@@ -1,0 +1,13 @@
+.editor {
+  user-select: none;
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  font-size: 13px;
+  font-family: monospace;
+  white-space: pre;
+  tab-size: 4;
+  color: #d4d4d4;
+  background: #1e1e1e;
+  margin: 0;
+}

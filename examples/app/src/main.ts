@@ -1,4 +1,4 @@
 import "./style.css";
-import { init } from "./app.ts";
+import { mountApp } from "./app.ts";
 
-init();
+mountApp();

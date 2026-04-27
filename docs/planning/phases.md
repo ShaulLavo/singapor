@@ -84,6 +84,9 @@ Make visible-range rendering and layout queries first-class. This phase turns th
 
 See also: [Posttext Layout Engine Plan](../posttext.md).
 
+Posttext may start earlier as an isolated, tested layout core. Replacing the editor renderer and
+threading layout through FoldMap should wait until Phase 5 validates the transform contract.
+
 | Deliverable | Acceptance Criteria |
 |---|---|
 | Layout unit spec | Defines unit identity, invalidation root, spill rules, and why the initial unit is suitable for benchmarking |

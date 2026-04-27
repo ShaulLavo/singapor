@@ -6,6 +6,7 @@ export {
 } from "./editor";
 export * from "./documentSession";
 export * from "./history";
+export * from "./layout";
 export * from "./pieceTable";
 export * from "./selections";
 export * from "./syntax";

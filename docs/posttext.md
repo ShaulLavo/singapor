@@ -61,6 +61,50 @@ So the end-state goal is:
   - vertical-only virtualization is insufficient
   - long lines must not force full horizontal realization
 
+## Coherence Pass: First Implementation Contract
+
+Posttext is coherent as an end-state direction, but the first implementation must be narrower than
+the full plan. Start with an isolated layout core, not a renderer replacement.
+
+### What can start now
+
+Build a pure TypeScript layout package inside `packages/editor` that consumes:
+
+- a `PieceTableSnapshot`
+- visible document offsets and Points
+- explicit layout metrics (`charWidth`, `lineHeight`, `tabSize`, font identity)
+- viewport rectangles
+- edit batches from `DocumentSessionChange`
+
+It should not depend on DOM nodes, CSS Highlight objects, `Selection`, or `Anchor`.
+
+### What must wait
+
+Do not replace the current text-node / CSS Highlight renderer until the layout core has stable query
+APIs and benchmarks. The current renderer still owns native editing behavior, DOM selection syncing,
+and syntax highlighting. Posttext can first run as a model behind tests and a debug/prototype view.
+
+### Coordinate contract
+
+- Document coordinates are UTF-16 visible offsets from `PieceTableSnapshot`.
+- `Point` remains `{ row, column }` in document space.
+- Posttext owns visual coordinates only: `{ x, y }`, visual lines, boxes, and viewport slices.
+- Layout output may reference offsets and Points, but never stores anchors.
+- Folded or transformed coordinates must enter through an explicit transform adapter later.
+
+### Initial constraints
+
+The first implementation targets the editor's current rendering assumptions:
+
+- monospace code font
+- single line height
+- `white-space: pre` / no soft wrap as the first executable slice
+- tabs expanded by configured tab stops
+- no bidi, proportional-font shaping, inline widgets, or injected-width content yet
+
+These constraints are not the final product. They create a measurable base for vertical and
+horizontal virtualization before adding soft wrap and width-sensitive inline content.
+
 ---
 
 ## Required Queries
@@ -145,7 +189,7 @@ A unit must be:
 
 ### Current direction
 
-Start from **logical line as the invalidation root**, but do not assume that is the final unit.
+Start from **logical line as the invalidation root**.
 
 Reason:
 
@@ -153,7 +197,13 @@ Reason:
 - line identity matters for editor UX
 - long-line behavior can still be handled inside the unit
 
-This remains subject to benchmarking.
+For the first implementation, a logical line is the external unit and long lines are internally
+subdivided into fixed-size chunks for preparation and horizontal viewport queries. This keeps edit
+invalidation line-based while avoiding full geometry materialization for a 50K-character line.
+
+This remains subject to benchmarking. If line-local chunks still create too much invalidation or
+memory pressure, the fallback is a hybrid unit: logical lines for identity, chunked text blocks for
+storage and measurement.
 
 ---
 
@@ -221,8 +271,18 @@ No global relayout after every edit.
 Edits should invalidate:
 
 - the edited unit
-- a bounded spill region if wrapping changes propagate
+- a bounded spill region if wrapping or inline width changes propagate
 - no more than necessary
+
+For the first no-wrap implementation:
+
+- changed text invalidates the intersecting logical line range
+- line insert/delete shifts later line indices but does not require relayout of later line contents
+- vertical y lookup can be arithmetic while line height is fixed
+- horizontal x lookup is line-local and must not allocate per-character boxes for long lines
+
+When soft wrap is added, a changed line can change its own visual-line count and height aggregate.
+It should not force text preparation for unrelated logical lines.
 
 ---
 
@@ -323,6 +383,41 @@ rangeToBoxes(layoutState, start, end) -> Box[]
 
 This is conceptual; exact signatures remain open.
 
+## First API Slice
+
+The first concrete API should be smaller:
+
+```ts
+type PosttextMetrics = {
+  readonly charWidth: number;
+  readonly lineHeight: number;
+  readonly tabSize: number;
+};
+
+type PosttextViewport = {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+};
+
+createPosttextLayout(snapshot, metrics) -> PosttextLayoutState
+updatePosttextLayout(state, change, metrics) -> PosttextLayoutState
+queryPosttextViewport(state, viewport) -> VisibleLayoutSlice
+offsetToXY(state, offset) -> { x, y }
+xyToOffset(state, x, y) -> offset
+rangeToBoxes(state, start, end) -> Box[]
+```
+
+Implementation detail can be more specific, but the public boundary should preserve these
+properties:
+
+- all inputs are immutable or treated as immutable
+- all outputs are snapshot-scoped
+- no DOM objects cross the boundary
+- metrics are injected, not read by the core
+- viewport queries can return spans instead of one box per character
+
 ---
 
 ## Interaction with the Editor
@@ -390,48 +485,46 @@ Need to verify whether tabs, injected text, and inline widgets can stay in one w
 
 ## Build Plan
 
-### Step 1 — Define the unit
-- choose the first layout unit
-- define its identity
-- define its invalidation rules
-- define its spill rules
+### Step 1 - Define the unit
+- lock logical line as the v0 unit
+- define line identity by snapshot row plus document offset range
+- define chunking inside long lines
+- define v0 invalidation rules for no-wrap layout
 
-### Step 2 — Build prepare
-- segment text
-- measure widths
-- cache reusable analysis artifacts
-- support incremental updates within a unit
+### Step 2 - Build the no-wrap layout core
+- produce visible line slices from a snapshot
+- map viewport y-range to document rows
+- map viewport x-range to line-local spans
+- implement offset/x/y and range-to-box queries
 
-### Step 3 — Build layout
-- compute wrapped visual lines
-- compute cumulative x positions
-- compute visual heights and bounds
-- support local relayout only
+### Step 3 - Add edit invalidation
+- accept `DocumentSessionChange`
+- invalidate changed logical lines
+- update line ranges and height aggregates
+- preserve unchanged prepared/layout artifacts
 
-### Step 4 — Build 2D virtualization
-- map viewport y-range to visible rows / units
-- map viewport x-range to visible spans within long lines
-- avoid creating geometry outside the visible 2D window
+### Step 4 - Benchmark the base
+- 10K, 50K, 100K-line files
+- 50K-character lines
+- rapid single-line edits
+- wide horizontal viewports
+- range boxes over long selections
 
-### Step 5 — Build query APIs
-- offset ↔ x/y
-- range → boxes
-- line/block bounds
-- visible slice extraction
+### Step 5 - Integrate behind a debug/prototype view
+- keep the current renderer as the default
+- expose layout query results for verification
+- compare browser hit testing against Posttext hit testing
 
-### Step 6 — Integrate
-- connect to editor rendering
-- connect to selection/decorations
-- connect to folds
-- validate no DOM measurement in hot paths
+### Step 6 - Add soft wrap
+- compute wrapped visual lines inside a logical line
+- update height aggregates when wrapping changes
+- preserve horizontal virtualization for very long wrapped lines
 
-### Step 7 — Benchmark and tighten
-- long documents
-- long lines
-- heavy editing
-- dense decorations
-- wide scroll windows
-- mixed scripts / emoji / tabs / injected content
+### Step 7 - Integrate with transforms and renderer
+- connect FoldMap or transform adapters
+- connect selection/decorations
+- decide whether the renderer becomes DOM spans, canvas, CSS Highlights, or a hybrid
+- validate no DOM measurement in hot paths after metrics are seeded
 
 ---
 

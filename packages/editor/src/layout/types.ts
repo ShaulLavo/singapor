@@ -26,11 +26,23 @@ export type PosttextViewport = {
   y2: number;
 };
 
+export type PosttextTextEdit = {
+  from: number;
+  to: number;
+  text: string;
+};
+
+export type PosttextLineBoundary = {
+  offset: number;
+  x: number;
+};
+
 export type PosttextLineLayout = {
   row: number;
   startOffset: number;
   endOffset: number;
   text: string;
+  boundaries: readonly PosttextLineBoundary[];
   y: number;
   height: number;
   width: number;

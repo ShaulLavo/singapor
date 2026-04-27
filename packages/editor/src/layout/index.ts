@@ -1,4 +1,5 @@
 export {
+  applyNoWrapPosttextLayoutEdits,
   createNoWrapPosttextLayout,
   getPosttextRangeBoxes,
   posttextOffsetToXY,
@@ -8,10 +9,12 @@ export {
 
 export type {
   PosttextLayout,
+  PosttextLineBoundary,
   PosttextLayoutMetrics,
   PosttextLineLayout,
   PosttextRangeBox,
   PosttextRect,
+  PosttextTextEdit,
   PosttextViewport,
   PosttextViewportLine,
   PosttextViewportResult,

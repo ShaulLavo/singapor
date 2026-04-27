@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyBatchToPieceTable,
+  applyNoWrapPosttextLayoutEdits,
   createNoWrapPosttextLayout,
   createPieceTableSnapshot,
   getPosttextRangeBoxes,
@@ -18,6 +20,17 @@ const metrics: PosttextLayoutMetrics = {
 };
 
 describe("Posttext no-wrap layout", () => {
+  it("prepares reusable per-line offset and x boundaries", () => {
+    const layout = createNoWrapPosttextLayout(createPieceTableSnapshot("ab\n\tcd"), metrics);
+
+    expect(layout.lines[1]?.boundaries).toEqual([
+      { offset: 3, x: 0 },
+      { offset: 4, x: 40 },
+      { offset: 5, x: 50 },
+      { offset: 6, x: 60 },
+    ]);
+  });
+
   it("converts offsets to XY positions with logical lines and tab stops", () => {
     const layout = createNoWrapPosttextLayout(createPieceTableSnapshot("ab\n\tcd"), metrics);
 
@@ -123,5 +136,42 @@ describe("Posttext no-wrap layout", () => {
     expect(layout.height).toBe(40);
     expect(posttextOffsetToXY(layout, 2)).toEqual({ x: 0, y: 20 });
     expect(getPosttextRangeBoxes(layout, 1, 1)).toEqual([]);
+  });
+
+  it("applies line-local edits without rebuilding unaffected prepared lines", () => {
+    const snapshot = createPieceTableSnapshot("aa\nbb\ncc");
+    const layout = createNoWrapPosttextLayout(snapshot, metrics);
+    const edit = { from: 4, to: 5, text: "B" };
+    const nextSnapshot = applyBatchToPieceTable(snapshot, [edit]);
+    const next = applyNoWrapPosttextLayoutEdits(layout, nextSnapshot, [edit]);
+
+    expect(next.lines[0]).toBe(layout.lines[0]);
+    expect(next.lines[2]).toBe(layout.lines[2]);
+    expect(next.lines[1]?.text).toBe("bB");
+    expect(posttextOffsetToXY(next, 5)).toEqual({ x: 20, y: 20 });
+    expect(posttextXYToOffset(next, { x: 15, y: 20 })).toBe(5);
+  });
+
+  it("applies newline edits and keeps query results aligned with a fresh layout", () => {
+    const snapshot = createPieceTableSnapshot("ab\n\tcd\nxy");
+    const layout = createNoWrapPosttextLayout(snapshot, metrics);
+    const edit = { from: 2, to: 3, text: "" };
+    const nextSnapshot = applyBatchToPieceTable(snapshot, [edit]);
+    const next = applyNoWrapPosttextLayoutEdits(layout, nextSnapshot, [edit]);
+    const rebuilt = createNoWrapPosttextLayout(nextSnapshot, metrics);
+
+    expect(next).toEqual(rebuilt);
+    expect(posttextOffsetToXY(next, 3)).toEqual({ x: 40, y: 0 });
+    expect(posttextXYToOffset(next, { x: 30, y: 0 })).toBe(3);
+    expect(queryNoWrapPosttextViewport(next, { x1: 0, y1: 0, x2: 45, y2: 20 }).lines).toEqual([
+      {
+        row: 0,
+        startOffset: 0,
+        endOffset: 5,
+        visibleStartOffset: 0,
+        visibleEndOffset: 4,
+        rect: { x: 0, y: 0, width: 50, height: 20 },
+      },
+    ]);
   });
 });

@@ -33,16 +33,3 @@
   color: inherit;
   background: transparent;
 }
-
-.editor-selection-overlay {
-  position: fixed;
-  pointer-events: none;
-  overflow: hidden;
-  z-index: 1;
-  contain: strict;
-}
-
-.editor-selection-box {
-  position: absolute;
-  background: rgba(56, 189, 248, 0.35);
-}

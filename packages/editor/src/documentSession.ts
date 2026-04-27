@@ -20,23 +20,6 @@ import {
   type PieceTableAnchor,
   type PieceTableSnapshot,
 } from "./pieceTable";
-import {
-  createPosttextLayoutSession,
-  getPosttextRangeBoxes,
-  posttextOffsetToXY,
-  posttextXYToOffset,
-  queryNoWrapPosttextViewport,
-  setPosttextLayoutSessionMetrics,
-  updatePosttextLayoutSession,
-  type PosttextLayout,
-  type PosttextLayoutMetrics,
-  type PosttextLayoutSession,
-  type PosttextLayoutUpdateMode,
-  type PosttextRangeBox,
-  type PosttextViewport,
-  type PosttextViewportResult,
-  type PosttextXY,
-} from "./layout";
 
 export type DocumentSessionChangeKind = "edit" | "selection" | "undo" | "redo" | "none";
 
@@ -53,20 +36,8 @@ export type DocumentSessionChange = {
   readonly text: string;
   readonly tokens: readonly EditorToken[];
   readonly timings: readonly EditorTimingMeasurement[];
-  readonly layout: DocumentSessionLayoutSummary;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
-};
-
-export type DocumentSessionLayoutSummary = {
-  readonly revision: number;
-  readonly updateMode: PosttextLayoutUpdateMode;
-  readonly rebuildCount: number;
-  readonly incrementalUpdateCount: number;
-  readonly reuseCount: number;
-  readonly lineCount: number;
-  readonly width: number;
-  readonly height: number;
 };
 
 export type DocumentSession = {
@@ -76,25 +47,17 @@ export type DocumentSession = {
   undo(): DocumentSessionChange;
   redo(): DocumentSessionChange;
   setSelection(anchorOffset: number, headOffset?: number): DocumentSessionChange;
-  setLayoutMetrics(metrics: PosttextLayoutMetrics): DocumentSessionChange;
   setTokens(tokens: readonly EditorToken[]): DocumentSessionChange;
   getText(): string;
   getTokens(): readonly EditorToken[];
   getSelections(): SelectionSet<PieceTableAnchor>;
   getSnapshot(): PieceTableSnapshot;
-  getLayout(): PosttextLayout;
-  getLayoutSummary(): DocumentSessionLayoutSummary;
-  getLayoutXY(offset: number): PosttextXY;
-  getLayoutOffset(point: PosttextXY): number;
-  getLayoutRangeBoxes(startOffset: number, endOffset: number): PosttextRangeBox[];
-  queryLayoutViewport(viewport: PosttextViewport): PosttextViewportResult;
   canUndo(): boolean;
   canRedo(): boolean;
 };
 
 class PieceTableDocumentSession implements DocumentSession {
   private history: PieceTableEditorHistory;
-  private layoutSession: PosttextLayoutSession;
   private text: string;
   private tokens: readonly EditorToken[] = [];
 
@@ -102,7 +65,6 @@ class PieceTableDocumentSession implements DocumentSession {
     const snapshot = createPieceTableSnapshot(text);
     const selections = createSelectionSet([createAnchorSelection(snapshot, snapshot.length)], true);
     this.history = createEditorHistory(snapshot, selections);
-    this.layoutSession = createPosttextLayoutSession(snapshot);
     this.text = text;
   }
 
@@ -148,15 +110,8 @@ class PieceTableDocumentSession implements DocumentSession {
     }
 
     this.history = next;
-    const layoutTimingStart = nowMs();
-    const layoutMode = this.updateLayout(this.history.current, []);
     this.refreshText();
-    const change = appendTiming(
-      this.createChange("undo", [], layoutMode),
-      layoutTimingName(layoutMode),
-      layoutTimingStart,
-    );
-    return appendTiming(change, "session.undo", start);
+    return appendTiming(this.createChange("undo", []), "session.undo", start);
   }
 
   public redo(): DocumentSessionChange {
@@ -167,15 +122,8 @@ class PieceTableDocumentSession implements DocumentSession {
     }
 
     this.history = next;
-    const layoutTimingStart = nowMs();
-    const layoutMode = this.updateLayout(this.history.current, []);
     this.refreshText();
-    const change = appendTiming(
-      this.createChange("redo", [], layoutMode),
-      layoutTimingName(layoutMode),
-      layoutTimingStart,
-    );
-    return appendTiming(change, "session.redo", start);
+    return appendTiming(this.createChange("redo", []), "session.redo", start);
   }
 
   public setSelection(anchorOffset: number, headOffset = anchorOffset): DocumentSessionChange {
@@ -184,18 +132,6 @@ class PieceTableDocumentSession implements DocumentSession {
     const selections = createSelectionSet([selection], true);
     this.history = { ...this.history, selections };
     return appendTiming(this.createChange("selection", []), "session.selection", start);
-  }
-
-  public setLayoutMetrics(metrics: PosttextLayoutMetrics): DocumentSessionChange {
-    const start = nowMs();
-    const result = setPosttextLayoutSessionMetrics(this.layoutSession, metrics);
-    this.layoutSession = result.session;
-    const change = appendTiming(
-      this.createChange("none", [], result.mode),
-      layoutTimingName(result.mode),
-      start,
-    );
-    return appendTiming(change, "session.setLayoutMetrics", start);
   }
 
   public setTokens(tokens: readonly EditorToken[]): DocumentSessionChange {
@@ -220,30 +156,6 @@ class PieceTableDocumentSession implements DocumentSession {
     return this.history.current;
   }
 
-  public getLayout(): PosttextLayout {
-    return this.layoutSession.layout;
-  }
-
-  public getLayoutSummary(): DocumentSessionLayoutSummary {
-    return this.createLayoutSummary("reuse");
-  }
-
-  public getLayoutXY(offset: number): PosttextXY {
-    return posttextOffsetToXY(this.layoutSession.layout, offset);
-  }
-
-  public getLayoutOffset(point: PosttextXY): number {
-    return posttextXYToOffset(this.layoutSession.layout, point);
-  }
-
-  public getLayoutRangeBoxes(startOffset: number, endOffset: number): PosttextRangeBox[] {
-    return getPosttextRangeBoxes(this.layoutSession.layout, startOffset, endOffset);
-  }
-
-  public queryLayoutViewport(viewport: PosttextViewport): PosttextViewportResult {
-    return queryNoWrapPosttextViewport(this.layoutSession.layout, viewport);
-  }
-
   public canUndo(): boolean {
     return this.history.undo !== null;
   }
@@ -260,33 +172,17 @@ class PieceTableDocumentSession implements DocumentSession {
     if (edits.length === 0) return this.createChange("none", []);
 
     this.history = commitEditorHistory(this.history, snapshot, selections);
-    const layoutTimingStart = nowMs();
-    const layoutMode = this.updateLayout(snapshot, edits);
     this.refreshText();
-    return appendTiming(
-      this.createChange("edit", edits, layoutMode),
-      layoutTimingName(layoutMode),
-      layoutTimingStart,
-    );
+    return this.createChange("edit", edits);
   }
 
   private refreshText(): void {
     this.text = getPieceTableText(this.history.current);
   }
 
-  private updateLayout(
-    snapshot: PieceTableSnapshot,
-    edits: readonly TextEdit[],
-  ): PosttextLayoutUpdateMode {
-    const result = updatePosttextLayoutSession(this.layoutSession, snapshot, edits);
-    this.layoutSession = result.session;
-    return result.mode;
-  }
-
   private createChange(
     kind: DocumentSessionChangeKind,
     edits: readonly TextEdit[],
-    layoutUpdateMode: PosttextLayoutUpdateMode = "reuse",
   ): DocumentSessionChange {
     return {
       kind,
@@ -296,22 +192,8 @@ class PieceTableDocumentSession implements DocumentSession {
       text: this.text,
       tokens: this.tokens,
       timings: [],
-      layout: this.createLayoutSummary(layoutUpdateMode),
       canUndo: this.canUndo(),
       canRedo: this.canRedo(),
-    };
-  }
-
-  private createLayoutSummary(updateMode: PosttextLayoutUpdateMode): DocumentSessionLayoutSummary {
-    return {
-      revision: this.layoutSession.stats.revision,
-      updateMode,
-      rebuildCount: this.layoutSession.stats.rebuildCount,
-      incrementalUpdateCount: this.layoutSession.stats.incrementalUpdateCount,
-      reuseCount: this.layoutSession.stats.reuseCount,
-      lineCount: this.layoutSession.layout.lineIndex.lineCount,
-      width: this.layoutSession.layout.width,
-      height: this.layoutSession.layout.height,
     };
   }
 }
@@ -333,8 +215,4 @@ function appendTiming(
     ...change,
     timings: [...change.timings, { name, durationMs: nowMs() - startMs }],
   };
-}
-
-function layoutTimingName(mode: PosttextLayoutUpdateMode): string {
-  return `posttext.layout.${mode}`;
 }

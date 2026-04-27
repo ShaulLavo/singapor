@@ -6,7 +6,6 @@ export {
 } from "./editor";
 export * from "./documentSession";
 export * from "./history";
-export * from "./layout";
 export * from "./pieceTable";
 export * from "./selections";
 export * from "./syntax";
@@ -18,6 +17,5 @@ export type {
   EditorSyntaxSessionFactory,
   EditorSyntaxStatus,
   HighlightRegistry,
-  LiveLayoutQueryResult,
 } from "./editor";
 export type { EditorDocument, EditorToken, EditorTokenStyle, TextEdit } from "./tokens";

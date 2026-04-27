@@ -37,14 +37,14 @@
 - Input handling
 - Caret & selection
 - Minimal text echo
-- Minimal local layout (small piece range)
+- Browser-owned layout for mounted rows
+- 2D viewport virtualization
 - Rendering / DOM / CSS highlights
 - Reconciliation with worker
 
 ### Worker(s) (Async / Authoritative)
 - Document model
 - Transactions / edits
-- Layout engine (full)
 - Tree-sitter syntax parsing
 - Decorations
 - Scheduling
@@ -83,11 +83,16 @@ See: [Positions: Anchors](docs/positions/anchors.md)
 
 ### 5.4 Layout System
 
-Work in progress — being designed separately. Will be reconciled once complete.
+The editor will not build a parallel text layout engine. Browser layout is the visual source of
+truth for mounted text.
 
-**Key principles (locked):** Piece-based, incremental from edit point.
+See: [Browser Layout + 2D Virtualizer](docs/display/browser-virtualization.md).
 
-**Open:** Layout unit, independent computation, tree vs flat, long line handling.
+**Key principles (locked):** native browser layout, custom viewport virtualization, CSS Highlight
+API for current selection/syntax paint, and DOM `Range`/caret APIs for geometry on mounted content.
+
+**Open:** virtual row data source, horizontal chunking for very long lines, interaction with FoldMap,
+and worker/main ownership of viewport inputs.
 
 ---
 
@@ -99,7 +104,7 @@ Work in progress — being designed separately. Will be reconciled once complete
 
 ### 5.6 Invalidation Model
 
-Display transform invalidation protocol designed. Layout/viewport/cache invalidation still open.
+Display transform invalidation protocol designed. Virtual row/chunk invalidation still open.
 
 See: [Display: Transforms](docs/display/transforms.md) for the invalidation protocol.
 
@@ -156,13 +161,12 @@ CSS Highlight API renderer implemented. See `packages/editor/src/editor.ts`.
 
 1. Input event (main)
 2. Minimal text update (main)
-3. Minimal layout update (main)
+3. Browser lays out mounted rows
 4. Paint immediately
 5. Send edit to worker
-6. Worker updates document
-7. Worker recomputes layout for affected pieces
-8. Worker sends authoritative result
-9. Main reconciles
+6. Worker updates document-derived projections
+7. Worker sends authoritative result
+8. Main updates visible row/chunk window and reconciles
 
 ---
 
@@ -170,9 +174,9 @@ CSS Highlight API renderer implemented. See `packages/editor/src/editor.ts`.
 
 1. ~~Position model?~~ **Locked.**
 2. ~~Text storage structure?~~ **Locked.**
-3. Layout unit model?
+3. Virtual row/chunk model?
 4. ~~Invalidation strategy?~~ **Partially designed.**
-5. Main vs worker layout split?
+5. Main vs worker virtualization split?
 6. Scheduler design?
 7. Decoration system design?
 8. Tree-sitter parser/query loading and memory policy?

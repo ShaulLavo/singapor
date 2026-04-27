@@ -28,9 +28,6 @@ describe("DocumentSession", () => {
 
     expect(change.kind).toBe("edit");
     expect(change.edits).toEqual([{ from: 3, to: 3, text: "!" }]);
-    expect(change.layout.updateMode).toBe("incremental");
-    expect(change.layout.incrementalUpdateCount).toBe(1);
-    expect(change.layout.rebuildCount).toBe(1);
     expect(session.getText()).toBe("abc!");
     expect(resolvedOffsets(session)).toEqual({ start: 4, end: 4 });
     expect(session.canUndo()).toBe(true);
@@ -65,33 +62,5 @@ describe("DocumentSession", () => {
     expect(redone.text).toBe("abc!");
     expect(session.getText()).toBe("abc!");
     expect(resolvedOffsets(session)).toEqual({ start: 4, end: 4 });
-  });
-
-  it("keeps Posttext layout queryable through typing", () => {
-    const session = createDocumentSession("ab\ncd");
-    session.setLayoutMetrics({
-      charWidth: 10,
-      lineHeight: 20,
-      tabSize: 4,
-      fontKey: "test",
-    });
-    session.setSelection(2);
-    const change = session.applyText("!");
-
-    expect(change.layout.updateMode).toBe("incremental");
-    expect(session.getLayoutXY(3)).toEqual({ x: 30, y: 0 });
-    expect(session.getLayoutOffset({ x: 5, y: 20 })).toBe(5);
-    expect(session.queryLayoutViewport({ x1: 0, y1: 0, x2: 40, y2: 40 }).lines).toHaveLength(2);
-  });
-
-  it("reports snapshot swaps as Posttext rebuilds", () => {
-    const session = createDocumentSession("abc");
-    session.applyText("!");
-    const beforeUndo = session.getLayoutSummary();
-    const change = session.undo();
-
-    expect(change.layout.updateMode).toBe("rebuild");
-    expect(change.layout.rebuildCount).toBe(beforeUndo.rebuildCount + 1);
-    expect(change.timings.some(({ name }) => name === "posttext.layout.rebuild")).toBe(true);
   });
 });

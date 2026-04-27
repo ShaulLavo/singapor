@@ -10,8 +10,6 @@
   "scripts": {
     "bench:anchors": "bun bench/pieceTable-anchors.ts",
     "bench:piece-table": "bun bench/pieceTable-insertions.ts",
-    "bench:posttext": "bun bench/posttext-layout.ts",
-    "bench:posttext-session": "bun bench/posttext-session.ts",
     "test": "vitest run",
     "test:browser": "vitest run --browser.enabled --browser.headless test/treeSitter-workerClient.browser.test.ts",
     "typecheck": "tsgo --noEmit",

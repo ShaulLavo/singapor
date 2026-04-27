@@ -254,32 +254,6 @@ describe("Editor", () => {
       expect(timing?.durationMs).toBeGreaterThan(1);
     });
 
-    it("measures Posttext update and live query work during input", () => {
-      const changes: DocumentSessionChange[] = [];
-      editor.dispose();
-      editor = new Editor(container, {
-        onChange: (_state, change) => {
-          if (change) changes.push(change);
-        },
-      });
-      const session = createDocumentSession("abc");
-      editor.attachSession(session);
-      const baseline = session.getLayoutSummary();
-
-      container.querySelector("pre")!.dispatchEvent(createInsertEvent("!"));
-
-      const change = changes.at(-1);
-      expect(change?.layout.updateMode).toBe("incremental");
-      expect(change?.layout.incrementalUpdateCount).toBe(1);
-      expect(change?.layout.rebuildCount).toBe(baseline.rebuildCount);
-      expect(change?.timings.some(({ name }) => name === "posttext.layout.incremental")).toBe(true);
-      expect(change?.timings.some(({ name }) => name === "posttext.query.live")).toBe(true);
-      expect(editor.getLastLayoutQuery()).toMatchObject({
-        revision: change?.layout.revision,
-        viewportLineCount: 1,
-      });
-    });
-
     it("routes undo through a document session", () => {
       const session = createDocumentSession("abc");
       editor.attachSession(session);
@@ -331,7 +305,7 @@ describe("Editor", () => {
       expect(container.querySelector("pre")!.textContent).toBe("aXd");
     });
 
-    it("renders range selections through Posttext selection boxes", () => {
+    it("renders range selections with a custom highlight", () => {
       const session = createDocumentSession("abcd");
       editor.attachSession(session);
       const textNode = container.querySelector("pre")!.firstChild!;
@@ -344,7 +318,7 @@ describe("Editor", () => {
       selection.addRange(range);
       container.querySelector("pre")!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 
-      expect(document.querySelectorAll(".editor-selection-box")).toHaveLength(1);
+      expect(highlightsMap.get("editor-token-0-selection")?.size).toBe(1);
 
       container.querySelector("pre")!.dispatchEvent(
         new InputEvent("beforeinput", {
@@ -355,7 +329,7 @@ describe("Editor", () => {
         }),
       );
 
-      expect(document.querySelectorAll(".editor-selection-box")).toHaveLength(0);
+      expect(highlightsMap.has("editor-token-0-selection")).toBe(false);
     });
 
     it("updates custom selection immediately while dragging", () => {
@@ -386,7 +360,7 @@ describe("Editor", () => {
       document.dispatchEvent(new MouseEvent("mousemove", { cancelable: true, clientX: 30 }));
 
       expect(mouseDown.defaultPrevented).toBe(true);
-      expect(document.querySelectorAll(".editor-selection-box")).toHaveLength(1);
+      expect(highlightsMap.get("editor-token-0-selection")?.size).toBe(1);
 
       let resolved = resolveSelection(
         session.getSnapshot(),

@@ -4,12 +4,6 @@ import type {
   EditorTimingMeasurement,
 } from "./documentSession";
 import { createDocumentSession } from "./documentSession";
-import type {
-  PosttextLayoutMetrics,
-  PosttextRangeBox,
-  PosttextViewport,
-  PosttextXY,
-} from "./layout";
 import { offsetToPoint } from "./pieceTable";
 import { resolveSelection } from "./selections";
 import {
@@ -38,25 +32,6 @@ type DocumentWithCaretHitTesting = Document & {
 type MouseSelectionDrag = {
   readonly anchorOffset: number;
   headOffset: number;
-};
-
-export type LiveLayoutQueryResult = {
-  readonly revision: number;
-  readonly caret: PosttextXY;
-  readonly viewportLineCount: number;
-  readonly selectionBoxCount: number;
-};
-
-type EditorBoxMetrics = {
-  readonly paddingLeft: number;
-  readonly paddingTop: number;
-};
-
-type ClippedRect = {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
 };
 
 export function resetEditorInstanceCount(): void {
@@ -135,10 +110,12 @@ function getHighlightRegistry(): HighlightRegistry {
 export class Editor {
   private el: HTMLPreElement;
   private readonly textNode: Text;
-  private readonly selectionOverlay: HTMLDivElement;
   private readonly options: EditorOptions;
   private readonly highlightPrefix: string;
+  private readonly selectionHighlightName: string;
   private readonly styleEl: HTMLStyleElement;
+  private readonly selectionHighlight: Highlight;
+  private selectionHighlightRegistered = false;
   private highlightNames: string[] = [];
   private nextGroupId = 0;
   private session: DocumentSession | null = null;
@@ -151,7 +128,6 @@ export class Editor {
   private syntaxVersion = 0;
   private mouseSelectionDrag: MouseSelectionDrag | null = null;
   private useSessionSelectionForNextInput = false;
-  private lastLayoutQuery: LiveLayoutQueryResult | null = null;
   private trackedTokens: Array<{ start: number; end: number; styleKey: string; range: Range }> = [];
   private groups = new Map<
     string,
@@ -162,18 +138,17 @@ export class Editor {
     this.options = options;
     this.el = document.createElement("pre");
     this.el.className = "editor";
-    this.selectionOverlay = document.createElement("div");
-    this.selectionOverlay.className = "editor-selection-overlay";
     this.textNode = document.createTextNode("");
     this.highlightPrefix = `editor-token-${editorInstanceCount++}`;
+    this.selectionHighlightName = `${this.highlightPrefix}-selection`;
     this.styleEl = document.createElement("style");
+    this.selectionHighlight = new Highlight();
 
     this.el.appendChild(this.textNode);
     this.el.tabIndex = 0;
     this.el.spellcheck = false;
     document.head.appendChild(this.styleEl);
     container.appendChild(this.el);
-    document.body.appendChild(this.selectionOverlay);
     this.rebuildStyleRules();
     this.installEditingHandlers();
   }
@@ -289,10 +264,6 @@ export class Editor {
     return this.session?.getText() ?? this.textNode.data;
   }
 
-  getLastLayoutQuery(): LiveLayoutQueryResult | null {
-    return this.lastLayoutQuery;
-  }
-
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
     this.documentVersion += 1;
     this.documentId = null;
@@ -302,7 +273,6 @@ export class Editor {
     this.session = session;
     this.sessionOptions = options;
     this.el.contentEditable = "plaintext-only";
-    this.syncSessionLayoutMetrics();
     this.setDocument({ text: session.getText(), tokens: session.getTokens() });
     this.syncDomSelection();
   }
@@ -310,7 +280,6 @@ export class Editor {
   detachSession(): void {
     this.session = null;
     this.sessionOptions = {};
-    this.lastLayoutQuery = null;
     this.clearSelectionHighlight();
     this.el.removeAttribute("contenteditable");
   }
@@ -331,7 +300,6 @@ export class Editor {
     this.detachSession();
     this.clearHighlights();
     this.styleEl.remove();
-    this.selectionOverlay.remove();
     this.el.remove();
   }
 
@@ -346,8 +314,6 @@ export class Editor {
     this.syntaxStatus = this.languageId ? "loading" : "plain";
     this.disposeSyntaxSession();
 
-    const session = createDocumentSession(document.text);
-    session.setLayoutMetrics(this.readLayoutMetrics());
     const documentId = this.documentId ?? `${this.highlightPrefix}-${documentVersion}`;
     this.syntaxSession = this.languageId
       ? editorSyntaxSessionFactory({
@@ -357,48 +323,12 @@ export class Editor {
         })
       : null;
 
-    this.session = session;
+    this.session = createDocumentSession(document.text);
     this.sessionOptions = {};
     this.el.contentEditable = "plaintext-only";
-    this.setDocument({ text: session.getText(), tokens: [] });
+    this.setDocument({ text: this.session.getText(), tokens: [] });
     this.syncDomSelection();
     return documentVersion;
-  }
-
-  private syncSessionLayoutMetrics(): void {
-    this.session?.setLayoutMetrics(this.readLayoutMetrics());
-  }
-
-  private readLayoutMetrics(): PosttextLayoutMetrics {
-    const style = getComputedStyle(this.el);
-    const fontSize = readCssPixels(style.fontSize) ?? 13;
-    const lineHeight = readCssPixels(style.lineHeight) ?? fontSize * 1.4;
-    const tabSize = readCssNumber(style.tabSize) ?? 4;
-    const fontKey = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-
-    return {
-      charWidth: this.measureCharacterWidth(style, fontSize),
-      lineHeight,
-      tabSize,
-      fontKey,
-    };
-  }
-
-  private measureCharacterWidth(style: CSSStyleDeclaration, fontSize: number): number {
-    const canvas = this.el.ownerDocument.createElement("canvas");
-    let context: CanvasRenderingContext2D | null = null;
-    try {
-      context = canvas.getContext("2d");
-    } catch {
-      return Math.max(1, fontSize * 0.62);
-    }
-
-    if (!context) return Math.max(1, fontSize * 0.62);
-
-    context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-    const width = context.measureText("M").width;
-    if (Number.isFinite(width) && width > 0) return width;
-    return Math.max(1, fontSize * 0.62);
   }
 
   private disposeSyntaxSession(): void {
@@ -414,12 +344,7 @@ export class Editor {
     this.el.addEventListener("keydown", this.handleKeyDown);
     this.el.addEventListener("keyup", this.syncSessionSelectionFromDom);
     this.el.addEventListener("mouseup", this.syncSessionSelectionFromDom);
-    this.el.addEventListener("scroll", this.syncRenderedSelectionFromSession);
     this.el.ownerDocument.addEventListener("selectionchange", this.syncCustomSelectionFromDom);
-    this.el.ownerDocument.defaultView?.addEventListener(
-      "resize",
-      this.syncRenderedSelectionFromSession,
-    );
   }
 
   private uninstallEditingHandlers(): void {
@@ -429,12 +354,7 @@ export class Editor {
     this.el.removeEventListener("keydown", this.handleKeyDown);
     this.el.removeEventListener("keyup", this.syncSessionSelectionFromDom);
     this.el.removeEventListener("mouseup", this.syncSessionSelectionFromDom);
-    this.el.removeEventListener("scroll", this.syncRenderedSelectionFromSession);
     this.el.ownerDocument.removeEventListener("selectionchange", this.syncCustomSelectionFromDom);
-    this.el.ownerDocument.defaultView?.removeEventListener(
-      "resize",
-      this.syncRenderedSelectionFromSession,
-    );
     this.stopMouseSelectionDrag();
   }
 
@@ -677,52 +597,10 @@ export class Editor {
       this.syncDomSelection();
       timedChange = appendTiming(timedChange, "editor.syncDomSelection", selectionStart);
     }
-    timedChange = this.measureLiveLayoutQueries(timedChange);
     const finalChange = appendTiming(timedChange, totalName, totalStart);
     this.sessionOptions.onChange?.(finalChange);
     this.refreshSyntax(this.documentVersion, finalChange);
     this.notifyChangeWithTiming(finalChange);
-  }
-
-  private measureLiveLayoutQueries(change: DocumentSessionChange): DocumentSessionChange {
-    if (!this.session) return change;
-
-    const start = nowMs();
-    this.lastLayoutQuery = this.queryLiveLayout(this.session);
-    return appendTiming(change, "posttext.query.live", start);
-  }
-
-  private queryLiveLayout(session: DocumentSession): LiveLayoutQueryResult {
-    const snapshot = session.getSnapshot();
-    const selection = session.getSelections().selections[0];
-    const resolved = selection ? resolveSelection(snapshot, selection) : null;
-    const headOffset = resolved?.headOffset ?? snapshot.length;
-    const selectionBoxes = resolved
-      ? session.getLayoutRangeBoxes(resolved.startOffset, resolved.endOffset)
-      : [];
-    const viewport = session.queryLayoutViewport(this.currentLayoutViewport(session));
-
-    return {
-      revision: session.getLayoutSummary().revision,
-      caret: session.getLayoutXY(headOffset),
-      viewportLineCount: viewport.lines.length,
-      selectionBoxCount: selectionBoxes.length,
-    };
-  }
-
-  private currentLayoutViewport(session: DocumentSession): PosttextViewport {
-    const lineHeight = session.getLayout().metrics.lineHeight;
-    const x1 = this.el.scrollLeft;
-    const y1 = this.el.scrollTop;
-    const width = Math.max(this.el.clientWidth, 1);
-    const height = Math.max(this.el.clientHeight, lineHeight);
-
-    return {
-      x1,
-      y1,
-      x2: x1 + width,
-      y2: y1 + height,
-    };
   }
 
   private renderSessionChange(change: DocumentSessionChange): void {
@@ -845,84 +723,28 @@ export class Editor {
       return;
     }
 
-    if (!this.session) return;
+    const range = document.createRange();
+    range.setStart(this.textNode, start);
+    range.setEnd(this.textNode, end);
 
-    const boxes = this.session.getLayoutRangeBoxes(start, end);
-    this.renderSelectionBoxes(boxes);
+    this.ensureSelectionHighlightRegistered();
+    this.selectionHighlight.clear();
+    this.selectionHighlight.add(range);
   }
 
   private clearSelectionHighlight(): void {
-    this.selectionOverlay.replaceChildren();
-    this.selectionOverlay.hidden = true;
+    if (!this.selectionHighlightRegistered) return;
+
+    this.selectionHighlight.clear();
+    getHighlightRegistry().delete(this.selectionHighlightName);
+    this.selectionHighlightRegistered = false;
   }
 
-  private syncRenderedSelectionFromSession = (): void => {
-    if (!this.session) {
-      this.clearSelectionHighlight();
-      return;
-    }
+  private ensureSelectionHighlightRegistered(): void {
+    if (this.selectionHighlightRegistered) return;
 
-    const selection = this.session.getSelections().selections[0];
-    if (!selection) {
-      this.clearSelectionHighlight();
-      return;
-    }
-
-    const resolved = resolveSelection(this.session.getSnapshot(), selection);
-    this.syncCustomSelectionHighlight(resolved.startOffset, resolved.endOffset);
-  };
-
-  private renderSelectionBoxes(boxes: readonly PosttextRangeBox[]): void {
-    const editorRect = this.el.getBoundingClientRect();
-    const metrics = this.editorBoxMetrics();
-    const overlayWidth = Math.max(
-      editorRect.width,
-      this.el.clientWidth,
-      this.session?.getLayout().width ?? 1,
-    );
-    const overlayHeight = Math.max(
-      editorRect.height,
-      this.el.clientHeight,
-      this.session?.getLayout().height ?? 1,
-    );
-    const fragments = boxes
-      .map((box) => this.createSelectionFragment(box, overlayWidth, overlayHeight, metrics))
-      .filter((fragment) => fragment !== null);
-
-    this.selectionOverlay.hidden = fragments.length === 0;
-    this.selectionOverlay.style.left = `${editorRect.left}px`;
-    this.selectionOverlay.style.top = `${editorRect.top}px`;
-    this.selectionOverlay.style.width = `${overlayWidth}px`;
-    this.selectionOverlay.style.height = `${overlayHeight}px`;
-    this.selectionOverlay.replaceChildren(...fragments);
-  }
-
-  private createSelectionFragment(
-    box: PosttextRangeBox,
-    overlayWidth: number,
-    overlayHeight: number,
-    metrics: EditorBoxMetrics,
-  ): HTMLDivElement | null {
-    const x = metrics.paddingLeft + box.rect.x - this.el.scrollLeft;
-    const y = metrics.paddingTop + box.rect.y - this.el.scrollTop;
-    const clipped = clipRect(x, y, box.rect.width, box.rect.height, overlayWidth, overlayHeight);
-    if (!clipped) return null;
-
-    const fragment = this.el.ownerDocument.createElement("div");
-    fragment.className = "editor-selection-box";
-    fragment.style.left = `${clipped.x}px`;
-    fragment.style.top = `${clipped.y}px`;
-    fragment.style.width = `${clipped.width}px`;
-    fragment.style.height = `${clipped.height}px`;
-    return fragment;
-  }
-
-  private editorBoxMetrics(): EditorBoxMetrics {
-    const style = getComputedStyle(this.el);
-    return {
-      paddingLeft: readCssPixels(style.paddingLeft) ?? 0,
-      paddingTop: readCssPixels(style.paddingTop) ?? 0,
-    };
+    getHighlightRegistry().set(this.selectionHighlightName, this.selectionHighlight);
+    this.selectionHighlightRegistered = true;
   }
 
   private domBoundaryToTextOffset(node: Node, offset: number): number | null {
@@ -1004,7 +826,9 @@ export class Editor {
   }
 
   private rebuildStyleRules() {
-    const rules: string[] = [];
+    const rules: string[] = [
+      `::highlight(${this.selectionHighlightName}) { background-color: rgba(56, 189, 248, 0.35); }`,
+    ];
     for (const { name, style } of this.groups.values()) rules.push(buildHighlightRule(name, style));
     this.styleEl.textContent = rules.join("\n");
   }
@@ -1092,42 +916,6 @@ function codePointSizeAt(text: string, offset: number): number {
   const codePoint = text.codePointAt(offset);
   if (codePoint === undefined) return 0;
   return codePoint > 0xffff ? 2 : 1;
-}
-
-function readCssPixels(value: string): number | null {
-  if (!value.endsWith("px")) return null;
-
-  const parsed = Number.parseFloat(value);
-  if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return null;
-}
-
-function readCssNumber(value: string): number | null {
-  const parsed = Number.parseFloat(value);
-  if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return null;
-}
-
-function clipRect(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  maxWidth: number,
-  maxHeight: number,
-): ClippedRect | null {
-  const left = Math.max(0, x);
-  const top = Math.max(0, y);
-  const right = Math.min(maxWidth, x + width);
-  const bottom = Math.min(maxHeight, y + height);
-  if (right <= left || bottom <= top) return null;
-
-  return {
-    x: left,
-    y: top,
-    width: right - left,
-    height: bottom - top,
-  };
 }
 
 function nowMs(): number {

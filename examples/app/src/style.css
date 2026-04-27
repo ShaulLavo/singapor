@@ -43,6 +43,15 @@ body {
   background: #505050;
 }
 
+#toolbar button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+#toolbar button:disabled:hover {
+  background: #3c3c3c;
+}
+
 #dir-name {
   color: #aaa;
   font-size: 14px;

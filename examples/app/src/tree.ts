@@ -3,33 +3,65 @@ type TreeEntry =
   | { name: string; kind: "directory"; handle: FileSystemDirectoryHandle };
 
 type FileSelectHandler = (filePath: string, content: string) => Promise<void> | void;
+type DirectoryToggleHandler = (directoryPath: string, open: boolean) => void;
+
+type RenderDirOptions = {
+  prefix?: string;
+  selectedPath?: string;
+  expandedPaths?: ReadonlySet<string>;
+  onDirectoryToggle?: DirectoryToggleHandler;
+};
+
+type DirectoryEntryOptions = {
+  path: string;
+  selectedPath?: string;
+  expandedPaths?: ReadonlySet<string>;
+  onDirectoryToggle?: DirectoryToggleHandler;
+  shouldRestore: boolean;
+};
+
+function createTreeEntry(
+  name: string,
+  child: FileSystemFileHandle | FileSystemDirectoryHandle,
+): TreeEntry {
+  if (child.kind === "directory") {
+    return { name, kind: "directory", handle: child as FileSystemDirectoryHandle };
+  }
+
+  return { name, kind: "file", handle: child as FileSystemFileHandle };
+}
+
+function compareTreeEntries(a: TreeEntry, b: TreeEntry): number {
+  if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+  return a.name.localeCompare(b.name);
+}
+
+function getDirectorySelectedPath(entryName: string, selectedPath?: string): string | undefined {
+  const entryPrefix = `${entryName}/`;
+  if (!selectedPath?.startsWith(entryPrefix)) return undefined;
+  return selectedPath.slice(entryPrefix.length);
+}
 
 async function readDir(handle: FileSystemDirectoryHandle): Promise<TreeEntry[]> {
   const entries: TreeEntry[] = [];
+
   try {
     for await (const [name, child] of handle.entries()) {
-      if (child.kind === "directory") {
-        entries.push({ name, kind: "directory", handle: child as FileSystemDirectoryHandle });
-      } else {
-        entries.push({ name, kind: "file", handle: child as FileSystemFileHandle });
-      }
+      entries.push(createTreeEntry(name, child));
     }
   } catch (err) {
     console.error(`Failed to read directory "${handle.name}":`, err);
     return [];
   }
-  entries.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
+
+  entries.sort(compareTreeEntries);
   return entries;
 }
 
 function renderDirectoryEntry(
   entry: TreeEntry & { kind: "directory" },
-  prefix: string,
   onFileSelect: FileSelectHandler,
-  restorePath?: string,
+  options: DirectoryEntryOptions,
 ): { li: HTMLLIElement; restore: Promise<void> | null } {
   const li = document.createElement("li");
   const label = document.createElement("span");
@@ -41,37 +73,52 @@ function renderDirectoryEntry(
   const childContainer = document.createElement("div");
   childContainer.style.display = "none";
 
-  const expand = async (subPath?: string) => {
+  const setOpen = (nextOpen: boolean) => {
+    open = nextOpen;
+    childContainer.style.display = nextOpen ? "" : "none";
+    label.textContent = (nextOpen ? "📂 " : "📁 ") + entry.name;
+  };
+
+  const expand = async () => {
     if (!loaded) {
       await renderDir(entry.handle, childContainer, onFileSelect, {
-        prefix: prefix + entry.name + "/",
-        selectedPath: subPath,
+        prefix: options.path,
+        selectedPath: options.selectedPath,
+        expandedPaths: options.expandedPaths,
+        onDirectoryToggle: options.onDirectoryToggle,
       });
       loaded = true;
     }
-    open = true;
-    childContainer.style.display = "";
-    label.textContent = "📂 " + entry.name;
+    setOpen(true);
+    options.onDirectoryToggle?.(options.path, true);
+  };
+
+  const collapse = () => {
+    setOpen(false);
+    options.onDirectoryToggle?.(options.path, false);
+  };
+
+  const toggle = async () => {
+    if (open) {
+      collapse();
+      return;
+    }
+
+    await expand();
   };
 
   label.addEventListener("click", async () => {
-    if (open) {
-      open = false;
-      childContainer.style.display = "none";
-      label.textContent = "📁 " + entry.name;
-    } else {
-      try {
-        await expand();
-      } catch (err) {
-        console.error(`Failed to expand directory "${entry.name}":`, err);
-        label.classList.add("error");
-      }
+    try {
+      await toggle();
+    } catch (err) {
+      console.error(`Failed to expand directory "${entry.name}":`, err);
+      label.classList.add("error");
     }
   });
 
   li.append(label, childContainer);
 
-  const restore = restorePath ? expand(restorePath) : null;
+  const restore = options.shouldRestore ? expand() : null;
   return { li, restore };
 }
 
@@ -105,34 +152,80 @@ function renderFileEntry(
   return { li, restore };
 }
 
+async function appendRenderedEntry(
+  ul: HTMLUListElement,
+  li: HTMLLIElement,
+  restore: Promise<void> | null,
+) {
+  ul.appendChild(li);
+  if (!restore) return;
+  await restore;
+}
+
+async function appendDirectoryEntry(
+  ul: HTMLUListElement,
+  entry: TreeEntry & { kind: "directory" },
+  prefix: string,
+  selectedPath: string | undefined,
+  onFileSelect: FileSelectHandler,
+  options?: RenderDirOptions,
+) {
+  const path = prefix + entry.name + "/";
+  const childSelectedPath = getDirectorySelectedPath(entry.name, selectedPath);
+  const shouldRestore = Boolean(childSelectedPath) || Boolean(options?.expandedPaths?.has(path));
+  const { li, restore } = renderDirectoryEntry(entry, onFileSelect, {
+    path,
+    selectedPath: childSelectedPath,
+    expandedPaths: options?.expandedPaths,
+    onDirectoryToggle: options?.onDirectoryToggle,
+    shouldRestore,
+  });
+
+  await appendRenderedEntry(ul, li, restore);
+}
+
+async function appendFileEntry(
+  ul: HTMLUListElement,
+  entry: TreeEntry & { kind: "file" },
+  prefix: string,
+  selectedPath: string | undefined,
+  onFileSelect: FileSelectHandler,
+) {
+  const autoSelect = selectedPath === entry.name;
+  const { li, restore } = renderFileEntry(entry, prefix, onFileSelect, autoSelect);
+  await appendRenderedEntry(ul, li, restore);
+}
+
+async function appendTreeEntry(
+  ul: HTMLUListElement,
+  entry: TreeEntry,
+  prefix: string,
+  selectedPath: string | undefined,
+  onFileSelect: FileSelectHandler,
+  options?: RenderDirOptions,
+) {
+  if (entry.kind === "directory") {
+    await appendDirectoryEntry(ul, entry, prefix, selectedPath, onFileSelect, options);
+    return;
+  }
+
+  await appendFileEntry(ul, entry, prefix, selectedPath, onFileSelect);
+}
+
 export async function renderDir(
   dirHandle: FileSystemDirectoryHandle,
   container: HTMLElement,
   onFileSelect: FileSelectHandler,
-  options?: { prefix?: string; selectedPath?: string },
+  options?: RenderDirOptions,
 ) {
   const prefix = options?.prefix ?? "";
-  const segments = options?.selectedPath?.split("/");
-  const targetName = segments?.[0];
-  const isLeaf = segments?.length === 1;
+  const selectedPath = options?.selectedPath;
 
   const entries = await readDir(dirHandle);
   const ul = document.createElement("ul");
 
   for (const entry of entries) {
-    const isTarget = entry.name === targetName;
-
-    if (entry.kind === "directory") {
-      const restorePath =
-        isTarget && !isLeaf && segments ? segments.slice(1).join("/") : undefined;
-      const { li, restore } = renderDirectoryEntry(entry, prefix, onFileSelect, restorePath);
-      ul.appendChild(li);
-      if (restore) await restore;
-    } else {
-      const { li, restore } = renderFileEntry(entry, prefix, onFileSelect, isTarget && !!isLeaf);
-      ul.appendChild(li);
-      if (restore) await restore;
-    }
+    await appendTreeEntry(ul, entry, prefix, selectedPath, onFileSelect, options);
   }
 
   container.appendChild(ul);

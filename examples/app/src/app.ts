@@ -1,16 +1,18 @@
 import {
   createDocumentSession,
+  createEditorSyntaxSession,
   debugPieceTable,
   Editor,
   offsetToPoint,
   resolveSelection,
   type DocumentSession,
   type DocumentSessionChange,
+  type EditorSyntaxSession,
   type EditorTimingMeasurement,
 } from "@editor/core";
 import "@editor/core/style.css";
 import { getCachedHandle, cacheHandle } from "./db.ts";
-import { createFileTokenizerSession, type FileTokenizerSession } from "./highlighting.ts";
+import { inferLanguage } from "./language.ts";
 import { renderDir } from "./tree.ts";
 
 const SELECTED_FILE_KEY = "editor-selected-file";
@@ -42,8 +44,7 @@ export function mountApp(): void {
   const lengthStatus = el("span", { id: "status-length" });
   const piecesStatus = el("span", { id: "status-pieces" });
   const historyStatus = el("span", { id: "status-history" });
-  const timingStatus = el("span", { id: "status-timing" });
-  status.append(fileStatus, cursorStatus, lengthStatus, piecesStatus, historyStatus, timingStatus);
+  status.append(fileStatus, cursorStatus, lengthStatus, piecesStatus, historyStatus);
 
   const tree = el("div", { id: "tree" });
   const editorContainer = el("div", { id: "editor-container" });
@@ -57,7 +58,7 @@ export function mountApp(): void {
   let currentDirectoryHandle: FileSystemDirectoryHandle | null = null;
   let currentSelectedPath: string | undefined;
   let currentSession: DocumentSession | null = null;
-  let currentTokenizer: FileTokenizerSession | null = null;
+  let currentSyntaxSession: EditorSyntaxSession | null = null;
   let isRenderingDirectory = false;
   let fileSelectionVersion = 0;
 
@@ -68,8 +69,8 @@ export function mountApp(): void {
 
   function clearActiveFile() {
     currentSession = null;
-    currentTokenizer?.dispose();
-    currentTokenizer = null;
+    currentSyntaxSession?.dispose();
+    currentSyntaxSession = null;
     editor.clear();
     updateStatus();
   }
@@ -81,7 +82,6 @@ export function mountApp(): void {
       lengthStatus.textContent = "";
       piecesStatus.textContent = "";
       historyStatus.textContent = "";
-      timingStatus.textContent = "";
       return;
     }
 
@@ -114,16 +114,13 @@ export function mountApp(): void {
     change: DocumentSessionChange,
     selectionVersion: number,
   ): Promise<DocumentSessionChange> {
-    if (!currentSession || !currentTokenizer) return change;
+    if (!currentSession || !currentSyntaxSession) return change;
     if (change.kind === "none" || change.kind === "selection") return change;
 
-    const edit = change.edits[0];
-    const tokenizeStart = nowMs();
-    const tokens =
-      change.kind === "edit" && edit && change.edits.length === 1
-        ? currentTokenizer.applyEdit(edit)
-        : currentTokenizer.reset(change.text);
-    let timedChange = appendTiming(change, "app.tokenize", tokenizeStart);
+    const syntaxStart = nowMs();
+    const syntaxResult = await currentSyntaxSession.applyChange(change);
+    const { tokens } = syntaxResult;
+    let timedChange = appendTiming(change, "app.syntax", syntaxStart);
 
     if (selectionVersion !== fileSelectionVersion) return timedChange;
 
@@ -148,7 +145,7 @@ export function mountApp(): void {
     void refreshTokensForChange(timedChange, selectionVersion)
       .then(reportTimings)
       .catch((err) => {
-        console.error(`Failed to update tokens for "${currentSelectedPath ?? "file"}":`, err);
+        console.error(`Failed to update syntax for "${currentSelectedPath ?? "file"}":`, err);
       });
   }
 
@@ -157,11 +154,17 @@ export function mountApp(): void {
 
     currentSelectedPath = filePath;
     localStorage.setItem(SELECTED_FILE_KEY, filePath);
-    currentTokenizer?.dispose();
-    currentTokenizer = null;
+    currentSyntaxSession?.dispose();
+    currentSyntaxSession = null;
 
     const session = createDocumentSession(content);
+    const syntaxSession = createEditorSyntaxSession({
+      documentId: filePath,
+      languageId: inferLanguage(filePath),
+      text: content,
+    });
     currentSession = session;
+    currentSyntaxSession = syntaxSession;
     editor.attachSession(session, {
       onChange: (change) => handleSessionChange(change, selectionVersion),
     });
@@ -169,19 +172,18 @@ export function mountApp(): void {
 
     try {
       const initStart = nowMs();
-      const tokenizer = await createFileTokenizerSession(filePath, content);
       let timings: EditorTimingMeasurement[] = [
-        { name: "app.tokenizer.init", durationMs: nowMs() - initStart },
+        { name: "app.syntax.init", durationMs: nowMs() - initStart },
       ];
       if (selectionVersion !== fileSelectionVersion) {
-        tokenizer.dispose();
+        syntaxSession.dispose();
         return;
       }
-      currentTokenizer = tokenizer;
       const sessionText = session.getText();
-      const tokenizeStart = nowMs();
-      const tokens = sessionText === content ? tokenizer.getTokens() : tokenizer.reset(sessionText);
-      timings = [...timings, { name: "app.initialTokens", durationMs: nowMs() - tokenizeStart }];
+      const syntaxStart = nowMs();
+      const syntaxResult = await syntaxSession.refresh(sessionText);
+      const { tokens } = syntaxResult;
+      timings = [...timings, { name: "app.initialSyntax", durationMs: nowMs() - syntaxStart }];
 
       const sessionTokensStart = nowMs();
       const tokenChange = session.setTokens(tokens);
@@ -199,7 +201,7 @@ export function mountApp(): void {
       timings = [...timings, { name: "app.status", durationMs: nowMs() - statusStart }];
       reportTimings({ ...tokenChange, timings });
     } catch (err) {
-      console.error(`Failed to tokenize "${filePath}":`, err);
+      console.error(`Failed to update syntax for "${filePath}":`, err);
     }
   }
 
@@ -293,16 +295,7 @@ function appendTiming(
   };
 }
 
-function formatTimings(timings: readonly EditorTimingMeasurement[]): string {
-  if (timings.length === 0) return "";
-
-  const total = timings.reduce((sum, timing) => sum + timing.durationMs, 0);
-  const parts = timings.map((timing) => `${timing.name}: ${timing.durationMs.toFixed(2)}ms`);
-  return `${parts.join(" | ")} | sum: ${total.toFixed(2)}ms`;
-}
-
 function reportTimings(change: DocumentSessionChange): void {
-  updateLatestTimingText(change.timings);
   if (change.timings.length === 0) return;
 
   console.groupCollapsed(`[editor timings] ${change.kind}`);
@@ -313,10 +306,4 @@ function reportTimings(change: DocumentSessionChange): void {
     })),
   );
   console.groupEnd();
-}
-
-function updateLatestTimingText(timings: readonly EditorTimingMeasurement[]): void {
-  const timingNode = document.getElementById("status-timing");
-  if (!timingNode) return;
-  timingNode.textContent = formatTimings(timings);
 }

@@ -85,13 +85,6 @@ body {
   text-overflow: ellipsis;
 }
 
-#status-timing {
-  min-width: 0;
-  overflow: hidden;
-  color: #8fb8ff;
-  text-overflow: ellipsis;
-}
-
 #tree {
   width: 260px;
   min-width: 180px;

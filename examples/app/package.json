@@ -14,8 +14,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@editor/core": "workspace:*",
-    "@editor/shiki": "workspace:*"
+    "@editor/core": "workspace:*"
   },
   "devDependencies": {
     "@typescript/native-preview": "latest",

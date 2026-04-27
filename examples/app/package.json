@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsgo && vite build",
-    "test": "vitest run --passWithNoTests",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",
     "format": "oxfmt --write .",

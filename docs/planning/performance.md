@@ -10,6 +10,9 @@
 | Reverse index update | < 0.5 ms | 100K-line, amortized |
 | Snapshot switch (undo/redo) | < 0.01 ms | O(1) root swap |
 | FoldMap conversion | < 0.5 ms | 100K-line, 100+ folds |
+| Tree-sitter visible edit reparse | < 5 ms async | 100K-line document, visible edit |
+| Tree-sitter visible highlight query | < 4 ms async | Visible range after edit |
+| Structural selection query | < 2 ms async | Node expand/shrink at cursor |
 | 100-cursor selection resolution | < 10 ms | 100K-line, FoldMap active |
 | Memory per snapshot delta | < 1 KB | Single char insertion |
 
@@ -31,6 +34,7 @@
 | Document size | 1K-10K lines | 50K-100K | 500K+ |
 | Cursors | 1-5 | 20-50 | 100+ |
 | Decorations | 100-500 | 5K-10K | 50K+ |
+| Syntax captures | 1K-5K | 50K-100K | 500K+ |
 | Edit frequency | 1-5/sec | 10-20/sec | 100+/sec |
 | Pieces | 50-500 | 1K-5K | 10K+ |
 
@@ -41,7 +45,8 @@
 3. **Selection merge at scale:** 100 selections x O(log n) per frame.
 4. **Soft-wrap invalidation:** Re-wrapping long lines.
 5. **Display round-trip:** 50K decorations through multiple transforms.
-6. **Add-buffer growth:** Solved by chunked buffer (Phase 1).
+6. **Tree-sitter memory pressure:** parse trees, query captures, and injected-language trees retained across snapshots.
+7. **Add-buffer growth:** Solved by chunked buffer (Phase 1).
 
 ## Risks
 
@@ -54,4 +59,5 @@
 | GC from cloning | Batch keystrokes; pool nodes | Needs measurement |
 | Surrogate enforcement | `anchorAt` as sole entry point; fuzz tests | Needs verification |
 | Layer invalidation | FoldMap validation; fallback to monolithic | **Open** |
+| Tree-sitter parse/query memory | Snapshot-scoped retention limits; visible-first queries; stale-result rejection | Needs design |
 | Anchor debugging | Debug inspector | Planned |

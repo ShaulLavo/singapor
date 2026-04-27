@@ -46,7 +46,25 @@ Anchor type, creation, resolution (with liveness), comparison. Linear-scan first
 | Selection edits | Complete. Text replacement and backspace produce batch edits against the original snapshot. |
 | Undo boundary | Complete. Minimal O(1) linked-stack history helper stores snapshots and selection state together. |
 
-## Phase 4: Display Transform Validation
+## Phase 4: Tree-sitter Syntax System
+
+Replace Shiki as the long-term syntax path. Tree-sitter becomes the source of syntax structure, highlighting, folds, structural selection, indentation, injections, and related query-driven features.
+
+| Deliverable | Acceptance Criteria |
+|---|---|
+| Worker-owned runtime | Parser creation, parsing, query execution, tree traversal, and injections all run off the main thread |
+| Language registry | Parser and query assets load by language id / file type inside workers |
+| Piece-table input adapter | Parser reads from the document model without whole-file flattening on every edit |
+| Incremental edit bridge | Batch edits update Tree-sitter trees correctly |
+| Parse snapshot identity | Parse results are tied to document snapshots; stale results are rejected |
+| Highlight queries | Query captures emit dense decorations compatible with CSS Highlight rendering |
+| Structural selection | Node/token expand and shrink produce `Selection<Anchor>[]` |
+| Fold queries | Syntax folds produce anchor-backed ranges for FoldMap |
+| Injection support | Embedded languages parse and highlight in parent buffer coordinates |
+| Benchmark | 10K, 50K, 100K-line parse/update/query time, memory, GC |
+| Fallback behavior | Unknown language or parser failure leaves editing and plain rendering functional |
+
+## Phase 5: Display Transform Validation
 
 FoldMap as first layer. Go/no-go for the layered abstraction.
 
@@ -60,6 +78,6 @@ FoldMap as first layer. Go/no-go for the layered abstraction.
 | Performance baseline | Single-layer overhead; extrapolate multi-layer |
 | Go/no-go decision | Based on invalidation precision |
 
-## Phase 5: Additional Transforms (Conditional)
+## Phase 6: Additional Transforms (Conditional)
 
-Only if FoldMap succeeds. Scope depends on Phase 4.
+Only if FoldMap succeeds. Scope depends on Phase 5.

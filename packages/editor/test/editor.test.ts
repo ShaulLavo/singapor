@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Editor, resetEditorInstanceCount, setHighlightRegistry } from "../src";
+import {
+  createDocumentSession,
+  Editor,
+  resetEditorInstanceCount,
+  resolveSelection,
+  setHighlightRegistry,
+} from "../src";
 
 // Mock HighlightRegistry backed by a Map, used to assert highlight state.
 const highlightsMap = new Map<string, Highlight>();
@@ -144,6 +150,248 @@ describe("Editor", () => {
       editor.setContent("hello world");
       editor.applyEdit({ from: 5, to: 5, text: " beautiful" }, []);
       expect(container.querySelector("pre")!.textContent).toBe("hello beautiful world");
+    });
+  });
+
+  describe("attachSession", () => {
+    it("routes text input through a document session", () => {
+      const session = createDocumentSession("abc");
+      editor.attachSession(session);
+
+      const event = new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        data: "!",
+        inputType: "insertText",
+      });
+      container.querySelector("pre")!.dispatchEvent(event);
+
+      expect(session.getText()).toBe("abc!");
+      expect(container.querySelector("pre")!.textContent).toBe("abc!");
+    });
+
+    it("routes undo through a document session", () => {
+      const session = createDocumentSession("abc");
+      editor.attachSession(session);
+      session.applyText("!");
+
+      container.querySelector("pre")!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "z",
+          metaKey: true,
+        }),
+      );
+
+      expect(session.getText()).toBe("abc");
+      expect(container.querySelector("pre")!.textContent).toBe("abc");
+    });
+
+    it("keeps browser selections synced to the document session", () => {
+      const session = createDocumentSession("abcd");
+      editor.attachSession(session);
+      const textNode = container.querySelector("pre")!.firstChild!;
+      const range = document.createRange();
+      range.setStart(textNode, 1);
+      range.setEnd(textNode, 3);
+
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      container.querySelector("pre")!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+
+      const resolved = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      );
+      expect(resolved.startOffset).toBe(1);
+      expect(resolved.endOffset).toBe(3);
+
+      container.querySelector("pre")!.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          data: "X",
+          inputType: "insertText",
+        }),
+      );
+
+      expect(session.getText()).toBe("aXd");
+      expect(container.querySelector("pre")!.textContent).toBe("aXd");
+    });
+
+    it("clamps cross-boundary browser selections before text input", () => {
+      const before = document.createElement("span");
+      before.textContent = "outside before";
+      const after = document.createElement("span");
+      after.textContent = "outside after";
+      container.before(before);
+      container.after(after);
+
+      const session = createDocumentSession("abcd");
+      editor.attachSession(session);
+      const textNode = container.querySelector("pre")!.firstChild!;
+      const range = document.createRange();
+      range.setStart(before.firstChild!, 0);
+      range.setEnd(textNode, 2);
+
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      container.querySelector("pre")!.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          data: "X",
+          inputType: "insertText",
+        }),
+      );
+
+      expect(session.getText()).toBe("Xcd");
+      expect(container.querySelector("pre")!.textContent).toBe("Xcd");
+      before.remove();
+      after.remove();
+    });
+
+    it("selects the current line on triple click", () => {
+      const session = createDocumentSession("one\ntwo\nthree");
+      editor.attachSession(session);
+
+      const textNode = container.querySelector("pre")!.firstChild!;
+      const range = document.createRange();
+      range.setStart(textNode, 5);
+      range.setEnd(textNode, 5);
+      const originalCaretRangeFromPoint = (
+        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+      ).caretRangeFromPoint;
+      Object.defineProperty(document, "caretRangeFromPoint", {
+        configurable: true,
+        value: () => range,
+      });
+
+      container.querySelector("pre")!.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 10,
+          detail: 3,
+        }),
+      );
+      if (originalCaretRangeFromPoint) {
+        Object.defineProperty(document, "caretRangeFromPoint", {
+          configurable: true,
+          value: originalCaretRangeFromPoint,
+        });
+      } else {
+        Reflect.deleteProperty(document, "caretRangeFromPoint");
+      }
+
+      const resolved = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      );
+      expect(resolved.startOffset).toBe(4);
+      expect(resolved.endOffset).toBe(7);
+
+      container.querySelector("pre")!.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          data: "X",
+          inputType: "insertText",
+        }),
+      );
+
+      expect(session.getText()).toBe("one\nX\nthree");
+      expect(container.querySelector("pre")!.textContent).toBe("one\nX\nthree");
+    });
+
+    it("selects the full document on quad click", () => {
+      const session = createDocumentSession("abcd");
+      editor.attachSession(session);
+
+      container.querySelector("pre")!.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          cancelable: true,
+          detail: 4,
+        }),
+      );
+
+      const resolved = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      );
+      expect(resolved.startOffset).toBe(0);
+      expect(resolved.endOffset).toBe(4);
+
+      container.querySelector("pre")!.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          data: "X",
+          inputType: "insertText",
+        }),
+      );
+
+      expect(session.getText()).toBe("X");
+      expect(container.querySelector("pre")!.textContent).toBe("X");
+    });
+
+    it("selects a word on double click", () => {
+      const session = createDocumentSession("alpha beta");
+      editor.attachSession(session);
+
+      const textNode = container.querySelector("pre")!.firstChild!;
+      const range = document.createRange();
+      range.setStart(textNode, 8);
+      range.setEnd(textNode, 8);
+      const originalCaretRangeFromPoint = (
+        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+      ).caretRangeFromPoint;
+      Object.defineProperty(document, "caretRangeFromPoint", {
+        configurable: true,
+        value: () => range,
+      });
+
+      container.querySelector("pre")!.dispatchEvent(
+        new MouseEvent("mousedown", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 10,
+          detail: 2,
+        }),
+      );
+      if (originalCaretRangeFromPoint) {
+        Object.defineProperty(document, "caretRangeFromPoint", {
+          configurable: true,
+          value: originalCaretRangeFromPoint,
+        });
+      } else {
+        Reflect.deleteProperty(document, "caretRangeFromPoint");
+      }
+
+      const resolved = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      );
+      expect(resolved.startOffset).toBe(6);
+      expect(resolved.endOffset).toBe(10);
+
+      container.querySelector("pre")!.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          data: "X",
+          inputType: "insertText",
+        }),
+      );
+
+      expect(session.getText()).toBe("alpha X");
+      expect(container.querySelector("pre")!.textContent).toBe("alpha X");
     });
   });
 

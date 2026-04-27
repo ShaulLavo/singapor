@@ -1,4 +1,4 @@
-import type { EditorToken } from "@editor/core";
+import type { EditorToken, TextEdit } from "@editor/core";
 import type { IncrementalTokenizer } from "@editor/shiki";
 import { createIncrementalTokenizer, snapshotToEditorTokens } from "@editor/shiki";
 
@@ -21,6 +21,22 @@ const fileExtensionToLanguage = new Map<string, string>([
 ]);
 
 const tokenizerCache = new Map<string, ReturnType<typeof createIncrementalTokenizer>>();
+
+export type FileTokenizerSession = {
+  applyEdit(edit: TextEdit): EditorToken[];
+  reset(code: string): EditorToken[];
+  getTokens(): EditorToken[];
+  dispose(): void;
+};
+
+function emptyTokenizerSession(): FileTokenizerSession {
+  return {
+    applyEdit: () => [],
+    reset: () => [],
+    getTokens: () => [],
+    dispose: () => {},
+  };
+}
 
 export async function resetTokenizerCache() {
   for (const promise of tokenizerCache.values()) {
@@ -73,4 +89,31 @@ export async function tokenizeFile(fileName: string, content: string): Promise<E
   const tokenizer = await getTokenizer(language);
   tokenizer.update(content);
   return snapshotToEditorTokens(tokenizer.getSnapshot());
+}
+
+export async function createFileTokenizerSession(
+  fileName: string,
+  content: string,
+): Promise<FileTokenizerSession> {
+  const language = inferLanguage(fileName);
+  if (!language) return emptyTokenizerSession();
+
+  const { tokenizer, highlighter } = await createIncrementalTokenizer({
+    code: content,
+    lang: language,
+    theme: THEME,
+  });
+
+  return {
+    applyEdit: (edit) => {
+      tokenizer.applyEdit(edit);
+      return snapshotToEditorTokens(tokenizer.getSnapshot());
+    },
+    reset: (code) => {
+      tokenizer.reset(code);
+      return snapshotToEditorTokens(tokenizer.getSnapshot());
+    },
+    getTokens: () => snapshotToEditorTokens(tokenizer.getSnapshot()),
+    dispose: () => highlighter.dispose(),
+  };
 }

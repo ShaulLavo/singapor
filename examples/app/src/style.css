@@ -63,6 +63,35 @@ body {
   overflow: hidden;
 }
 
+#status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 26px;
+  padding: 4px 12px;
+  border-top: 1px solid #444;
+  background: #252526;
+  color: #aaa;
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+#status-file {
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  color: #d4d4d4;
+  text-overflow: ellipsis;
+}
+
+#status-timing {
+  min-width: 0;
+  overflow: hidden;
+  color: #8fb8ff;
+  text-overflow: ellipsis;
+}
+
 #tree {
   width: 260px;
   min-width: 180px;

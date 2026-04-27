@@ -1,4 +1,5 @@
 export { Editor, resetEditorInstanceCount, setHighlightRegistry } from "./editor";
+export * from "./documentSession";
 export * from "./history";
 export * from "./pieceTable";
 export * from "./selections";

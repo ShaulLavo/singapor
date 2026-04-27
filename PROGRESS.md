@@ -118,7 +118,20 @@ Validation after Phase 3:
 - Added a minimal O(1) linked-stack snapshot+selection history helper for undo/redo boundaries.
 - Added tests for selection resolution, normalization, multi-selection edits, backspace, and undo/redo.
 
-### Phase 4: Display Transform Validation
+### Phase 4: Tree-sitter Syntax System
+
+- Replace Shiki as the long-term syntax path.
+- Keep Tree-sitter parser creation, parsing, query execution, tree traversal, and injections worker-owned.
+- Add a worker-side language registry for parser and query assets.
+- Build a piece-table input adapter for Tree-sitter.
+- Translate batch edits into Tree-sitter input edits.
+- Tie parse results to document snapshots and reject stale syntax output.
+- Use Tree-sitter highlight queries for syntax decorations.
+- Use Tree-sitter queries for folds, structural selection, indentation, injections, and bracket/tag matching.
+- Keep active selections stored as anchors; Tree-sitter nodes are transient inputs for selection commands.
+- Benchmark parse/update/query time, memory, and GC at 10K, 50K, and 100K lines.
+
+### Phase 5: Display Transform Validation
 
 - Prototype `FoldMap`.
 - Implement `FoldPoint`.
@@ -128,9 +141,9 @@ Validation after Phase 3:
 - Benchmark single-layer transform overhead.
 - Make the go/no-go decision for layered display transforms.
 
-### Phase 5: Additional Transforms
+### Phase 6: Additional Transforms
 
-- Conditional on Phase 4 succeeding.
+- Conditional on Phase 5 succeeding.
 - Likely candidates: wrapping and decoration-related transforms.
 - Scope still depends on FoldMap results.
 
@@ -138,6 +151,7 @@ Validation after Phase 3:
 
 - Layout system design is still open.
 - Main-thread versus worker layout split is still open.
+- Tree-sitter worker protocol, parser/query loading, memory policy, and worker scheduling are not designed yet.
 - Scheduler design is not started.
 - Viewport and virtualization design is not started.
 - Decoration system design is deferred.
@@ -146,4 +160,4 @@ Validation after Phase 3:
 
 ## Immediate Next Step
 
-Start Phase 4 FoldMap/display-transform validation.
+Start Phase 4 Tree-sitter syntax-system design and prototype the parser/query pipeline.

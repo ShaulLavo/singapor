@@ -4,7 +4,7 @@ Instructions for AI coding agents working with this codebase.
 
 ## Project Overview
 
-Browser-based code editor targeting ultra-low latency typing (<1-2ms perceived). Treap-backed piece table with persistent immutable snapshots, CSS Highlight API rendering, and incremental Shiki tokenization.
+Browser-based code editor targeting ultra-low latency typing (<1-2ms perceived). Treap-backed piece table with persistent immutable snapshots, CSS Highlight API rendering, and a committed Tree-sitter syntax system.
 
 ## Architecture
 
@@ -29,9 +29,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 
 - [Transforms](docs/display/transforms.md) — Layered transform hypothesis, layer interface, invalidation protocol, FoldMap validation, decoration constraints
 
+### Syntax
+
+- [Tree-sitter](docs/syntax/tree-sitter.md) — Committed syntax engine for highlighting, folds, structural selection, indentation, injections, and query-driven features
+
 ### Planning
 
-- [Phases](docs/planning/phases.md) — Phase 1 through 5 deliverables and acceptance criteria
+- [Phases](docs/planning/phases.md) — Phase 1 through 6 deliverables and acceptance criteria
 - [Performance](docs/planning/performance.md) — Targets, GC budget, system pressure, risks
 - [Collaboration](docs/planning/collaboration.md) — Structural constraints on single-user design for future collaboration
 - [Open Work](docs/planning/open-work.md) — Consolidated validation and measurement tasks
@@ -43,14 +47,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 | Package | Purpose | Key files |
 |---|---|---|
 | `packages/editor` | Core editor: piece table + CSS Highlight API renderer | `src/pieceTable/pieceTable.ts`, `src/pieceTable/pieceTableTypes.ts`, `src/editor.ts`, `src/tokens.ts` |
-| `packages/shiki` | Incremental Shiki tokenizer | `src/tokenizer.ts`, `src/editor-tokens.ts` |
+| `packages/shiki` | Legacy/demo incremental tokenizer; planned to be replaced by Tree-sitter | `src/tokenizer.ts`, `src/editor-tokens.ts` |
 | `examples/app` | Demo app with file browser | `src/app.ts`, `src/main.ts` |
 
 ### What's Implemented
 
 - **Piece table** — Treap with persistent snapshots, insert/delete/read, structural sharing
 - **CSS Highlight API renderer** — Token-based syntax highlighting via `Highlight` objects
-- **Incremental tokenizer** — Per-line state tracking, `TokenPatch` for incremental updates
+- **Incremental tokenizer** — Existing Shiki demo path; not the committed long-term syntax engine
 - **Example app** — File System Access API browser + editor integration
 
 ### What's Designed but Not Built
@@ -60,7 +64,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 - Anchor system (Phase 2)
 - Persistent reverse index (Phase 2)
 - Selection model (Phase 3)
-- Display transforms / FoldMap (Phase 4)
+- Tree-sitter syntax system (Phase 4)
+- Display transforms / FoldMap (Phase 5)
 - Viewport & virtualization
 - Scheduling system
 - Decoration system

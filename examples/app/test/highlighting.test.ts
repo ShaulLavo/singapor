@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { inferLanguage, resetTokenizerCache, tokenizeFile } from "../src/highlighting";
+import {
+  createFileTokenizerSession,
+  inferLanguage,
+  resetTokenizerCache,
+  tokenizeFile,
+} from "../src/highlighting";
 
 describe("inferLanguage", () => {
   it("maps .ts to ts", () => {
@@ -75,5 +80,25 @@ describe("tokenizeFile", () => {
     const tokens2 = await tokenizeFile("b.ts", "const b = 2");
     expect(tokens1.length).toBeGreaterThan(0);
     expect(tokens2.length).toBeGreaterThan(0);
+  });
+});
+
+describe("createFileTokenizerSession", () => {
+  it("returns an empty tokenizer session for unknown file types", async () => {
+    const session = await createFileTokenizerSession("image.png", "binary content");
+
+    expect(session.getTokens()).toEqual([]);
+    expect(session.applyEdit({ from: 0, to: 0, text: "x" })).toEqual([]);
+    session.dispose();
+  });
+
+  it("updates tokens through incremental edits", async () => {
+    const session = await createFileTokenizerSession("example.ts", "const x = 1");
+    const initialTokens = session.getTokens();
+    const editedTokens = session.applyEdit({ from: 11, to: 11, text: "\nconst y = 2" });
+
+    expect(initialTokens.length).toBeGreaterThan(0);
+    expect(editedTokens.length).toBeGreaterThan(initialTokens.length);
+    session.dispose();
   });
 });

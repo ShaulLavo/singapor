@@ -1,7 +1,16 @@
-import { Editor } from "@editor/core";
+import {
+  createDocumentSession,
+  debugPieceTable,
+  Editor,
+  offsetToPoint,
+  resolveSelection,
+  type DocumentSession,
+  type DocumentSessionChange,
+  type EditorTimingMeasurement,
+} from "@editor/core";
 import "@editor/core/style.css";
 import { getCachedHandle, cacheHandle } from "./db.ts";
-import { tokenizeFile } from "./highlighting.ts";
+import { createFileTokenizerSession, type FileTokenizerSession } from "./highlighting.ts";
 import { renderDir } from "./tree.ts";
 
 const SELECTED_FILE_KEY = "editor-selected-file";
@@ -27,23 +36,66 @@ export function mountApp(): void {
   const dirName = el("span", { id: "dir-name" });
   toolbar.append(openBtn, refreshBtn, dirName);
 
+  const status = el("div", { id: "status" });
+  const fileStatus = el("span", { id: "status-file" });
+  const cursorStatus = el("span", { id: "status-cursor" });
+  const lengthStatus = el("span", { id: "status-length" });
+  const piecesStatus = el("span", { id: "status-pieces" });
+  const historyStatus = el("span", { id: "status-history" });
+  const timingStatus = el("span", { id: "status-timing" });
+  status.append(fileStatus, cursorStatus, lengthStatus, piecesStatus, historyStatus, timingStatus);
+
   const tree = el("div", { id: "tree" });
   const editorContainer = el("div", { id: "editor-container" });
   const main = el("div", { id: "main" });
   main.append(tree, editorContainer);
 
-  app.append(toolbar, main);
+  app.append(toolbar, main, status);
 
   const editor = new Editor(editorContainer);
   const expandedDirectoryPaths = new Set<string>();
   let currentDirectoryHandle: FileSystemDirectoryHandle | null = null;
   let currentSelectedPath: string | undefined;
+  let currentSession: DocumentSession | null = null;
+  let currentTokenizer: FileTokenizerSession | null = null;
   let isRenderingDirectory = false;
   let fileSelectionVersion = 0;
 
   function updateToolbarState() {
     openBtn.disabled = isRenderingDirectory;
     refreshBtn.disabled = isRenderingDirectory || !currentDirectoryHandle;
+  }
+
+  function clearActiveFile() {
+    currentSession = null;
+    currentTokenizer?.dispose();
+    currentTokenizer = null;
+    editor.clear();
+    updateStatus();
+  }
+
+  function updateStatus() {
+    if (!currentSession) {
+      fileStatus.textContent = "No file";
+      cursorStatus.textContent = "";
+      lengthStatus.textContent = "";
+      piecesStatus.textContent = "";
+      historyStatus.textContent = "";
+      timingStatus.textContent = "";
+      return;
+    }
+
+    const snapshot = currentSession.getSnapshot();
+    const selection = currentSession.getSelections().selections[0];
+    const resolved = selection ? resolveSelection(snapshot, selection) : null;
+    const point = offsetToPoint(snapshot, resolved?.headOffset ?? snapshot.length);
+    fileStatus.textContent = currentSelectedPath ?? "Untitled";
+    cursorStatus.textContent = `Ln ${point.row + 1}, Col ${point.column + 1}`;
+    lengthStatus.textContent = `${snapshot.length} chars`;
+    piecesStatus.textContent = `${debugPieceTable(snapshot).length} pieces`;
+    historyStatus.textContent = `${currentSession.canUndo() ? "Undo" : "No undo"} / ${
+      currentSession.canRedo() ? "Redo" : "No redo"
+    }`;
   }
 
   function setDirectoryOpen(directoryPath: string, open: boolean) {
@@ -58,17 +110,94 @@ export function mountApp(): void {
     }
   }
 
+  async function refreshTokensForChange(
+    change: DocumentSessionChange,
+    selectionVersion: number,
+  ): Promise<DocumentSessionChange> {
+    if (!currentSession || !currentTokenizer) return change;
+    if (change.kind === "none" || change.kind === "selection") return change;
+
+    const edit = change.edits[0];
+    const tokenizeStart = nowMs();
+    const tokens =
+      change.kind === "edit" && edit && change.edits.length === 1
+        ? currentTokenizer.applyEdit(edit)
+        : currentTokenizer.reset(change.text);
+    let timedChange = appendTiming(change, "app.tokenize", tokenizeStart);
+
+    if (selectionVersion !== fileSelectionVersion) return timedChange;
+
+    const setTokensStart = nowMs();
+    currentSession.setTokens(tokens);
+    timedChange = appendTiming(timedChange, "app.session.setTokens", setTokensStart);
+
+    const highlightStart = nowMs();
+    editor.setTokens(tokens);
+    timedChange = appendTiming(timedChange, "app.highlight", highlightStart);
+
+    const statusStart = nowMs();
+    updateStatus();
+    return appendTiming(timedChange, "app.status", statusStart);
+  }
+
+  function handleSessionChange(change: DocumentSessionChange, selectionVersion: number) {
+    const statusStart = nowMs();
+    updateStatus();
+    const timedChange = appendTiming(change, "app.status", statusStart);
+
+    void refreshTokensForChange(timedChange, selectionVersion)
+      .then(reportTimings)
+      .catch((err) => {
+        console.error(`Failed to update tokens for "${currentSelectedPath ?? "file"}":`, err);
+      });
+  }
+
   async function displayFile(filePath: string, content: string) {
     const selectionVersion = ++fileSelectionVersion;
 
     currentSelectedPath = filePath;
     localStorage.setItem(SELECTED_FILE_KEY, filePath);
-    editor.setContent(content);
+    currentTokenizer?.dispose();
+    currentTokenizer = null;
+
+    const session = createDocumentSession(content);
+    currentSession = session;
+    editor.attachSession(session, {
+      onChange: (change) => handleSessionChange(change, selectionVersion),
+    });
+    updateStatus();
 
     try {
-      const tokens = await tokenizeFile(filePath, content);
-      if (selectionVersion !== fileSelectionVersion) return;
+      const initStart = nowMs();
+      const tokenizer = await createFileTokenizerSession(filePath, content);
+      let timings: EditorTimingMeasurement[] = [
+        { name: "app.tokenizer.init", durationMs: nowMs() - initStart },
+      ];
+      if (selectionVersion !== fileSelectionVersion) {
+        tokenizer.dispose();
+        return;
+      }
+      currentTokenizer = tokenizer;
+      const sessionText = session.getText();
+      const tokenizeStart = nowMs();
+      const tokens = sessionText === content ? tokenizer.getTokens() : tokenizer.reset(sessionText);
+      timings = [...timings, { name: "app.initialTokens", durationMs: nowMs() - tokenizeStart }];
+
+      const sessionTokensStart = nowMs();
+      const tokenChange = session.setTokens(tokens);
+      timings = [
+        ...timings,
+        { name: "app.session.setTokens", durationMs: nowMs() - sessionTokensStart },
+      ];
+
+      const highlightStart = nowMs();
       editor.setTokens(tokens);
+      timings = [...timings, { name: "app.highlight", durationMs: nowMs() - highlightStart }];
+
+      const statusStart = nowMs();
+      updateStatus();
+      timings = [...timings, { name: "app.status", durationMs: nowMs() - statusStart }];
+      reportTimings({ ...tokenChange, timings });
     } catch (err) {
       console.error(`Failed to tokenize "${filePath}":`, err);
     }
@@ -89,7 +218,7 @@ export function mountApp(): void {
     isRenderingDirectory = true;
     updateToolbarState();
     dirName.textContent = handle.name;
-    editor.clear();
+    clearActiveFile();
     tree.replaceChildren();
 
     try {
@@ -147,4 +276,47 @@ export function mountApp(): void {
       dirName.textContent = "Failed to refresh directory";
     }
   });
+}
+
+function nowMs(): number {
+  return globalThis.performance?.now() ?? Date.now();
+}
+
+function appendTiming(
+  change: DocumentSessionChange,
+  name: string,
+  startMs: number,
+): DocumentSessionChange {
+  return {
+    ...change,
+    timings: [...change.timings, { name, durationMs: nowMs() - startMs }],
+  };
+}
+
+function formatTimings(timings: readonly EditorTimingMeasurement[]): string {
+  if (timings.length === 0) return "";
+
+  const total = timings.reduce((sum, timing) => sum + timing.durationMs, 0);
+  const parts = timings.map((timing) => `${timing.name}: ${timing.durationMs.toFixed(2)}ms`);
+  return `${parts.join(" | ")} | sum: ${total.toFixed(2)}ms`;
+}
+
+function reportTimings(change: DocumentSessionChange): void {
+  updateLatestTimingText(change.timings);
+  if (change.timings.length === 0) return;
+
+  console.groupCollapsed(`[editor timings] ${change.kind}`);
+  console.table(
+    change.timings.map((timing) => ({
+      phase: timing.name,
+      durationMs: Number(timing.durationMs.toFixed(3)),
+    })),
+  );
+  console.groupEnd();
+}
+
+function updateLatestTimingText(timings: readonly EditorTimingMeasurement[]): void {
+  const timingNode = document.getElementById("status-timing");
+  if (!timingNode) return;
+  timingNode.textContent = formatTimings(timings);
 }

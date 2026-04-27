@@ -92,9 +92,10 @@ Constraints defined, design deferred until anchors and selections validated.
 ### Known
 
 - Range-based with style metadata
-- Dense decorations (50K syntax tokens) must NOT use one anchor per endpoint
+- Dense decorations (50K+ Tree-sitter highlight captures) must NOT use one anchor per endpoint
 - Invalidation at least line-granular
-- Different lifetimes: syntax (async, high volume), lint (async, medium), transient (frequent, low volume)
+- Different lifetimes: syntax (Tree-sitter async, high volume), lint (async, medium), transient (frequent, low volume)
+- Tree-sitter is the committed source for syntax highlighting, folds, structural selection, indentation, injections, and bracket/tag matching.
 
 ### Key question: how dense decorations reference positions
 
@@ -107,4 +108,7 @@ Candidates:
 
 CSS Highlight API renderer: `packages/editor/src/editor.ts`
 Token types: `packages/editor/src/tokens.ts` (`EditorToken`, `EditorTokenStyle`, `TextEdit`)
-Incremental tokenizer: `packages/shiki/src/tokenizer.ts` (`TokenPatch`, `IncrementalShikiTokenizer`)
+
+### Current implementation note
+
+The demo app still contains a Shiki tokenizer package. That is implementation debt, not the long-term plan. New syntax-system design should target Tree-sitter query output and adapt it to the renderer's decoration/highlight API.

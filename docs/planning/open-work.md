@@ -38,6 +38,20 @@ Consolidated validation, design, and measurement tasks.
 - Fold-boundary edge cases
 - If FoldMap succeeds: design next layer (likely wrapping)
 
+## Syntax Validation
+
+- Design worker protocol for parse/query requests, cancellation, and snapshot-tagged results
+- Choose browser-compatible Tree-sitter runtime and parser packaging strategy
+- Design worker-side language registry for parsers and query assets
+- Prototype piece-table input adapter without whole-file flattening on every edit
+- Translate batch edits into Tree-sitter input edits
+- Tie parse results to `PieceTableSnapshot` versions and reject stale output
+- Convert highlight query captures into dense editor decorations
+- Convert structural selection node/token ranges into anchor-backed selections
+- Derive syntax fold ranges for FoldMap
+- Validate language injections with parent-buffer coordinates
+- Benchmark parse/update/query time, memory, and GC on 10K, 50K, and 100K-line files
+
 ## Undo/Redo Validation
 
 - Liveness transitions across undo/redo with interleaved edits
@@ -50,6 +64,7 @@ Consolidated validation, design, and measurement tasks.
 - Baseline benchmarks before new features
 - Define "representative editing patterns"
 - Multi-cursor targets (100 cursors x FoldMap)
+- Tree-sitter visible-range query latency under rapid edits
 - 50K+ line stress tests
 - GC profiling under rapid editing
 - 100+ edits without resolving, then resolve all

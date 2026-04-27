@@ -45,7 +45,7 @@
 - Document model
 - Transactions / edits
 - Layout engine (full)
-- Tokenization / parsing
+- Tree-sitter syntax parsing
 - Decorations
 - Scheduling
 
@@ -105,13 +105,32 @@ See: [Display: Transforms](docs/display/transforms.md) for the invalidation prot
 
 ---
 
-### 5.7 Scheduling System
+### 5.7 Syntax Tree System (Committed)
 
-**Not yet designed.** Proposed priority levels: Critical (typing) > High (visible layout) > Medium (visible tokens) > Low (background parsing).
+Tree-sitter is the canonical syntax engine. It replaces Shiki as the long-term source of syntax data.
+
+See: [Syntax: Tree-sitter](docs/syntax/tree-sitter.md)
+
+**Locked:**
+- Parse state is a derived projection over a specific `PieceTableSnapshot`.
+- All Tree-sitter parser creation, parsing, incremental reparsing, and query execution runs in workers.
+- The main thread never loads grammars, owns parse trees, walks syntax nodes, or runs Tree-sitter queries during typing.
+- The main thread only consumes snapshot-tagged syntax outputs: highlight decorations, fold ranges, structural-selection ranges, indentation hints, and bracket/tag match ranges.
+- Worker-side Tree-sitter queries drive highlights, folds, structural selections, bracket/tag matching, indentation, language injections, and outline-style features.
+- Selection behavior may be syntax-native, but active selections are stored as anchors so they survive stale parses, syntax errors, unknown languages, undo/redo, and snapshot changes.
+- Syntax decorations emitted from Tree-sitter must not allocate one anchor per token/node.
+
+**Open:** worker protocol, parser package loading, query asset format, edit-to-parser input bridge, parser memory limits, and snapshot retention policy for parse trees.
 
 ---
 
-### 5.8 Decoration System
+### 5.8 Scheduling System
+
+**Not yet designed.** Proposed priority levels: Critical (typing) > High (visible layout) > Medium (visible syntax highlights) > Low (background Tree-sitter parsing / non-visible queries).
+
+---
+
+### 5.9 Decoration System
 
 Constraints defined, design deferred. Dense decorations must not use per-token anchors.
 
@@ -119,13 +138,13 @@ See: [Display: Transforms](docs/display/transforms.md) for decoration constraint
 
 ---
 
-### 5.9 Viewport & Virtualization
+### 5.10 Viewport & Virtualization
 
 **Not yet designed.**
 
 ---
 
-### 5.10 Rendering Layer (Partially Implemented)
+### 5.11 Rendering Layer (Partially Implemented)
 
 CSS Highlight API renderer implemented. See `packages/editor/src/editor.ts`.
 
@@ -156,3 +175,4 @@ CSS Highlight API renderer implemented. See `packages/editor/src/editor.ts`.
 5. Main vs worker layout split?
 6. Scheduler design?
 7. Decoration system design?
+8. Tree-sitter parser/query loading and memory policy?

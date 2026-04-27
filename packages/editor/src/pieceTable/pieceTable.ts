@@ -10,24 +10,20 @@ import type {
   Point,
   RealAnchor,
   ResolvedAnchor,
+  PieceTableEdit,
 } from "./pieceTableTypes";
 
-export type { AnchorBias, RealAnchor, ResolvedAnchor };
+export type { AnchorBias, RealAnchor, ResolvedAnchor, PieceTableEdit };
 
 export const Anchor = {
   MIN: { kind: "min" },
   MAX: { kind: "max" },
 } as const satisfies Record<"MIN" | "MAX", AnchorType>;
 
-export type PieceTableEdit = {
-  from: number;
-  to: number;
-  text: string;
-};
-
 const BUFFER_CHUNK_SIZE = 16 * 1024;
+const PIECE_ORDER_STEP = 1024;
+const PIECE_ORDER_MIN_GAP = 1e-9;
 let nextBufferSequence = 0;
-const reverseIndexCache = new WeakMap<PieceTableTreeSnapshot, PieceTableReverseIndexNode | null>();
 
 const randomPriority = () => Math.random();
 
@@ -42,6 +38,12 @@ const getSubtreePieces = (node: PieceTreeNode | null): number => (node ? node.su
 
 const getSubtreeLineBreaks = (node: PieceTreeNode | null): number =>
   node ? node.subtreeLineBreaks : 0;
+
+const getSubtreeMinOrder = (node: PieceTreeNode | null): number =>
+  node ? node.subtreeMinOrder : Number.POSITIVE_INFINITY;
+
+const getSubtreeMaxOrder = (node: PieceTreeNode | null): number =>
+  node ? node.subtreeMaxOrder : Number.NEGATIVE_INFINITY;
 
 const getPieceVisibleLength = (piece: Piece): number => (piece.visible ? piece.length : 0);
 
@@ -70,6 +72,7 @@ const createPiece = (
   buffer: PieceBufferId,
   start: number,
   length: number,
+  order: number,
   visible = true,
 ): Piece => {
   const text = getBufferText(buffers, buffer);
@@ -77,6 +80,7 @@ const createPiece = (
     buffer,
     start,
     length,
+    order,
     lineBreaks: countLineBreaks(text, start, start + length),
     visible,
   };
@@ -91,6 +95,8 @@ const cloneNode = (node: PieceTreeNode): PieceTreeNode => ({
   subtreeVisibleLength: node.subtreeVisibleLength,
   subtreePieces: node.subtreePieces,
   subtreeLineBreaks: node.subtreeLineBreaks,
+  subtreeMinOrder: node.subtreeMinOrder,
+  subtreeMaxOrder: node.subtreeMaxOrder,
 });
 
 const computeSubtreeLength = (
@@ -116,6 +122,18 @@ const computeSubtreeLineBreaks = (
 ): number =>
   getPieceVisibleLineBreaks(piece) + getSubtreeLineBreaks(left) + getSubtreeLineBreaks(right);
 
+const computeSubtreeMinOrder = (
+  piece: Piece,
+  left: PieceTreeNode | null,
+  right: PieceTreeNode | null,
+): number => Math.min(piece.order, getSubtreeMinOrder(left), getSubtreeMinOrder(right));
+
+const computeSubtreeMaxOrder = (
+  piece: Piece,
+  left: PieceTreeNode | null,
+  right: PieceTreeNode | null,
+): number => Math.max(piece.order, getSubtreeMaxOrder(left), getSubtreeMaxOrder(right));
+
 const createNode = (
   piece: Piece,
   left: PieceTreeNode | null = null,
@@ -130,6 +148,8 @@ const createNode = (
   subtreeVisibleLength: computeSubtreeVisibleLength(piece, left, right),
   subtreePieces: computeSubtreePieces(left, right),
   subtreeLineBreaks: computeSubtreeLineBreaks(piece, left, right),
+  subtreeMinOrder: computeSubtreeMinOrder(piece, left, right),
+  subtreeMaxOrder: computeSubtreeMaxOrder(piece, left, right),
 });
 
 const updateNode = (node: PieceTreeNode | null): PieceTreeNode | null => {
@@ -138,6 +158,8 @@ const updateNode = (node: PieceTreeNode | null): PieceTreeNode | null => {
   node.subtreeVisibleLength = computeSubtreeVisibleLength(node.piece, node.left, node.right);
   node.subtreePieces = computeSubtreePieces(node.left, node.right);
   node.subtreeLineBreaks = computeSubtreeLineBreaks(node.piece, node.left, node.right);
+  node.subtreeMinOrder = computeSubtreeMinOrder(node.piece, node.left, node.right);
+  node.subtreeMaxOrder = computeSubtreeMaxOrder(node.piece, node.left, node.right);
   return node;
 };
 
@@ -156,10 +178,73 @@ const merge = (left: PieceTreeNode | null, right: PieceTreeNode | null): PieceTr
   return updateNode(newRight);
 };
 
+type ReverseIndexChange = {
+  remove?: Piece;
+  add?: Piece;
+};
+
+type SplitContext = {
+  changes: ReverseIndexChange[];
+  normalizeOrders: boolean;
+};
+
+const allocateOrdersBetween = (
+  lower: number | null,
+  upper: number | null,
+  count: number,
+): number[] | null => {
+  if (count <= 0) return [];
+
+  if (lower === null && upper === null) {
+    return Array.from({ length: count }, (_, index) => (index + 1) * PIECE_ORDER_STEP);
+  }
+
+  if (upper === null) {
+    const start = (lower ?? 0) + PIECE_ORDER_STEP;
+    return Array.from({ length: count }, (_, index) => start + index * PIECE_ORDER_STEP);
+  }
+
+  if (lower === null) {
+    const start = upper - count * PIECE_ORDER_STEP;
+    return Array.from({ length: count }, (_, index) => start + index * PIECE_ORDER_STEP);
+  }
+
+  const gap = upper - lower;
+  if (gap <= PIECE_ORDER_MIN_GAP * (count + 1)) return null;
+
+  const step = gap / (count + 1);
+  return Array.from({ length: count }, (_, index) => lower + step * (index + 1));
+};
+
+const assignPieceOrders = (
+  pieces: readonly Piece[],
+  lower: number | null,
+  upper: number | null,
+): { pieces: Piece[]; normalizeOrders: boolean } => {
+  const orders = allocateOrdersBetween(lower, upper, pieces.length);
+
+  if (!orders) {
+    return {
+      pieces: pieces.map((piece, index) => ({
+        ...piece,
+        order: (lower ?? 0) + (index + 1) * PIECE_ORDER_MIN_GAP,
+      })),
+      normalizeOrders: true,
+    };
+  }
+
+  return {
+    pieces: pieces.map((piece, index) => ({ ...piece, order: orders[index] })),
+    normalizeOrders: false,
+  };
+};
+
 const splitByVisibleOffset = (
   node: PieceTreeNode | null,
   offset: number,
   buffers: PieceTableBuffers,
+  context: SplitContext,
+  upperOrder: number | null = null,
 ): { left: PieceTreeNode | null; right: PieceTreeNode | null } => {
   if (!node) return { left: null, right: null };
 
@@ -168,7 +253,13 @@ const splitByVisibleOffset = (
 
   if (offset < leftLen) {
     const newNode = cloneNode(node);
-    const { left, right } = splitByVisibleOffset(newNode.left, offset, buffers);
+    const { left, right } = splitByVisibleOffset(
+      newNode.left,
+      offset,
+      buffers,
+      context,
+      node.piece.order,
+    );
     newNode.left = right;
     return { left, right: updateNode(newNode) };
   }
@@ -179,6 +270,8 @@ const splitByVisibleOffset = (
       newNode.right,
       offset - leftLen - nodeLen,
       buffers,
+      context,
+      upperOrder,
     );
     newNode.right = left;
     return { left: updateNode(newNode), right };
@@ -206,11 +299,16 @@ const splitByVisibleOffset = (
   }
 
   const localOffset = offset - leftLen;
+  const rightUpperOrder = node.right ? getSubtreeMinOrder(node.right) : upperOrder;
+  const rightOrders = allocateOrdersBetween(node.piece.order, rightUpperOrder, 1);
+  const rightOrder = rightOrders?.[0] ?? node.piece.order + PIECE_ORDER_MIN_GAP;
+  context.normalizeOrders ||= !rightOrders;
   const leftPiece = createPiece(
     buffers,
     node.piece.buffer,
     node.piece.start,
     localOffset,
+    node.piece.order,
     node.piece.visible,
   );
   const rightPiece = createPiece(
@@ -218,11 +316,18 @@ const splitByVisibleOffset = (
     node.piece.buffer,
     node.piece.start + localOffset,
     nodeLen - localOffset,
+    rightOrder,
     node.piece.visible,
   );
 
-  const leftTree = merge(node.left, createNode(leftPiece));
-  const rightTree = merge(createNode(rightPiece), node.right);
+  const leftNode = createNode(leftPiece);
+  const rightNode = createNode(rightPiece);
+  const leftTree = merge(node.left, leftNode);
+  const rightTree = merge(rightNode, node.right);
+
+  context.changes.push({ remove: node.piece });
+  context.changes.push({ add: leftNode.piece });
+  context.changes.push({ add: rightNode.piece });
 
   return { left: leftTree, right: rightTree };
 };
@@ -355,6 +460,7 @@ const appendChunksToBuffers = (buffers: PieceTableBuffers, text: string): Piece[
       buffer,
       start: 0,
       length: chunkText.length,
+      order: 0,
       lineBreaks: countLineBreaks(chunkText),
       visible: true,
     });
@@ -381,6 +487,7 @@ const createOriginalPiece = (buffers: PieceTableBuffers): Piece | null => {
     buffer: buffers.original,
     start: 0,
     length: original.length,
+    order: PIECE_ORDER_STEP,
     lineBreaks: countLineBreaks(original),
     visible: true,
   };
@@ -423,32 +530,65 @@ const flattenPieces = (node: PieceTreeNode | null, acc: Piece[]): Piece[] => {
   return acc;
 };
 
-type VisiblePieceLocation = {
-  node: PieceTreeNode;
+type AnchorLocation = {
+  piece: Piece;
   visibleStart: number;
-  visibleEnd: number;
 };
 
-const collectVisiblePieceLocations = (
+const findVisiblePieceEndingAt = (
   node: PieceTreeNode | null,
-  acc: VisiblePieceLocation[],
+  offset: number,
   baseOffset = 0,
-): number => {
-  if (!node) return baseOffset;
+): AnchorLocation | null => {
+  if (!node) return null;
 
-  let offset = collectVisiblePieceLocations(node.left, acc, baseOffset);
+  const leftLen = getSubtreeVisibleLength(node.left);
   const nodeLen = getPieceVisibleLength(node.piece);
+  const nodeStart = baseOffset + leftLen;
+  const nodeEnd = nodeStart + nodeLen;
 
-  if (nodeLen > 0) {
-    acc.push({
-      node,
-      visibleStart: offset,
-      visibleEnd: offset + nodeLen,
-    });
+  if (offset <= nodeStart) return findVisiblePieceEndingAt(node.left, offset, baseOffset);
+  if (nodeLen > 0 && offset === nodeEnd) return { piece: node.piece, visibleStart: nodeStart };
+
+  return findVisiblePieceEndingAt(node.right, offset, nodeEnd);
+};
+
+const findVisiblePieceStartingAt = (
+  node: PieceTreeNode | null,
+  offset: number,
+  baseOffset = 0,
+): AnchorLocation | null => {
+  if (!node) return null;
+
+  const leftLen = getSubtreeVisibleLength(node.left);
+  const nodeLen = getPieceVisibleLength(node.piece);
+  const nodeStart = baseOffset + leftLen;
+  const nodeEnd = nodeStart + nodeLen;
+
+  if (offset < nodeStart) return findVisiblePieceStartingAt(node.left, offset, baseOffset);
+  if (nodeLen > 0 && offset === nodeStart) return { piece: node.piece, visibleStart: nodeStart };
+
+  return findVisiblePieceStartingAt(node.right, offset, nodeEnd);
+};
+
+const findVisiblePieceContainingOffset = (
+  node: PieceTreeNode | null,
+  offset: number,
+  baseOffset = 0,
+): AnchorLocation | null => {
+  if (!node) return null;
+
+  const leftLen = getSubtreeVisibleLength(node.left);
+  const nodeLen = getPieceVisibleLength(node.piece);
+  const nodeStart = baseOffset + leftLen;
+  const nodeEnd = nodeStart + nodeLen;
+
+  if (offset < nodeStart) return findVisiblePieceContainingOffset(node.left, offset, baseOffset);
+  if (nodeLen > 0 && offset > nodeStart && offset < nodeEnd) {
+    return { piece: node.piece, visibleStart: nodeStart };
   }
 
-  offset += nodeLen;
-  return collectVisiblePieceLocations(node.right, acc, offset);
+  return findVisiblePieceContainingOffset(node.right, offset, nodeEnd);
 };
 
 const flattenNodes = (node: PieceTreeNode | null, acc: PieceTreeNode[]): PieceTreeNode[] => {
@@ -473,16 +613,18 @@ const compareReverseKeys = (
 const cloneReverseIndexNode = (node: PieceTableReverseIndexNode): PieceTableReverseIndexNode => ({
   buffer: node.buffer,
   start: node.start,
-  pieceNode: node.pieceNode,
+  piece: node.piece,
+  order: node.order,
   priority: node.priority,
   left: node.left,
   right: node.right,
 });
 
-const createReverseIndexNode = (pieceNode: PieceTreeNode): PieceTableReverseIndexNode => ({
-  buffer: pieceNode.piece.buffer,
-  start: pieceNode.piece.start,
-  pieceNode,
+const createReverseIndexNode = (piece: Piece): PieceTableReverseIndexNode => ({
+  buffer: piece.buffer,
+  start: piece.start,
+  piece,
+  order: piece.order,
   priority: randomPriority(),
   left: null,
   right: null,
@@ -506,33 +648,117 @@ const rotateReverseLeft = (node: PieceTableReverseIndexNode): PieceTableReverseI
 
 const insertReverseIndexNode = (
   root: PieceTableReverseIndexNode | null,
-  pieceNode: PieceTreeNode,
+  piece: Piece,
 ): PieceTableReverseIndexNode => {
-  if (!root) return createReverseIndexNode(pieceNode);
+  if (!root) return createReverseIndexNode(piece);
 
-  const comparison = compareReverseKeys(
-    pieceNode.piece.buffer,
-    pieceNode.piece.start,
-    root.buffer,
-    root.start,
-  );
+  const comparison = compareReverseKeys(piece.buffer, piece.start, root.buffer, root.start);
 
   if (comparison < 0) {
     const next = cloneReverseIndexNode(root);
-    next.left = insertReverseIndexNode(next.left, pieceNode);
+    next.left = insertReverseIndexNode(next.left, piece);
     return next.left.priority < next.priority ? rotateReverseRight(next) : next;
   }
 
   if (comparison > 0) {
     const next = cloneReverseIndexNode(root);
-    next.right = insertReverseIndexNode(next.right, pieceNode);
+    next.right = insertReverseIndexNode(next.right, piece);
     return next.right.priority < next.priority ? rotateReverseLeft(next) : next;
   }
 
   return {
     ...root,
-    pieceNode,
+    piece,
+    order: piece.order,
   };
+};
+
+const mergeReverseIndexNodes = (
+  left: PieceTableReverseIndexNode | null,
+  right: PieceTableReverseIndexNode | null,
+): PieceTableReverseIndexNode | null => {
+  if (!left) return right;
+  if (!right) return left;
+
+  if (left.priority < right.priority) {
+    const next = cloneReverseIndexNode(left);
+    next.right = mergeReverseIndexNodes(next.right, right);
+    return next;
+  }
+
+  const next = cloneReverseIndexNode(right);
+  next.left = mergeReverseIndexNodes(left, next.left);
+  return next;
+};
+
+const deleteReverseIndexNode = (
+  root: PieceTableReverseIndexNode | null,
+  piece: Piece,
+): PieceTableReverseIndexNode | null => {
+  if (!root) return null;
+
+  const comparison = compareReverseKeys(piece.buffer, piece.start, root.buffer, root.start);
+
+  if (comparison < 0) {
+    const next = cloneReverseIndexNode(root);
+    next.left = deleteReverseIndexNode(next.left, piece);
+    return next;
+  }
+
+  if (comparison > 0) {
+    const next = cloneReverseIndexNode(root);
+    next.right = deleteReverseIndexNode(next.right, piece);
+    return next;
+  }
+
+  return mergeReverseIndexNodes(root.left, root.right);
+};
+
+const applyReverseIndexChanges = (
+  root: PieceTableReverseIndexNode | null,
+  changes: readonly ReverseIndexChange[],
+): PieceTableReverseIndexNode | null => {
+  let next = root;
+
+  for (const change of changes) {
+    if (change.remove && change.remove.length > 0) {
+      next = deleteReverseIndexNode(next, change.remove);
+    }
+    if (change.add && change.add.length > 0) {
+      next = insertReverseIndexNode(next, change.add);
+    }
+  }
+
+  return next;
+};
+
+const normalizePieceOrders = (
+  node: PieceTreeNode | null,
+  nextOrder: { value: number },
+): PieceTreeNode | null => {
+  if (!node) return null;
+
+  const next = cloneNode(node);
+  next.left = normalizePieceOrders(next.left, nextOrder);
+  next.piece = {
+    ...next.piece,
+    order: nextOrder.value,
+  };
+  nextOrder.value += PIECE_ORDER_STEP;
+  next.right = normalizePieceOrders(next.right, nextOrder);
+  return updateNode(next);
+};
+
+const createSnapshotWithIndex = (
+  buffers: PieceTableBuffers,
+  root: PieceTreeNode | null,
+  reverseIndexRoot: PieceTableReverseIndexNode | null,
+  normalizeOrders: boolean,
+): PieceTableTreeSnapshot => {
+  if (!normalizeOrders) return createSnapshot(buffers, root, reverseIndexRoot);
+
+  const normalizedRoot = normalizePieceOrders(root, { value: PIECE_ORDER_STEP });
+  return createSnapshot(buffers, normalizedRoot, buildReverseIndex(normalizedRoot));
 };
 
 const buildReverseIndex = (root: PieceTreeNode | null): PieceTableReverseIndexNode | null => {
@@ -541,21 +767,10 @@ const buildReverseIndex = (root: PieceTreeNode | null): PieceTableReverseIndexNo
 
   for (const node of nodes) {
     if (node.piece.length === 0) continue;
-    indexRoot = insertReverseIndexNode(indexRoot, node);
+    indexRoot = insertReverseIndexNode(indexRoot, node.piece);
   }
 
   return indexRoot;
-};
-
-const getSnapshotReverseIndexRoot = (
-  snapshot: PieceTableTreeSnapshot,
-): PieceTableReverseIndexNode | null => {
-  if (snapshot.reverseIndexRoot) return snapshot.reverseIndexRoot;
-  if (reverseIndexCache.has(snapshot)) return reverseIndexCache.get(snapshot) ?? null;
-
-  const root = buildReverseIndex(snapshot.root);
-  reverseIndexCache.set(snapshot, root);
-  return root;
 };
 
 const reversePredecessor = (
@@ -592,13 +807,22 @@ const lookupReverseIndex = (
   anchor: RealAnchor,
 ): PieceTableReverseIndexNode | null => {
   const strict = anchor.bias === "left" && anchor.offset > 0;
-  const root = getSnapshotReverseIndexRoot(snapshot);
-  const preferred = reversePredecessor(root, anchor.buffer, anchor.offset, strict);
+  const preferred = reversePredecessor(
+    snapshot.reverseIndexRoot,
+    anchor.buffer,
+    anchor.offset,
+    strict,
+  );
 
-  if (preferred && coversAnchorOffset(preferred.pieceNode.piece, anchor.offset)) return preferred;
+  if (preferred && coversAnchorOffset(preferred.piece, anchor.offset)) return preferred;
 
-  const fallback = reversePredecessor(root, anchor.buffer, anchor.offset, false);
-  if (fallback && coversAnchorOffset(fallback.pieceNode.piece, anchor.offset)) return fallback;
+  const fallback = reversePredecessor(
+    snapshot.reverseIndexRoot,
+    anchor.buffer,
+    anchor.offset,
+    false,
+  );
+  if (fallback && coversAnchorOffset(fallback.piece, anchor.offset)) return fallback;
 
   return null;
 };
@@ -606,10 +830,11 @@ const lookupReverseIndex = (
 const createSnapshot = (
   buffers: PieceTableBuffers,
   root: PieceTreeNode | null,
+  reverseIndexRoot: PieceTableReverseIndexNode | null,
 ): PieceTableTreeSnapshot => ({
   buffers,
   root,
-  reverseIndexRoot: null,
+  reverseIndexRoot,
   length: getSubtreeVisibleLength(root),
   pieceCount: getSubtreePieces(root),
 });
@@ -635,7 +860,7 @@ const ensureCodePointBoundary = (snapshot: PieceTableTreeSnapshot, offset: numbe
 };
 
 const anchorFromLocation = (
-  location: VisiblePieceLocation,
+  location: AnchorLocation,
   offset: number,
   bias: AnchorBias,
 ): RealAnchor => {
@@ -643,8 +868,8 @@ const anchorFromLocation = (
 
   return {
     kind: "anchor",
-    buffer: location.node.piece.buffer,
-    offset: location.node.piece.start + pieceOffset,
+    buffer: location.piece.buffer,
+    offset: location.piece.start + pieceOffset,
     bias,
   };
 };
@@ -660,109 +885,140 @@ const findAnchorLocation = (
   snapshot: PieceTableTreeSnapshot,
   offset: number,
   bias: AnchorBias,
-): VisiblePieceLocation | null => {
-  const locations: VisiblePieceLocation[] = [];
-  collectVisiblePieceLocations(snapshot.root, locations);
+): AnchorLocation | null => {
+  const interior = findVisiblePieceContainingOffset(snapshot.root, offset);
+  if (interior) return interior;
 
-  if (locations.length === 0) return null;
-
-  for (const location of locations) {
-    if (offset > location.visibleStart && offset < location.visibleEnd) return location;
-  }
-
-  const left = locations.findLast((location) => location.visibleEnd === offset) ?? null;
-  const right = locations.find((location) => location.visibleStart === offset) ?? null;
+  const left = findVisiblePieceEndingAt(snapshot.root, offset);
+  const right = findVisiblePieceStartingAt(snapshot.root, offset);
 
   if (bias === "left") return left ?? right;
   return right ?? left;
 };
 
-const markTreeInvisible = (node: PieceTreeNode | null): PieceTreeNode | null => {
+const markTreeInvisible = (
+  node: PieceTreeNode | null,
+  changes: ReverseIndexChange[],
+): PieceTreeNode | null => {
   if (!node) return null;
 
   const next = cloneNode(node);
-  next.left = markTreeInvisible(next.left);
-  next.right = markTreeInvisible(next.right);
+  next.left = markTreeInvisible(next.left, changes);
+  next.right = markTreeInvisible(next.right, changes);
   next.piece = {
     ...next.piece,
     visible: false,
   };
+  changes.push({ add: next.piece });
 
   return updateNode(next);
 };
 
-const visiblePrefixBeforeNode = (
-  root: PieceTreeNode | null,
-  target: PieceTreeNode,
+const visiblePrefixBeforeOrder = (
+  node: PieceTreeNode | null,
+  order: number,
   baseOffset = 0,
 ): number | null => {
-  if (!root) return null;
+  if (!node) return null;
 
-  const leftLength = getSubtreeVisibleLength(root.left);
+  const leftLength = getSubtreeVisibleLength(node.left);
   const nodeStart = baseOffset + leftLength;
 
-  if (root === target) return nodeStart;
+  if (order === node.piece.order) return nodeStart;
+  if (order < node.piece.order) return visiblePrefixBeforeOrder(node.left, order, baseOffset);
 
-  const leftResult = visiblePrefixBeforeNode(root.left, target, baseOffset);
-  if (leftResult !== null) return leftResult;
-
-  return visiblePrefixBeforeNode(root.right, target, nodeStart + getPieceVisibleLength(root.piece));
+  return visiblePrefixBeforeOrder(node.right, order, nodeStart + getPieceVisibleLength(node.piece));
 };
 
-const deletedRightEdgeOffset = (
-  snapshot: PieceTableTreeSnapshot,
-  target: PieceTreeNode,
-  prefix: number,
+const visibleLengthBetweenOrders = (
+  node: PieceTreeNode | null,
+  lowExclusive: number,
+  highExclusive: number,
 ): number => {
-  const nodes = flattenNodes(snapshot.root, []);
-  const targetIndex = nodes.indexOf(target);
-  if (targetIndex === -1) return prefix;
+  if (!node || lowExclusive >= highExclusive) return 0;
+  if (getSubtreeMaxOrder(node) <= lowExclusive) return 0;
+  if (getSubtreeMinOrder(node) >= highExclusive) return 0;
 
-  let offset = prefix;
-  const deletedEnd = target.piece.start + target.piece.length;
-
-  for (let index = targetIndex + 1; index < nodes.length; index++) {
-    const piece = nodes[index].piece;
-    if (piece.buffer === target.piece.buffer && piece.start >= deletedEnd) break;
-    offset += getPieceVisibleLength(piece);
+  if (getSubtreeMinOrder(node) > lowExclusive && getSubtreeMaxOrder(node) < highExclusive) {
+    return getSubtreeVisibleLength(node);
   }
 
-  return offset;
+  const nodeLength =
+    node.piece.order > lowExclusive && node.piece.order < highExclusive
+      ? getPieceVisibleLength(node.piece)
+      : 0;
+
+  return (
+    visibleLengthBetweenOrders(node.left, lowExclusive, highExclusive) +
+    nodeLength +
+    visibleLengthBetweenOrders(node.right, lowExclusive, highExclusive)
+  );
+};
+
+const reverseSuccessor = (
+  root: PieceTableReverseIndexNode | null,
+  buffer: PieceBufferId,
+  offset: number,
+): PieceTableReverseIndexNode | null => {
+  let node = root;
+  let candidate: PieceTableReverseIndexNode | null = null;
+
+  while (node) {
+    const comparison = compareReverseKeys(node.buffer, node.start, buffer, offset);
+
+    if (comparison >= 0) {
+      candidate = node;
+      node = node.left;
+      continue;
+    }
+
+    node = node.right;
+  }
+
+  if (candidate?.buffer === buffer) return candidate;
+  return null;
 };
 
 const deletedLeftEdgeOffset = (
   snapshot: PieceTableTreeSnapshot,
-  target: PieceTreeNode,
+  entry: PieceTableReverseIndexNode,
   prefix: number,
 ): number => {
-  const nodes = flattenNodes(snapshot.root, []);
-  const targetIndex = nodes.indexOf(target);
-  if (targetIndex === -1) return prefix;
-
-  let offset = prefix;
-
-  for (let index = targetIndex - 1; index >= 0; index--) {
-    const piece = nodes[index].piece;
-    if (piece.buffer === target.piece.buffer && piece.start + piece.length <= target.piece.start) {
-      break;
-    }
-    offset -= getPieceVisibleLength(piece);
-  }
-
-  return offset;
+  const previous = reversePredecessor(
+    snapshot.reverseIndexRoot,
+    entry.piece.buffer,
+    entry.piece.start,
+    true,
+  );
+  const lowOrder = previous?.order ?? Number.NEGATIVE_INFINITY;
+  return prefix - visibleLengthBetweenOrders(snapshot.root, lowOrder, entry.order);
 };
 
-const resolveAnchorAgainstNode = (
+const deletedRightEdgeOffset = (
+  snapshot: PieceTableTreeSnapshot,
+  entry: PieceTableReverseIndexNode,
+  prefix: number,
+): number => {
+  const next = reverseSuccessor(
+    snapshot.reverseIndexRoot,
+    entry.piece.buffer,
+    entry.piece.start + entry.piece.length,
+  );
+  const highOrder = next?.order ?? Number.POSITIVE_INFINITY;
+  return prefix + visibleLengthBetweenOrders(snapshot.root, entry.order, highOrder);
+};
+
+const resolveAnchorAgainstEntry = (
   snapshot: PieceTableTreeSnapshot,
   anchor: RealAnchor,
-  pieceNode: PieceTreeNode,
+  entry: PieceTableReverseIndexNode,
 ): ResolvedAnchor => {
-  const prefix = visiblePrefixBeforeNode(snapshot.root, pieceNode);
+  const prefix = visiblePrefixBeforeOrder(snapshot.root, entry.order);
   if (prefix === null) return { offset: 0, liveness: "deleted" };
 
-  if (pieceNode.piece.visible) {
+  if (entry.piece.visible) {
     return {
-      offset: prefix + Math.min(anchor.offset - pieceNode.piece.start, pieceNode.piece.length),
+      offset: prefix + Math.min(anchor.offset - entry.piece.start, entry.piece.length),
       liveness: "live",
     };
   }
@@ -770,8 +1026,8 @@ const resolveAnchorAgainstNode = (
   return {
     offset:
       anchor.bias === "left"
-        ? deletedLeftEdgeOffset(snapshot, pieceNode, prefix)
-        : deletedRightEdgeOffset(snapshot, pieceNode, prefix),
+        ? deletedLeftEdgeOffset(snapshot, entry, prefix)
+        : deletedRightEdgeOffset(snapshot, entry, prefix),
     liveness: "deleted",
   };
 };
@@ -780,8 +1036,15 @@ const resolveMissingAnchor = (
   snapshot: PieceTableTreeSnapshot,
   anchor: RealAnchor,
 ): ResolvedAnchor => {
-  if (!snapshot.root && anchor.buffer === snapshot.buffers.original && anchor.offset === 0) {
-    return { offset: 0, liveness: "live" };
+  const originalText = getBufferText(snapshot.buffers, snapshot.buffers.original);
+  const isEmptyOriginalAnchor =
+    originalText.length === 0 && anchor.buffer === snapshot.buffers.original && anchor.offset === 0;
+
+  if (isEmptyOriginalAnchor) {
+    return {
+      offset: anchor.bias === "left" ? 0 : snapshot.length,
+      liveness: "live",
+    };
   }
 
   return { offset: 0, liveness: "deleted" };
@@ -833,7 +1096,7 @@ export const createPieceTableSnapshot = (original: string): PieceTableTreeSnapsh
   const buffers = createInitialBuffers(original);
   const originalPiece = createOriginalPiece(buffers);
   const root = originalPiece ? createNode(originalPiece) : null;
-  return createSnapshot(buffers, root);
+  return createSnapshot(buffers, root, buildReverseIndex(root));
 };
 
 export const getPieceTableLength = (snapshot: PieceTableTreeSnapshot): number => snapshot.length;
@@ -865,11 +1128,29 @@ export const insertIntoPieceTable = (
     throw new RangeError("invalid offset");
   }
 
-  const pieces = appendChunksToBuffers(snapshot.buffers, text);
-  const insertionTree = createTreeFromPieces(pieces);
-  const { left, right } = splitByVisibleOffset(snapshot.root, offset, snapshot.buffers);
+  const context: SplitContext = { changes: [], normalizeOrders: false };
+  const { left, right } = splitByVisibleOffset(snapshot.root, offset, snapshot.buffers, context);
+  const leftOrder = left ? getSubtreeMaxOrder(left) : null;
+  const rightOrder = right ? getSubtreeMinOrder(right) : null;
+  const ordered = assignPieceOrders(
+    appendChunksToBuffers(snapshot.buffers, text),
+    leftOrder,
+    rightOrder,
+  );
+  const insertionTree = createTreeFromPieces(ordered.pieces);
   const merged = merge(merge(left, insertionTree), right);
-  return createSnapshot(snapshot.buffers, merged);
+  const insertionChanges = ordered.pieces.map((piece) => ({ add: piece }));
+  const reverseIndexRoot = applyReverseIndexChanges(snapshot.reverseIndexRoot, [
+    ...context.changes,
+    ...insertionChanges,
+  ]);
+
+  return createSnapshotWithIndex(
+    snapshot.buffers,
+    merged,
+    reverseIndexRoot,
+    context.normalizeOrders || ordered.normalizeOrders,
+  );
 };
 
 export const deleteFromPieceTable = (
@@ -880,10 +1161,23 @@ export const deleteFromPieceTable = (
   if (length <= 0) return snapshot;
   ensureValidRange(snapshot, offset, offset + length);
 
-  const { left, right } = splitByVisibleOffset(snapshot.root, offset, snapshot.buffers);
-  const { left: deleted, right: tail } = splitByVisibleOffset(right, length, snapshot.buffers);
-  const merged = merge(merge(left, markTreeInvisible(deleted)), tail);
-  return createSnapshot(snapshot.buffers, merged);
+  const context: SplitContext = { changes: [], normalizeOrders: false };
+  const { left, right } = splitByVisibleOffset(snapshot.root, offset, snapshot.buffers, context);
+  const { left: deleted, right: tail } = splitByVisibleOffset(
+    right,
+    length,
+    snapshot.buffers,
+    context,
+  );
+  const invisible = markTreeInvisible(deleted, context.changes);
+  const merged = merge(merge(left, invisible), tail);
+  const reverseIndexRoot = applyReverseIndexChanges(snapshot.reverseIndexRoot, context.changes);
+  return createSnapshotWithIndex(
+    snapshot.buffers,
+    merged,
+    reverseIndexRoot,
+    context.normalizeOrders,
+  );
 };
 
 export const applyBatchToPieceTable = (
@@ -956,7 +1250,15 @@ export const resolveAnchorLinear = (
   const pieceNode = findLinearAnchorNode(snapshot, anchor);
   if (!pieceNode) return resolveMissingAnchor(snapshot, anchor);
 
-  return resolveAnchorAgainstNode(snapshot, anchor, pieceNode);
+  return resolveAnchorAgainstEntry(snapshot, anchor, {
+    buffer: pieceNode.piece.buffer,
+    start: pieceNode.piece.start,
+    piece: pieceNode.piece,
+    order: pieceNode.piece.order,
+    priority: 0,
+    left: null,
+    right: null,
+  });
 };
 
 export const resolveAnchor = (
@@ -969,7 +1271,7 @@ export const resolveAnchor = (
   const indexed = lookupReverseIndex(snapshot, anchor);
   if (!indexed) return resolveAnchorLinear(snapshot, anchor);
 
-  return resolveAnchorAgainstNode(snapshot, anchor, indexed.pieceNode);
+  return resolveAnchorAgainstEntry(snapshot, anchor, indexed);
 };
 
 export const compareAnchors = (

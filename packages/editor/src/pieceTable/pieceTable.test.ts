@@ -98,6 +98,28 @@ const runRandomEditScenario = (seed: number): void => {
   }
 };
 
+const runRandomAnchorScenario = (seed: number): void => {
+  const random = createRandom(seed);
+  let snapshot = createPieceTableSnapshot(randomText(random));
+  let text = getPieceTableText(snapshot);
+  const anchors = [anchorBefore(snapshot, 0), anchorAfter(snapshot, snapshot.length)];
+
+  for (let operation = 0; operation < 80; operation++) {
+    if (anchors.length < 60) {
+      const offset = randomInt(random, text.length + 1);
+      anchors.push(anchorAt(snapshot, offset, random() < 0.5 ? "left" : "right"));
+    }
+
+    const result = applyRandomEdit(snapshot, text, random);
+    snapshot = result.snapshot;
+    text = result.text;
+
+    for (const anchor of anchors) {
+      expect(resolveAnchor(snapshot, anchor)).toEqual(resolveAnchorLinear(snapshot, anchor));
+    }
+  }
+};
+
 describe("piece table", () => {
   test("basic insert/delete round-trip", () => {
     let snapshot = createPieceTableSnapshot("hello");
@@ -240,6 +262,16 @@ describe("piece table", () => {
     expect(snapshot.root?.subtreeLineBreaks ?? 0).toBe(0);
   });
 
+  test("stores reverse-index roots in produced snapshots", () => {
+    const initial = createPieceTableSnapshot("abc");
+    const inserted = insertIntoPieceTable(initial, 1, "XX");
+    const deleted = deleteFromPieceTable(inserted, 1, 2);
+
+    expect(initial.reverseIndexRoot).not.toBeNull();
+    expect(inserted.reverseIndexRoot).not.toBeNull();
+    expect(deleted.reverseIndexRoot).not.toBeNull();
+  });
+
   test("resolves sentinel anchors in every snapshot", () => {
     let snapshot = createPieceTableSnapshot("abc");
     expect(resolveAnchor(snapshot, Anchor.MIN)).toEqual({ offset: 0, liveness: "live" });
@@ -297,6 +329,16 @@ describe("piece table", () => {
     expect(resolveAnchor(snapshot, anchor)).toEqual({ offset: 0, liveness: "live" });
   });
 
+  test("preserves empty-document anchor bias after first insert", () => {
+    const snapshot = createPieceTableSnapshot("");
+    const left = anchorBefore(snapshot, 0);
+    const right = anchorAfter(snapshot, 0);
+    const inserted = insertIntoPieceTable(snapshot, 0, "abc");
+
+    expect(resolveAnchor(inserted, left)).toEqual({ offset: 0, liveness: "live" });
+    expect(resolveAnchor(inserted, right)).toEqual({ offset: 3, liveness: "live" });
+  });
+
   test("indexed anchor resolution matches the linear baseline across edits", () => {
     let snapshot = createPieceTableSnapshot("alpha\nbeta\ngamma");
     const anchors = [
@@ -314,6 +356,12 @@ describe("piece table", () => {
 
     for (const anchor of anchors) {
       expect(resolveAnchor(snapshot, anchor)).toEqual(resolveAnchorLinear(snapshot, anchor));
+    }
+  });
+
+  test("indexed anchor resolution matches linear across randomized edit patterns", () => {
+    for (let seed = 1; seed <= 10; seed++) {
+      runRandomAnchorScenario(seed);
     }
   });
 

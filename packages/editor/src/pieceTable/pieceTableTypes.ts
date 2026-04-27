@@ -33,6 +33,7 @@ export type Piece = {
   buffer: PieceBufferId;
   start: number;
   length: number;
+  order: number;
   lineBreaks: number;
   visible: boolean;
 };
@@ -51,12 +52,15 @@ export type PieceTreeNode = {
   subtreeVisibleLength: number;
   subtreePieces: number;
   subtreeLineBreaks: number;
+  subtreeMinOrder: number;
+  subtreeMaxOrder: number;
 };
 
 export type PieceTableReverseIndexNode = {
   buffer: PieceBufferId;
   start: number;
-  pieceNode: PieceTreeNode;
+  piece: Piece;
+  order: number;
   priority: number;
   left: PieceTableReverseIndexNode | null;
   right: PieceTableReverseIndexNode | null;
@@ -68,6 +72,12 @@ export type PieceTableTreeSnapshot = {
   reverseIndexRoot: PieceTableReverseIndexNode | null;
   length: number;
   pieceCount: number;
+};
+
+export type PieceTableEdit = {
+  from: number;
+  to: number;
+  text: string;
 };
 
 export type PieceTableSnapshot = PieceTableTreeSnapshot;

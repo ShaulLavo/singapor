@@ -13,35 +13,30 @@ type Sample = {
   pieces: number;
   anchors: number;
   textLength: number;
-  indexBuildMs: number;
+  buildMs: number;
+  averageInsertionMs: number;
+  averageAnchorCreateMs: number;
   averageResolveMs: number;
   heapUsedMb: number;
 };
 
-const LINE_BATCH_SIZE = 100;
 const LINE_COUNTS = [10_000, 50_000, 100_000] as const;
 const ANCHOR_STRIDE = 1_000;
 
 const formatMs = (value: number): string => `${value.toFixed(4)}ms`;
 
-const makeLineBatch = (startLine: number): string => {
-  const lines: string[] = [];
-
-  for (let index = 0; index < LINE_BATCH_SIZE; index++) {
-    lines.push(`line-${startLine + index}\n`);
-  }
-
-  return lines.join("");
-};
-
 const buildSnapshot = (lineCount: number) => {
   let snapshot = createPieceTableSnapshot("");
+  const start = performance.now();
 
-  for (let line = 0; line < lineCount; line += LINE_BATCH_SIZE) {
-    snapshot = insertIntoPieceTable(snapshot, snapshot.length, makeLineBatch(line));
+  for (let line = 0; line < lineCount; line++) {
+    snapshot = insertIntoPieceTable(snapshot, snapshot.length, `line-${line}\n`);
   }
 
-  return snapshot;
+  return {
+    snapshot,
+    buildMs: performance.now() - start,
+  };
 };
 
 const createAnchors = (snapshot: ReturnType<typeof createPieceTableSnapshot>): RealAnchor[] => {
@@ -55,12 +50,12 @@ const createAnchors = (snapshot: ReturnType<typeof createPieceTableSnapshot>): R
 };
 
 const measure = (lineCount: number): Sample => {
-  const snapshot = buildSnapshot(lineCount);
-  const anchors = createAnchors(snapshot);
+  const { snapshot, buildMs } = buildSnapshot(lineCount);
+  if (!snapshot.reverseIndexRoot) throw new Error("expected snapshot-owned reverse index");
 
-  const indexStart = performance.now();
-  resolveAnchor(snapshot, anchors[0]);
-  const indexBuildMs = performance.now() - indexStart;
+  const anchorStart = performance.now();
+  const anchors = createAnchors(snapshot);
+  const anchorCreateMs = performance.now() - anchorStart;
 
   const resolveStart = performance.now();
   for (const anchor of anchors) resolveAnchor(snapshot, anchor);
@@ -71,7 +66,9 @@ const measure = (lineCount: number): Sample => {
     pieces: snapshot.pieceCount,
     anchors: anchors.length,
     textLength: snapshot.length,
-    indexBuildMs,
+    buildMs,
+    averageInsertionMs: buildMs / lineCount,
+    averageAnchorCreateMs: anchorCreateMs / anchors.length,
     averageResolveMs: resolveMs / anchors.length,
     heapUsedMb: process.memoryUsage().heapUsed / 1024 / 1024,
   };
@@ -82,7 +79,9 @@ const printSample = (sample: Sample): void => {
   console.log(`pieces: ${sample.pieces}`);
   console.log(`anchors: ${sample.anchors}`);
   console.log(`text length: ${sample.textLength}`);
-  console.log(`lazy index build: ${formatMs(sample.indexBuildMs)}`);
+  console.log(`snapshot build with index: ${formatMs(sample.buildMs)}`);
+  console.log(`average insertion with index: ${formatMs(sample.averageInsertionMs)}`);
+  console.log(`average anchor create: ${formatMs(sample.averageAnchorCreateMs)}`);
   console.log(`average indexed resolve: ${formatMs(sample.averageResolveMs)}`);
   console.log(`heap used: ${sample.heapUsedMb.toFixed(2)} MiB`);
 };

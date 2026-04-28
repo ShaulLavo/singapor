@@ -90,4 +90,21 @@ describe("fixed row virtualizer", () => {
       size: 24,
     });
   });
+
+  it("supports variable row sizes", () => {
+    const virtualizer = new FixedRowVirtualizer({
+      count: 3,
+      rowHeight: 20,
+      rowSizes: [20, 60, 20],
+      overscan: 0,
+    });
+
+    virtualizer.setScrollMetrics({ scrollTop: 30, viewportHeight: 40 });
+
+    expect(virtualizer.getSnapshot()).toMatchObject({
+      totalSize: 100,
+      visibleRange: { start: 1, end: 2 },
+      virtualItems: [{ index: 1, start: 20, size: 60 }],
+    });
+  });
 });

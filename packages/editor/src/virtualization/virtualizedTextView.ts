@@ -1,4 +1,12 @@
 import { bufferPointToFoldPoint, foldPointToBufferPoint, type FoldMap } from "../foldMap";
+import {
+  DEFAULT_TAB_SIZE,
+  createDisplayRows,
+  visualColumnToBufferColumn,
+  visualColumnLength,
+  type BlockRow,
+  type DisplayRow,
+} from "../displayTransforms";
 import type { EditorToken, EditorTokenStyle, TextEdit } from "../tokens";
 import {
   buildHighlightRule,
@@ -65,7 +73,6 @@ import {
   tokenStylesEqual,
   updateMutableRow,
   updateMutableRowChunks,
-  visualColumn,
 } from "./virtualizedTextViewHelpers";
 import type {
   DocumentWithCaretHitTesting,
@@ -117,8 +124,12 @@ export class VirtualizedTextView {
   private textRevision = 0;
   private tokens: readonly EditorToken[] = [];
   private lineStarts: number[] = [0];
+  private displayRows: DisplayRow[] = [];
   private foldMap: FoldMap | null = null;
   private foldMarkers: readonly VirtualizedFoldMarker[] = [];
+  private blockRows: readonly BlockRow[] = [];
+  private wrapEnabled = false;
+  private currentWrapColumn: number | null = null;
   private tokenGroups = new Map<string, TokenGroup>();
   private rowTokenSignatures = new Map<number, string>();
   private rowTokenRanges = new Map<number, Map<string, readonly AbstractRange[]>>();
@@ -161,6 +172,8 @@ export class VirtualizedTextView {
     this.horizontalOverscanColumns = normalizeHorizontalOverscan(options.horizontalOverscanColumns);
     this.onFoldToggle = options.onFoldToggle ?? null;
     this.onViewportChange = options.onViewportChange ?? null;
+    this.wrapEnabled = options.wrap ?? false;
+    this.blockRows = options.blockRows ?? [];
     this.virtualizer = new FixedRowVirtualizer(createVirtualizerOptions(rowHeight, overscan));
 
     this.scrollElement.style.setProperty("--editor-gutter-width", `${gutterWidth}px`);
@@ -196,11 +209,12 @@ export class VirtualizedTextView {
     this.tokenRangesFollowLastTextEdit = false;
     this.lineStarts = computeLineStarts(text);
     this.foldMap = foldMapMatchesText(this.foldMap, text) ? this.foldMap : null;
+    this.rebuildDisplayRows();
     this.clampStoredSelection();
     this.clearRowTokenState();
     this.lastRenderedRowsKey = "";
     this.resetContentWidthScan();
-    this.virtualizer.updateOptions({ count: this.visibleLineCount() });
+    this.updateVirtualizerRows();
   }
 
   public setFoldMap(foldMap: FoldMap | null): void {
@@ -223,10 +237,11 @@ export class VirtualizedTextView {
     this.foldMarkers = nextFoldMarkers;
     this.foldMap = nextFoldMap;
     if (foldMapChanged) this.clearRowTokenState();
+    if (foldMapChanged) this.rebuildDisplayRows();
 
     this.lastRenderedRowsKey = "";
     if (foldMapChanged) {
-      this.virtualizer.updateOptions({ count: this.visibleLineCount() });
+      this.updateVirtualizerRows();
       return;
     }
 
@@ -238,8 +253,9 @@ export class VirtualizedTextView {
     const rowHeight = normalizeRowHeight(measured.rowHeight);
     this.metrics = { rowHeight, characterWidth: measured.characterWidth };
     this.applyRowHeight(rowHeight);
+    this.refreshDisplayRowsForWrapWidth();
     this.lastRenderedRowsKey = "";
-    this.virtualizer.updateOptions({ rowHeight });
+    this.virtualizer.updateOptions({ rowHeight, rowSizes: this.rowSizes() });
     return this.metrics;
   }
 
@@ -295,7 +311,27 @@ export class VirtualizedTextView {
   }
 
   public setScrollMetrics(scrollTop: number, viewportHeight: number): void {
+    this.refreshDisplayRowsForWrapWidth();
     this.virtualizer.setScrollMetrics({ scrollTop, viewportHeight });
+  }
+
+  public setWrapEnabled(enabled: boolean): void {
+    if (this.wrapEnabled === enabled) return;
+
+    this.wrapEnabled = enabled;
+    this.currentWrapColumn = null;
+    this.rebuildDisplayRows();
+    this.resetContentWidthScan();
+    this.lastRenderedRowsKey = "";
+    this.updateVirtualizerRows();
+  }
+
+  public setBlockRows(blockRows: readonly BlockRow[]): void {
+    this.blockRows = blockRows;
+    this.rebuildDisplayRows();
+    this.resetContentWidthScan();
+    this.lastRenderedRowsKey = "";
+    this.updateVirtualizerRows();
   }
 
   public reserveOverlayWidth(side: "left" | "right", width: number): void {
@@ -310,7 +346,7 @@ export class VirtualizedTextView {
 
   public scrollToRow(row: number): void {
     const target = clamp(Math.floor(row), 0, this.visibleLineCount() - 1);
-    this.scrollElement.scrollTop = target * this.getRowHeight();
+    this.scrollElement.scrollTop = this.rowTop(target);
     this.virtualizer.setScrollMetrics({
       scrollTop: this.scrollElement.scrollTop,
       viewportHeight: this.scrollElement.clientHeight,
@@ -340,6 +376,8 @@ export class VirtualizedTextView {
       totalHeight: snapshot.totalSize,
       visibleRange: snapshot.visibleRange,
       mountedRows: this.getMountedRows(),
+      wrapActive: this.wrapEnabled,
+      blockRowCount: this.blockRows.length,
     };
   }
 
@@ -377,7 +415,7 @@ export class VirtualizedTextView {
 
     const row = this.rowForViewportY(metrics.y);
     const column = Math.floor(metrics.x / this.characterWidth());
-    return this.lineStartOffset(row) + clamp(column, 0, this.lineText(row).length);
+    return this.offsetForViewportColumn(row, column);
   }
 
   public textOffsetFromDomBoundary(node: Node, offset: number): number | null {
@@ -481,6 +519,7 @@ export class VirtualizedTextView {
       startOffset: 0,
       endOffset: 0,
       text: "",
+      kind: "text",
       chunks: [],
       top: Number.NaN,
       height: Number.NaN,
@@ -489,6 +528,7 @@ export class VirtualizedTextView {
       chunkKey: "",
       foldMarkerKey: "",
       foldCollapsed: false,
+      displayKind: "text",
       element,
       gutterElement,
       gutterLabelElement,
@@ -507,11 +547,13 @@ export class VirtualizedTextView {
     const startOffset = this.lineStartOffset(item.index);
     const endOffset = this.lineEndOffset(item.index);
     const foldMarker = this.foldMarkerForVirtualRow(item.index);
+    const displayKind = this.displayRowKind(item.index);
 
     this.updateRowElement(row, item, text, startOffset);
     updateMutableRow(row, {
       bufferRow,
       endOffset,
+      kind: displayKind,
       foldCollapsed: foldMarker?.collapsed ?? false,
       foldMarkerKey: foldMarker?.key ?? "",
       height: item.size,
@@ -521,6 +563,7 @@ export class VirtualizedTextView {
       textRevision: this.textRevision,
       top: item.start,
       chunkKey: this.rowChunkKey(text),
+      displayKind,
     });
   }
 
@@ -535,6 +578,12 @@ export class VirtualizedTextView {
     if (row.top !== item.start) {
       row.element.style.transform = `translate3d(0, ${item.start}px, 0)`;
     }
+    if (this.displayRowKind(item.index) === "block") {
+      this.setBlockRowText(row, text, startOffset);
+      this.updateRowFoldPresentation(row, item);
+      return;
+    }
+
     this.updateRowTextChunks(row, text, startOffset);
     this.updateRowFoldPresentation(row, item);
   }
@@ -546,6 +595,7 @@ export class VirtualizedTextView {
     this.foldMap = null;
     this.tokenRangesFollowLastTextEdit = true;
     this.lineStarts = computeLineStarts(nextText);
+    this.rebuildDisplayRows();
     this.clampStoredSelection();
     this.resetContentWidthScan();
     this.updateContentWidth(snapshot.virtualItems);
@@ -572,11 +622,13 @@ export class VirtualizedTextView {
     const startOffset = this.lineStartOffset(item.index);
     const endOffset = this.lineEndOffset(item.index);
     const foldMarker = this.foldMarkerForVirtualRow(item.index);
+    const displayKind = this.displayRowKind(item.index);
 
     this.updateRowElementForSameLineEdit(row, item, text, patch, startOffset);
     updateMutableRow(row, {
       bufferRow: this.bufferRowForVirtualRow(item.index),
       endOffset,
+      kind: displayKind,
       foldCollapsed: foldMarker?.collapsed ?? false,
       foldMarkerKey: foldMarker?.key ?? "",
       height: item.size,
@@ -586,6 +638,7 @@ export class VirtualizedTextView {
       textRevision: this.textRevision,
       top: item.start,
       chunkKey: this.rowChunkKey(text),
+      displayKind,
     });
   }
 
@@ -601,6 +654,12 @@ export class VirtualizedTextView {
     if (row.top !== item.start) {
       row.element.style.transform = `translate3d(0, ${item.start}px, 0)`;
     }
+    if (this.displayRowKind(item.index) === "block") {
+      this.setBlockRowText(row, text, startOffset);
+      this.updateRowFoldPresentation(row, item);
+      return;
+    }
+
     this.updateRowTextForSameLineEdit(row, item, text, patch, startOffset);
     this.updateRowFoldPresentation(row, item);
   }
@@ -683,6 +742,12 @@ export class VirtualizedTextView {
     updateMutableRowChunks(row, [chunk]);
   }
 
+  private setBlockRowText(row: MountedVirtualizedTextRow, text: string, startOffset: number): void {
+    row.element.replaceChildren(row.textNode);
+    if (row.textNode.data !== text) row.textNode.data = text;
+    this.syncDirectRowChunk(row, text, startOffset);
+  }
+
   private setChunkedRowText(
     row: MountedVirtualizedTextRow,
     text: string,
@@ -744,6 +809,7 @@ export class VirtualizedTextView {
   }
 
   private shouldChunkLine(text: string): boolean {
+    if (this.wrapEnabled) return false;
     return text.length > this.longLineChunkThreshold;
   }
 
@@ -844,6 +910,10 @@ export class VirtualizedTextView {
   }
 
   private foldMarkerForVirtualRow(row: number): VirtualizedFoldMarker | null {
+    const displayRow = this.displayRows[row];
+    if (displayRow?.kind === "block") return null;
+    if (displayRow?.kind === "text" && displayRow.sourceStartColumn !== 0) return null;
+
     const bufferRow = this.bufferRowForVirtualRow(row);
     return this.foldMarkers.find((marker) => marker.startRow === bufferRow) ?? null;
   }
@@ -865,6 +935,7 @@ export class VirtualizedTextView {
     const text = this.lineText(item.index);
     const bufferRow = this.bufferRowForVirtualRow(item.index);
     const foldMarker = this.foldMarkerForVirtualRow(item.index);
+    const displayKind = this.displayRowKind(item.index);
     return (
       row.index === item.index &&
       row.bufferRow === bufferRow &&
@@ -874,6 +945,7 @@ export class VirtualizedTextView {
       row.chunkKey === this.rowChunkKey(text) &&
       row.foldMarkerKey === (foldMarker?.key ?? "") &&
       row.foldCollapsed === (foldMarker?.collapsed ?? false) &&
+      row.displayKind === displayKind &&
       row.textRevision === this.textRevision
     );
   }
@@ -946,7 +1018,7 @@ export class VirtualizedTextView {
     for (let row = startIndex; row <= endIndex; row += 1) {
       this.maxVisualColumnsSeen = Math.max(
         this.maxVisualColumnsSeen,
-        visualColumn(this.lineText(row)),
+        visualColumnLength(this.lineText(row), DEFAULT_TAB_SIZE),
       );
     }
   }
@@ -1410,30 +1482,104 @@ export class VirtualizedTextView {
     this.styleEl.textContent = nextRules;
   }
 
+  private rebuildDisplayRows(): void {
+    this.currentWrapColumn = this.wrapColumn();
+    this.displayRows = createDisplayRows({
+      text: this.text,
+      lineStarts: this.lineStarts,
+      visibleLineCount: this.foldVisibleLineCount(),
+      bufferRowForVisibleRow: (row) => this.foldBufferRowForVisibleRow(row),
+      wrapColumn: this.currentWrapColumn,
+      blocks: this.blockRows,
+      tabSize: DEFAULT_TAB_SIZE,
+    });
+  }
+
+  private refreshDisplayRowsForWrapWidth(): void {
+    if (!this.wrapEnabled) return;
+
+    const wrapColumn = this.wrapColumn();
+    if (wrapColumn === this.currentWrapColumn) return;
+
+    this.rebuildDisplayRows();
+    this.resetContentWidthScan();
+    this.lastRenderedRowsKey = "";
+    this.updateVirtualizerRows();
+  }
+
+  private updateVirtualizerRows(): void {
+    this.virtualizer.updateOptions({
+      count: this.visibleLineCount(),
+      rowSizes: this.rowSizes(),
+    });
+  }
+
+  private rowSizes(): readonly number[] | undefined {
+    if (!this.hasVariableRows()) return undefined;
+
+    const rowHeight = this.metrics.rowHeight;
+    return this.displayRows.map((row) => {
+      if (row.kind === "block") return row.heightRows * rowHeight;
+      return rowHeight;
+    });
+  }
+
+  private hasVariableRows(): boolean {
+    return this.displayRows.some((row) => row.kind === "block" && row.heightRows !== 1);
+  }
+
+  private rowTop(row: number): number {
+    const rowSizes = this.rowSizes();
+    if (!rowSizes) return row * this.getRowHeight();
+
+    let top = 0;
+    for (let index = 0; index < row; index += 1) top += rowSizes[index] ?? 0;
+    return top;
+  }
+
+  private wrapColumn(): number | null {
+    if (!this.wrapEnabled) return null;
+
+    return this.horizontalViewportColumns();
+  }
+
+  private displayRowKind(row: number): "text" | "block" {
+    return this.displayRows[row]?.kind ?? "text";
+  }
+
+  private offsetForViewportColumn(row: number, visualColumn: number): number {
+    const displayRow = this.displayRows[row];
+    if (!displayRow) return this.text.length;
+    if (displayRow.kind === "block") return displayRow.startOffset;
+
+    const bufferColumn = visualColumnToBufferColumn(
+      displayRow.text,
+      visualColumn,
+      "nearest",
+      DEFAULT_TAB_SIZE,
+    );
+    return displayRow.startOffset + clamp(bufferColumn, 0, displayRow.text.length);
+  }
+
   private lineStartOffset(row: number): number {
-    return this.bufferLineStartOffset(this.bufferRowForVirtualRow(row));
+    return this.displayRows[row]?.startOffset ?? this.text.length;
   }
 
   private lineEndOffset(row: number): number {
-    return this.bufferLineEndOffset(this.bufferRowForVirtualRow(row));
+    return this.displayRows[row]?.endOffset ?? this.text.length;
   }
 
   private bufferLineStartOffset(row: number): number {
     return this.lineStarts[row] ?? this.text.length;
   }
 
-  private bufferLineEndOffset(row: number): number {
-    const nextLineStart = this.lineStarts[row + 1];
-    if (nextLineStart === undefined) return this.text.length;
-    return Math.max(this.bufferLineStartOffset(row), nextLineStart - 1);
-  }
-
   private lineText(row: number): string {
-    return this.text.slice(this.lineStartOffset(row), this.lineEndOffset(row));
+    return this.displayRows[row]?.text ?? "";
   }
 
   private sameLineEditPatch(edit: TextEdit): SameLineEditPatch | null {
     if (this.foldMap) return null;
+    if (this.wrapEnabled || this.blockRows.length > 0) return null;
     if (edit.from < 0 || edit.to < edit.from || edit.to > this.text.length) return null;
     if (edit.text.includes("\n")) return null;
     if (this.text.slice(edit.from, edit.to).includes("\n")) return null;
@@ -1449,6 +1595,13 @@ export class VirtualizedTextView {
   }
 
   private rowForOffset(offset: number): number {
+    const displayRow = this.displayRows.find((row) => {
+      if (row.kind !== "text") return false;
+      if (offset < row.startOffset) return false;
+      return offset <= row.endOffset;
+    });
+    if (displayRow) return displayRow.index;
+
     return this.virtualRowForBufferRow(this.bufferRowForOffset(offset));
   }
 
@@ -1476,11 +1629,25 @@ export class VirtualizedTextView {
   }
 
   private rowForViewportY(y: number): number {
-    const row = Math.floor((this.scrollElement.scrollTop + y) / this.getRowHeight());
-    return clamp(row, 0, this.visibleLineCount() - 1);
+    const offset = this.scrollElement.scrollTop + y;
+    const rowSizes = this.rowSizes();
+    if (!rowSizes)
+      return clamp(Math.floor(offset / this.getRowHeight()), 0, this.visibleLineCount() - 1);
+
+    let top = 0;
+    for (let row = 0; row < rowSizes.length; row += 1) {
+      top += rowSizes[row] ?? 0;
+      if (offset < top) return row;
+    }
+
+    return this.visibleLineCount() - 1;
   }
 
   private visibleLineCount(): number {
+    return Math.max(1, this.displayRows.length);
+  }
+
+  private foldVisibleLineCount(): number {
     if (!this.foldMap) return this.lineStarts.length;
 
     const hidden = this.foldMap.ranges.reduce((count, range) => {
@@ -1490,13 +1657,28 @@ export class VirtualizedTextView {
   }
 
   private bufferRowForVirtualRow(row: number): number {
-    if (!this.foldMap) return clamp(row, 0, this.lineStarts.length - 1);
+    const displayRow = this.displayRows[row];
+    if (displayRow?.kind === "text") return displayRow.bufferRow;
+    if (displayRow?.kind === "block") return displayRow.anchorBufferRow;
+    return this.foldBufferRowForVisibleRow(row);
+  }
 
+  private foldBufferRowForVisibleRow(row: number): number {
+    if (!this.foldMap) return clamp(row, 0, this.lineStarts.length - 1);
     const point = foldPointToBufferPoint(this.foldMap, asFoldPoint({ row, column: 0 }));
     return clamp(point.row, 0, this.lineStarts.length - 1);
   }
 
   private virtualRowForBufferRow(row: number): number {
+    const match = this.displayRows.find((displayRow) => {
+      return displayRow.kind === "text" && displayRow.bufferRow === row;
+    });
+    if (match) return match.index;
+
+    return this.foldVirtualRowForBufferRow(row);
+  }
+
+  private foldVirtualRowForBufferRow(row: number): number {
     if (!this.foldMap) return clamp(row, 0, this.visibleLineCount() - 1);
 
     const point = bufferPointToFoldPoint(this.foldMap, { row, column: 0 });
@@ -1552,7 +1734,9 @@ export class VirtualizedTextView {
 
     const columnText = this.text.slice(row.startOffset, offset);
     return {
-      left: this.gutterWidth() + visualColumn(columnText) * this.characterWidth(),
+      left:
+        this.gutterWidth() +
+        visualColumnLength(columnText, DEFAULT_TAB_SIZE) * this.characterWidth(),
       top: row.top,
       height: row.height,
     };

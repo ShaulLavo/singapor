@@ -29,7 +29,7 @@ Consolidated validation, design, and measurement tasks.
 - CSS Highlight API paints visible syntax/selection ranges over mounted content and chunks
 - Syntax fold candidates render gutter controls and toggle collapsed FoldMap rows
 - Initial 2D virtualization benchmark complete for 100K-line documents and 50K-character lines via `bun run bench:virtualization` in `packages/editor`
-- Design next layer, likely wrapping, and validate whether it stays independent or needs fusion
+- Display transform core complete for shared invalidation primitives, tab-column mapping, wrap rows, block-row primitives, and virtualizer integration
 - Extend 2D virtualization benchmarks to dense decorations and wider scroll-window scenarios
 
 ## Scheduling Validation

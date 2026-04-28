@@ -159,6 +159,42 @@ describe("VirtualizedTextView", () => {
     expect(scrolledChunk?.textNode.length).toBeLessThanOrEqual(1_000);
   });
 
+  it("mounts wrapped text segments as virtual rows when wrapping is enabled", () => {
+    view.dispose();
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: "test-selection",
+      wrap: true,
+    });
+    mockClientWidth(view.scrollElement, 76);
+    mockViewport(view.scrollElement, 76, 80);
+
+    view.setText("abcdefghij");
+    view.setScrollMetrics(0, 80);
+
+    expect(view.getState().wrapActive).toBe(true);
+    expect(view.getState().totalHeight).toBe(40);
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual(["abcde", "fghij"]);
+    expect(view.textOffsetFromViewportPoint(100, 25)).toBe(10);
+  });
+
+  it("mounts internal block rows with row-unit height", () => {
+    view.setText("abc\ndef");
+    view.setBlockRows([
+      { id: "after-first", anchorBufferRow: 0, placement: "after", heightRows: 2, text: "panel" },
+    ]);
+    view.setScrollMetrics(0, 80);
+
+    const rows = view.getState().mountedRows;
+    expect(view.getState().blockRowCount).toBe(1);
+    expect(view.getState().totalHeight).toBe(80);
+    expect(rows.map((row) => row.kind)).toEqual(["text", "block", "text"]);
+    expect(rows[1]).toMatchObject({ text: "panel", height: 40, startOffset: 3, endOffset: 3 });
+    expect(view.textOffsetFromViewportPoint(100, 25)).toBe(3);
+  });
+
   it("maps chunked DOM boundaries back to document offsets", () => {
     view.dispose();
     view = new VirtualizedTextView(container, {

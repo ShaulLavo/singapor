@@ -13,6 +13,7 @@
   },
   "scripts": {
     "bench:anchors": "bun bench/pieceTable-anchors.ts",
+    "bench:transforms": "bun bench/displayTransforms.ts",
     "bench:fold-map": "bun bench/foldMap.ts",
     "bench:piece-table": "bun bench/pieceTable-insertions.ts",
     "bench:syntax": "bun bench/treeSitter-syntax.ts",

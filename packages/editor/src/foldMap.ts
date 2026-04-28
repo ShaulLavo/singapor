@@ -1,4 +1,5 @@
 import { anchorAfter, anchorBefore, resolveAnchor } from "./pieceTable/anchors";
+import type { InvalidatedRange } from "./displayTransforms";
 import type {
   Anchor as PieceTableAnchor,
   PieceTableEdit,
@@ -30,14 +31,6 @@ export type FoldMap = {
   readonly snapshot: PieceTableSnapshot;
   readonly ranges: readonly AnchorFoldRange[];
 };
-
-export type InvalidatedRange<TPoint extends Point> = {
-  readonly start: TPoint;
-  readonly end: TPoint;
-  readonly lineCountDelta: number;
-};
-
-export type InvalidationSet<TPoint extends Point> = readonly InvalidatedRange<TPoint>[];
 
 export type FoldMapInvalidationReason = "external-edit" | "fold-placeholder" | "fold-expanded";
 

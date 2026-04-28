@@ -1,4 +1,5 @@
 import type { EditorTokenStyle } from "../tokens";
+import type { BlockRow } from "../displayTransforms";
 import type { BrowserTextMetrics } from "./browserMetrics";
 import type { FixedRowVisibleRange } from "./fixedRowVirtualizer";
 
@@ -24,6 +25,8 @@ export type VirtualizedTextViewOptions = {
   readonly highlightRegistry?: HighlightRegistry;
   readonly onFoldToggle?: (marker: VirtualizedFoldMarker) => void;
   readonly onViewportChange?: () => void;
+  readonly wrap?: boolean;
+  readonly blockRows?: readonly BlockRow[];
 };
 
 export type VirtualizedTextChunk = {
@@ -51,6 +54,7 @@ export type VirtualizedTextRow = {
   readonly startOffset: number;
   readonly endOffset: number;
   readonly text: string;
+  readonly kind: "text" | "block";
   readonly chunks: readonly VirtualizedTextChunk[];
   readonly element: HTMLDivElement;
   readonly textNode: Text;
@@ -64,6 +68,8 @@ export type VirtualizedTextViewState = {
   readonly totalHeight: number;
   readonly visibleRange: FixedRowVisibleRange;
   readonly mountedRows: readonly VirtualizedTextRow[];
+  readonly wrapActive: boolean;
+  readonly blockRowCount: number;
 };
 
 export type NativeGeometryValidation = {
@@ -108,6 +114,7 @@ export type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly chunkKey: string;
   readonly foldMarkerKey: string;
   readonly foldCollapsed: boolean;
+  readonly displayKind: "text" | "block";
 };
 
 export type SameLineEditPatch = {

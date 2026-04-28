@@ -492,12 +492,14 @@ export function updateMutableRow(
     readonly startOffset: number;
     readonly endOffset: number;
     readonly text: string;
+    readonly kind: "text" | "block";
     readonly top: number;
     readonly height: number;
     readonly textRevision: number;
     readonly chunkKey: string;
     readonly foldMarkerKey: string;
     readonly foldCollapsed: boolean;
+    readonly displayKind: "text" | "block";
   },
 ): void {
   const mutable = row as {
@@ -506,24 +508,28 @@ export function updateMutableRow(
     startOffset: number;
     endOffset: number;
     text: string;
+    kind: "text" | "block";
     top: number;
     height: number;
     textRevision: number;
     chunkKey: string;
     foldMarkerKey: string;
     foldCollapsed: boolean;
+    displayKind: "text" | "block";
   };
   mutable.index = values.index;
   mutable.bufferRow = values.bufferRow;
   mutable.startOffset = values.startOffset;
   mutable.endOffset = values.endOffset;
   mutable.text = values.text;
+  mutable.kind = values.kind;
   mutable.top = values.top;
   mutable.height = values.height;
   mutable.textRevision = values.textRevision;
   mutable.chunkKey = values.chunkKey;
   mutable.foldMarkerKey = values.foldMarkerKey;
   mutable.foldCollapsed = values.foldCollapsed;
+  mutable.displayKind = values.displayKind;
 }
 
 export function updateMutableRowChunks(

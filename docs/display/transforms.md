@@ -51,9 +51,9 @@ Typed ranges: `InvalidatedRange<T>` with `start`, `end`, `lineCountDelta`.
 - **Parameterized by `T`:** type system enforces coordinate space matching
 - **Empty ranges:** no-op, layer absorbed the edit
 
-FoldMap now implements this protocol with `InvalidatedRange<FoldPoint>` records. The protocol is
-validated for the fold layer, but future wrapping, tab, and block-decoration layers still need
-separate measurements.
+FoldMap implements this protocol with `InvalidatedRange<FoldPoint>` records. Shared transform
+primitives now live in `packages/editor/src/displayTransforms.ts`, including typed invalidations,
+the common layer shape, tab column conversion, wrap rows, and block-row primitives.
 
 ---
 
@@ -83,12 +83,12 @@ placeholder invalidation for surviving boundary edits, expansion invalidation wh
 destroyed, and pass-through invalidation for external edits. This is precise enough to continue to a
 second validation layer instead of collapsing immediately to a monolithic mapper.
 
-### Deferred until after FoldMap
+### Implemented after FoldMap
 
-- Invalidation analysis for wrapping, tab expansion, block decorations
-- Multi-layer round-trip chain design
-- Layout model
-- Whether some transforms must be fused
+- Tab expansion uses fixed `tab-size: 4` math shared with the renderer.
+- Wrapping is represented as transform-produced display rows using monospace measured columns.
+- Block rows are internal transform primitives that occupy row units without creating buffer text.
+- The virtualizer consumes transform-produced rows and supports variable row sizes for block rows.
 
 ---
 

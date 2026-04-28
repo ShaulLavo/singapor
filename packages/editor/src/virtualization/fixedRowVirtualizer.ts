@@ -20,6 +20,7 @@ export type FixedRowVirtualizerSnapshot = {
 export type FixedRowVirtualizerOptions = {
   readonly count: number;
   readonly rowHeight: number;
+  readonly rowSizes?: readonly number[];
   readonly overscan?: number;
   readonly enabled?: boolean;
 };
@@ -84,7 +85,7 @@ export function computeFixedRowVirtualItems(options: {
 }
 
 export class FixedRowVirtualizer {
-  private options: Required<FixedRowVirtualizerOptions>;
+  private options: NormalizedFixedRowVirtualizerOptions;
   private scrollTop = 0;
   private viewportHeight = 0;
   private attached: AttachedScrollElement | null = null;
@@ -99,7 +100,7 @@ export class FixedRowVirtualizer {
   }
 
   public updateOptions(options: Partial<FixedRowVirtualizerOptions>): void {
-    const next = normalizeOptions({ ...this.options, ...options });
+    const next = normalizeOptions({ ...denormalizeOptions(this.options), ...options });
     this.updateCacheForRowHeight(next.rowHeight);
     this.options = next;
     this.emitChange();
@@ -148,13 +149,22 @@ export class FixedRowVirtualizer {
     return {
       scrollTop: this.scrollTop,
       viewportHeight: this.viewportHeight,
-      totalSize: computeFixedRowTotalSize(this.options.count, this.options.rowHeight),
+      totalSize: computeTotalSize(this.options),
       visibleRange,
       virtualItems: this.getVirtualItems(visibleRange),
     };
   }
 
   private getVisibleRange(): FixedRowVisibleRange {
+    if (this.options.rowSizes) {
+      return computeVariableRowVisibleRange({
+        rowSizes: this.options.rowSizes,
+        scrollTop: this.scrollTop,
+        viewportHeight: this.viewportHeight,
+        enabled: this.options.enabled,
+      });
+    }
+
     return computeFixedRowVisibleRange({
       count: this.options.count,
       rowHeight: this.options.rowHeight,
@@ -172,6 +182,8 @@ export class FixedRowVirtualizer {
     }
 
     const window = computeOverscannedRange(count, range, this.options.overscan);
+    if (this.options.rowSizes) return collectVariableVirtualItems(this.options.rowSizes, window);
+
     this.pruneItemCache(window);
     return this.collectVirtualItems(window);
   }
@@ -259,15 +271,108 @@ function createVirtualItem(index: number, rowHeight: number): FixedRowVirtualIte
   };
 }
 
+type NormalizedFixedRowVirtualizerOptions = Required<
+  Omit<FixedRowVirtualizerOptions, "rowSizes">
+> & {
+  readonly rowSizes: readonly number[] | null;
+};
+
 function normalizeOptions(
   options: FixedRowVirtualizerOptions,
-): Required<FixedRowVirtualizerOptions> {
+): NormalizedFixedRowVirtualizerOptions {
+  const count = normalizeCount(options.count);
   return {
-    count: normalizeCount(options.count),
+    count,
     rowHeight: normalizeRowHeight(options.rowHeight),
+    rowSizes: normalizeRowSizes(options.rowSizes, count),
     overscan: normalizeOverscan(options.overscan),
     enabled: options.enabled ?? true,
   };
+}
+
+function denormalizeOptions(
+  options: NormalizedFixedRowVirtualizerOptions,
+): FixedRowVirtualizerOptions {
+  return {
+    ...options,
+    rowSizes: options.rowSizes ?? undefined,
+  };
+}
+
+function computeTotalSize(options: NormalizedFixedRowVirtualizerOptions): number {
+  if (options.rowSizes) return sumRows(options.rowSizes, 0, options.rowSizes.length);
+  return computeFixedRowTotalSize(options.count, options.rowHeight);
+}
+
+function computeVariableRowVisibleRange(options: {
+  readonly rowSizes: readonly number[];
+  readonly scrollTop: number;
+  readonly viewportHeight: number;
+  readonly enabled?: boolean;
+}): FixedRowVisibleRange {
+  const count = options.rowSizes.length;
+  if (options.enabled === false || count === 0) return { start: 0, end: 0 };
+
+  const scrollTop = Math.max(0, normalizeNumber(options.scrollTop));
+  const viewportHeight = Math.max(0, normalizeNumber(options.viewportHeight));
+  const start = rowIndexAtOffset(options.rowSizes, scrollTop);
+  const end = clamp(
+    rowIndexAfterOffset(options.rowSizes, scrollTop + viewportHeight),
+    start + 1,
+    count,
+  );
+  return { start, end };
+}
+
+function collectVariableVirtualItems(
+  rowSizes: readonly number[],
+  range: FixedRowVisibleRange,
+): FixedRowVirtualItem[] {
+  const items: FixedRowVirtualItem[] = [];
+  let start = sumRows(rowSizes, 0, range.start);
+
+  for (let index = range.start; index < range.end; index += 1) {
+    const size = rowSizes[index] ?? DEFAULT_ROW_HEIGHT;
+    items.push({ index, start, size });
+    start += size;
+  }
+
+  return items;
+}
+
+function rowIndexAtOffset(rowSizes: readonly number[], offset: number): number {
+  let top = 0;
+  for (let index = 0; index < rowSizes.length; index += 1) {
+    const bottom = top + rowSizes[index]!;
+    if (offset < bottom) return index;
+    top = bottom;
+  }
+
+  return Math.max(0, rowSizes.length - 1);
+}
+
+function rowIndexAfterOffset(rowSizes: readonly number[], offset: number): number {
+  let top = 0;
+  for (let index = 0; index < rowSizes.length; index += 1) {
+    top += rowSizes[index]!;
+    if (offset <= top) return index + 1;
+  }
+
+  return rowSizes.length;
+}
+
+function sumRows(rowSizes: readonly number[], start: number, end: number): number {
+  let sum = 0;
+  for (let index = start; index < end; index += 1) sum += rowSizes[index] ?? 0;
+  return sum;
+}
+
+function normalizeRowSizes(
+  rowSizes: readonly number[] | undefined,
+  count: number,
+): readonly number[] | null {
+  if (!rowSizes || rowSizes.length !== count) return null;
+  return rowSizes.map(normalizeRowHeight);
 }
 
 function normalizeCount(value: number): number {

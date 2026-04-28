@@ -5,6 +5,7 @@ export {
   setHighlightRegistry,
 } from "./editor";
 export * from "./documentSession";
+export * from "./displayTransforms";
 export * from "./foldMap";
 export * from "./history";
 export * from "./pieceTable";

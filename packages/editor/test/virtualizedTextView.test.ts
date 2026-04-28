@@ -48,12 +48,27 @@ describe("VirtualizedTextView", () => {
     view.setScrollMetrics(0, 100);
 
     const rows = container.querySelectorAll("[data-editor-virtual-row]");
+    const gutterRows = container.querySelectorAll("[data-editor-virtual-gutter-row]");
     expect(rows).toHaveLength(7);
+    expect(gutterRows).toHaveLength(7);
     expect(view.getState()).toMatchObject({
       lineCount: 100_000,
       totalHeight: 2_000_000,
       visibleRange: { start: 0, end: 5 },
     });
+  });
+
+  it("renders gutter rows with CSS counter line numbers", () => {
+    view.setText("alpha\nbeta\ngamma");
+    view.setScrollMetrics(0, 80);
+
+    const firstLabel = container.querySelector(
+      '[data-editor-virtual-gutter-row="0"] .editor-virtualized-line-number',
+    ) as HTMLSpanElement;
+
+    expect(firstLabel).not.toBeNull();
+    expect(firstLabel.textContent).toBe("");
+    expect(firstLabel.style.counterSet).toBe("editor-line 1");
   });
 
   it("updates mounted rows when scrolling", () => {
@@ -104,6 +119,14 @@ describe("VirtualizedTextView", () => {
 
     expect(view.textOffsetFromViewportPoint(8, -5)).toBe(0);
     expect(view.textOffsetFromViewportPoint(8, 45)).toBe(10);
+  });
+
+  it("maps viewport fallback points in the gutter to the line start", () => {
+    view.setText("abc\ndef");
+    view.setScrollMetrics(0, 40);
+    mockViewport(view.scrollElement, 120, 40);
+
+    expect(view.textOffsetFromViewportPoint(8, 25)).toBe(4);
   });
 
   it("returns null for DOM boundaries outside mounted rows", () => {

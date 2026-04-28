@@ -27,6 +27,7 @@ export type VirtualizedTextViewOptions = {
   readonly rowHeight?: number;
   readonly overscan?: number;
   readonly className?: string;
+  readonly gutterWidth?: number;
   readonly selectionHighlightName?: string;
   readonly highlightRegistry?: HighlightRegistry;
 };
@@ -60,6 +61,8 @@ type TokenGroup = {
 };
 
 type MountedVirtualizedTextRow = VirtualizedTextRow & {
+  readonly gutterElement: HTMLDivElement;
+  readonly gutterLabelElement: HTMLSpanElement;
   readonly top: number;
   readonly height: number;
   readonly textRevision: number;
@@ -67,6 +70,8 @@ type MountedVirtualizedTextRow = VirtualizedTextRow & {
 
 const DEFAULT_ROW_HEIGHT = 20;
 const DEFAULT_OVERSCAN = 24;
+// TODO: Size the gutter to the widest visible row marker instead of a constant.
+const DEFAULT_GUTTER_WIDTH = 36;
 const DEFAULT_SELECTION_HIGHLIGHT = "editor-virtualized-selection";
 
 export class VirtualizedTextView {
@@ -74,6 +79,7 @@ export class VirtualizedTextView {
   public readonly inputElement: HTMLTextAreaElement;
 
   private readonly spacer: HTMLDivElement;
+  private readonly gutterElement: HTMLDivElement;
   private readonly caretElement: HTMLDivElement;
   private readonly styleEl: HTMLStyleElement;
   private readonly virtualizer: FixedRowVirtualizer;
@@ -100,6 +106,7 @@ export class VirtualizedTextView {
   public constructor(container: HTMLElement, options: VirtualizedTextViewOptions = {}) {
     const rowHeight = options.rowHeight ?? DEFAULT_ROW_HEIGHT;
     const overscan = options.overscan ?? DEFAULT_OVERSCAN;
+    const gutterWidth = normalizeGutterWidth(options.gutterWidth);
 
     this.highlightRegistry = options.highlightRegistry ?? getDefaultHighlightRegistry();
     this.selectionHighlightName = options.selectionHighlightName ?? DEFAULT_SELECTION_HIGHLIGHT;
@@ -108,12 +115,16 @@ export class VirtualizedTextView {
     this.scrollElement = createScrollElement(container, options.className);
     this.inputElement = createInputElement(container);
     this.spacer = container.ownerDocument.createElement("div");
+    this.gutterElement = container.ownerDocument.createElement("div");
     this.caretElement = container.ownerDocument.createElement("div");
     this.virtualizer = new FixedRowVirtualizer(createVirtualizerOptions(rowHeight, overscan));
 
+    this.scrollElement.style.setProperty("--editor-gutter-width", `${gutterWidth}px`);
     this.spacer.className = "editor-virtualized-spacer";
+    this.gutterElement.className = "editor-virtualized-gutter";
     this.caretElement.className = "editor-virtualized-caret";
     this.caretElement.hidden = true;
+    this.spacer.appendChild(this.gutterElement);
     this.spacer.appendChild(this.caretElement);
     this.scrollElement.appendChild(this.spacer);
     this.scrollElement.appendChild(this.inputElement);
@@ -255,6 +266,7 @@ export class VirtualizedTextView {
 
     this.lastRenderedRowsKey = rowsKey;
     this.spacer.style.height = `${snapshot.totalSize}px`;
+    this.gutterElement.style.height = `${snapshot.totalSize}px`;
     this.updateContentWidth(snapshot.virtualItems);
     this.clearMountedHighlightRanges();
     this.reconcileRows(snapshot.virtualItems);
@@ -290,10 +302,17 @@ export class VirtualizedTextView {
   private createRow(): MountedVirtualizedTextRow {
     const document = this.scrollElement.ownerDocument;
     const element = document.createElement("div");
+    const gutterElement = document.createElement("div");
+    const gutterLabelElement = document.createElement("span");
     const textNode = document.createTextNode("");
 
     element.className = "editor-virtualized-row";
+    gutterElement.className = "editor-virtualized-gutter-row";
+    gutterLabelElement.className = "editor-virtualized-gutter-label editor-virtualized-line-number";
+    gutterLabelElement.setAttribute("aria-hidden", "true");
+    gutterElement.appendChild(gutterLabelElement);
     element.appendChild(textNode);
+    this.gutterElement.appendChild(gutterElement);
     this.spacer.appendChild(element);
 
     return {
@@ -305,6 +324,8 @@ export class VirtualizedTextView {
       height: Number.NaN,
       textRevision: -1,
       element,
+      gutterElement,
+      gutterLabelElement,
       textNode,
     };
   }
@@ -334,6 +355,7 @@ export class VirtualizedTextView {
     text: string,
   ): void {
     if (row.index !== item.index) row.element.dataset.editorVirtualRow = String(item.index);
+    this.updateGutterRowElement(row, item);
     if (row.height !== item.size) {
       row.element.style.height = `${item.size}px`;
       row.element.style.lineHeight = `${item.size}px`;
@@ -342,6 +364,20 @@ export class VirtualizedTextView {
       row.element.style.transform = `translate3d(0, ${item.start}px, 0)`;
     }
     if (row.text !== text) row.textNode.data = text;
+  }
+
+  private updateGutterRowElement(row: MountedVirtualizedTextRow, item: FixedRowVirtualItem): void {
+    if (row.index !== item.index) {
+      row.gutterElement.dataset.editorVirtualGutterRow = String(item.index);
+      row.gutterLabelElement.style.counterSet = `editor-line ${item.index + 1}`;
+    }
+    if (row.height !== item.size) {
+      row.gutterElement.style.height = `${item.size}px`;
+      row.gutterElement.style.lineHeight = `${item.size}px`;
+    }
+    if (row.top !== item.start) {
+      row.gutterElement.style.transform = `translate3d(0, ${item.start}px, 0)`;
+    }
   }
 
   private isRowCurrent(row: MountedVirtualizedTextRow, item: FixedRowVirtualItem): boolean {
@@ -366,7 +402,7 @@ export class VirtualizedTextView {
   }
 
   private removeReusableRows(rows: readonly MountedVirtualizedTextRow[]): void {
-    for (const row of rows) row.element.remove();
+    for (const row of rows) removeRowElements(row);
   }
 
   private resetContentWidthScan(): void {
@@ -428,7 +464,7 @@ export class VirtualizedTextView {
     if (width === this.contentWidth) return;
 
     this.contentWidth = width;
-    this.spacer.style.width = `${width}px`;
+    this.spacer.style.width = `${width + this.gutterWidth()}px`;
   }
 
   private getMountedRows(): readonly VirtualizedTextRow[] {
@@ -528,7 +564,7 @@ export class VirtualizedTextView {
 
     this.caretElement.hidden = false;
     this.caretElement.style.height = `${position.height}px`;
-    this.caretElement.style.transform = `translate(${position.column}ch, ${position.top}px)`;
+    this.caretElement.style.transform = `translate(${position.left}px, ${position.top}px)`;
   }
 
   private clampStoredSelection(): void {
@@ -757,10 +793,16 @@ export class VirtualizedTextView {
     const bottom = Math.max(top, rect.bottom - padding.bottom);
 
     return {
-      x: clamp(clientX, left, right) - left,
+      x: this.viewportTextX(clientX, left, right),
       y: clamp(clientY, top, Math.max(top, bottom - 1)) - top,
       verticalDirection: pointVerticalDirection(clientY, top, bottom),
     };
+  }
+
+  private viewportTextX(clientX: number, left: number, right: number): number {
+    const viewportX = clamp(clientX, left, right) - left;
+    const scrolledX = viewportX + this.scrollElement.scrollLeft;
+    return Math.max(0, scrolledX - this.gutterWidth());
   }
 
   private estimatedCharacterWidth(): number {
@@ -776,6 +818,11 @@ export class VirtualizedTextView {
     return row?.size ?? DEFAULT_ROW_HEIGHT;
   }
 
+  private gutterWidth(): number {
+    const value = this.scrollElement.style.getPropertyValue("--editor-gutter-width");
+    return parseCssPixels(value) ?? DEFAULT_GUTTER_WIDTH;
+  }
+
   private mountedOffsetRange(): { readonly start: number; readonly end: number } | null {
     const rows = this.getMountedRows();
     const first = rows[0];
@@ -789,7 +836,7 @@ export class VirtualizedTextView {
   }
 
   private caretPosition(offset: number): {
-    readonly column: number;
+    readonly left: number;
     readonly top: number;
     readonly height: number;
   } | null {
@@ -799,11 +846,17 @@ export class VirtualizedTextView {
 
     const columnText = this.text.slice(row.startOffset, offset);
     return {
-      column: visualColumn(columnText),
+      left: this.gutterWidth() + visualColumn(columnText) * this.estimatedCharacterWidth(),
       top: rowIndex * this.getRowHeight(),
       height: this.getRowHeight(),
     };
   }
+}
+
+function normalizeGutterWidth(width: number | undefined): number {
+  if (width === undefined) return DEFAULT_GUTTER_WIDTH;
+  if (!Number.isFinite(width) || width < 0) return DEFAULT_GUTTER_WIDTH;
+  return width;
 }
 
 function createVirtualizerOptions(rowHeight: number, overscan: number): FixedRowVirtualizerOptions {
@@ -893,6 +946,11 @@ function updateMutableRow(
   mutable.top = values.top;
   mutable.height = values.height;
   mutable.textRevision = values.textRevision;
+}
+
+function removeRowElements(row: MountedVirtualizedTextRow): void {
+  row.element.remove();
+  row.gutterElement.remove();
 }
 
 function scrollElementPadding(element: HTMLElement): {

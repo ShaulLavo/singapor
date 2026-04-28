@@ -6,7 +6,7 @@ import {
   parseWithTreeSitter,
 } from "../src/syntax/treeSitter/workerClient.ts";
 
-describe("tree-sitter worker client", () => {
+describe.skipIf(typeof Worker === "undefined")("tree-sitter worker client", () => {
   afterEach(async () => {
     await disposeTreeSitterWorker();
   });
@@ -30,7 +30,8 @@ describe("tree-sitter worker client", () => {
       languageId: "typescript",
       startIndex: 6,
       oldEndIndex: 12,
-      newText: "value",
+      newEndIndex: 11,
+      insertedText: "value",
       startPosition: { row: 0, column: 6 },
       oldEndPosition: { row: 0, column: 12 },
       newEndPosition: { row: 0, column: 11 },

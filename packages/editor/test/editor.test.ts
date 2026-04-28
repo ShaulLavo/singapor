@@ -435,7 +435,7 @@ describe("Editor", () => {
     it("continues dragging selection when pointer hit-testing leaves the text", () => {
       const session = createDocumentSession("abcd");
       editor.attachSession(session);
-      mockEditorViewport(editorRoot(), 80, 40);
+      mockEditorViewport(editorRoot(), 120, 40);
 
       const textNode = rowTextNode();
       const originalCaretRangeFromPoint = (
@@ -465,14 +465,14 @@ describe("Editor", () => {
       document.dispatchEvent(
         new MouseEvent("mousemove", {
           cancelable: true,
-          clientX: 80,
+          clientX: 120,
           clientY: 10,
         }),
       );
       document.dispatchEvent(
         new MouseEvent("mouseup", {
           cancelable: true,
-          clientX: 80,
+          clientX: 120,
           clientY: 10,
         }),
       );

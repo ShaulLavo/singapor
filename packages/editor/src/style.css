@@ -19,7 +19,6 @@
 
   flex: 1;
   overflow: auto;
-  padding: 16px;
   font-size: 13px;
   font-family: monospace;
   white-space: pre;
@@ -52,11 +51,12 @@
   --editor-syntax-type-parameter: #5eead4;
   --editor-syntax-variable: #e4e4e7;
   --editor-syntax-variable-builtin: #fdba74;
+  --editor-gutter-style: hebrew;
+  --editor-gutter-width: 36px;
 
   flex: 1;
   position: relative;
   overflow: auto;
-  padding: 16px;
   font-size: 13px;
   font-family: monospace;
   white-space: pre;
@@ -70,8 +70,41 @@
   position: relative;
 }
 
-.editor-virtualized-row {
+.editor-virtualized-gutter {
+  background: #1e1e1e;
   left: 0;
+  pointer-events: none;
+  position: sticky;
+  width: var(--editor-gutter-width);
+  z-index: 2;
+}
+
+.editor-virtualized-gutter-row {
+  align-items: center;
+  display: flex;
+  justify-content: flex-end;
+  left: 0;
+  padding-right: 4px;
+  position: absolute;
+  right: 0;
+  top: 0;
+  user-select: none;
+}
+
+.editor-virtualized-gutter-label {
+  color: #71717a;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: inherit;
+  tab-size: 4;
+}
+
+.editor-virtualized-line-number::before {
+  content: counter(editor-line, var(--editor-gutter-style, decimal));
+}
+
+.editor-virtualized-row {
+  left: var(--editor-gutter-width);
   min-width: max-content;
   position: absolute;
   right: 0;

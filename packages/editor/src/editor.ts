@@ -313,7 +313,7 @@ export class Editor {
     this.nativeInputGeneration += 1;
   };
 
-  private handleNativeInputInputCapture = (_event: InputEvent): void => {
+  private handleNativeInputInputCapture = (): void => {
     this.nativeInputGeneration += 1;
   };
 

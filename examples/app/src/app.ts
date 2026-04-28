@@ -1,4 +1,4 @@
-import { Editor, type DocumentSessionChange } from "@editor/core";
+import { Editor } from "@editor/core";
 import "@editor/core/style.css";
 import { createEditorPane } from "./components/editorPane.ts";
 import { el } from "./components/dom.ts";
@@ -108,9 +108,8 @@ export function mountApp(): void {
 
   let controller: DirectoryController | null = null;
   const editor = new Editor(editorPane.element, {
-    onChange: (state, change) => {
+    onChange: (state) => {
       controller?.updateStatus(state);
-      if (change) reportTimings(change);
     },
   });
   controller = new DirectoryController(topBar, sidebar, statusBar, editor);
@@ -135,7 +134,6 @@ function restoreCachedDirectory(controller: AppController, topBar: TopBar): void
       }
     })
     .catch(() => {
-      console.error("Failed to restore cached directory");
       topBar.setMessage("Failed to restore directory");
       return undefined;
     });
@@ -148,7 +146,6 @@ async function openDirectoryFromPicker(controller: AppController, topBar: TopBar
     await controller.openDirectory(handle);
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled the picker
-    console.error("Failed to open directory");
     topBar.setMessage("Failed to open directory");
     return;
   }
@@ -157,8 +154,8 @@ async function openDirectoryFromPicker(controller: AppController, topBar: TopBar
 async function cacheDirectoryHandle(handle: FileSystemDirectoryHandle): Promise<void> {
   try {
     await cacheHandle(handle);
-  } catch (err) {
-    console.warn("Failed to cache directory handle", err);
+  } catch {
+    return;
   }
 }
 
@@ -166,21 +163,7 @@ async function refreshOpenDirectory(controller: AppController, topBar: TopBar): 
   try {
     await controller.refreshDirectory();
   } catch {
-    console.error("Failed to refresh directory");
     topBar.setMessage("Failed to refresh directory");
     return;
   }
-}
-
-function reportTimings(change: DocumentSessionChange): void {
-  if (change.timings.length === 0) return;
-
-  console.groupCollapsed(`[editor timings] ${change.kind}`);
-  console.table(
-    change.timings.map((timing) => ({
-      phase: timing.name,
-      durationMs: Number(timing.durationMs.toFixed(3)),
-    })),
-  );
-  console.groupEnd();
 }

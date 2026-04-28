@@ -49,8 +49,7 @@ async function readDir(handle: FileSystemDirectoryHandle): Promise<TreeEntry[]> 
     for await (const [name, child] of handle.entries()) {
       entries.push(createTreeEntry(name, child));
     }
-  } catch (err) {
-    console.error(`Failed to read directory "${handle.name}":`, err);
+  } catch {
     return [];
   }
 
@@ -109,8 +108,7 @@ function renderDirectoryEntry(
   label.addEventListener("click", async () => {
     try {
       await toggle();
-    } catch (err) {
-      console.error(`Failed to expand directory "${entry.name}":`, err);
+    } catch {
       label.classList.add("error");
       return;
     }
@@ -139,8 +137,7 @@ function renderFileEntry(
     try {
       const file = await entry.handle.getFile();
       await onFileSelect(prefix + entry.name, await file.text());
-    } catch (err) {
-      console.error(`Failed to read file "${entry.name}":`, err);
+    } catch {
       label.classList.add("error");
       return;
     }

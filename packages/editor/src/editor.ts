@@ -27,8 +27,6 @@ type MouseSelectionDrag = {
   clientY: number;
 };
 
-type EditorInputDebugDetails = Record<string, unknown>;
-
 const MOUSE_SELECTION_SCROLL_ZONE_PX = 40;
 const MOUSE_SELECTION_MAX_SCROLL_PX = 24;
 const MOUSE_SELECTION_MIN_SCROLL_PX = 2;
@@ -287,16 +285,8 @@ export class Editor {
     });
     this.el.addEventListener("paste", this.handlePaste);
     this.el.addEventListener("keydown", this.handleKeyDown);
-    this.el.ownerDocument.addEventListener("keydown", this.handleDocumentKeyDownCapture, {
-      capture: true,
-    });
-    this.view.inputElement.addEventListener("keydown", this.handleNativeInputKeyDownCapture, {
-      capture: true,
-    });
     this.el.addEventListener("keyup", this.syncSessionSelectionFromDom);
     this.el.addEventListener("mouseup", this.syncSessionSelectionFromDom);
-    this.view.inputElement.addEventListener("focus", this.handleInputFocus);
-    this.view.inputElement.addEventListener("blur", this.handleInputBlur);
     this.el.ownerDocument.addEventListener("selectionchange", this.syncCustomSelectionFromDom);
   }
 
@@ -313,85 +303,23 @@ export class Editor {
     });
     this.el.removeEventListener("paste", this.handlePaste);
     this.el.removeEventListener("keydown", this.handleKeyDown);
-    this.el.ownerDocument.removeEventListener("keydown", this.handleDocumentKeyDownCapture, {
-      capture: true,
-    });
-    this.view.inputElement.removeEventListener("keydown", this.handleNativeInputKeyDownCapture, {
-      capture: true,
-    });
     this.el.removeEventListener("keyup", this.syncSessionSelectionFromDom);
     this.el.removeEventListener("mouseup", this.syncSessionSelectionFromDom);
-    this.view.inputElement.removeEventListener("focus", this.handleInputFocus);
-    this.view.inputElement.removeEventListener("blur", this.handleInputBlur);
     this.el.ownerDocument.removeEventListener("selectionchange", this.syncCustomSelectionFromDom);
     this.stopMouseSelectionDrag();
   }
 
-  private handleInputFocus = (): void => {
-    this.debugInput("input.focus");
-  };
-
-  private handleInputBlur = (): void => {
-    this.debugInput("input.blur");
-  };
-
-  private handleDocumentKeyDownCapture = (event: KeyboardEvent): void => {
-    this.debugInput("document.keydown.capture", {
-      defaultPrevented: event.defaultPrevented,
-      key: event.key,
-      path: describeEventPath(event),
-      target: describeNode(event.target instanceof Node ? event.target : null),
-    });
-  };
-
-  private handleNativeInputKeyDownCapture = (event: KeyboardEvent): void => {
-    this.debugInput("native.keydown.capture", {
-      defaultPrevented: event.defaultPrevented,
-      inputSelectionEnd: this.view.inputElement.selectionEnd,
-      inputSelectionStart: this.view.inputElement.selectionStart,
-      inputValueLength: this.view.inputElement.value.length,
-      key: event.key,
-      readOnlyAttribute: this.view.inputElement.hasAttribute("readonly"),
-    });
-
-    queueMicrotask(() => {
-      this.debugInput("native.keydown.microtask", {
-        defaultPrevented: event.defaultPrevented,
-        inputSelectionEnd: this.view.inputElement.selectionEnd,
-        inputSelectionStart: this.view.inputElement.selectionStart,
-        inputValueLength: this.view.inputElement.value.length,
-        key: event.key,
-      });
-    });
-  };
-
-  private handleNativeInputBeforeInputCapture = (event: InputEvent): void => {
+  private handleNativeInputBeforeInputCapture = (_event: InputEvent): void => {
     this.nativeInputGeneration += 1;
-    this.debugInput("native.beforeinput.capture", {
-      data: event.data,
-      defaultPrevented: event.defaultPrevented,
-      inputType: event.inputType,
-      isComposing: event.isComposing,
-    });
   };
 
-  private handleNativeInputInputCapture = (event: InputEvent): void => {
+  private handleNativeInputInputCapture = (_event: InputEvent): void => {
     this.nativeInputGeneration += 1;
-    this.debugInput("native.input.capture", {
-      data: event.data,
-      defaultPrevented: event.defaultPrevented,
-      inputType: event.inputType,
-      inputValue: this.view.inputElement.value,
-      isComposing: event.isComposing,
-    });
   };
 
   private handleMouseDown = (event: MouseEvent): void => {
-    this.debugInput("mouse.down", this.debugMouseEvent(event));
-    if (!this.session) {
-      this.debugInput("mouse.down.ignored", { reason: "no-session" });
-      return;
-    }
+    if (!this.session) return;
+
     this.view.focusInput();
     if (event.detail >= 4) {
       this.selectFullDocument(event, "input.quadClick");
@@ -399,11 +327,7 @@ export class Editor {
     }
 
     const offset = this.textOffsetFromMouseEvent(event);
-    this.debugInput("mouse.offset", { offset });
-    if (offset === null) {
-      this.debugInput("mouse.down.ignored", { reason: "no-offset" });
-      return;
-    }
+    if (offset === null) return;
 
     if (event.detail === 3) {
       this.selectLineAtOffset(event, offset);
@@ -419,14 +343,8 @@ export class Editor {
   };
 
   private startMouseSelectionDrag(event: MouseEvent, offset: number): void {
-    if (event.button !== 0) {
-      this.debugInput("mouse.drag.ignored", { reason: "non-primary-button", button: event.button });
-      return;
-    }
-    if (event.detail !== 1) {
-      this.debugInput("mouse.drag.ignored", { reason: "not-single-click", detail: event.detail });
-      return;
-    }
+    if (event.button !== 0) return;
+    if (event.detail !== 1) return;
 
     event.preventDefault();
     this.view.focusInput();
@@ -436,7 +354,6 @@ export class Editor {
       clientX: event.clientX,
       clientY: event.clientY,
     };
-    this.debugInput("mouse.drag.start", { offset });
     this.syncCustomSelectionHighlight(offset, offset);
     this.el.ownerDocument.addEventListener("mousemove", this.updateMouseSelectionDrag);
     this.el.ownerDocument.addEventListener("mouseup", this.finishMouseSelectionDrag);
@@ -470,11 +387,6 @@ export class Editor {
     const change = this.session.setSelection(drag.anchorOffset, offset);
     const syncDomSelection = drag.anchorOffset === offset;
     this.useSessionSelectionForNextInput = true;
-    this.debugInput("mouse.drag.finish", {
-      anchorOffset: drag.anchorOffset,
-      headOffset: offset,
-      syncDomSelection,
-    });
     this.applySessionChange(change, "input.selection", start, { syncDomSelection });
   };
 
@@ -599,21 +511,10 @@ export class Editor {
   }
 
   private handleBeforeInput = (event: InputEvent): void => {
-    this.debugInput("beforeinput", {
-      data: event.data,
-      inputType: event.inputType,
-      isComposing: event.isComposing,
-    });
-    if (!this.session) {
-      this.debugInput("beforeinput.ignored", { reason: "no-session" });
-      return;
-    }
+    if (!this.session) return;
 
     const text = event.data ?? "";
-    if (event.inputType !== "insertText" && event.inputType !== "insertLineBreak") {
-      this.debugInput("beforeinput.ignored", { reason: "unsupported-input-type" });
-      return;
-    }
+    if (event.inputType !== "insertText" && event.inputType !== "insertLineBreak") return;
 
     const start = eventStartMs(event);
     const selectionChange = this.selectionChangeBeforeEdit();
@@ -624,7 +525,6 @@ export class Editor {
       "input.beforeinput",
       start,
     );
-    this.debugInput("beforeinput.applied", { inserted });
   };
 
   private handlePaste = (event: ClipboardEvent): void => {
@@ -644,20 +544,7 @@ export class Editor {
   };
 
   private handleKeyDown = (event: KeyboardEvent): void => {
-    this.debugInput("key.down", {
-      key: event.key,
-      code: event.code,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
-      path: describeEventPath(event),
-      altKey: event.altKey,
-      shiftKey: event.shiftKey,
-      target: describeNode(event.target instanceof Node ? event.target : null),
-    });
-    if (!this.session) {
-      this.debugInput("key.down.ignored", { reason: "no-session" });
-      return;
-    }
+    if (!this.session) return;
 
     if (this.handleUndoRedo(event)) return;
     if (event.key === "Backspace") {
@@ -693,17 +580,10 @@ export class Editor {
   private scheduleKeyboardTextFallback(event: KeyboardEvent, text: string): void {
     const start = eventStartMs(event);
     const nativeInputGeneration = this.nativeInputGeneration;
-    this.debugInput("key.fallback.scheduled", { text });
 
     this.el.ownerDocument.defaultView?.setTimeout(() => {
-      if (!this.session) {
-        this.debugInput("key.fallback.cancelled", { reason: "no-session", text });
-        return;
-      }
-      if (this.nativeInputGeneration !== nativeInputGeneration) {
-        this.debugInput("key.fallback.cancelled", { reason: "native-input", text });
-        return;
-      }
+      if (!this.session) return;
+      if (this.nativeInputGeneration !== nativeInputGeneration) return;
 
       const selectionChange = this.selectionChangeBeforeEdit();
       this.view.inputElement.value = "";
@@ -712,7 +592,6 @@ export class Editor {
         "input.keydownFallback",
         start,
       );
-      this.debugInput("key.fallback.applied", { text });
     }, 0);
   }
 
@@ -728,22 +607,10 @@ export class Editor {
   }
 
   private syncSessionSelectionFromDom = (_event: Event): void => {
-    if (!this.session) {
-      this.debugInput("dom.selection-sync.ignored", { reason: "no-session" });
-      return;
-    }
-    if (this.mouseSelectionDrag) {
-      this.debugInput("dom.selection-sync.ignored", { reason: "mouse-drag" });
-      return;
-    }
-    if (this.useSessionSelectionForNextInput) {
-      this.debugInput("dom.selection-sync.ignored", { reason: "session-selection-authoritative" });
-      return;
-    }
-    if (this.isInputFocused()) {
-      this.debugInput("dom.selection-sync.ignored", { reason: "input-focused" });
-      return;
-    }
+    if (!this.session) return;
+    if (this.mouseSelectionDrag) return;
+    if (this.useSessionSelectionForNextInput) return;
+    if (this.isInputFocused()) return;
 
     const start = nowMs();
     const change = this.updateSessionSelectionFromDom();
@@ -753,7 +620,6 @@ export class Editor {
     const timedChange = appendTiming(change, "input.selection", start);
     this.sessionOptions.onChange?.(timedChange);
     this.notifyChangeWithTiming(timedChange);
-    this.debugInput("dom.selection-sync.applied");
   };
 
   private updateSessionSelectionFromDom(): DocumentSessionChange | null {
@@ -761,13 +627,9 @@ export class Editor {
 
     const readStart = nowMs();
     const offsets = this.readDomSelectionOffsets();
-    if (!offsets) {
-      this.debugInput("dom.selection-read.empty");
-      return null;
-    }
+    if (!offsets) return null;
 
     this.syncCustomSelectionHighlight(offsets.anchorOffset, offsets.headOffset);
-    this.debugInput("dom.selection-read", offsets);
     return appendTiming(
       this.session.setSelection(offsets.anchorOffset, offsets.headOffset),
       "editor.readDomSelection",
@@ -777,16 +639,11 @@ export class Editor {
 
   private selectionChangeBeforeEdit(): DocumentSessionChange | null {
     if (this.isInputFocused()) {
-      this.debugInput("selection.before-edit.skipped", { reason: "input-focused" });
       this.useSessionSelectionForNextInput = false;
       return null;
     }
-    if (!this.useSessionSelectionForNextInput) {
-      this.debugInput("selection.before-edit.read-dom");
-      return this.updateSessionSelectionFromDom();
-    }
+    if (!this.useSessionSelectionForNextInput) return this.updateSessionSelectionFromDom();
 
-    this.debugInput("selection.before-edit.skipped", { reason: "session-selection-authoritative" });
     this.useSessionSelectionForNextInput = false;
     return null;
   }
@@ -816,12 +673,7 @@ export class Editor {
   private renderSessionChange(change: DocumentSessionChange): void {
     const edit = change.edits[0];
     if (change.kind === "selection" || change.kind === "none") return;
-    this.debugInput("render.session-change", {
-      editCount: change.edits.length,
-      edits: change.edits,
-      kind: change.kind,
-      nextTextLength: change.text.length,
-    });
+
     if (change.kind === "edit" && edit && change.edits.length === 1) {
       this.applyEdit(edit, projectTokensThroughEdit(this.tokens, edit, this.text));
       return;
@@ -909,11 +761,6 @@ export class Editor {
 
     if (this.isInputFocused()) {
       this.syncCustomSelectionHighlight(start, end);
-      this.debugInput("dom.selection-sync.skipped", {
-        end,
-        reason: "input-focused",
-        start,
-      });
       return;
     }
 
@@ -921,7 +768,6 @@ export class Editor {
     domSelection?.removeAllRanges();
     if (range) domSelection?.addRange(range);
     this.syncCustomSelectionHighlight(start, end);
-    this.debugInput("dom.selection-sync.rendered", { end, start });
   }
 
   private readDomSelectionOffsets(): { anchorOffset: number; headOffset: number } | null {
@@ -937,16 +783,8 @@ export class Editor {
 
   private syncCustomSelectionFromDom = (): void => {
     if (!this.session) return;
-    if (this.useSessionSelectionForNextInput) {
-      this.debugInput("dom.custom-selection.ignored", {
-        reason: "session-selection-authoritative",
-      });
-      return;
-    }
-    if (this.isInputFocused()) {
-      this.debugInput("dom.custom-selection.ignored", { reason: "input-focused" });
-      return;
-    }
+    if (this.useSessionSelectionForNextInput) return;
+    if (this.isInputFocused()) return;
 
     const offsets = this.readDomSelectionOffsets();
     if (!offsets) return;
@@ -964,55 +802,6 @@ export class Editor {
 
   private isInputFocused(): boolean {
     return this.el.ownerDocument.activeElement === this.view.inputElement;
-  }
-
-  private debugMouseEvent(event: MouseEvent): EditorInputDebugDetails {
-    return {
-      button: event.button,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      detail: event.detail,
-      target: describeNode(event.target instanceof Node ? event.target : null),
-    };
-  }
-
-  private debugInput(label: string, details: EditorInputDebugDetails = {}): void {
-    console.log(
-      "[editor input]",
-      JSON.stringify({
-        label,
-        ...this.debugInputState(),
-        ...details,
-      }),
-    );
-  }
-
-  private debugInputState(): EditorInputDebugDetails {
-    return {
-      activeElement: describeElement(this.el.ownerDocument.activeElement),
-      documentId: this.documentId,
-      domSelection: describeSelection(this.el.ownerDocument.getSelection()),
-      inputFocused: this.isInputFocused(),
-      inputReadOnly: this.view.inputElement.readOnly,
-      sessionSelection: this.debugSessionSelection(),
-      textLength: this.getText().length,
-      useSessionSelectionForNextInput: this.useSessionSelectionForNextInput,
-    };
-  }
-
-  private debugSessionSelection(): EditorInputDebugDetails | null {
-    if (!this.session) return null;
-
-    const selection = this.session.getSelections().selections[0];
-    if (!selection) return null;
-
-    const resolved = resolveSelection(this.session.getSnapshot(), selection);
-    return {
-      anchorOffset: resolved.anchorOffset,
-      endOffset: resolved.endOffset,
-      headOffset: resolved.headOffset,
-      startOffset: resolved.startOffset,
-    };
   }
 
   private domBoundaryToTextOffset(node: Node, offset: number): number | null {
@@ -1144,44 +933,6 @@ function isWordBeforeOffset(text: string, offset: number): boolean {
   const previous = previousCodePointStart(text, offset);
   if (previous === null) return false;
   return isWordCodePointAt(text, previous);
-}
-
-function describeElement(element: Element | null): string | null {
-  if (!element) return null;
-
-  const id = element.id ? `#${element.id}` : "";
-  const className = typeof element.className === "string" ? element.className : "";
-  const classes = className ? `.${className.trim().replaceAll(/\s+/g, ".")}` : "";
-  return `${element.tagName.toLowerCase()}${id}${classes}`;
-}
-
-function describeNode(node: Node | null): string | null {
-  if (!node) return null;
-  if (node instanceof Element) return describeElement(node);
-  if (node.nodeType === Node.TEXT_NODE) return "#text";
-  return node.nodeName;
-}
-
-function describeSelection(selection: Selection | null): EditorInputDebugDetails | null {
-  if (!selection || selection.rangeCount === 0) return null;
-
-  return {
-    anchorNode: describeNode(selection.anchorNode),
-    anchorOffset: selection.anchorOffset,
-    focusNode: describeNode(selection.focusNode),
-    focusOffset: selection.focusOffset,
-    isCollapsed: selection.isCollapsed,
-    rangeCount: selection.rangeCount,
-  };
-}
-
-function describeEventPath(event: Event): readonly (string | null)[] {
-  return event
-    .composedPath()
-    .slice(0, 5)
-    .map((node) => {
-      return node instanceof Node ? describeNode(node) : String(node);
-    });
 }
 
 function elementBoundaryToTextOffset(offset: number, textLength: number): number {

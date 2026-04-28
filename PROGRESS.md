@@ -1,11 +1,11 @@
 # Progress
 
-Last updated: 2026-04-27
+Last updated: 2026-04-28
 
 ## Current Status
 
-Phase 3 selection core is implemented locally on top of the Phase 1 storage foundation and Phase 2
-anchor system.
+Phase 2 validation is complete. Phase 3 selection core is implemented locally on top of the Phase 1
+storage foundation and Phase 2 anchor system.
 
 Latest committed Phase 1 work:
 
@@ -28,6 +28,8 @@ Validation after Phase 2:
 - `bun run lint` passed in `packages/editor`
 - `bun run bench:piece-table` passed in `packages/editor`
 - `bun run bench:anchors` passed in `packages/editor`
+- Follow-up liveness validation for delete/retype, replacement, boundary clamping, and undo/redo passed in `packages/editor`
+- Anchor benchmark now reports 10K/50K/100K-line resolution, reverse-index rebuild cost, invisible-piece delete/retype cost, and forced-GC memory samples
 
 Validation after Phase 3:
 
@@ -100,11 +102,16 @@ Validation after Phase 3:
   - boundary creation and bias
   - deleted liveness
   - replacement bias
+  - real delete-and-retype liveness
+  - single and batched replacement liveness
+  - boundary clamping at document edges
+  - undo/redo liveness transitions
   - surrogate-pair boundary rejection
   - empty-snapshot real anchors
   - indexed resolver parity with the linear baseline
   - batch edits
 - Added `bench:anchors` for 10K, 50K, and 100K-line anchor resolution/index-cost measurements.
+- Extended `bench:anchors` with reverse-index node counts, rebuild timing, invisible-piece retention counts, delete/retype timing, and forced-GC memory samples.
 
 ### Phase 3: Selection Model
 

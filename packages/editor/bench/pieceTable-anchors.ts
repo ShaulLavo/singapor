@@ -3,27 +3,117 @@ import { performance } from "node:perf_hooks";
 import {
   anchorAfter,
   createPieceTableSnapshot,
+  debugPieceTable,
+  deleteFromPieceTable,
   insertIntoPieceTable,
   resolveAnchor,
+  type PieceTableSnapshot,
   type RealAnchor,
 } from "../src/pieceTable";
+import { buildReverseIndex } from "../src/pieceTable/reverseIndex.ts";
+
+import type { PieceTableReverseIndexNode } from "../src/pieceTable/pieceTableTypes.ts";
+
+type MemorySample = {
+  heapUsedMb: number;
+  heapTotalMb: number;
+  rssMb: number;
+};
+
+type PieceCounts = {
+  visible: number;
+  invisible: number;
+};
 
 type Sample = {
   lines: number;
   pieces: number;
+  visiblePieces: number;
+  invisiblePieces: number;
+  reverseIndexNodes: number;
+  rebuiltReverseIndexNodes: number;
   anchors: number;
   textLength: number;
   buildMs: number;
+  reverseIndexRebuildMs: number;
+  invisibleValidationMs: number;
   averageInsertionMs: number;
   averageAnchorCreateMs: number;
   averageResolveMs: number;
-  heapUsedMb: number;
+  averageDeleteRetypeMs: number;
+  memoryStart: MemorySample;
+  memoryAfterBuild: MemorySample;
+  memoryAfterAnchors: MemorySample;
+  memoryAfterInvisibleValidation: MemorySample;
+  memoryAfterForcedGc: MemorySample;
+  forcedGcAvailable: boolean;
 };
 
 const LINE_COUNTS = [10_000, 50_000, 100_000] as const;
 const ANCHOR_STRIDE = 1_000;
+const DELETE_RETYPE_EDITS = 1_000;
 
 const formatMs = (value: number): string => `${value.toFixed(4)}ms`;
+
+const toMb = (bytes: number): number => bytes / 1024 / 1024;
+
+const readMemory = (): MemorySample => {
+  const usage = process.memoryUsage();
+  return {
+    heapUsedMb: toMb(usage.heapUsed),
+    heapTotalMb: toMb(usage.heapTotal),
+    rssMb: toMb(usage.rss),
+  };
+};
+
+const forceGc = (): boolean => {
+  if (typeof Bun !== "undefined" && typeof Bun.gc === "function") {
+    Bun.gc(true);
+    return true;
+  }
+
+  if (typeof globalThis.gc === "function") {
+    globalThis.gc();
+    return true;
+  }
+
+  return false;
+};
+
+const formatMemory = (memory: MemorySample): string =>
+  `heap ${memory.heapUsedMb.toFixed(2)} / ${memory.heapTotalMb.toFixed(2)} MiB, rss ${memory.rssMb.toFixed(2)} MiB`;
+
+const countReverseIndexNodes = (root: PieceTableReverseIndexNode | null): number => {
+  let count = 0;
+  const stack: PieceTableReverseIndexNode[] = [];
+  if (root) stack.push(root);
+
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+
+    count++;
+    if (node.left) stack.push(node.left);
+    if (node.right) stack.push(node.right);
+  }
+
+  return count;
+};
+
+const countPieces = (snapshot: PieceTableSnapshot): PieceCounts => {
+  const counts: PieceCounts = { visible: 0, invisible: 0 };
+
+  for (const piece of debugPieceTable(snapshot)) {
+    if (piece.visible) {
+      counts.visible++;
+      continue;
+    }
+
+    counts.invisible++;
+  }
+
+  return counts;
+};
 
 const buildSnapshot = (lineCount: number) => {
   let snapshot = createPieceTableSnapshot("");
@@ -39,7 +129,7 @@ const buildSnapshot = (lineCount: number) => {
   };
 };
 
-const createAnchors = (snapshot: ReturnType<typeof createPieceTableSnapshot>): RealAnchor[] => {
+const createAnchors = (snapshot: PieceTableSnapshot): RealAnchor[] => {
   const anchors: RealAnchor[] = [];
 
   for (let offset = 0; offset <= snapshot.length; offset += ANCHOR_STRIDE) {
@@ -49,41 +139,122 @@ const createAnchors = (snapshot: ReturnType<typeof createPieceTableSnapshot>): R
   return anchors;
 };
 
+const rebuildReverseIndex = (snapshot: PieceTableSnapshot) => {
+  const start = performance.now();
+  const root = buildReverseIndex(snapshot.root);
+
+  return {
+    reverseIndexRebuildMs: performance.now() - start,
+    rebuiltReverseIndexNodes: countReverseIndexNodes(root),
+  };
+};
+
+const deleteRetypeOffset = (snapshot: PieceTableSnapshot, editIndex: number): number => {
+  const span = Math.max(1, snapshot.length - 1);
+  return Math.floor(((editIndex + 1) * span) / (DELETE_RETYPE_EDITS + 1));
+};
+
+const validateInvisiblePieces = (snapshot: PieceTableSnapshot) => {
+  let next = snapshot;
+  const start = performance.now();
+
+  for (let edit = 0; edit < DELETE_RETYPE_EDITS && next.length > 0; edit++) {
+    const offset = deleteRetypeOffset(next, edit);
+    next = deleteFromPieceTable(next, offset, 1);
+    next = insertIntoPieceTable(next, offset, "x");
+  }
+
+  const duration = performance.now() - start;
+
+  return {
+    snapshot: next,
+    invisibleValidationMs: duration,
+    averageDeleteRetypeMs: duration / DELETE_RETYPE_EDITS,
+  };
+};
+
+const measureResolves = (snapshot: PieceTableSnapshot, anchors: readonly RealAnchor[]): number => {
+  const start = performance.now();
+
+  for (const anchor of anchors) resolveAnchor(snapshot, anchor);
+
+  return performance.now() - start;
+};
+
 const measure = (lineCount: number): Sample => {
+  const forcedGcAvailable = forceGc();
+  const memoryStart = readMemory();
   const { snapshot, buildMs } = buildSnapshot(lineCount);
   if (!snapshot.reverseIndexRoot) throw new Error("expected snapshot-owned reverse index");
+
+  forceGc();
+  const memoryAfterBuild = readMemory();
+  const index = rebuildReverseIndex(snapshot);
+  forceGc();
 
   const anchorStart = performance.now();
   const anchors = createAnchors(snapshot);
   const anchorCreateMs = performance.now() - anchorStart;
+  const resolveMs = measureResolves(snapshot, anchors);
+  const memoryAfterAnchors = readMemory();
 
-  const resolveStart = performance.now();
-  for (const anchor of anchors) resolveAnchor(snapshot, anchor);
-  const resolveMs = performance.now() - resolveStart;
+  const invisibleValidation = validateInvisiblePieces(snapshot);
+  const memoryAfterInvisibleValidation = readMemory();
+  forceGc();
+  const memoryAfterForcedGc = readMemory();
+  const counts = countPieces(invisibleValidation.snapshot);
 
   return {
     lines: lineCount,
-    pieces: snapshot.pieceCount,
+    pieces: invisibleValidation.snapshot.pieceCount,
+    visiblePieces: counts.visible,
+    invisiblePieces: counts.invisible,
+    reverseIndexNodes: countReverseIndexNodes(invisibleValidation.snapshot.reverseIndexRoot),
+    rebuiltReverseIndexNodes: index.rebuiltReverseIndexNodes,
     anchors: anchors.length,
-    textLength: snapshot.length,
+    textLength: invisibleValidation.snapshot.length,
     buildMs,
+    reverseIndexRebuildMs: index.reverseIndexRebuildMs,
+    invisibleValidationMs: invisibleValidation.invisibleValidationMs,
     averageInsertionMs: buildMs / lineCount,
     averageAnchorCreateMs: anchorCreateMs / anchors.length,
     averageResolveMs: resolveMs / anchors.length,
-    heapUsedMb: process.memoryUsage().heapUsed / 1024 / 1024,
+    averageDeleteRetypeMs: invisibleValidation.averageDeleteRetypeMs,
+    memoryStart,
+    memoryAfterBuild,
+    memoryAfterAnchors,
+    memoryAfterInvisibleValidation,
+    memoryAfterForcedGc,
+    forcedGcAvailable,
   };
 };
 
 const printSample = (sample: Sample): void => {
   console.log(`anchor benchmark: ${sample.lines.toLocaleString()} lines`);
-  console.log(`pieces: ${sample.pieces}`);
+  console.log(
+    `pieces: ${sample.pieces} (${sample.visiblePieces} visible, ${sample.invisiblePieces} invisible)`,
+  );
+  console.log(`reverse index nodes: ${sample.reverseIndexNodes}`);
+  console.log(`rebuilt reverse index nodes: ${sample.rebuiltReverseIndexNodes}`);
   console.log(`anchors: ${sample.anchors}`);
   console.log(`text length: ${sample.textLength}`);
-  console.log(`snapshot build with index: ${formatMs(sample.buildMs)}`);
+  console.log(`snapshot build with incremental index: ${formatMs(sample.buildMs)}`);
+  console.log(`reverse index rebuild: ${formatMs(sample.reverseIndexRebuildMs)}`);
+  console.log(
+    `delete/retype invisible-piece validation: ${formatMs(sample.invisibleValidationMs)}`,
+  );
   console.log(`average insertion with index: ${formatMs(sample.averageInsertionMs)}`);
   console.log(`average anchor create: ${formatMs(sample.averageAnchorCreateMs)}`);
   console.log(`average indexed resolve: ${formatMs(sample.averageResolveMs)}`);
-  console.log(`heap used: ${sample.heapUsedMb.toFixed(2)} MiB`);
+  console.log(`average delete/retype edit: ${formatMs(sample.averageDeleteRetypeMs)}`);
+  console.log(`forced GC available: ${sample.forcedGcAvailable ? "yes" : "no"}`);
+  console.log(`memory start: ${formatMemory(sample.memoryStart)}`);
+  console.log(`memory after build + GC: ${formatMemory(sample.memoryAfterBuild)}`);
+  console.log(`memory after anchors/resolves: ${formatMemory(sample.memoryAfterAnchors)}`);
+  console.log(
+    `memory after invisible validation: ${formatMemory(sample.memoryAfterInvisibleValidation)}`,
+  );
+  console.log(`memory after forced GC: ${formatMemory(sample.memoryAfterForcedGc)}`);
 };
 
 for (const lineCount of LINE_COUNTS) {

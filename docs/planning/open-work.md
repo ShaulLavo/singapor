@@ -2,26 +2,11 @@
 
 Consolidated validation, design, and measurement tasks.
 
-## Blocking Implementation (Phase 2)
+## Completed Validation (Phase 2)
 
-- Add `Piece.visible` and convert delete from physical removal to invisible-piece marking
-- Implement `subtreeVisibleLength` aggregate on treap nodes
-- Switch user-facing document length/offset prefix sums to visible length
-- Implement persistent balanced BST reverse index keyed by `(buffer, piece.start)` intervals
-- Implement bridging: reverse index to treap node to prefix-sum walk
-- Verify atomic snapshot production
-- Verify indexed resolution matches linear-scan baseline
-
-## Anchor Validation
-
-- Deletion/bias against real patterns: delete-and-retype, replace, multi-cursor, boundary clamping
-- Gap-boundary resolution: delete word, line, everything
-- Replacement: delete "abc", insert "xyz", verify bias
-- Boundary clamping at document edges
-- Sentinel vs real anchor at boundaries
-- Piece-boundary creation: left bias chooses left piece end; right bias chooses right piece start
-- Invisible pieces remain resolvable after delete and across undo/redo
-- Surrogate-pair enforcement and fuzz testing
+- Invisible-piece deletion, `subtreeVisibleLength`, visible-offset reads/edits, persistent reverse index, and indexed-vs-linear resolution are implemented and covered by tests.
+- Anchor liveness is validated for delete-and-retype, single replacement, batched replacement, boundary clamping, sentinels, piece-boundary bias, surrogate-pair enforcement, fuzz scenarios, and undo/redo snapshot swaps.
+- `bench:anchors` covers 10K, 50K, and 100K-line files with resolution timing, reverse-index rebuild timing, invisible-piece delete/retype timing, reverse-index/invisible-piece counts, memory samples, and forced-GC samples.
 
 ## Coordinate Validation
 
@@ -61,9 +46,8 @@ Consolidated validation, design, and measurement tasks.
 
 ## Undo/Redo Validation
 
-- Liveness transitions across undo/redo with interleaved edits
 - Rapid undo/redo performance
-- Create, delete, undo, redo, undo — verify liveness toggles
+- Interleaved multi-entry history validation once worker transactions own edit boundaries
 - Decide final ownership boundary for history once worker transactions are introduced
 
 ## Scale Validation

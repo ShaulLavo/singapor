@@ -6,7 +6,13 @@ describe("MinimapWorkerRenderer", () => {
   it("ignores updates before initialization", () => {
     const renderer = new MinimapWorkerRenderer();
 
-    renderer.setDocument({ text: "a", lineStarts: [0], tokens: [], selections: [], decorations: [] });
+    renderer.setDocument({
+      text: "a",
+      lineStarts: [0],
+      tokens: [],
+      selections: [],
+      decorations: [],
+    });
     renderer.updateViewport({
       scrollTop: 0,
       scrollLeft: 0,

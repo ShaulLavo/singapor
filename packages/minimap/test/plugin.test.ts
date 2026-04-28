@@ -9,9 +9,9 @@ import { createMinimapPlugin } from "../src/plugin";
 
 describe("createMinimapPlugin", () => {
   it("registers a view contribution factory", () => {
-    const registerViewContribution = vi.fn<EditorPluginContext["registerViewContribution"]>(
-      () => ({ dispose: vi.fn() }),
-    );
+    const registerViewContribution = vi.fn<EditorPluginContext["registerViewContribution"]>(() => ({
+      dispose: vi.fn(),
+    }));
     const plugin = createMinimapPlugin({ enabled: false });
 
     const disposable = plugin.activate({

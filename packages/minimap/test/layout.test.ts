@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  computeFrameLayout,
-  computeRenderLayout,
-  yForLineNumber,
-} from "../src/layout";
+import { computeFrameLayout, computeRenderLayout, yForLineNumber } from "../src/layout";
 import { resolveMinimapOptions } from "../src/options";
 import { RenderMinimap, type MinimapRenderLayout, type MinimapViewport } from "../src/types";
 

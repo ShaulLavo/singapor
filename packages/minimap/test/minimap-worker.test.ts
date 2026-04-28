@@ -9,9 +9,7 @@ describe("minimap worker", () => {
   });
 
   it("routes renderer errors to error responses", async () => {
-    const postMessage = vi
-      .spyOn(globalThis, "postMessage")
-      .mockImplementation(() => undefined);
+    const postMessage = vi.spyOn(globalThis, "postMessage").mockImplementation(() => undefined);
     await import("../src/minimap.worker");
 
     const onmessage = globalThis.onmessage as ((event: MessageEvent) => void) | null;
@@ -34,9 +32,7 @@ describe("minimap worker", () => {
   });
 
   it("does not post a render response before initialization", async () => {
-    const postMessage = vi
-      .spyOn(globalThis, "postMessage")
-      .mockImplementation(() => undefined);
+    const postMessage = vi.spyOn(globalThis, "postMessage").mockImplementation(() => undefined);
     await import("../src/minimap.worker");
 
     const onmessage = globalThis.onmessage as ((event: MessageEvent) => void) | null;

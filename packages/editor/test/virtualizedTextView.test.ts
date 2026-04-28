@@ -206,6 +206,7 @@ describe("VirtualizedTextView", () => {
     expect(rowZeroAfter.textNode.data).toBe("aXbc");
     expect(rowOneAfter.textNode).toBe(rowOneBefore.textNode);
     expect(rowOneAfter.startOffset).toBe(5);
+    expect(view.textOffsetFromDomBoundary(rowOneAfter.textNode, 1)).toBe(6);
     expect(replaceData).toHaveBeenCalledWith(1, 0, "X");
   });
 
@@ -287,8 +288,7 @@ describe("VirtualizedTextView", () => {
     view.setScrollMetrics(0, 80);
     view.setTokens([{ start: 2, end: 10, style: { color: "#ff0000" } }]);
 
-    const tokenHighlightName = tokenHighlightNames()[0]!;
-    const ranges = [...highlightsMap.get(tokenHighlightName)!];
+    const ranges = tokenHighlightRanges();
     const rows = view.getState().mountedRows;
 
     expect(ranges).toHaveLength(2);
@@ -322,11 +322,51 @@ describe("VirtualizedTextView", () => {
     expect(ranges).toHaveLength(1);
   });
 
+  it("repaints token highlights only for rows with changed local segments", () => {
+    view.setText("aa\nbb");
+    view.setScrollMetrics(0, 40);
+    view.setTokens([
+      { start: 0, end: 2, style: { color: "#ff0000" } },
+      { start: 3, end: 5, style: { color: "#ff0000" } },
+    ]);
+
+    const rowOne = view.getState().mountedRows.find((row) => row.index === 1)!;
+    const preserved = tokenHighlightRangeForNode(rowOne.textNode);
+    expect(preserved).toBeDefined();
+
+    view.applyEdit({ from: 1, to: 1, text: "X" }, "aXa\nbb");
+    view.setTokens([
+      { start: 0, end: 1, style: { color: "#ff0000" } },
+      { start: 1, end: 3, style: { color: "#00ff00" } },
+      { start: 4, end: 6, style: { color: "#ff0000" } },
+    ]);
+
+    expect([...preserved!.highlight]).toContain(preserved!.range);
+    expect(preserved!.range.startContainer).toBe(rowOne.textNode);
+    expect(preserved!.range.startOffset).toBe(0);
+    expect(preserved!.range.endOffset).toBe(2);
+  });
+
   it("does not repaint when the token list is unchanged", () => {
     const tokens = [{ start: 0, end: 5, style: { color: "#ff0000" } }];
     view.setText("world");
     view.setScrollMetrics(0, 20);
     view.setTokens(tokens);
+
+    const addCount = highlightAdds;
+    const deleteCount = highlightDeletes;
+    highlightClears = 0;
+    view.setTokens([{ start: 0, end: 5, style: { color: "#ff0000" } }]);
+
+    expect(highlightClears).toBe(0);
+    expect(highlightAdds).toBe(addCount);
+    expect(highlightDeletes).toBe(deleteCount);
+  });
+
+  it("treats empty token style fields as unchanged", () => {
+    view.setText("world");
+    view.setScrollMetrics(0, 20);
+    view.setTokens([{ start: 0, end: 5, style: { color: "#ff0000", textDecoration: "" } }]);
 
     const addCount = highlightAdds;
     const deleteCount = highlightDeletes;
@@ -465,6 +505,22 @@ function lineStartOffsets(lines: readonly string[]): number[] {
 
 function tokenHighlightNames(): string[] {
   return [...highlightsMap.keys()].filter((name) => name.includes("-token-"));
+}
+
+function tokenHighlightRanges(): Range[] {
+  return tokenHighlightNames().flatMap((name) => [...highlightsMap.get(name)!]);
+}
+
+function tokenHighlightRangeForNode(
+  node: Text,
+): { readonly highlight: Highlight; readonly range: Range } | undefined {
+  for (const name of tokenHighlightNames()) {
+    const highlight = highlightsMap.get(name)!;
+    const range = [...highlight].find((candidate) => candidate.startContainer === node);
+    if (range) return { highlight, range };
+  }
+
+  return undefined;
 }
 
 function mockViewport(element: HTMLElement, width: number, height: number): void {

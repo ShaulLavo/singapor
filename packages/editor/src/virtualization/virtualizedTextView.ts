@@ -101,6 +101,16 @@ type TokenGroup = {
   readonly name: string;
   readonly highlight: Highlight;
   readonly style: EditorTokenStyle;
+  readonly styleKey: string;
+  readonly rowSlotId: number;
+};
+
+type TokenRowSegment = {
+  readonly chunk: VirtualizedTextChunk;
+  readonly start: number;
+  readonly end: number;
+  readonly style: EditorTokenStyle;
+  readonly styleKey: string;
 };
 
 type MountedVirtualizedTextRow = VirtualizedTextRow & {
@@ -112,6 +122,7 @@ type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly top: number;
   readonly height: number;
   readonly textRevision: number;
+  readonly tokenHighlightSlotId: number;
   readonly chunkKey: string;
   readonly foldMarkerKey: string;
   readonly foldCollapsed: boolean;
@@ -168,8 +179,9 @@ export class VirtualizedTextView {
   private foldMap: FoldMap | null = null;
   private foldMarkers: readonly VirtualizedFoldMarker[] = [];
   private tokenGroups = new Map<string, TokenGroup>();
-  private tokenHighlightNames: string[] = [];
+  private rowTokenSignatures = new Map<number, string>();
   private nextTokenGroupId = 0;
+  private nextTokenHighlightSlotId = 0;
   private selectionStart: number | null = null;
   private selectionEnd: number | null = null;
   private lastRenderedRowsKey = "";
@@ -241,6 +253,7 @@ export class VirtualizedTextView {
     this.lineStarts = computeLineStarts(text);
     this.foldMap = foldMapMatchesText(this.foldMap, text) ? this.foldMap : null;
     this.clampStoredSelection();
+    this.rowTokenSignatures.clear();
     this.lastRenderedRowsKey = "";
     this.resetContentWidthScan();
     this.virtualizer.updateOptions({ count: this.visibleLineCount() });
@@ -248,6 +261,7 @@ export class VirtualizedTextView {
 
   public setFoldMap(foldMap: FoldMap | null): void {
     this.foldMap = foldMapMatchesText(foldMap, this.text) ? foldMap : null;
+    this.rowTokenSignatures.clear();
     this.lastRenderedRowsKey = "";
     this.virtualizer.updateOptions({ count: this.visibleLineCount() });
   }
@@ -421,7 +435,6 @@ export class VirtualizedTextView {
     this.spacer.style.height = `${snapshot.totalSize}px`;
     this.gutterElement.style.height = `${snapshot.totalSize}px`;
     this.updateContentWidth(snapshot.virtualItems);
-    this.clearMountedHighlightRanges();
     this.reconcileRows(snapshot.virtualItems);
     this.renderTokenHighlights();
     this.renderSelectionHighlight();
@@ -490,6 +503,7 @@ export class VirtualizedTextView {
       top: Number.NaN,
       height: Number.NaN,
       textRevision: -1,
+      tokenHighlightSlotId: this.nextTokenHighlightSlotId++,
       chunkKey: "",
       foldMarkerKey: "",
       foldCollapsed: false,
@@ -626,6 +640,7 @@ export class VirtualizedTextView {
   ): void {
     if (item.index !== patch.rowIndex) {
       if (row.text !== text) this.updateRowTextChunks(row, text, startOffset);
+      if (row.text === text) this.syncRowChunkOffsets(row, startOffset);
       return;
     }
 
@@ -641,6 +656,15 @@ export class VirtualizedTextView {
 
     row.textNode.replaceData(patch.localFrom, patch.deleteLength, patch.text);
     this.syncDirectRowChunk(row, text, startOffset);
+  }
+
+  private syncRowChunkOffsets(row: MountedVirtualizedTextRow, startOffset: number): void {
+    const chunks = row.chunks.map((chunk) => ({
+      ...chunk,
+      startOffset: startOffset + chunk.localStart,
+      endOffset: startOffset + chunk.localEnd,
+    }));
+    updateMutableRowChunks(row, chunks);
   }
 
   private updateRowTextChunks(
@@ -901,7 +925,10 @@ export class VirtualizedTextView {
   }
 
   private removeReusableRows(rows: readonly MountedVirtualizedTextRow[]): void {
-    for (const row of rows) removeRowElements(row);
+    for (const row of rows) {
+      this.deleteTokenGroupsForRow(row.tokenHighlightSlotId);
+      removeRowElements(row);
+    }
   }
 
   private resetContentWidthScan(): void {
@@ -966,7 +993,7 @@ export class VirtualizedTextView {
     this.spacer.style.width = `${width + this.gutterWidth()}px`;
   }
 
-  private getMountedRows(): readonly VirtualizedTextRow[] {
+  private getMountedRows(): readonly MountedVirtualizedTextRow[] {
     return [...this.rowElements.values()].sort((a, b) => a.index - b.index);
   }
 
@@ -1121,46 +1148,90 @@ export class VirtualizedTextView {
   }
 
   private renderTokenHighlights(): void {
-    const previousRanges = this.captureTokenHighlightRanges();
     if (!this.highlightRegistry || this.tokens.length === 0 || this.text.length === 0) {
-      this.deleteCapturedTokenRanges(previousRanges);
+      this.clearTokenHighlights();
       return;
     }
 
     const mountedRows = this.getMountedRows();
-    const mountedRange = mountedOffsetRange(mountedRows);
-    if (!mountedRange) {
-      this.deleteCapturedTokenRanges(previousRanges);
-      return;
+    const segmentsByRow = this.tokenSegmentsForRows(mountedRows);
+    let groupsChanged = false;
+    for (const row of mountedRows) {
+      groupsChanged =
+        this.reconcileTokenHighlightsForRow(
+          row,
+          segmentsByRow.get(row.tokenHighlightSlotId) ?? [],
+        ) || groupsChanged;
     }
 
-    for (const token of this.tokens) {
-      if (!rangesIntersect(token.start, token.end, mountedRange.start, mountedRange.end)) continue;
-      this.addTokenRanges(token, mountedRows);
-    }
+    if (!groupsChanged) return;
 
-    this.deleteCapturedTokenRanges(previousRanges);
     this.rebuildStyleRules();
   }
 
-  private addTokenRanges(token: EditorToken, mountedRows: readonly VirtualizedTextRow[]): void {
+  private reconcileTokenHighlightsForRow(
+    row: MountedVirtualizedTextRow,
+    segments: readonly TokenRowSegment[],
+  ): boolean {
+    const signature = tokenRowSignature(row, segments);
+    if (this.rowTokenSignatures.get(row.tokenHighlightSlotId) === signature) return false;
+
+    const previousRanges = this.captureTokenHighlightRangesForRow(row.tokenHighlightSlotId);
+    const usedStyleKeys = this.addTokenSegmentsForRow(row, segments);
+    this.deleteCapturedTokenRanges(previousRanges);
+    const removed = this.removeUnusedTokenGroupsForRow(row.tokenHighlightSlotId, usedStyleKeys);
+    this.rowTokenSignatures.set(row.tokenHighlightSlotId, signature);
+    return previousRanges.size > 0 || usedStyleKeys.size > 0 || removed;
+  }
+
+  private tokenSegmentsForRows(
+    rows: readonly MountedVirtualizedTextRow[],
+  ): Map<number, TokenRowSegment[]> {
+    const segmentsByRow = new Map<number, TokenRowSegment[]>();
+    const mountedRange = mountedOffsetRange(rows);
+    if (!mountedRange) return segmentsByRow;
+
+    for (const token of this.tokens) {
+      this.appendTokenSegmentsForMountedRows(segmentsByRow, rows, mountedRange, token);
+    }
+
+    return segmentsByRow;
+  }
+
+  private appendTokenSegmentsForMountedRows(
+    segmentsByRow: Map<number, TokenRowSegment[]>,
+    rows: readonly MountedVirtualizedTextRow[],
+    mountedRange: OffsetRange,
+    token: EditorToken,
+  ): void {
     const style = normalizeTokenStyle(token.style);
     if (!style) return;
 
     const range = this.clampedTokenRange(token);
     if (!range) return;
+    if (!rangesIntersect(range.start, range.end, mountedRange.start, mountedRange.end)) return;
 
-    const firstRowIndex = firstIntersectingMountedRow(mountedRows, range.start, range.end);
+    const firstRowIndex = firstIntersectingMountedRow(rows, range.start, range.end);
     if (firstRowIndex === -1) return;
 
-    const group = this.ensureTokenGroup(style);
-    if (!group) return;
-
-    const document = this.scrollElement.ownerDocument;
-    for (let index = firstRowIndex; index < mountedRows.length; index += 1) {
-      const row = mountedRows[index]!;
+    const styleKey = serializeTokenStyle(style);
+    for (let index = firstRowIndex; index < rows.length; index += 1) {
+      const row = rows[index]!;
       if (row.startOffset >= range.end) break;
-      this.addTokenRangeToRow(document, group.highlight, range.start, range.end, row);
+      this.appendTokenSegmentsForRow(segmentsByRow, row, range, style, styleKey);
+    }
+  }
+
+  private appendTokenSegmentsForRow(
+    segmentsByRow: Map<number, TokenRowSegment[]>,
+    row: MountedVirtualizedTextRow,
+    range: OffsetRange,
+    style: EditorTokenStyle,
+    styleKey: string,
+  ): void {
+    const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId);
+    for (const chunk of row.chunks) {
+      appendTokenSegmentForChunk(segments, chunk, range, style, styleKey);
     }
   }
 
@@ -1172,43 +1243,55 @@ export class VirtualizedTextView {
     return { start, end };
   }
 
-  private addTokenRangeToRow(
-    document: Document,
-    highlight: Highlight,
-    start: number,
-    end: number,
-    row: VirtualizedTextRow,
-  ): void {
-    if (end <= row.startOffset || start >= row.endOffset) return;
+  private addTokenSegmentsForRow(
+    row: MountedVirtualizedTextRow,
+    segments: readonly TokenRowSegment[],
+  ): Set<string> {
+    const usedStyleKeys = new Set<string>();
+    const document = this.scrollElement.ownerDocument;
+    for (const segment of segments) {
+      const group = this.ensureTokenGroup(row, segment.styleKey, segment.style);
+      if (!group) continue;
 
-    for (const chunk of row.chunks) {
-      addTokenRangeToChunk(document, highlight, chunk, start, end);
+      usedStyleKeys.add(segment.styleKey);
+      addTokenRangeToChunk(document, group.highlight, segment.chunk, segment.start, segment.end);
     }
+
+    return usedStyleKeys;
   }
 
-  private ensureTokenGroup(style: EditorTokenStyle): TokenGroup | null {
-    const styleKey = serializeTokenStyle(style);
-    const existing = this.tokenGroups.get(styleKey);
+  private ensureTokenGroup(
+    row: MountedVirtualizedTextRow,
+    styleKey: string,
+    style: EditorTokenStyle,
+  ): TokenGroup | null {
+    const key = tokenGroupKey(row.tokenHighlightSlotId, styleKey);
+    const existing = this.tokenGroups.get(key);
     if (existing) return existing;
 
     const name = `${this.selectionHighlightName}-token-${this.nextTokenGroupId++}`;
     const highlight = new Highlight();
     if (!highlight) return null;
 
-    const group = { name, highlight, style };
-    this.tokenGroups.set(styleKey, group);
-    this.tokenHighlightNames.push(name);
+    const group = {
+      name,
+      highlight,
+      style,
+      styleKey,
+      rowSlotId: row.tokenHighlightSlotId,
+    };
+    this.tokenGroups.set(key, group);
     this.highlightRegistry?.set(name, group.highlight);
     return group;
   }
 
   private clearTokenHighlights(): void {
-    for (const name of this.tokenHighlightNames) {
-      this.highlightRegistry?.delete(name);
+    for (const group of this.tokenGroups.values()) {
+      this.highlightRegistry?.delete(group.name);
     }
 
     this.tokenGroups.clear();
-    this.tokenHighlightNames = [];
+    this.rowTokenSignatures.clear();
     this.nextTokenGroupId = 0;
     this.rebuildStyleRules();
   }
@@ -1236,19 +1319,17 @@ export class VirtualizedTextView {
 
   private removeUnusedTokenGroups(styleKeys: ReadonlySet<string>): void {
     let removed = false;
-    for (const [styleKey, group] of this.tokenGroups) {
-      if (styleKeys.has(styleKey)) continue;
+    for (const [key, group] of this.tokenGroups) {
+      if (styleKeys.has(group.styleKey)) continue;
 
       this.highlightRegistry?.delete(group.name);
-      this.tokenGroups.delete(styleKey);
+      this.tokenGroups.delete(key);
+      this.rowTokenSignatures.delete(group.rowSlotId);
       removed = true;
     }
 
     if (!removed) return;
 
-    this.tokenHighlightNames = this.tokenHighlightNames.filter((name) => {
-      return [...this.tokenGroups.values()].some((group) => group.name === name);
-    });
     this.rebuildStyleRules();
   }
 
@@ -1262,20 +1343,12 @@ export class VirtualizedTextView {
     });
   }
 
-  private clearMountedHighlightRanges(): void {
-    this.clearTokenHighlightRanges();
-    this.clearSelectionHighlightRanges();
-  }
-
-  private clearTokenHighlightRanges(): void {
-    for (const group of this.tokenGroups.values()) {
-      group.highlight.clear();
-    }
-  }
-
-  private captureTokenHighlightRanges(): Map<TokenGroup, readonly AbstractRange[]> {
+  private captureTokenHighlightRangesForRow(
+    rowSlotId: number,
+  ): Map<TokenGroup, readonly AbstractRange[]> {
     const ranges = new Map<TokenGroup, readonly AbstractRange[]>();
     for (const group of this.tokenGroups.values()) {
+      if (group.rowSlotId !== rowSlotId) continue;
       ranges.set(group, [...group.highlight]);
     }
 
@@ -1290,6 +1363,37 @@ export class VirtualizedTextView {
         group.highlight.delete(range);
       }
     }
+  }
+
+  private removeUnusedTokenGroupsForRow(
+    rowSlotId: number,
+    styleKeys: ReadonlySet<string>,
+  ): boolean {
+    let removed = false;
+    for (const [key, group] of this.tokenGroups) {
+      if (group.rowSlotId !== rowSlotId) continue;
+      if (styleKeys.has(group.styleKey)) continue;
+
+      this.highlightRegistry?.delete(group.name);
+      this.tokenGroups.delete(key);
+      removed = true;
+    }
+
+    return removed;
+  }
+
+  private deleteTokenGroupsForRow(rowSlotId: number): void {
+    let removed = false;
+    for (const [key, group] of this.tokenGroups) {
+      if (group.rowSlotId !== rowSlotId) continue;
+
+      this.highlightRegistry?.delete(group.name);
+      this.tokenGroups.delete(key);
+      removed = true;
+    }
+
+    this.rowTokenSignatures.delete(rowSlotId);
+    if (removed) this.rebuildStyleRules();
   }
 
   private clearSelectionHighlightRanges(): void {
@@ -1599,22 +1703,34 @@ function createInputElement(container: HTMLElement): HTMLTextAreaElement {
 }
 
 function editorTokensEqual(left: readonly EditorToken[], right: readonly EditorToken[]): boolean {
-  if (left.length !== right.length) return false;
+  if (left === right) return true;
 
-  return left.every((token, index) => {
-    const rightToken = right[index];
-    if (!rightToken) return false;
-    if (token.start !== rightToken.start || token.end !== rightToken.end) return false;
-    return tokenStylesEqual(token, rightToken);
-  });
+  const length = left.length;
+  if (length !== right.length) return false;
+
+  for (let index = 0; index < length; index += 1) {
+    const leftToken = left[index]!;
+    const rightToken = right[index]!;
+    if (leftToken === rightToken) continue;
+    if (leftToken.start !== rightToken.start || leftToken.end !== rightToken.end) return false;
+    if (!tokenStylesEqual(leftToken, rightToken)) return false;
+  }
+
+  return true;
 }
 
 function tokenStylesEqual(left: EditorToken, right: EditorToken): boolean {
-  const leftStyle = normalizeTokenStyle(left.style);
-  const rightStyle = normalizeTokenStyle(right.style);
-  if (!leftStyle || !rightStyle) return leftStyle === rightStyle;
+  const leftStyle = left.style;
+  const rightStyle = right.style;
+  if (leftStyle === rightStyle) return true;
 
-  return serializeTokenStyle(leftStyle) === serializeTokenStyle(rightStyle);
+  return (
+    (leftStyle.color || undefined) === (rightStyle.color || undefined) &&
+    (leftStyle.backgroundColor || undefined) === (rightStyle.backgroundColor || undefined) &&
+    (leftStyle.fontStyle || undefined) === (rightStyle.fontStyle || undefined) &&
+    (leftStyle.fontWeight || undefined) === (rightStyle.fontWeight || undefined) &&
+    (leftStyle.textDecoration || undefined) === (rightStyle.textDecoration || undefined)
+  );
 }
 
 function computeLineStarts(text: string): number[] {
@@ -1696,6 +1812,58 @@ function firstIntersectingMountedRow(
   const row = rows[result];
   if (!row || row.startOffset >= end) return -1;
   return result;
+}
+
+function getOrCreateTokenSegments(
+  segmentsByRow: Map<number, TokenRowSegment[]>,
+  rowSlotId: number,
+): TokenRowSegment[] {
+  const existing = segmentsByRow.get(rowSlotId);
+  if (existing) return existing;
+
+  const segments: TokenRowSegment[] = [];
+  segmentsByRow.set(rowSlotId, segments);
+  return segments;
+}
+
+function appendTokenSegmentForChunk(
+  segments: TokenRowSegment[],
+  chunk: VirtualizedTextChunk,
+  range: OffsetRange,
+  style: EditorTokenStyle,
+  styleKey: string,
+): void {
+  if (!rangesIntersect(range.start, range.end, chunk.startOffset, chunk.endOffset)) return;
+
+  segments.push({
+    chunk,
+    start: Math.max(range.start, chunk.startOffset),
+    end: Math.min(range.end, chunk.endOffset),
+    style,
+    styleKey,
+  });
+}
+
+function tokenRowSignature(
+  row: MountedVirtualizedTextRow,
+  segments: readonly TokenRowSegment[],
+): string {
+  const parts = [`${row.chunkKey}:${row.text.length}`];
+  for (const segment of segments) {
+    parts.push(tokenSegmentSignature(segment));
+  }
+
+  return parts.join("|");
+}
+
+function tokenSegmentSignature(segment: TokenRowSegment): string {
+  const localStart = segment.start - segment.chunk.startOffset;
+  const localEnd = segment.end - segment.chunk.startOffset;
+  return `${segment.styleKey}:${segment.chunk.localStart}:${localStart}:${localEnd}`;
+}
+
+function tokenGroupKey(rowSlotId: number, styleKey: string): string {
+  return `${rowSlotId}:${styleKey}`;
 }
 
 function addTokenRangeToChunk(

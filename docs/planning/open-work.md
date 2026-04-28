@@ -34,10 +34,13 @@ Consolidated validation, design, and measurement tasks.
 
 ## Scheduling Validation
 
-- Implement main-thread frame coalescing for viewport and mounted highlight updates
+- Lean syntax scheduler slice complete: syntax and plugin highlight refreshes now use a shared latest-result-wins helper with stale result/error dropping, disposal cleanup, and request timing.
+- Rapid edit syntax/highlight debounce complete: edit-triggered refreshes are delayed by 75ms and repeated edits coalesce to the latest document text; open, undo, redo, and full refresh remain immediate.
+- Helper and editor coverage complete for delayed supersession, stale result/error rejection, dispose cleanup, rapid edit coalescing, and immediate non-edit refreshes.
+- Implement main-thread frame coalescing for viewport and mounted highlight updates beyond the existing virtualizer scroll coalescing
 - Implement worker-side priority lanes for transactions, visible syntax, interactive queries, background work, and idle cleanup
-- Add stale-result rejection tests for every worker result type
-- Add coalescing tests for repeated edits, scroll events, and visible syntax requests
+- Add stale-result rejection tests for every worker result type not covered by the lean syntax/highlight helper
+- Add coalescing tests for scroll events and visible syntax requests
 - Add starvation tests: visible and interactive work must run while background work is pending
 - Add pressure-state reporting and degradation behavior for huge files
 - Add lane timing counters and benchmark assertions against the performance targets

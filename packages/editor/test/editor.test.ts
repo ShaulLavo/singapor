@@ -132,6 +132,11 @@ async function flushTimers(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function flushSyntaxDebounce(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await flushMicrotasks();
+}
+
 function createInsertEvent(data: string): InputEvent {
   return new InputEvent("beforeinput", {
     bubbles: true,
@@ -1295,6 +1300,8 @@ describe("Editor", () => {
       );
       await flushMicrotasks();
 
+      expect(changes).toEqual([]);
+      await flushSyntaxDebounce();
       expect(changes).toEqual(["const a = 1;!"]);
       expect(editor.getState().syntaxStatus).toBe("ready");
       expect(highlightsMap.size).toBe(1);
@@ -1320,6 +1327,7 @@ describe("Editor", () => {
       expect(ranges).toHaveLength(1);
       expect(ranges[0]!.startOffset).toBe(0);
 
+      await flushSyntaxDebounce();
       editResult.resolve(createSyntaxResult([{ start: 0, end: 6, style: { color: "#00ff00" } }]));
       await flushMicrotasks();
 
@@ -1358,6 +1366,7 @@ describe("Editor", () => {
       expect(editor.getText()).toBe(`${text}!`);
       expect(foldToggle().dataset.editorFoldState).toBe("expanded");
 
+      await flushSyntaxDebounce();
       editResult.resolve(createSyntaxResult([], []));
       await flushMicrotasks();
 
@@ -1403,11 +1412,35 @@ describe("Editor", () => {
       expect(editorRoot().textContent).toContain("...");
       expect(editorRoot().textContent).not.toContain("  y();");
 
+      await flushSyntaxDebounce();
       editResult.resolve(createSyntaxResult([], []));
       await flushMicrotasks();
     });
 
-    it("ignores stale syntax results after rapid edits", async () => {
+    it("debounces rapid edit syntax requests to the latest text", async () => {
+      const changes: string[] = [];
+      setEditorSyntaxSessionFactory(() =>
+        createMockSyntaxSession({
+          refresh: async () => createSyntaxResult([]),
+          applyChange: async (change) => {
+            changes.push(change.text);
+            return createSyntaxResult([{ start: 0, end: 5, style: { color: "#00ff00" } }]);
+          },
+        }),
+      );
+
+      editor.openDocument({ documentId: "main.ts", text: "const a = 1;" });
+      await flushMicrotasks();
+      editorRoot().dispatchEvent(createInsertEvent("!"));
+      editorRoot().dispatchEvent(createInsertEvent("?"));
+
+      await flushSyntaxDebounce();
+      expect(changes).toEqual(["const a = 1;!?"]);
+      expect(editor.getText()).toBe("const a = 1;!?");
+      expect(highlightsMap.size).toBe(1);
+    });
+
+    it("ignores stale syntax results after a newer edit", async () => {
       const initial = createDeferred<EditorSyntaxResult>();
       const firstEdit = createDeferred<EditorSyntaxResult>();
       const secondEdit = createDeferred<EditorSyntaxResult>();
@@ -1423,7 +1456,9 @@ describe("Editor", () => {
       initial.resolve(createSyntaxResult([]));
       await flushMicrotasks();
       editorRoot().dispatchEvent(createInsertEvent("!"));
+      await flushSyntaxDebounce();
       editorRoot().dispatchEvent(createInsertEvent("?"));
+      await flushSyntaxDebounce();
 
       secondEdit.resolve(createSyntaxResult([{ start: 0, end: 5, style: { color: "#00ff00" } }]));
       await flushMicrotasks();
@@ -1435,7 +1470,35 @@ describe("Editor", () => {
       expect(highlightsMap.size).toBe(1);
     });
 
-    it("ignores stale plugin highlight results after rapid edits", async () => {
+    it("debounces rapid edit plugin highlight requests to the latest text", async () => {
+      const changes: string[] = [];
+      const highlighter = createMockHighlighterSession({
+        refresh: async () => createHighlightResult([]),
+        applyChange: async (change) => {
+          changes.push(change.text);
+          return createHighlightResult([{ start: 0, end: 5, style: { color: "#00ff00" } }]);
+        },
+      });
+      editor.dispose();
+      editor = new Editor(container, { plugins: [createHighlighterPlugin(highlighter)] });
+      setEditorSyntaxSessionFactory(() =>
+        createMockSyntaxSession({
+          refresh: async () => createSyntaxResult([]),
+          applyChange: async () => createSyntaxResult([]),
+        }),
+      );
+
+      editor.openDocument({ documentId: "main.ts", text: "const a = 1;" });
+      await flushMicrotasks();
+      editorRoot().dispatchEvent(createInsertEvent("!"));
+      editorRoot().dispatchEvent(createInsertEvent("?"));
+
+      await flushSyntaxDebounce();
+      expect(changes).toEqual(["const a = 1;!?"]);
+      expect(tokenHighlightRanges()[0]?.startOffset).toBe(0);
+    });
+
+    it("ignores stale plugin highlight results after a newer edit", async () => {
       const firstEdit = createDeferred<EditorHighlightResult>();
       const secondEdit = createDeferred<EditorHighlightResult>();
       const editResults = [firstEdit, secondEdit];
@@ -1455,7 +1518,9 @@ describe("Editor", () => {
       editor.openDocument({ documentId: "main.ts", text: "const a = 1;" });
       await flushMicrotasks();
       editorRoot().dispatchEvent(createInsertEvent("!"));
+      await flushSyntaxDebounce();
       editorRoot().dispatchEvent(createInsertEvent("?"));
+      await flushSyntaxDebounce();
 
       secondEdit.resolve(
         createHighlightResult([{ start: 0, end: 5, style: { color: "#00ff00" } }]),

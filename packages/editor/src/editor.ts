@@ -8,6 +8,7 @@ import {
 import { projectSyntaxFoldsThroughLineEdit } from "./editor/folds";
 import { EditorFoldState } from "./editor/foldState";
 import { isUndoRedoEvent, keyboardFallbackText } from "./editor/input";
+import { LatestAsyncRequest } from "./editor/latestAsyncRequest";
 import {
   cancelFrame,
   mouseSelectionAutoScrollDelta,
@@ -84,6 +85,7 @@ export type {
 } from "./plugins";
 
 let editorInstanceCount = 0;
+const SYNTAX_EDIT_DEBOUNCE_MS = 75;
 
 export function resetEditorInstanceCount(): void {
   editorInstanceCount = 0;
@@ -112,6 +114,11 @@ function getHighlightRegistry(): HighlightRegistry | undefined {
   return highlightRegistry ?? globalThis.CSS?.highlights;
 }
 
+const syntaxRefreshDelay = (change: DocumentSessionChange | null): number => {
+  if (change?.kind !== "edit") return 0;
+  return SYNTAX_EDIT_DEBOUNCE_MS;
+};
+
 export class Editor {
   private readonly view: VirtualizedTextView;
   private readonly foldState: EditorFoldState;
@@ -128,10 +135,10 @@ export class Editor {
   private syntaxStatus: EditorSyntaxStatus = "plain";
   private syntaxSession: EditorSyntaxSession | null = null;
   private highlighterSession: EditorHighlighterSession | null = null;
+  private readonly syntaxRequests = new LatestAsyncRequest<EditorSyntaxResult>();
+  private readonly highlightRequests = new LatestAsyncRequest<EditorHighlightResult>();
   private tokens: readonly EditorToken[] = [];
   private documentVersion = 0;
-  private syntaxVersion = 0;
-  private highlightVersion = 0;
   private mouseSelectionDrag: MouseSelectionDrag | null = null;
   private mouseSelectionAutoScrollFrame = 0;
   private useSessionSelectionForNextInput = false;
@@ -309,13 +316,13 @@ export class Editor {
   }
 
   private disposeSyntaxSession(): void {
-    this.syntaxVersion += 1;
+    this.syntaxRequests.cancel();
     this.syntaxSession?.dispose();
     this.syntaxSession = null;
   }
 
   private disposeHighlighterSession(): void {
-    this.highlightVersion += 1;
+    this.highlightRequests.cancel();
     this.highlighterSession?.dispose();
     this.highlighterSession = null;
   }
@@ -847,17 +854,14 @@ export class Editor {
     if (!this.syntaxSession || !this.session || !this.languageId) return;
 
     const text = this.session.getText();
-    const startedAt = nowMs();
-    const syntaxVersion = ++this.syntaxVersion;
     this.syntaxStatus = "loading";
 
-    void this.loadSyntaxResult(change, text)
-      .then((result) => {
-        this.applySyntaxResult(result, documentVersion, syntaxVersion, startedAt);
-      })
-      .catch(() => {
-        this.applySyntaxError(documentVersion, syntaxVersion);
-      });
+    this.syntaxRequests.schedule({
+      delayMs: syntaxRefreshDelay(change),
+      run: () => this.loadSyntaxResult(change, text),
+      apply: (result, startedAt) => this.applySyntaxResult(result, documentVersion, startedAt),
+      fail: () => this.applySyntaxError(documentVersion),
+    });
   }
 
   private refreshHighlightTokens(
@@ -867,16 +871,12 @@ export class Editor {
     if (!this.highlighterSession || !this.session) return;
 
     const text = this.session.getText();
-    const startedAt = nowMs();
-    const highlightVersion = ++this.highlightVersion;
-
-    void this.loadHighlightResult(change, text)
-      .then((result) => {
-        this.applyHighlightResult(result, documentVersion, highlightVersion, startedAt);
-      })
-      .catch(() => {
-        this.applyHighlightError(documentVersion, highlightVersion, startedAt);
-      });
+    this.highlightRequests.schedule({
+      delayMs: syntaxRefreshDelay(change),
+      run: () => this.loadHighlightResult(change, text),
+      apply: (result, startedAt) => this.applyHighlightResult(result, documentVersion, startedAt),
+      fail: (_error, startedAt) => this.applyHighlightError(documentVersion, startedAt),
+    });
   }
 
   private loadSyntaxResult(
@@ -909,11 +909,9 @@ export class Editor {
   private applySyntaxResult(
     result: EditorSyntaxResult,
     documentVersion: number,
-    syntaxVersion: number,
     startedAt: number,
   ): void {
     if (!this.session || documentVersion !== this.documentVersion) return;
-    if (syntaxVersion !== this.syntaxVersion) return;
 
     this.syntaxStatus = "ready";
     const nextTokens = this.highlighterSession ? this.tokens : result.tokens;
@@ -927,11 +925,9 @@ export class Editor {
   private applyHighlightResult(
     result: EditorHighlightResult,
     documentVersion: number,
-    highlightVersion: number,
     startedAt: number,
   ): void {
     if (!this.session || documentVersion !== this.documentVersion) return;
-    if (highlightVersion !== this.highlightVersion) return;
 
     const tokenChange = this.session.adoptTokens(result.tokens);
     const timedChange = appendTiming(tokenChange, "editor.highlight", startedAt);
@@ -953,21 +949,15 @@ export class Editor {
     this.notifyViewContributions("tokens", null);
   }
 
-  private applySyntaxError(documentVersion: number, syntaxVersion: number): void {
+  private applySyntaxError(documentVersion: number): void {
     if (documentVersion !== this.documentVersion) return;
-    if (syntaxVersion !== this.syntaxVersion) return;
 
     this.syntaxStatus = "error";
     this.notifyChange(null);
   }
 
-  private applyHighlightError(
-    documentVersion: number,
-    highlightVersion: number,
-    startedAt: number,
-  ): void {
+  private applyHighlightError(documentVersion: number, startedAt: number): void {
     if (!this.session || documentVersion !== this.documentVersion) return;
-    if (highlightVersion !== this.highlightVersion) return;
 
     const tokenChange = this.session.adoptTokens([]);
     const timedChange = appendTiming(tokenChange, "editor.highlightError", startedAt);

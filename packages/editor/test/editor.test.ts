@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { detectPlatform } from "@tanstack/hotkeys";
 import {
   createDocumentSession,
   Editor,
@@ -177,6 +178,21 @@ function setCollapsedDomSelection(offset: number): void {
 
 function editorInput(): HTMLTextAreaElement {
   return document.querySelector(".editor-virtualized-input") as HTMLTextAreaElement;
+}
+
+function dispatchEditorKey(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    bubbles: true,
+    cancelable: true,
+    key,
+    ...init,
+  });
+  editorRoot().dispatchEvent(event);
+  return event;
+}
+
+function primaryModifier(): KeyboardEventInit {
+  return detectPlatform() === "mac" ? { metaKey: true } : { ctrlKey: true };
 }
 
 function tokenHighlights(): Highlight[] {
@@ -489,12 +505,99 @@ describe("Editor", () => {
           bubbles: true,
           cancelable: true,
           key: "z",
-          metaKey: true,
+          ...primaryModifier(),
         }),
       );
 
       expect(session.getText()).toBe("abc");
       expect(editorRoot().textContent).toBe("abc");
+    });
+
+    it("routes delete commands through the keymap layer", () => {
+      const session = createDocumentSession("abc");
+      editor.attachSession(session);
+
+      dispatchEditorKey("Backspace");
+
+      expect(session.getText()).toBe("ab");
+      expect(editor.getText()).toBe("ab");
+    });
+
+    it("selects the full document with Mod+A", () => {
+      const session = createDocumentSession("abc");
+      editor.attachSession(session);
+
+      dispatchEditorKey("a", primaryModifier());
+
+      const resolved = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      );
+      expect(resolved.startOffset).toBe(0);
+      expect(resolved.endOffset).toBe(3);
+    });
+
+    it("moves a collapsed caret with arrow keys", () => {
+      const session = createDocumentSession("abc");
+      editor.attachSession(session);
+
+      dispatchEditorKey("ArrowLeft");
+
+      expect(editor.getState().cursor).toEqual({ row: 0, column: 2 });
+      const resolved = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      );
+      expect(resolved.headOffset).toBe(2);
+    });
+
+    it("extends selections with shift arrow keys", () => {
+      const session = createDocumentSession("abc");
+      editor.attachSession(session);
+
+      dispatchEditorKey("ArrowLeft", { shiftKey: true });
+
+      const resolved = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      );
+      expect(resolved.anchorOffset).toBe(3);
+      expect(resolved.headOffset).toBe(2);
+      expect(resolved.startOffset).toBe(2);
+      expect(resolved.endOffset).toBe(3);
+      expect(highlightsMap.get("editor-token-0-selection")?.size).toBe(1);
+    });
+
+    it("keeps vertical navigation on the preferred visual column", () => {
+      const session = createDocumentSession("abcdef\nx\n12345");
+      editor.attachSession(session);
+
+      dispatchEditorKey("ArrowUp");
+      dispatchEditorKey("ArrowUp");
+
+      expect(editor.getState().cursor).toEqual({ row: 0, column: 5 });
+    });
+
+    it("scrolls the caret into view while navigating by keyboard", () => {
+      const session = createDocumentSession("0\n1\n2\n3\n4\n5");
+      session.setSelection(0);
+      mockEditorViewport(editorRoot(), 80, 40);
+      editor.attachSession(session);
+
+      for (let index = 0; index < 5; index += 1) dispatchEditorKey("ArrowDown");
+
+      expect(editorRoot().scrollTop).toBeGreaterThan(0);
+      expect(editor.getState().cursor).toEqual({ row: 5, column: 0 });
+    });
+
+    it("can disable default keymap bindings", () => {
+      editor.dispose();
+      editor = new Editor(container, { keymap: { enabled: false } });
+      editor.openDocument({ text: "abc" });
+
+      dispatchEditorKey("ArrowLeft");
+
+      expect(editor.getState().cursor).toEqual({ row: 0, column: 3 });
     });
 
     it("keeps browser selections synced to the document session", () => {
@@ -1088,7 +1191,7 @@ describe("Editor", () => {
           bubbles: true,
           cancelable: true,
           key: "z",
-          metaKey: true,
+          ...primaryModifier(),
         }),
       );
 
@@ -1423,7 +1526,7 @@ describe("Editor", () => {
           bubbles: true,
           cancelable: true,
           key: "z",
-          metaKey: true,
+          ...primaryModifier(),
         }),
       );
 
@@ -1592,7 +1695,7 @@ describe("Editor", () => {
           bubbles: true,
           cancelable: true,
           key: "z",
-          metaKey: true,
+          ...primaryModifier(),
         }),
       );
 

@@ -5,6 +5,7 @@ import type {
   EditorSyntaxSessionOptions,
 } from "../syntax/session";
 import type { EditorPlugin } from "../plugins";
+import type { EditorKeymapOptions } from "./keymap";
 
 /** Minimal interface for the CSS Custom Highlight API registry. */
 export interface HighlightRegistry {
@@ -41,6 +42,7 @@ export type EditorChangeHandler = (
 export type EditorOptions = {
   readonly onChange?: EditorChangeHandler;
   readonly plugins?: readonly EditorPlugin[];
+  readonly keymap?: EditorKeymapOptions;
 };
 
 export type EditorOpenDocumentOptions = {

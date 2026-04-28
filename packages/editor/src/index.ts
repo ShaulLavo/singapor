@@ -13,6 +13,8 @@ export * from "./plugins";
 export * from "./selections";
 export * from "./syntax";
 export * from "./virtualization";
+export type { EditorCommandContext, EditorCommandId } from "./editor/commands";
+export type { EditorKeyBinding, EditorKeymapOptions } from "./editor/keymap";
 export type {
   EditorChangeHandler,
   EditorOpenDocumentOptions,

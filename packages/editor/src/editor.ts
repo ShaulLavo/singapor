@@ -7,7 +7,8 @@ import {
 } from "./editor/domBoundary";
 import { projectSyntaxFoldsThroughLineEdit } from "./editor/folds";
 import { EditorFoldState } from "./editor/foldState";
-import { isUndoRedoEvent, keyboardFallbackText } from "./editor/input";
+import { keyboardFallbackText } from "./editor/input";
+import { EditorKeymapController } from "./editor/keymap";
 import { LatestAsyncRequest } from "./editor/latestAsyncRequest";
 import {
   cancelFrame,
@@ -15,9 +16,16 @@ import {
   requestFrame,
   type MouseSelectionDrag,
 } from "./editor/mouseSelection";
+import {
+  nextCodePointOffset,
+  nextWordOffset,
+  previousCodePointOffset,
+  previousWordOffset,
+} from "./editor/navigation";
 import { lineRangeAtOffset, wordRangeAtOffset } from "./editor/textRanges";
 import { appendTiming, eventStartMs, mergeChangeTimings, nowMs } from "./editor/timing";
 import { projectTokensThroughEdit } from "./editor/tokenProjection";
+import type { EditorCommandContext, EditorCommandId } from "./editor/commands";
 import type {
   EditorOptions,
   EditorOpenDocumentOptions,
@@ -40,7 +48,7 @@ import {
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
 } from "./plugins";
-import { resolveSelection } from "./selections";
+import { SelectionGoal, resolveSelection, type ResolvedSelection } from "./selections";
 import {
   createEditorSyntaxSession,
   inferEditorSyntaxLanguage,
@@ -68,6 +76,8 @@ export type {
   EditorSyntaxStatus,
   HighlightRegistry,
 } from "./editor/types";
+export type { EditorCommandContext, EditorCommandId } from "./editor/commands";
+export type { EditorKeyBinding, EditorKeymapOptions } from "./editor/keymap";
 export type {
   EditorDisposable,
   EditorHighlightResult,
@@ -119,12 +129,20 @@ const syntaxRefreshDelay = (change: DocumentSessionChange | null): number => {
   return SYNTAX_EDIT_DEBOUNCE_MS;
 };
 
+type NavigationTarget = {
+  readonly offset: number;
+  readonly extend: boolean;
+  readonly goal?: ReturnType<typeof SelectionGoal.horizontal>;
+  readonly timingName: string;
+};
+
 export class Editor {
   private readonly view: VirtualizedTextView;
   private readonly foldState: EditorFoldState;
   private readonly el: HTMLDivElement;
   private readonly options: EditorOptions;
   private readonly pluginHost: EditorPluginHost;
+  private readonly keymap: EditorKeymapController;
   private viewContributions: readonly EditorViewContribution[] = [];
   private readonly highlightPrefix: string;
   private text = "";
@@ -157,6 +175,11 @@ export class Editor {
     });
     this.foldState = new EditorFoldState(this.view, () => this.session?.getSnapshot() ?? null);
     this.el = this.view.scrollElement;
+    this.keymap = new EditorKeymapController({
+      target: this.el,
+      keymap: options.keymap,
+      dispatch: (command, context) => this.dispatchCommand(command, context),
+    });
     this.viewContributions = this.pluginHost.createViewContributions(
       this.createViewContributionContext(container),
     );
@@ -235,6 +258,15 @@ export class Editor {
     this.view.focusInput();
   }
 
+  dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
+    if (command === "undo") return this.applyHistoryCommand("undo", context);
+    if (command === "redo") return this.applyHistoryCommand("redo", context);
+    if (command === "selectAll") return this.applySelectAllCommand(context);
+    if (command === "deleteBackward") return this.applyDeleteCommand("backward", context);
+    if (command === "deleteForward") return this.applyDeleteCommand("forward", context);
+    return this.applyNavigationCommand(command, context);
+  }
+
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
     this.documentVersion += 1;
     this.documentId = null;
@@ -271,6 +303,7 @@ export class Editor {
 
   dispose(): void {
     this.uninstallEditingHandlers();
+    this.keymap.dispose();
     this.disposeSyntaxSession();
     this.disposeHighlighterSession();
     this.detachSession();
@@ -683,31 +716,6 @@ export class Editor {
   private handleKeyDown = (event: KeyboardEvent): void => {
     if (!this.session) return;
 
-    if (this.handleUndoRedo(event)) return;
-    if (event.key === "Backspace") {
-      const start = eventStartMs(event);
-      const selectionChange = this.selectionChangeBeforeEdit();
-      event.preventDefault();
-      this.applySessionChange(
-        mergeChangeTimings(this.session.backspace(), selectionChange),
-        "input.backspace",
-        start,
-      );
-      return;
-    }
-
-    if (event.key === "Delete") {
-      const start = eventStartMs(event);
-      const selectionChange = this.selectionChangeBeforeEdit();
-      event.preventDefault();
-      this.applySessionChange(
-        mergeChangeTimings(this.session.deleteSelection(), selectionChange),
-        "input.delete",
-        start,
-      );
-      return;
-    }
-
     const fallbackText = keyboardFallbackText(event);
     if (fallbackText === null) return;
 
@@ -732,15 +740,224 @@ export class Editor {
     }, 0);
   }
 
-  private handleUndoRedo(event: KeyboardEvent): boolean {
+  private applyHistoryCommand(command: "undo" | "redo", context: EditorCommandContext): boolean {
     if (!this.session) return false;
-    if (!isUndoRedoEvent(event)) return false;
 
-    event.preventDefault();
-    const start = eventStartMs(event);
-    const change = event.shiftKey ? this.session.redo() : this.session.undo();
-    this.applySessionChange(change, event.shiftKey ? "input.redo" : "input.undo", start);
+    const start = context.event ? eventStartMs(context.event) : nowMs();
+    const change = command === "undo" ? this.session.undo() : this.session.redo();
+    this.applySessionChange(change, command === "undo" ? "input.undo" : "input.redo", start);
     return true;
+  }
+
+  private applyDeleteCommand(
+    direction: "backward" | "forward",
+    context: EditorCommandContext,
+  ): boolean {
+    if (!this.session) return false;
+
+    const start = context.event ? eventStartMs(context.event) : nowMs();
+    const selectionChange = this.selectionChangeBeforeEdit();
+    const change =
+      direction === "backward" ? this.session.backspace() : this.session.deleteSelection();
+    this.applySessionChange(
+      mergeChangeTimings(change, selectionChange),
+      direction === "backward" ? "input.backspace" : "input.delete",
+      start,
+    );
+    return true;
+  }
+
+  private applySelectAllCommand(context: EditorCommandContext): boolean {
+    if (!this.session) return false;
+
+    const start = context.event ? eventStartMs(context.event) : nowMs();
+    const change = this.session.setSelection(0, this.session.getSnapshot().length);
+    this.syncCustomSelectionHighlight(0, this.session.getSnapshot().length);
+    this.useSessionSelectionForNextInput = true;
+    this.applySessionChange(change, "input.selectAll", start, { syncDomSelection: false });
+    return true;
+  }
+
+  private applyNavigationCommand(command: EditorCommandId, context: EditorCommandContext): boolean {
+    const resolved = this.currentResolvedSelection();
+    if (!resolved) return false;
+
+    const target = this.navigationTarget(command, resolved);
+    if (!target) return false;
+
+    this.applyNavigationTarget(target, resolved, context);
+    return true;
+  }
+
+  private currentResolvedSelection(): ResolvedSelection | null {
+    if (!this.session) return null;
+
+    const selection = this.session.getSelections().selections[0];
+    if (!selection) return null;
+
+    return resolveSelection(this.session.getSnapshot(), selection);
+  }
+
+  private navigationTarget(
+    command: EditorCommandId,
+    resolved: ResolvedSelection,
+  ): NavigationTarget | null {
+    if (command === "cursorLeft") return this.horizontalTarget(resolved, "left", false);
+    if (command === "cursorRight") return this.horizontalTarget(resolved, "right", false);
+    if (command === "selectLeft") return this.horizontalTarget(resolved, "left", true);
+    if (command === "selectRight") return this.horizontalTarget(resolved, "right", true);
+    if (command === "cursorWordLeft") return this.wordTarget(resolved, "left", false);
+    if (command === "cursorWordRight") return this.wordTarget(resolved, "right", false);
+    if (command === "selectWordLeft") return this.wordTarget(resolved, "left", true);
+    if (command === "selectWordRight") return this.wordTarget(resolved, "right", true);
+    if (command === "cursorUp") return this.verticalTarget(resolved, -1, false, "input.cursorUp");
+    if (command === "cursorDown")
+      return this.verticalTarget(resolved, 1, false, "input.cursorDown");
+    if (command === "selectUp") return this.verticalTarget(resolved, -1, true, "input.selectUp");
+    if (command === "selectDown") return this.verticalTarget(resolved, 1, true, "input.selectDown");
+    return this.boundaryNavigationTarget(command, resolved);
+  }
+
+  private horizontalTarget(
+    resolved: ResolvedSelection,
+    direction: "left" | "right",
+    extend: boolean,
+  ): NavigationTarget {
+    const text = this.session?.getText() ?? this.text;
+    const collapsedOffset = direction === "left" ? resolved.startOffset : resolved.endOffset;
+    const shouldMoveHead = extend || resolved.collapsed;
+    const offset = shouldMoveHead
+      ? codePointOffset(text, resolved.headOffset, direction)
+      : collapsedOffset;
+
+    return {
+      offset,
+      extend,
+      timingName: extend
+        ? `input.select${capitalize(direction)}`
+        : `input.cursor${capitalize(direction)}`,
+    };
+  }
+
+  private wordTarget(
+    resolved: ResolvedSelection,
+    direction: "left" | "right",
+    extend: boolean,
+  ): NavigationTarget {
+    const text = this.session?.getText() ?? this.text;
+    const offset =
+      direction === "left"
+        ? previousWordOffset(text, resolved.headOffset)
+        : nextWordOffset(text, resolved.headOffset);
+
+    return {
+      offset,
+      extend,
+      timingName: extend
+        ? `input.selectWord${capitalize(direction)}`
+        : `input.cursorWord${capitalize(direction)}`,
+    };
+  }
+
+  private verticalTarget(
+    resolved: ResolvedSelection,
+    rowDelta: number,
+    extend: boolean,
+    timingName: string,
+  ): NavigationTarget {
+    const goalColumn = this.navigationGoalColumn(resolved);
+    return {
+      offset: this.view.offsetByDisplayRows(resolved.headOffset, rowDelta, goalColumn),
+      extend,
+      goal: SelectionGoal.horizontal(goalColumn),
+      timingName,
+    };
+  }
+
+  private boundaryNavigationTarget(
+    command: EditorCommandId,
+    resolved: ResolvedSelection,
+  ): NavigationTarget | null {
+    if (command === "cursorLineStart") return this.lineBoundaryTarget(resolved, "start", false);
+    if (command === "cursorLineEnd") return this.lineBoundaryTarget(resolved, "end", false);
+    if (command === "selectLineStart") return this.lineBoundaryTarget(resolved, "start", true);
+    if (command === "selectLineEnd") return this.lineBoundaryTarget(resolved, "end", true);
+    if (command === "cursorDocumentStart") return this.documentBoundaryTarget("start", false);
+    if (command === "cursorDocumentEnd") return this.documentBoundaryTarget("end", false);
+    if (command === "selectDocumentStart") return this.documentBoundaryTarget("start", true);
+    if (command === "selectDocumentEnd") return this.documentBoundaryTarget("end", true);
+    if (command === "cursorPageUp") return this.pageTarget(resolved, -1, false);
+    if (command === "cursorPageDown") return this.pageTarget(resolved, 1, false);
+    if (command === "selectPageUp") return this.pageTarget(resolved, -1, true);
+    if (command === "selectPageDown") return this.pageTarget(resolved, 1, true);
+    return null;
+  }
+
+  private lineBoundaryTarget(
+    resolved: ResolvedSelection,
+    boundary: "start" | "end",
+    extend: boolean,
+  ): NavigationTarget {
+    return {
+      offset: this.view.offsetAtLineBoundary(resolved.headOffset, boundary),
+      extend,
+      timingName: extend
+        ? `input.selectLine${capitalize(boundary)}`
+        : `input.cursorLine${capitalize(boundary)}`,
+    };
+  }
+
+  private documentBoundaryTarget(boundary: "start" | "end", extend: boolean): NavigationTarget {
+    return {
+      offset: boundary === "start" ? 0 : (this.session?.getSnapshot().length ?? this.text.length),
+      extend,
+      timingName: extend
+        ? `input.selectDocument${capitalize(boundary)}`
+        : `input.cursorDocument${capitalize(boundary)}`,
+    };
+  }
+
+  private pageTarget(
+    resolved: ResolvedSelection,
+    direction: -1 | 1,
+    extend: boolean,
+  ): NavigationTarget {
+    const rowDelta = direction * this.view.pageRowDelta();
+    const goalColumn = this.navigationGoalColumn(resolved);
+    return {
+      offset: this.view.offsetByDisplayRows(resolved.headOffset, rowDelta, goalColumn),
+      extend,
+      goal: SelectionGoal.horizontal(goalColumn),
+      timingName: extend
+        ? direction < 0
+          ? "input.selectPageUp"
+          : "input.selectPageDown"
+        : direction < 0
+          ? "input.cursorPageUp"
+          : "input.cursorPageDown",
+    };
+  }
+
+  private navigationGoalColumn(resolved: ResolvedSelection): number {
+    if (resolved.goal.kind === "horizontal") return resolved.goal.x;
+    return this.view.visualColumnForOffset(resolved.headOffset);
+  }
+
+  private applyNavigationTarget(
+    target: NavigationTarget,
+    resolved: ResolvedSelection,
+    context: EditorCommandContext,
+  ): void {
+    if (!this.session) return;
+
+    const start = context.event ? eventStartMs(context.event) : nowMs();
+    const anchorOffset = target.extend ? resolved.anchorOffset : target.offset;
+    const change = this.session.setSelection(anchorOffset, target.offset, {
+      goal: target.goal ?? SelectionGoal.none(),
+    });
+    this.useSessionSelectionForNextInput = true;
+    this.view.revealOffset(target.offset);
+    this.applySessionChange(change, target.timingName, start);
   }
 
   private syncSessionSelectionFromDom = (_event: Event): void => {
@@ -1058,4 +1275,13 @@ function viewContributionKindForChange(
 ): EditorViewContributionUpdateKind {
   if (change.kind === "selection") return "selection";
   return "content";
+}
+
+function codePointOffset(text: string, offset: number, direction: "left" | "right"): number {
+  if (direction === "left") return previousCodePointOffset(text, offset);
+  return nextCodePointOffset(text, offset);
+}
+
+function capitalize(value: string): string {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }

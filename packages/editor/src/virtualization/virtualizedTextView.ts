@@ -1,6 +1,7 @@
 import { bufferPointToFoldPoint, foldPointToBufferPoint, type FoldMap } from "../foldMap";
 import {
   DEFAULT_TAB_SIZE,
+  bufferColumnToVisualColumn,
   createDisplayRows,
   visualColumnToBufferColumn,
   visualColumnLength,
@@ -351,6 +352,36 @@ export class VirtualizedTextView {
       scrollTop: this.scrollElement.scrollTop,
       viewportHeight: this.scrollElement.clientHeight,
     });
+  }
+
+  public revealOffset(offset: number): void {
+    this.ensureOffsetMounted(offset);
+    this.scrollOffsetIntoView(offset);
+  }
+
+  public visualColumnForOffset(offset: number): number {
+    const row = this.rowForOffset(offset);
+    const displayRow = this.displayRows[row];
+    if (!displayRow || displayRow.kind === "block") return 0;
+
+    const localOffset = clamp(offset - displayRow.startOffset, 0, displayRow.text.length);
+    return bufferColumnToVisualColumn(displayRow.text, localOffset, DEFAULT_TAB_SIZE);
+  }
+
+  public offsetByDisplayRows(offset: number, rowDelta: number, visualColumn: number): number {
+    const row = this.rowForOffset(offset);
+    const targetRow = clamp(row + rowDelta, 0, this.visibleLineCount() - 1);
+    return this.offsetForViewportColumn(targetRow, visualColumn);
+  }
+
+  public offsetAtLineBoundary(offset: number, boundary: "start" | "end"): number {
+    const row = this.rowForOffset(offset);
+    if (boundary === "start") return this.lineStartOffset(row);
+    return this.lineEndOffset(row);
+  }
+
+  public pageRowDelta(): number {
+    return Math.max(1, Math.floor(this.scrollElement.clientHeight / this.getRowHeight()) - 1);
   }
 
   public createRange(startOffset: number, endOffset: number): Range | null {
@@ -1103,6 +1134,50 @@ export class VirtualizedTextView {
     this.scrollElement.scrollLeft = Math.max(0, targetLeft - this.gutterWidth());
   }
 
+  private scrollOffsetIntoView(offset: number): void {
+    const row = this.rowForOffset(offset);
+    const rowTop = this.rowTop(row);
+    const rowBottom = rowTop + this.rowHeight(row);
+    const scrollTop = this.scrollTopForVisibleRow(rowTop, rowBottom);
+    const scrollLeft = this.scrollLeftForVisibleOffset(row, offset);
+    if (scrollTop === this.scrollElement.scrollTop && scrollLeft === this.scrollElement.scrollLeft)
+      return;
+
+    this.scrollElement.scrollTop = scrollTop;
+    this.scrollElement.scrollLeft = scrollLeft;
+    this.virtualizer.setScrollMetrics({
+      scrollTop: this.scrollElement.scrollTop,
+      viewportHeight: this.scrollElement.clientHeight,
+    });
+  }
+
+  private scrollTopForVisibleRow(rowTop: number, rowBottom: number): number {
+    const viewportTop = this.scrollElement.scrollTop;
+    const viewportBottom = viewportTop + this.scrollElement.clientHeight;
+    const maxScrollTop = Math.max(
+      0,
+      this.virtualizer.getSnapshot().totalSize - this.scrollElement.clientHeight,
+    );
+
+    if (rowTop < viewportTop) return clamp(rowTop, 0, maxScrollTop);
+    if (rowBottom > viewportBottom)
+      return clamp(rowBottom - this.scrollElement.clientHeight, 0, maxScrollTop);
+    return viewportTop;
+  }
+
+  private scrollLeftForVisibleOffset(row: number, offset: number): number {
+    const text = this.lineText(row);
+    const localOffset = clamp(offset - this.lineStartOffset(row), 0, text.length);
+    const caretLeft =
+      this.gutterWidth() +
+      bufferColumnToVisualColumn(text, localOffset, DEFAULT_TAB_SIZE) * this.characterWidth();
+    const viewportLeft = this.scrollElement.scrollLeft + this.gutterWidth();
+    const viewportRight = this.scrollElement.scrollLeft + this.scrollElement.clientWidth;
+    if (caretLeft < viewportLeft) return Math.max(0, caretLeft - this.gutterWidth());
+    if (caretLeft > viewportRight) return Math.max(0, caretLeft - this.scrollElement.clientWidth);
+    return this.scrollElement.scrollLeft;
+  }
+
   private resolveMountedOffset(
     offset: number,
   ): { readonly node: Text; readonly offset: number } | null {
@@ -1535,6 +1610,10 @@ export class VirtualizedTextView {
     let top = 0;
     for (let index = 0; index < row; index += 1) top += rowSizes[index] ?? 0;
     return top;
+  }
+
+  private rowHeight(row: number): number {
+    return this.rowSizes()?.[row] ?? this.getRowHeight();
   }
 
   private wrapColumn(): number | null {

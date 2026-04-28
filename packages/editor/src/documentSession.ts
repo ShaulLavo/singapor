@@ -4,6 +4,7 @@ import {
   createAnchorSelection,
   createSelectionSet,
   deleteSelections,
+  type SelectionGoal,
   type SelectionSet,
 } from "./selections";
 import {
@@ -43,7 +44,11 @@ export type DocumentSession = {
   deleteSelection(): DocumentSessionChange;
   undo(): DocumentSessionChange;
   redo(): DocumentSessionChange;
-  setSelection(anchorOffset: number, headOffset?: number): DocumentSessionChange;
+  setSelection(
+    anchorOffset: number,
+    headOffset?: number,
+    options?: DocumentSessionSelectionOptions,
+  ): DocumentSessionChange;
   setTokens(tokens: readonly EditorToken[]): DocumentSessionChange;
   adoptTokens(tokens: readonly EditorToken[]): DocumentSessionChange;
   getText(): string;
@@ -52,6 +57,10 @@ export type DocumentSession = {
   getSnapshot(): PieceTableSnapshot;
   canUndo(): boolean;
   canRedo(): boolean;
+};
+
+export type DocumentSessionSelectionOptions = {
+  readonly goal?: SelectionGoal;
 };
 
 class PieceTableDocumentSession implements DocumentSession {
@@ -132,9 +141,15 @@ class PieceTableDocumentSession implements DocumentSession {
     return appendTiming(this.createChange("redo", edits), "session.redo", start);
   }
 
-  public setSelection(anchorOffset: number, headOffset = anchorOffset): DocumentSessionChange {
+  public setSelection(
+    anchorOffset: number,
+    headOffset = anchorOffset,
+    options: DocumentSessionSelectionOptions = {},
+  ): DocumentSessionChange {
     const start = nowMs();
-    const selection = createAnchorSelection(this.history.current, anchorOffset, headOffset);
+    const selection = createAnchorSelection(this.history.current, anchorOffset, headOffset, {
+      goal: options.goal,
+    });
     const selections = createSelectionSet([selection], true);
     this.history = { ...this.history, selections };
     return appendTiming(this.createChange("selection", []), "session.selection", start);

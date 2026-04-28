@@ -42,6 +42,8 @@ class MinimapContribution implements EditorViewContribution {
   private latestSnapshot: EditorViewSnapshot;
   private activeSliderDrag: SliderDrag | null = null;
   private reservedWidth = 0;
+  private verticalScrollbarWidth = -1;
+  private horizontalScrollbarHeight = -1;
   private disposed = false;
 
   public constructor(context: EditorViewContributionContext, options: ResolvedMinimapOptions) {
@@ -49,6 +51,7 @@ class MinimapContribution implements EditorViewContribution {
     this.options = options;
     this.latestSnapshot = context.getSnapshot();
     this.host = createHost(context, options);
+    this.updateNativeScrollbarGutter();
     this.client = new MinimapWorkerClient({
       host: this.host,
       options,
@@ -67,6 +70,7 @@ class MinimapContribution implements EditorViewContribution {
     if (this.disposed) return;
 
     this.latestSnapshot = snapshot;
+    this.updateNativeScrollbarGutter();
     this.client.update(snapshot, kind, change);
   }
 
@@ -90,6 +94,7 @@ class MinimapContribution implements EditorViewContribution {
     if (nextWidth === this.reservedWidth) return;
 
     this.reservedWidth = nextWidth;
+    this.updateNativeScrollbarGutter();
     this.context.reserveOverlayWidth(this.options.side, nextWidth);
   };
 
@@ -170,6 +175,28 @@ class MinimapContribution implements EditorViewContribution {
     const ratio = Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)));
     return Math.floor(ratio * Math.max(1, this.latestSnapshot.lineCount));
   }
+
+  private updateNativeScrollbarGutter(): void {
+    const gutter = nativeScrollbarGutter(this.context.scrollElement);
+    if (
+      gutter.vertical === this.verticalScrollbarWidth &&
+      gutter.horizontal === this.horizontalScrollbarHeight
+    ) {
+      return;
+    }
+
+    this.verticalScrollbarWidth = gutter.vertical;
+    this.horizontalScrollbarHeight = gutter.horizontal;
+    this.host.root.style.bottom = `${gutter.horizontal}px`;
+    if (this.options.side === "right") {
+      this.host.root.style.right = `${gutter.vertical}px`;
+      this.host.root.style.left = "";
+      return;
+    }
+
+    this.host.root.style.left = "0";
+    this.host.root.style.right = "";
+  }
 }
 
 type SliderDrag = {
@@ -224,4 +251,31 @@ function hostClassName(options: ResolvedMinimapOptions): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function nativeScrollbarGutter(element: HTMLElement): {
+  readonly vertical: number;
+  readonly horizontal: number;
+} {
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+  const borderX = cssPixels(style?.borderLeftWidth) + cssPixels(style?.borderRightWidth);
+  const borderY = cssPixels(style?.borderTopWidth) + cssPixels(style?.borderBottomWidth);
+  const vertical =
+    element.scrollHeight > element.clientHeight
+      ? Math.max(0, element.offsetWidth - element.clientWidth - borderX)
+      : 0;
+  const horizontal =
+    element.scrollWidth > element.clientWidth
+      ? Math.max(0, element.offsetHeight - element.clientHeight - borderY)
+      : 0;
+
+  return { vertical, horizontal };
+}
+
+function cssPixels(value: string | undefined): number {
+  if (!value) return 0;
+
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed;
 }

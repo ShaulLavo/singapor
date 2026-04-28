@@ -40,7 +40,6 @@ import {
   createScrollElement,
   createVirtualizerOptions,
   editorTokensEqual,
-  firstIntersectingMountedRow,
   foldMapMatchesText,
   foldMarkersEqual,
   getDefaultHighlightRegistry,
@@ -48,7 +47,6 @@ import {
   hideFoldButton,
   hideFoldPlaceholder,
   mountedChunkForOffset,
-  mountedOffsetRange,
   normalizeChunkSize,
   normalizeChunkThreshold,
   normalizeFoldMarkers,
@@ -58,7 +56,6 @@ import {
   parseCssPixels,
   pointVerticalDirection,
   preventFoldButtonMouseDown,
-  rangesIntersect,
   rangesIntersectInclusive,
   removeRowElements,
   rowChunkFromDomBoundary,
@@ -81,7 +78,6 @@ import type {
   HorizontalChunkWindow,
   MountedVirtualizedTextRow,
   NativeGeometryValidation,
-  OffsetRange,
   SameLineEditPatch,
   TokenGroup,
   TokenRowSegment,
@@ -101,6 +97,16 @@ export type {
   VirtualizedTextViewOptions,
   VirtualizedTextViewState,
 } from "./virtualizedTextViewTypes";
+
+type RevealBlock = "nearest" | "end";
+
+type TokenRenderEntry = {
+  readonly start: number;
+  readonly end: number;
+  readonly style: EditorTokenStyle;
+  readonly styleKey: string;
+  readonly sourceIndex: number;
+};
 
 export class VirtualizedTextView {
   public readonly scrollElement: HTMLDivElement;
@@ -124,6 +130,9 @@ export class VirtualizedTextView {
   private text = "";
   private textRevision = 0;
   private tokens: readonly EditorToken[] = [];
+  private tokenRenderEntries: readonly TokenRenderEntry[] = [];
+  private tokenRenderEntryMaxEnds: readonly number[] = [];
+  private tokenRenderIndexDirty = true;
   private lineStarts: number[] = [0];
   private displayRows: DisplayRow[] = [];
   private foldMap: FoldMap | null = null;
@@ -208,6 +217,7 @@ export class VirtualizedTextView {
     this.text = text;
     this.textRevision += 1;
     this.tokenRangesFollowLastTextEdit = false;
+    this.tokenRenderIndexDirty = true;
     this.lineStarts = computeLineStarts(text);
     this.foldMap = foldMapMatchesText(this.foldMap, text) ? this.foldMap : null;
     this.rebuildDisplayRows();
@@ -284,11 +294,13 @@ export class VirtualizedTextView {
     if (this.canKeepLiveTokenRanges(tokens)) {
       this.tokens = tokens;
       this.tokenRangesFollowLastTextEdit = false;
+      this.tokenRenderIndexDirty = true;
       return;
     }
 
     this.tokenRangesFollowLastTextEdit = false;
     this.tokens = tokens;
+    this.tokenRenderIndexDirty = true;
     this.syncTokenGroupsToTokenSet();
     this.renderTokenHighlights();
   }
@@ -354,8 +366,13 @@ export class VirtualizedTextView {
     });
   }
 
-  public revealOffset(offset: number): void {
+  public revealOffset(offset: number, block: RevealBlock = "nearest"): void {
     this.ensureOffsetMounted(offset);
+    if (block === "end") {
+      this.scrollOffsetToViewportEnd(offset);
+      return;
+    }
+
     this.scrollOffsetIntoView(offset);
   }
 
@@ -625,6 +642,7 @@ export class VirtualizedTextView {
     this.textRevision += 1;
     this.foldMap = null;
     this.tokenRangesFollowLastTextEdit = true;
+    this.tokenRenderIndexDirty = true;
     this.lineStarts = computeLineStarts(nextText);
     this.rebuildDisplayRows();
     this.clampStoredSelection();
@@ -1151,6 +1169,30 @@ export class VirtualizedTextView {
     });
   }
 
+  private scrollOffsetToViewportEnd(offset: number): void {
+    const row = this.rowForOffset(offset);
+    const rowBottom = this.rowTop(row) + this.rowHeight(row);
+    const scrollTop = this.scrollTopForRowBottom(rowBottom);
+    const scrollLeft = this.scrollLeftForVisibleOffset(row, offset);
+    if (scrollTop === this.scrollElement.scrollTop && scrollLeft === this.scrollElement.scrollLeft)
+      return;
+
+    this.scrollElement.scrollTop = scrollTop;
+    this.scrollElement.scrollLeft = scrollLeft;
+    this.virtualizer.setScrollMetrics({
+      scrollTop: this.scrollElement.scrollTop,
+      viewportHeight: this.scrollElement.clientHeight,
+    });
+  }
+
+  private scrollTopForRowBottom(rowBottom: number): number {
+    const maxScrollTop = Math.max(
+      0,
+      this.virtualizer.getSnapshot().totalSize - this.scrollElement.clientHeight,
+    );
+    return clamp(rowBottom - this.scrollElement.clientHeight, 0, maxScrollTop);
+  }
+
   private scrollTopForVisibleRow(rowTop: number, rowBottom: number): number {
     const viewportTop = this.scrollElement.scrollTop;
     const viewportBottom = viewportTop + this.scrollElement.clientHeight;
@@ -1310,63 +1352,123 @@ export class VirtualizedTextView {
     return result.groupsChanged;
   }
 
+  private ensureTokenRenderIndex(): void {
+    if (!this.tokenRenderIndexDirty) return;
+
+    this.rebuildTokenRenderIndex();
+    this.tokenRenderIndexDirty = false;
+  }
+
+  private rebuildTokenRenderIndex(): void {
+    const entries: TokenRenderEntry[] = [];
+    for (let index = 0; index < this.tokens.length; index += 1) {
+      const token = this.tokens[index]!;
+      const entry = this.tokenRenderEntry(token, index);
+      if (!entry) continue;
+      entries.push(entry);
+    }
+
+    entries.sort(compareTokenRenderEntries);
+    this.tokenRenderEntries = entries;
+    this.tokenRenderEntryMaxEnds = tokenRenderEntryMaxEnds(entries);
+  }
+
+  private tokenRenderEntry(token: EditorToken, sourceIndex: number): TokenRenderEntry | null {
+    const style = normalizeTokenStyle(token.style);
+    if (!style) return null;
+
+    const start = clamp(token.start, 0, this.text.length);
+    const end = clamp(token.end, start, this.text.length);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (end <= start) return null;
+
+    return {
+      start,
+      end,
+      style,
+      styleKey: serializeTokenStyle(style),
+      sourceIndex,
+    };
+  }
+
+  private firstTokenRenderEntryStartingAtOrAfter(offset: number): number {
+    let low = 0;
+    let high = this.tokenRenderEntries.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      const token = this.tokenRenderEntries[middle]!;
+      if (token.start >= offset) {
+        high = middle;
+        continue;
+      }
+
+      low = middle + 1;
+    }
+
+    return low;
+  }
+
+  private firstTokenRenderEntryEndingAfter(offset: number, endIndex: number): number {
+    let low = 0;
+    let high = endIndex;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      const maxEnd = this.tokenRenderEntryMaxEnds[middle] ?? 0;
+      if (maxEnd > offset) {
+        high = middle;
+        continue;
+      }
+
+      low = middle + 1;
+    }
+
+    return low;
+  }
+
   private tokenSegmentsForRows(
     rows: readonly MountedVirtualizedTextRow[],
   ): Map<number, TokenRowSegment[]> {
     const segmentsByRow = new Map<number, TokenRowSegment[]>();
-    const mountedRange = mountedOffsetRange(rows);
-    if (!mountedRange) return segmentsByRow;
+    if (rows.length === 0) return segmentsByRow;
 
-    for (const token of this.tokens) {
-      this.appendTokenSegmentsForMountedRows(segmentsByRow, rows, mountedRange, token);
+    this.ensureTokenRenderIndex();
+    if (this.tokenRenderEntries.length === 0) return segmentsByRow;
+
+    for (const row of rows) {
+      this.appendTokenSegmentsForMountedRow(segmentsByRow, row);
     }
 
     return segmentsByRow;
   }
 
-  private appendTokenSegmentsForMountedRows(
-    segmentsByRow: Map<number, TokenRowSegment[]>,
-    rows: readonly MountedVirtualizedTextRow[],
-    mountedRange: OffsetRange,
-    token: EditorToken,
-  ): void {
-    const style = normalizeTokenStyle(token.style);
-    if (!style) return;
-
-    const range = this.clampedTokenRange(token);
-    if (!range) return;
-    if (!rangesIntersect(range.start, range.end, mountedRange.start, mountedRange.end)) return;
-
-    const firstRowIndex = firstIntersectingMountedRow(rows, range.start, range.end);
-    if (firstRowIndex === -1) return;
-
-    const styleKey = serializeTokenStyle(style);
-    for (let index = firstRowIndex; index < rows.length; index += 1) {
-      const row = rows[index]!;
-      if (row.startOffset >= range.end) break;
-      this.appendTokenSegmentsForRow(segmentsByRow, row, range, style, styleKey);
-    }
-  }
-
-  private appendTokenSegmentsForRow(
+  private appendTokenSegmentsForMountedRow(
     segmentsByRow: Map<number, TokenRowSegment[]>,
     row: MountedVirtualizedTextRow,
-    range: OffsetRange,
-    style: EditorTokenStyle,
-    styleKey: string,
   ): void {
-    const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId);
+    if (row.kind !== "text") return;
+
     for (const chunk of row.chunks) {
-      appendTokenSegmentForChunk(segments, chunk, range, style, styleKey);
+      this.appendTokenSegmentsForChunk(segmentsByRow, row, chunk);
     }
   }
 
-  private clampedTokenRange(token: EditorToken): OffsetRange | null {
-    const start = clamp(token.start, 0, this.text.length);
-    const end = clamp(token.end, start, this.text.length);
-    if (end <= start) return null;
+  private appendTokenSegmentsForChunk(
+    segmentsByRow: Map<number, TokenRowSegment[]>,
+    row: MountedVirtualizedTextRow,
+    chunk: VirtualizedTextChunk,
+  ): void {
+    if (chunk.endOffset <= chunk.startOffset) return;
 
-    return { start, end };
+    const endIndex = this.firstTokenRenderEntryStartingAtOrAfter(chunk.endOffset);
+    const startIndex = this.firstTokenRenderEntryEndingAfter(chunk.startOffset, endIndex);
+    if (startIndex >= endIndex) return;
+
+    const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId);
+    for (let index = startIndex; index < endIndex; index += 1) {
+      const token = this.tokenRenderEntries[index]!;
+      if (token.end <= chunk.startOffset) continue;
+      appendTokenSegmentForChunk(segments, chunk, token, token.style, token.styleKey);
+    }
   }
 
   private addTokenSegmentsForRow(
@@ -1436,8 +1538,13 @@ export class VirtualizedTextView {
   }
 
   private syncTokenGroupsToTokenSet(): void {
+    if (this.text.length === 0) {
+      this.clearTokenHighlights();
+      return;
+    }
+
     const styles = this.currentTokenStyles();
-    if (styles.size === 0 || this.text.length === 0) {
+    if (styles.size === 0) {
       this.clearTokenHighlights();
       return;
     }
@@ -1448,11 +1555,11 @@ export class VirtualizedTextView {
   }
 
   private currentTokenStyles(): Map<string, EditorTokenStyle> {
+    this.ensureTokenRenderIndex();
+
     const styles = new Map<string, EditorTokenStyle>();
-    for (const token of this.tokens) {
-      const style = normalizeTokenStyle(token.style);
-      if (!style) continue;
-      styles.set(serializeTokenStyle(style), style);
+    for (const token of this.tokenRenderEntries) {
+      styles.set(token.styleKey, token.style);
     }
 
     return styles;
@@ -1820,4 +1927,20 @@ export class VirtualizedTextView {
       height: row.height,
     };
   }
+}
+
+function compareTokenRenderEntries(left: TokenRenderEntry, right: TokenRenderEntry): number {
+  return left.start - right.start || left.sourceIndex - right.sourceIndex;
+}
+
+function tokenRenderEntryMaxEnds(entries: readonly TokenRenderEntry[]): number[] {
+  const maxEnds: number[] = [];
+  let maxEnd = 0;
+
+  for (const entry of entries) {
+    maxEnd = Math.max(maxEnd, entry.end);
+    maxEnds.push(maxEnd);
+  }
+
+  return maxEnds;
 }

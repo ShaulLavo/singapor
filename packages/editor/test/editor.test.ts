@@ -191,6 +191,38 @@ function dispatchEditorKey(key: string, init: KeyboardEventInit = {}): KeyboardE
   return event;
 }
 
+function createPasteEvent(text: string): ClipboardEvent {
+  const clipboardData = {
+    getData: (format: string): string => (format === "text/plain" ? text : ""),
+    setData: () => undefined,
+  };
+  const event = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
+  Object.defineProperty(event, "clipboardData", { configurable: true, value: clipboardData });
+  return event;
+}
+
+function createCopyEvent(): {
+  readonly event: ClipboardEvent;
+  readonly formatCount: () => number;
+  readonly getText: () => string;
+} {
+  const values = new Map<string, string>();
+  const clipboardData = {
+    getData: (format: string): string => values.get(format) ?? "",
+    setData: (format: string, value: string): void => {
+      values.set(format, value);
+    },
+  };
+  const event = new Event("copy", { bubbles: true, cancelable: true }) as ClipboardEvent;
+  Object.defineProperty(event, "clipboardData", { configurable: true, value: clipboardData });
+
+  return {
+    event,
+    formatCount: () => values.size,
+    getText: () => values.get("text/plain") ?? "",
+  };
+}
+
 function primaryModifier(): KeyboardEventInit {
   return detectPlatform() === "mac" ? { metaKey: true } : { ctrlKey: true };
 }
@@ -535,6 +567,53 @@ describe("Editor", () => {
       );
       expect(resolved.startOffset).toBe(0);
       expect(resolved.endOffset).toBe(3);
+    });
+
+    it("copies selected text as plain text", () => {
+      const session = createDocumentSession("alpha beta");
+      session.setSelection(6, 10);
+      editor.attachSession(session);
+
+      const copy = createCopyEvent();
+      editorRoot().dispatchEvent(copy.event);
+
+      expect(copy.getText()).toBe("beta");
+      expect(copy.event.defaultPrevented).toBe(true);
+    });
+
+    it("does not intercept copy for collapsed selections", () => {
+      const session = createDocumentSession("abc");
+      editor.attachSession(session);
+
+      const copy = createCopyEvent();
+      editorRoot().dispatchEvent(copy.event);
+
+      expect(copy.formatCount()).toBe(0);
+      expect(copy.event.defaultPrevented).toBe(false);
+    });
+
+    it("copies the full document after Mod+A", () => {
+      editor.openDocument({ text: "abc" });
+
+      dispatchEditorKey("a", primaryModifier());
+      const copy = createCopyEvent();
+      editorRoot().dispatchEvent(copy.event);
+
+      expect(copy.getText()).toBe("abc");
+      expect(copy.event.defaultPrevented).toBe(true);
+    });
+
+    it("scrolls to the bottom of pasted text", () => {
+      const pasted = Array.from({ length: 8 }, (_value, index) => `line ${index}`).join("\n");
+      editor.openDocument({ text: "" });
+      mockEditorViewport(editorRoot(), 80, 40);
+      editor.focus();
+
+      editorInput().dispatchEvent(createPasteEvent(pasted));
+
+      expect(editor.getText()).toBe(pasted);
+      expect(editor.getState().cursor).toEqual({ row: 7, column: 6 });
+      expect(editorRoot().scrollTop).toBeGreaterThan(0);
     });
 
     it("moves a collapsed caret with arrow keys", () => {

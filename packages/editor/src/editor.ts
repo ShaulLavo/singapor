@@ -37,6 +37,7 @@ import type {
 } from "./editor/types";
 import type { FoldMap } from "./foldMap";
 import { offsetToPoint } from "./pieceTable/positions";
+import { getPieceTableText } from "./pieceTable/reads";
 import {
   EditorPluginHost,
   type EditorHighlightResult,
@@ -134,6 +135,12 @@ type NavigationTarget = {
   readonly extend: boolean;
   readonly goal?: ReturnType<typeof SelectionGoal.horizontal>;
   readonly timingName: string;
+};
+
+type SessionChangeOptions = {
+  readonly syncDomSelection?: boolean;
+  readonly revealOffset?: number;
+  readonly revealBlock?: "nearest" | "end";
 };
 
 export class Editor {
@@ -452,6 +459,7 @@ export class Editor {
     this.view.inputElement.addEventListener("input", this.handleNativeInputInputCapture, {
       capture: true,
     });
+    this.el.addEventListener("copy", this.handleCopy);
     this.el.addEventListener("paste", this.handlePaste);
     this.el.addEventListener("keydown", this.handleKeyDown);
     this.el.addEventListener("keyup", this.syncSessionSelectionFromDom);
@@ -470,6 +478,7 @@ export class Editor {
     this.view.inputElement.removeEventListener("input", this.handleNativeInputInputCapture, {
       capture: true,
     });
+    this.el.removeEventListener("copy", this.handleCopy);
     this.el.removeEventListener("paste", this.handlePaste);
     this.el.removeEventListener("keydown", this.handleKeyDown);
     this.el.removeEventListener("keyup", this.syncSessionSelectionFromDom);
@@ -706,11 +715,20 @@ export class Editor {
     const start = eventStartMs(event);
     const selectionChange = this.selectionChangeBeforeEdit();
     event.preventDefault();
-    this.applySessionChange(
-      mergeChangeTimings(this.session.applyText(text), selectionChange),
-      "input.paste",
-      start,
-    );
+    const change = mergeChangeTimings(this.session.applyText(text), selectionChange);
+    this.applySessionChange(change, "input.paste", start, {
+      revealBlock: "end",
+      revealOffset: this.primarySelectionHeadOffset(change),
+    });
+  };
+
+  private handleCopy = (event: ClipboardEvent): void => {
+    const text = this.selectedTextForClipboard();
+    if (text === null) return;
+    if (!event.clipboardData) return;
+
+    event.clipboardData.setData("text/plain", text);
+    event.preventDefault();
   };
 
   private handleKeyDown = (event: KeyboardEvent): void => {
@@ -796,6 +814,26 @@ export class Editor {
     if (!selection) return null;
 
     return resolveSelection(this.session.getSnapshot(), selection);
+  }
+
+  private selectedTextForClipboard(): string | null {
+    if (!this.session) return null;
+
+    const selection = this.session.getSelections().selections[0];
+    if (!selection) return null;
+
+    const snapshot = this.session.getSnapshot();
+    const resolved = resolveSelection(snapshot, selection);
+    if (resolved.collapsed) return null;
+
+    return getPieceTableText(snapshot, resolved.startOffset, resolved.endOffset);
+  }
+
+  private primarySelectionHeadOffset(change: DocumentSessionChange): number | undefined {
+    const selection = change.selections.selections[0];
+    if (!selection) return undefined;
+
+    return resolveSelection(change.snapshot, selection).headOffset;
   }
 
   private navigationTarget(
@@ -1007,12 +1045,18 @@ export class Editor {
     change: DocumentSessionChange,
     totalName = "editor.change",
     totalStart = nowMs(),
-    options: { readonly syncDomSelection?: boolean } = {},
+    options: SessionChangeOptions = {},
   ): void {
     let timedChange = change;
     const renderStart = nowMs();
     this.renderSessionChange(change);
     timedChange = appendTiming(timedChange, "editor.render", renderStart);
+
+    if (options.revealOffset !== undefined) {
+      const revealStart = nowMs();
+      this.view.revealOffset(options.revealOffset, options.revealBlock);
+      timedChange = appendTiming(timedChange, "editor.reveal", revealStart);
+    }
 
     if (options.syncDomSelection !== false) {
       const selectionStart = nowMs();

@@ -59,7 +59,7 @@ const runDocumentTask = (
   const previous = documentTasks.get(documentId) ?? Promise.resolve(undefined);
   const next = previous.catch(() => undefined).then(task);
   documentTasks.set(documentId, next);
-  void next.finally(() => clearDocumentTask(documentId, next));
+  void next.finally(() => clearDocumentTask(documentId, next)).catch(() => undefined);
   return next;
 };
 

@@ -180,7 +180,7 @@ class MinimapContribution implements EditorViewContribution {
   }
 
   private updateNativeScrollbarGutter(): void {
-    const gutter = nativeScrollbarGutter(this.context.scrollElement);
+    const gutter = nativeScrollbarGutter(this.context.scrollElement, this.latestSnapshot.viewport);
     if (
       gutter.vertical === this.verticalScrollbarWidth &&
       gutter.horizontal === this.horizontalScrollbarHeight
@@ -267,17 +267,20 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function nativeScrollbarGutter(element: HTMLElement): {
+function nativeScrollbarGutter(
+  element: HTMLElement,
+  viewport: EditorViewSnapshot["viewport"],
+): {
   readonly vertical: number;
   readonly horizontal: number;
 } {
   const style = element.ownerDocument.defaultView?.getComputedStyle(element);
   const borderX = cssPixels(style?.borderLeftWidth) + cssPixels(style?.borderRightWidth);
   const borderY = cssPixels(style?.borderTopWidth) + cssPixels(style?.borderBottomWidth);
-  const hasVerticalScrollbar = element.scrollHeight > element.clientHeight;
-  const hasHorizontalScrollbar = element.scrollWidth > element.clientWidth;
-  const measuredVertical = Math.max(0, element.offsetWidth - element.clientWidth - borderX);
-  const measuredHorizontal = Math.max(0, element.offsetHeight - element.clientHeight - borderY);
+  const hasVerticalScrollbar = viewport.scrollHeight > viewport.clientHeight;
+  const hasHorizontalScrollbar = viewport.scrollWidth > viewport.clientWidth;
+  const measuredVertical = Math.max(0, element.offsetWidth - viewport.clientWidth - borderX);
+  const measuredHorizontal = Math.max(0, element.offsetHeight - viewport.clientHeight - borderY);
   const vertical = hasVerticalScrollbar
     ? Math.max(measuredVertical, OVERLAY_SCROLLBAR_GUTTER_FALLBACK)
     : 0;

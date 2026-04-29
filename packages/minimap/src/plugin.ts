@@ -47,6 +47,7 @@ class MinimapContribution implements EditorViewContribution {
   private appliedReservedWidth = 0;
   private verticalScrollbarWidth = -1;
   private horizontalScrollbarHeight = -1;
+  private readonly scrollElementBorderMetrics: ScrollElementBorderMetrics;
   private disposed = false;
 
   public constructor(context: EditorViewContributionContext, options: ResolvedMinimapOptions) {
@@ -54,6 +55,7 @@ class MinimapContribution implements EditorViewContribution {
     this.options = options;
     this.latestSnapshot = context.getSnapshot();
     this.host = createHost(context, options);
+    this.scrollElementBorderMetrics = readScrollElementBorderMetrics(context.scrollElement);
     this.updateNativeScrollbarGutter();
     this.client = new MinimapWorkerClient({
       host: this.host,
@@ -181,9 +183,9 @@ class MinimapContribution implements EditorViewContribution {
 
   private updateNativeScrollbarGutter(): void {
     const gutter = nativeScrollbarGutter(
-      this.context.scrollElement,
       this.latestSnapshot.viewport,
       this.appliedReservedWidth,
+      this.scrollElementBorderMetrics,
     );
     if (
       gutter.vertical === this.verticalScrollbarWidth &&
@@ -221,6 +223,11 @@ type SliderDrag = {
   readonly pointerId: number;
   readonly onMove: (event: PointerEvent) => void;
   readonly onEnd: () => void;
+};
+
+type ScrollElementBorderMetrics = {
+  readonly x: number;
+  readonly y: number;
 };
 
 function createHost(
@@ -272,29 +279,26 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function nativeScrollbarGutter(
-  element: HTMLElement,
   viewport: EditorViewSnapshot["viewport"],
   overlayWidth: number,
+  border: ScrollElementBorderMetrics,
 ): {
   readonly vertical: number;
   readonly horizontal: number;
 } {
-  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
-  const borderX = cssPixels(style?.borderLeftWidth) + cssPixels(style?.borderRightWidth);
-  const borderY = cssPixels(style?.borderTopWidth) + cssPixels(style?.borderBottomWidth);
   const hasVerticalScrollbar =
     viewport.clientHeight > 0 && viewport.scrollHeight > viewport.clientHeight;
   const hasHorizontalScrollbar =
     viewport.clientWidth > 0 && viewport.scrollWidth > viewport.clientWidth;
   const vertical = hasVerticalScrollbar
     ? Math.max(
-        measuredVerticalScrollbarGutter(viewport, borderX, overlayWidth),
+        measuredVerticalScrollbarGutter(viewport, border.x, overlayWidth),
         OVERLAY_SCROLLBAR_GUTTER_FALLBACK,
       )
     : 0;
   const horizontal = hasHorizontalScrollbar
     ? Math.max(
-        measuredHorizontalScrollbarGutter(viewport, borderY),
+        measuredHorizontalScrollbarGutter(viewport, border.y),
         OVERLAY_SCROLLBAR_GUTTER_FALLBACK,
       )
     : 0;
@@ -322,6 +326,14 @@ function measuredHorizontalScrollbarGutter(
 
   const borderBoxHeight = viewport.borderBoxHeight ?? viewport.clientHeight + borderWidth;
   return Math.max(0, borderBoxHeight - viewport.clientHeight - borderWidth);
+}
+
+function readScrollElementBorderMetrics(element: HTMLElement): ScrollElementBorderMetrics {
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+  return {
+    x: cssPixels(style?.borderLeftWidth) + cssPixels(style?.borderRightWidth),
+    y: cssPixels(style?.borderTopWidth) + cssPixels(style?.borderBottomWidth),
+  };
 }
 
 function cssPixels(value: string | undefined): number {

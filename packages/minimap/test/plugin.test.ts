@@ -80,6 +80,21 @@ describe("createMinimapPlugin", () => {
       expect(host?.style.right).toBe("30px");
       expect(testContext.reserveOverlayWidth).toHaveBeenCalledWith("right", 30);
 
+      const getComputedStyle = vi.spyOn(window, "getComputedStyle");
+      contribution?.update(
+        snapshot({
+          borderBoxWidth: 112,
+          clientHeight: 20,
+          clientWidth: 80,
+          scrollHeight: 80,
+          scrollWidth: 80,
+        }),
+        "viewport",
+      );
+
+      expect(getComputedStyle).not.toHaveBeenCalled();
+      getComputedStyle.mockRestore();
+
       contribution?.dispose();
     } finally {
       restoreRuntime();

@@ -383,10 +383,10 @@ export class Editor {
     const viewport = {
       scrollTop: viewState.scrollTop,
       scrollLeft: viewState.scrollLeft,
-      scrollHeight: this.el.scrollHeight,
-      scrollWidth: this.el.scrollWidth,
-      clientHeight: this.el.clientHeight,
-      clientWidth: this.el.clientWidth,
+      scrollHeight: viewState.scrollHeight,
+      scrollWidth: viewState.scrollWidth,
+      clientHeight: viewState.viewportHeight,
+      clientWidth: viewState.viewportWidth,
       visibleRange: viewState.visibleRange,
     };
 

@@ -65,8 +65,10 @@ export type VirtualizedTextViewState = {
   readonly contentWidth: number;
   readonly foldMapActive: boolean;
   readonly metrics: BrowserTextMetrics;
+  readonly scrollHeight: number;
   readonly scrollLeft: number;
   readonly scrollTop: number;
+  readonly scrollWidth: number;
   readonly totalHeight: number;
   readonly viewportHeight: number;
   readonly viewportWidth: number;

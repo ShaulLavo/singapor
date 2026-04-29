@@ -267,35 +267,55 @@ function mockEditorViewport(
   });
 }
 
-function withThrowingScrollOffsetReads(element: HTMLElement, callback: () => void): void {
-  const scrollTop = Object.getOwnPropertyDescriptor(element, "scrollTop");
-  const scrollLeft = Object.getOwnPropertyDescriptor(element, "scrollLeft");
-  Object.defineProperty(element, "scrollTop", {
-    configurable: true,
-    get: () => {
-      throw new Error("unexpected scrollTop read");
-    },
-    set: () => undefined,
-  });
-  Object.defineProperty(element, "scrollLeft", {
-    configurable: true,
-    get: () => {
-      throw new Error("unexpected scrollLeft read");
-    },
-    set: () => undefined,
-  });
+type ScrollMetricProperty =
+  | "clientHeight"
+  | "clientWidth"
+  | "scrollHeight"
+  | "scrollLeft"
+  | "scrollTop"
+  | "scrollWidth";
+
+function withThrowingScrollMetricReads(element: HTMLElement, callback: () => void): void {
+  const descriptors: Record<ScrollMetricProperty, PropertyDescriptor | undefined> = {
+    clientHeight: Object.getOwnPropertyDescriptor(element, "clientHeight"),
+    clientWidth: Object.getOwnPropertyDescriptor(element, "clientWidth"),
+    scrollHeight: Object.getOwnPropertyDescriptor(element, "scrollHeight"),
+    scrollLeft: Object.getOwnPropertyDescriptor(element, "scrollLeft"),
+    scrollTop: Object.getOwnPropertyDescriptor(element, "scrollTop"),
+    scrollWidth: Object.getOwnPropertyDescriptor(element, "scrollWidth"),
+  };
+  defineThrowingElementProperty(element, "clientHeight");
+  defineThrowingElementProperty(element, "clientWidth");
+  defineThrowingElementProperty(element, "scrollHeight");
+  defineThrowingElementProperty(element, "scrollLeft");
+  defineThrowingElementProperty(element, "scrollTop");
+  defineThrowingElementProperty(element, "scrollWidth");
 
   try {
     callback();
   } finally {
-    restoreElementProperty(element, "scrollTop", scrollTop);
-    restoreElementProperty(element, "scrollLeft", scrollLeft);
+    restoreElementProperty(element, "clientHeight", descriptors.clientHeight);
+    restoreElementProperty(element, "clientWidth", descriptors.clientWidth);
+    restoreElementProperty(element, "scrollHeight", descriptors.scrollHeight);
+    restoreElementProperty(element, "scrollLeft", descriptors.scrollLeft);
+    restoreElementProperty(element, "scrollTop", descriptors.scrollTop);
+    restoreElementProperty(element, "scrollWidth", descriptors.scrollWidth);
   }
+}
+
+function defineThrowingElementProperty(element: HTMLElement, property: ScrollMetricProperty): void {
+  Object.defineProperty(element, property, {
+    configurable: true,
+    get: () => {
+      throw new Error(`unexpected ${property} read`);
+    },
+    set: () => undefined,
+  });
 }
 
 function restoreElementProperty(
   element: HTMLElement,
-  property: "scrollLeft" | "scrollTop",
+  property: ScrollMetricProperty,
   descriptor: PropertyDescriptor | undefined,
 ): void {
   if (!descriptor) {
@@ -398,17 +418,21 @@ describe("Editor", () => {
       expect(events.at(-1)?.snapshot?.text).toBe("const a = 1;!");
     });
 
-    it("uses cached scroll offsets when creating snapshots", () => {
+    it("uses cached scroll metrics when creating snapshots", () => {
       const events: ViewContributionEvent[] = [];
       editor.dispose();
       editor = new Editor(container, { plugins: [createViewContributionPlugin(events)] });
 
-      withThrowingScrollOffsetReads(editorRoot(), () => {
+      withThrowingScrollMetricReads(editorRoot(), () => {
         editor.openDocument({ documentId: "test.ts", text: "const a = 1;" });
       });
 
       expect(events.at(-1)?.snapshot?.viewport.scrollTop).toBe(0);
       expect(events.at(-1)?.snapshot?.viewport.scrollLeft).toBe(0);
+      expect(events.at(-1)?.snapshot?.viewport.scrollHeight).toBeGreaterThan(0);
+      expect(events.at(-1)?.snapshot?.viewport.scrollWidth).toBeGreaterThan(0);
+      expect(events.at(-1)?.snapshot?.viewport.clientHeight).toBe(0);
+      expect(events.at(-1)?.snapshot?.viewport.clientWidth).toBe(0);
     });
 
     it("disposes view contributions with the editor", () => {

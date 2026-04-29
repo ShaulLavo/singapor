@@ -1,11 +1,12 @@
-import { renderDir, type FileSelectHandler } from "../tree.ts";
+import type { SourceFile } from "../githubSource.ts";
+import { buildSourceTree, renderTree, type FileSelectHandler } from "../tree.ts";
 import { el } from "./dom.ts";
 
 export type Sidebar = {
   readonly element: HTMLDivElement;
   clear(): void;
-  renderDirectory(
-    handle: FileSystemDirectoryHandle,
+  renderSource(
+    files: readonly SourceFile[],
     onFileSelect: FileSelectHandler,
     options?: SidebarRenderOptions,
   ): Promise<void>;
@@ -25,8 +26,8 @@ class SidebarController implements Sidebar {
     this.element.replaceChildren();
   }
 
-  async renderDirectory(
-    handle: FileSystemDirectoryHandle,
+  async renderSource(
+    files: readonly SourceFile[],
     onFileSelect: FileSelectHandler,
     options?: SidebarRenderOptions,
   ): Promise<void> {
@@ -37,7 +38,7 @@ class SidebarController implements Sidebar {
     this.expandedDirectoryPaths.clear();
     this.element.replaceChildren();
 
-    await renderDir(handle, this.element, onFileSelect, {
+    await renderTree(buildSourceTree(files), this.element, onFileSelect, {
       selectedPath: options?.selectedPath,
       expandedPaths: expandedPathsToRestore,
       onDirectoryToggle: this.setDirectoryOpen,

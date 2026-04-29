@@ -540,9 +540,15 @@ export function updateMutableRowChunks(
   mutable.textNode = chunks[0]?.textNode ?? row.textNode;
 }
 
-export function removeRowElements(row: MountedVirtualizedTextRow): void {
-  row.element.remove();
-  row.gutterElement.remove();
+export function removeRowElements(
+  rows: readonly MountedVirtualizedTextRow[],
+  rowParent: HTMLDivElement,
+  gutterParent: HTMLDivElement,
+): void {
+  for (const row of rows) {
+    rowParent.removeChild(row.element);
+    gutterParent.removeChild(row.gutterElement);
+  }
 }
 
 export function scrollElementPadding(element: HTMLElement): {

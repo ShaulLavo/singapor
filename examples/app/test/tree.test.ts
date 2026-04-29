@@ -1,22 +1,23 @@
 import { describe, expect, it } from "vitest";
 
-import { renderDir } from "../src/tree.ts";
+import type { SourceFile } from "../src/githubSource.ts";
+import { buildSourceTree, renderTree } from "../src/tree.ts";
 
-describe("renderDir", () => {
+describe("renderTree", () => {
   it("sorts directories before files and auto-selects the requested file", async () => {
     const container = document.createElement("div");
-    const selectedFiles: Array<{ path: string; content: string }> = [];
-    const root = directoryHandle("root", [
-      fileHandle("zeta.ts", "z"),
-      directoryHandle("src", [fileHandle("main.ts", "main")]),
-      fileHandle("alpha.ts", "a"),
-    ]);
+    const selectedFiles: string[] = [];
+    const files = [
+      sourceFile("zeta.ts", "z"),
+      sourceFile("src/main.ts", "main"),
+      sourceFile("alpha.ts", "a"),
+    ];
 
-    await renderDir(
-      root,
+    await renderTree(
+      buildSourceTree(files),
       container,
-      (path, content) => {
-        selectedFiles.push({ path, content });
+      (file) => {
+        selectedFiles.push(`${file.path}:${file.text}`);
       },
       {
         selectedPath: "alpha.ts",
@@ -24,16 +25,16 @@ describe("renderDir", () => {
     );
 
     expect(entryLabels(container)).toEqual(["src", "alpha.ts", "zeta.ts"]);
-    expect(selectedFiles).toEqual([{ path: "alpha.ts", content: "a" }]);
+    expect(selectedFiles).toEqual(["alpha.ts:a"]);
     expect(container.querySelector(".entry.active")?.textContent).toContain("alpha.ts");
   });
 
   it("restores expanded directories and reports toggles", async () => {
     const container = document.createElement("div");
     const toggles: Array<{ path: string; open: boolean }> = [];
-    const root = directoryHandle("root", [directoryHandle("src", [fileHandle("main.ts", "main")])]);
+    const files = [sourceFile("src/main.ts", "main")];
 
-    await renderDir(root, container, () => undefined, {
+    await renderTree(buildSourceTree(files), container, () => undefined, {
       expandedPaths: new Set(["src/"]),
       onDirectoryToggle: (path, open) => toggles.push({ path, open }),
     });
@@ -63,23 +64,11 @@ function clickEntry(container: HTMLElement, name: string): void {
   entry.click();
 }
 
-function fileHandle(name: string, content: string): FileSystemFileHandle {
+function sourceFile(path: string, text: string): SourceFile {
   return {
-    kind: "file",
-    name,
-    getFile: async () => new File([content], name),
-  } as FileSystemFileHandle;
-}
-
-function directoryHandle(
-  name: string,
-  children: Array<FileSystemFileHandle | FileSystemDirectoryHandle>,
-): FileSystemDirectoryHandle {
-  return {
-    kind: "directory",
-    name,
-    entries: async function* () {
-      for (const child of children) yield [child.name, child] as const;
-    },
-  } as unknown as FileSystemDirectoryHandle;
+    path,
+    text,
+    sha: `${path}-sha`,
+    size: text.length,
+  };
 }

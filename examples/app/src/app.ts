@@ -12,23 +12,23 @@ import { createStatusBar } from "./components/statusBar.ts";
 import type { StatusBar } from "./components/statusBar.ts";
 import { createTopBar } from "./components/topBar.ts";
 import type { TopBar } from "./components/topBar.ts";
-import { getCachedHandle, cacheHandle } from "./db.ts";
+import {
+  fetchRepositorySource,
+  REPOSITORY_NAME,
+  REPOSITORY_OWNER,
+  type SourceFile,
+  type SourceSnapshot,
+} from "./githubSource.ts";
+import { loadCachedSourceSnapshot, saveSourceSnapshotToCache } from "./sourceCache.ts";
+import { findSourceFile, firstSourceFile } from "./tree.ts";
 
 const SELECTED_FILE_KEY = "editor-selected-file";
+const DEFAULT_SELECTED_FILE = "README.md";
 
-type AppController = {
-  readonly openDirectory: (
-    handle: FileSystemDirectoryHandle,
-    options?: { selectedPath?: string; preserveExpandedPaths?: boolean },
-  ) => Promise<void>;
-  readonly refreshDirectory: () => Promise<void>;
-  readonly selectedPath: () => string | undefined;
-};
-
-class DirectoryController implements AppController {
-  private currentDirectoryHandle: FileSystemDirectoryHandle | null = null;
+class SourceController {
+  private currentSnapshot: SourceSnapshot | null = null;
   private currentSelectedPath: string | undefined;
-  private isRenderingDirectory = false;
+  private isRefreshingSource = false;
   private readonly topBar: TopBar;
   private readonly sidebar: Sidebar;
   private readonly statusBar: StatusBar;
@@ -41,57 +41,98 @@ class DirectoryController implements AppController {
     this.editor = editor;
   }
 
-  selectedPath(): string | undefined {
-    return this.currentSelectedPath;
+  start(): void {
+    this.statusBar.clear();
+    this.topBar.setMessage("Loading cached source");
+    void this.loadCachedThenRefresh();
   }
 
   updateStatus(state = this.editor.getState()): void {
     this.statusBar.update(this.currentSelectedPath, state);
   }
 
-  async openDirectory(
-    handle: FileSystemDirectoryHandle,
-    options?: { selectedPath?: string; preserveExpandedPaths?: boolean },
-  ): Promise<void> {
-    this.currentDirectoryHandle = handle;
-    this.currentSelectedPath = options?.selectedPath;
-    this.isRenderingDirectory = true;
+  async refreshSource(): Promise<void> {
+    if (this.isRefreshingSource) return;
+
+    this.isRefreshingSource = true;
     this.updateToolbarState();
-    this.topBar.setDirectoryName(handle.name);
-    this.clearActiveFile();
+    this.topBar.setMessage(`Fetching ${REPOSITORY_OWNER}/${REPOSITORY_NAME}`);
 
     try {
-      await this.sidebar.renderDirectory(handle, this.displayFile, {
-        selectedPath: options?.selectedPath,
-        preserveExpandedPaths: options?.preserveExpandedPaths,
+      const snapshot = await fetchRepositorySource();
+      await persistSnapshot(snapshot);
+      await this.displaySnapshot(snapshot, {
+        selectedPath: this.currentSelectedPath ?? storedSelectedPath(),
+        preserveExpandedPaths: Boolean(this.currentSnapshot),
       });
+      this.topBar.setRepositoryName(snapshotLabel(snapshot));
+    } catch {
+      this.handleRefreshFailure();
     } finally {
-      this.isRenderingDirectory = false;
+      this.isRefreshingSource = false;
       this.updateToolbarState();
     }
   }
 
-  async refreshDirectory(): Promise<void> {
-    if (!this.currentDirectoryHandle) return;
+  private async loadCachedThenRefresh(): Promise<void> {
+    const cached = await loadCachedSourceSnapshot();
 
-    await this.openDirectory(this.currentDirectoryHandle, {
-      selectedPath: this.currentSelectedPath,
-      preserveExpandedPaths: true,
+    if (cached) {
+      await this.displaySnapshot(cached, {
+        selectedPath: storedSelectedPath(),
+        preserveExpandedPaths: false,
+      });
+      this.topBar.setRepositoryName(`${snapshotLabel(cached)} cached`);
+    }
+
+    await this.refreshSource();
+  }
+
+  private async displaySnapshot(
+    snapshot: SourceSnapshot,
+    options: { readonly selectedPath?: string; readonly preserveExpandedPaths: boolean },
+  ): Promise<void> {
+    const selectedFile = selectedFileForSnapshot(snapshot, options.selectedPath);
+    this.currentSnapshot = snapshot;
+    this.currentSelectedPath = selectedFile?.path;
+
+    if (!selectedFile) {
+      this.clearActiveFile();
+      this.sidebar.clear();
+      return;
+    }
+
+    await this.sidebar.renderSource(snapshot.files, this.displayFile, {
+      selectedPath: selectedFile.path,
+      preserveExpandedPaths: options.preserveExpandedPaths,
     });
   }
 
-  private readonly displayFile = (filePath: string, content: string): void => {
-    this.currentSelectedPath = filePath;
-    localStorage.setItem(SELECTED_FILE_KEY, filePath);
-    this.editor.setText(content, {
-      languageId: languageIdForFilePath(filePath),
+  private readonly displayFile = (file: SourceFile, reason: "auto" | "user"): void => {
+    this.currentSelectedPath = file.path;
+    localStorage.setItem(SELECTED_FILE_KEY, file.path);
+    this.editor.openDocument({
+      documentId: file.path,
+      text: file.text,
+      languageId: languageIdForFilePath(file.path),
     });
-    this.editor.focus();
+    if (reason === "user") this.editor.focus();
     this.updateStatus();
   };
 
+  private handleRefreshFailure(): void {
+    if (this.currentSnapshot) {
+      this.topBar.setMessage("Using cached source; refresh failed");
+      return;
+    }
+
+    this.topBar.setMessage("Failed to fetch source");
+    this.clearActiveFile();
+    this.sidebar.clear();
+  }
+
   private updateToolbarState(): void {
-    this.topBar.setBusyState(this.isRenderingDirectory, Boolean(this.currentDirectoryHandle));
+    this.topBar.setBusyState(this.isRefreshingSource);
   }
 
   private clearActiveFile(): void {
@@ -112,7 +153,7 @@ export function mountApp(): void {
 
   app.append(topBar.element, main, statusBar.element);
 
-  let controller: DirectoryController | null = null;
+  let controller: SourceController | null = null;
   const editor = new Editor(editorPane.element, {
     plugins: [
       javaScript({ jsx: true }),
@@ -127,60 +168,36 @@ export function mountApp(): void {
       controller?.updateStatus(state);
     },
   });
-  controller = new DirectoryController(topBar, sidebar, statusBar, editor);
+  controller = new SourceController(topBar, sidebar, statusBar, editor);
 
-  restoreCachedDirectory(controller, topBar);
-  topBar.openButton.addEventListener("click", () => {
-    void openDirectoryFromPicker(controller, topBar);
-  });
-  topBar.refreshButton.addEventListener("click", () => {
-    void refreshOpenDirectory(controller, topBar);
-  });
+  controller.start();
 }
 
-function restoreCachedDirectory(controller: AppController, topBar: TopBar): void {
-  getCachedHandle()
-    .then(async (cached) => {
-      if (!cached) return;
-      const perm = await cached.queryPermission({ mode: "read" });
-      if (perm === "granted") {
-        const selectedPath = localStorage.getItem(SELECTED_FILE_KEY) ?? undefined;
-        await controller.openDirectory(cached, { selectedPath });
-      }
-    })
-    .catch(() => {
-      topBar.setMessage("Failed to restore directory");
-      return undefined;
-    });
+function selectedFileForSnapshot(
+  snapshot: SourceSnapshot,
+  selectedPath: string | undefined,
+): SourceFile | null {
+  return (
+    findSourceFile(snapshot.files, selectedPath) ??
+    findSourceFile(snapshot.files, DEFAULT_SELECTED_FILE) ??
+    firstSourceFile(snapshot.files)
+  );
 }
 
-async function openDirectoryFromPicker(controller: AppController, topBar: TopBar): Promise<void> {
+async function persistSnapshot(snapshot: SourceSnapshot): Promise<void> {
   try {
-    const handle = await window.showDirectoryPicker();
-    await cacheDirectoryHandle(handle);
-    await controller.openDirectory(handle);
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") return; // user cancelled the picker
-    topBar.setMessage("Failed to open directory");
-    return;
-  }
-}
-
-async function cacheDirectoryHandle(handle: FileSystemDirectoryHandle): Promise<void> {
-  try {
-    await cacheHandle(handle);
+    await saveSourceSnapshotToCache(snapshot);
   } catch {
     return;
   }
 }
 
-async function refreshOpenDirectory(controller: AppController, topBar: TopBar): Promise<void> {
-  try {
-    await controller.refreshDirectory();
-  } catch {
-    topBar.setMessage("Failed to refresh directory");
-    return;
-  }
+function storedSelectedPath(): string | undefined {
+  return localStorage.getItem(SELECTED_FILE_KEY) ?? undefined;
+}
+
+function snapshotLabel(snapshot: SourceSnapshot): string {
+  return `${snapshot.owner}/${snapshot.repo} @ ${snapshot.treeSha.slice(0, 7)}`;
 }
 
 function languageIdForFilePath(filePath: string): string | null {

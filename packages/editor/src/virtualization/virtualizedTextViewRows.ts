@@ -95,7 +95,7 @@ function mountOrUpdateRow(
     return;
   }
 
-  const row = reusableRows.shift() ?? createRow(view);
+  const row = reusableRows.pop() ?? createRow(view);
   updateRow(view, row, item, snapshot);
   view.rowElements.set(item.index, row);
 }
@@ -605,10 +605,11 @@ function releaseRowsOutside(
   view: VirtualizedTextViewInternal,
   items: readonly FixedRowVirtualItem[],
 ): MountedVirtualizedTextRow[] {
-  const mounted = new Set(items.map((item) => item.index));
+  const start = items[0]?.index ?? 0;
+  const end = (items[items.length - 1]?.index ?? -1) + 1;
   const reusableRows: MountedVirtualizedTextRow[] = [];
   for (const [index, row] of view.rowElements) {
-    if (mounted.has(index)) continue;
+    if (index >= start && index < end) continue;
     view.rowElements.delete(index);
     reusableRows.push(row);
   }
@@ -621,11 +622,14 @@ function removeReusableRows(
   rows: readonly MountedVirtualizedTextRow[],
   onRemoveSlot: (rowSlotId: number) => void,
 ): void {
+  if (rows.length === 0) return;
+
   for (const row of rows) {
     onRemoveSlot(row.tokenHighlightSlotId);
     view.rowTokenSignatures.delete(row.tokenHighlightSlotId);
-    removeRowElements(row);
   }
+
+  removeRowElements(rows, view.spacer, view.gutterElement);
 }
 
 export function resetContentWidthScan(view: VirtualizedTextViewInternal): void {

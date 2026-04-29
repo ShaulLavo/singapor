@@ -1,63 +1,188 @@
-type TreeEntry =
-  | { name: string; kind: "file"; handle: FileSystemFileHandle }
-  | { name: string; kind: "directory"; handle: FileSystemDirectoryHandle };
+import type { SourceFile } from "./githubSource.ts";
 
-export type FileSelectHandler = (filePath: string, content: string) => Promise<void> | void;
+export type SourceTreeEntry =
+  | {
+      readonly name: string;
+      readonly path: string;
+      readonly kind: "file";
+      readonly file: SourceFile;
+    }
+  | {
+      readonly name: string;
+      readonly path: string;
+      readonly kind: "directory";
+      readonly children: readonly SourceTreeEntry[];
+    };
+
+export type FileSelectReason = "auto" | "user";
+export type FileSelectHandler = (
+  file: SourceFile,
+  reason: FileSelectReason,
+) => Promise<void> | void;
 type DirectoryToggleHandler = (directoryPath: string, open: boolean) => void;
 
-type RenderDirOptions = {
-  prefix?: string;
-  selectedPath?: string;
-  expandedPaths?: ReadonlySet<string>;
-  onDirectoryToggle?: DirectoryToggleHandler;
+type RenderTreeOptions = {
+  readonly selectedPath?: string;
+  readonly expandedPaths?: ReadonlySet<string>;
+  readonly onDirectoryToggle?: DirectoryToggleHandler;
 };
 
-type DirectoryEntryOptions = {
-  path: string;
-  selectedPath?: string;
-  expandedPaths?: ReadonlySet<string>;
-  onDirectoryToggle?: DirectoryToggleHandler;
-  shouldRestore: boolean;
+type DirectoryEntryOptions = RenderTreeOptions & {
+  readonly shouldRestore: boolean;
 };
 
-function createTreeEntry(
-  name: string,
-  child: FileSystemFileHandle | FileSystemDirectoryHandle,
-): TreeEntry {
-  if (child.kind === "directory") {
-    return { name, kind: "directory", handle: child as FileSystemDirectoryHandle };
+type MutableDirectory = {
+  readonly name: string;
+  readonly path: string;
+  readonly directories: Map<string, MutableDirectory>;
+  readonly files: Map<string, SourceFile>;
+};
+
+export function buildSourceTree(files: readonly SourceFile[]): readonly SourceTreeEntry[] {
+  const root = createMutableDirectory("", "");
+
+  for (const file of files) {
+    addSourceFile(root, file);
   }
 
-  return { name, kind: "file", handle: child as FileSystemFileHandle };
+  return directoryChildren(root);
 }
 
-function compareTreeEntries(a: TreeEntry, b: TreeEntry): number {
-  if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
-  return a.name.localeCompare(b.name);
+export function firstSourceFile(files: readonly SourceFile[]): SourceFile | null {
+  return files.toSorted((left, right) => left.path.localeCompare(right.path))[0] ?? null;
 }
 
-function getDirectorySelectedPath(entryName: string, selectedPath?: string): string | undefined {
-  const entryPrefix = `${entryName}/`;
-  if (!selectedPath?.startsWith(entryPrefix)) return undefined;
-  return selectedPath.slice(entryPrefix.length);
+export function findSourceFile(
+  files: readonly SourceFile[],
+  path: string | undefined,
+): SourceFile | null {
+  if (!path) return null;
+  return files.find((file) => file.path === path) ?? null;
 }
 
-async function readDir(handle: FileSystemDirectoryHandle): Promise<TreeEntry[]> {
-  const entries: TreeEntry[] = [];
+export async function renderTree(
+  entries: readonly SourceTreeEntry[],
+  container: HTMLElement,
+  onFileSelect: FileSelectHandler,
+  options?: RenderTreeOptions,
+): Promise<void> {
+  const ul = document.createElement("ul");
 
-  try {
-    for await (const [name, child] of handle.entries()) {
-      entries.push(createTreeEntry(name, child));
-    }
-  } catch {
-    return [];
+  for (const entry of entries) {
+    await appendTreeEntry(ul, entry, onFileSelect, options);
   }
 
-  return entries.toSorted(compareTreeEntries);
+  container.appendChild(ul);
+}
+
+function createMutableDirectory(name: string, path: string): MutableDirectory {
+  return {
+    name,
+    path,
+    directories: new Map(),
+    files: new Map(),
+  };
+}
+
+function addSourceFile(root: MutableDirectory, file: SourceFile): void {
+  const parts = file.path.split("/");
+  const fileName = parts.at(-1);
+  if (!fileName) return;
+
+  const directory = ensureDirectory(root, parts.slice(0, -1));
+  directory.files.set(fileName, file);
+}
+
+function ensureDirectory(root: MutableDirectory, parts: readonly string[]): MutableDirectory {
+  let current = root;
+
+  for (const part of parts) {
+    current = ensureChildDirectory(current, part);
+  }
+
+  return current;
+}
+
+function ensureChildDirectory(parent: MutableDirectory, name: string): MutableDirectory {
+  const existing = parent.directories.get(name);
+  if (existing) return existing;
+
+  const path = parent.path ? `${parent.path}${name}/` : `${name}/`;
+  const directory = createMutableDirectory(name, path);
+  parent.directories.set(name, directory);
+  return directory;
+}
+
+function directoryChildren(directory: MutableDirectory): readonly SourceTreeEntry[] {
+  const directories = Array.from(directory.directories.values())
+    .toSorted((left, right) => left.name.localeCompare(right.name))
+    .map(directoryEntry);
+  const files = Array.from(directory.files.entries())
+    .toSorted(([left], [right]) => left.localeCompare(right))
+    .map(([name, file]) => fileEntry(name, file));
+
+  return [...directories, ...files];
+}
+
+function directoryEntry(directory: MutableDirectory): SourceTreeEntry {
+  return {
+    name: directory.name,
+    path: directory.path,
+    kind: "directory",
+    children: directoryChildren(directory),
+  };
+}
+
+function fileEntry(name: string, file: SourceFile): SourceTreeEntry {
+  return {
+    name,
+    path: file.path,
+    kind: "file",
+    file,
+  };
+}
+
+async function appendTreeEntry(
+  ul: HTMLUListElement,
+  entry: SourceTreeEntry,
+  onFileSelect: FileSelectHandler,
+  options?: RenderTreeOptions,
+): Promise<void> {
+  if (entry.kind === "directory") {
+    await appendDirectoryEntry(ul, entry, onFileSelect, options);
+    return;
+  }
+
+  await appendFileEntry(ul, entry, onFileSelect, options?.selectedPath === entry.path);
+}
+
+function appendDirectoryEntry(
+  ul: HTMLUListElement,
+  entry: SourceTreeEntry & { readonly kind: "directory" },
+  onFileSelect: FileSelectHandler,
+  options?: RenderTreeOptions,
+): Promise<void> {
+  const shouldRestore = shouldRestoreDirectory(entry, options);
+  const { li, restore } = renderDirectoryEntry(entry, onFileSelect, {
+    selectedPath: options?.selectedPath,
+    expandedPaths: options?.expandedPaths,
+    onDirectoryToggle: options?.onDirectoryToggle,
+    shouldRestore,
+  });
+
+  return appendRenderedEntry(ul, li, restore);
+}
+
+function shouldRestoreDirectory(
+  entry: SourceTreeEntry & { readonly kind: "directory" },
+  options?: RenderTreeOptions,
+): boolean {
+  if (options?.expandedPaths?.has(entry.path)) return true;
+  return options?.selectedPath?.startsWith(entry.path) ?? false;
 }
 
 function renderDirectoryEntry(
-  entry: TreeEntry & { kind: "directory" },
+  entry: SourceTreeEntry & { readonly kind: "directory" },
   onFileSelect: FileSelectHandler,
   options: DirectoryEntryOptions,
 ): { li: HTMLLIElement; restore: Promise<void> | null } {
@@ -79,21 +204,17 @@ function renderDirectoryEntry(
 
   const expand = async () => {
     if (!loaded) {
-      await renderDir(entry.handle, childContainer, onFileSelect, {
-        prefix: options.path,
-        selectedPath: options.selectedPath,
-        expandedPaths: options.expandedPaths,
-        onDirectoryToggle: options.onDirectoryToggle,
-      });
+      await renderTree(entry.children, childContainer, onFileSelect, options);
       loaded = true;
     }
+
     setOpen(true);
-    options.onDirectoryToggle?.(options.path, true);
+    options.onDirectoryToggle?.(entry.path, true);
   };
 
   const collapse = () => {
     setOpen(false);
-    options.onDirectoryToggle?.(options.path, false);
+    options.onDirectoryToggle?.(entry.path, false);
   };
 
   const toggle = async () => {
@@ -105,13 +226,8 @@ function renderDirectoryEntry(
     await expand();
   };
 
-  label.addEventListener("click", async () => {
-    try {
-      await toggle();
-    } catch {
-      label.classList.add("error");
-      return;
-    }
+  label.addEventListener("click", () => {
+    void markErrors(label, toggle());
   });
 
   li.append(label, childContainer);
@@ -120,9 +236,18 @@ function renderDirectoryEntry(
   return { li, restore };
 }
 
+function appendFileEntry(
+  ul: HTMLUListElement,
+  entry: SourceTreeEntry & { readonly kind: "file" },
+  onFileSelect: FileSelectHandler,
+  autoSelect: boolean,
+): Promise<void> {
+  const { li, restore } = renderFileEntry(entry, onFileSelect, autoSelect);
+  return appendRenderedEntry(ul, li, restore);
+}
+
 function renderFileEntry(
-  entry: TreeEntry & { kind: "file" },
-  prefix: string,
+  entry: SourceTreeEntry & { readonly kind: "file" },
   onFileSelect: FileSelectHandler,
   autoSelect: boolean,
 ): { li: HTMLLIElement; restore: Promise<void> | null } {
@@ -131,100 +256,35 @@ function renderFileEntry(
   label.className = "entry file";
   label.textContent = "📄 " + entry.name;
 
-  const selectFile = async () => {
+  const selectFile = async (reason: FileSelectReason) => {
     document.querySelectorAll(".entry.active").forEach((el) => el.classList.remove("active"));
     label.classList.add("active");
-    try {
-      const file = await entry.handle.getFile();
-      await onFileSelect(prefix + entry.name, await file.text());
-    } catch {
-      label.classList.add("error");
-      return;
-    }
+    await onFileSelect(entry.file, reason);
   };
 
-  label.addEventListener("click", selectFile);
+  label.addEventListener("click", () => {
+    void markErrors(label, selectFile("user"));
+  });
   li.appendChild(label);
 
-  const restore = autoSelect ? selectFile() : null;
+  const restore = autoSelect ? selectFile("auto") : null;
   return { li, restore };
+}
+
+async function markErrors(label: HTMLElement, action: Promise<void>): Promise<void> {
+  try {
+    await action;
+  } catch {
+    label.classList.add("error");
+  }
 }
 
 async function appendRenderedEntry(
   ul: HTMLUListElement,
   li: HTMLLIElement,
   restore: Promise<void> | null,
-) {
+): Promise<void> {
   ul.appendChild(li);
   if (!restore) return;
   await restore;
-}
-
-function appendDirectoryEntry(
-  ul: HTMLUListElement,
-  entry: TreeEntry & { kind: "directory" },
-  prefix: string,
-  selectedPath: string | undefined,
-  onFileSelect: FileSelectHandler,
-  options?: RenderDirOptions,
-): Promise<void> {
-  const path = prefix + entry.name + "/";
-  const childSelectedPath = getDirectorySelectedPath(entry.name, selectedPath);
-  const shouldRestore = Boolean(childSelectedPath) || Boolean(options?.expandedPaths?.has(path));
-  const { li, restore } = renderDirectoryEntry(entry, onFileSelect, {
-    path,
-    selectedPath: childSelectedPath,
-    expandedPaths: options?.expandedPaths,
-    onDirectoryToggle: options?.onDirectoryToggle,
-    shouldRestore,
-  });
-
-  return appendRenderedEntry(ul, li, restore);
-}
-
-function appendFileEntry(
-  ul: HTMLUListElement,
-  entry: TreeEntry & { kind: "file" },
-  prefix: string,
-  selectedPath: string | undefined,
-  onFileSelect: FileSelectHandler,
-): Promise<void> {
-  const autoSelect = selectedPath === entry.name;
-  const { li, restore } = renderFileEntry(entry, prefix, onFileSelect, autoSelect);
-  return appendRenderedEntry(ul, li, restore);
-}
-
-async function appendTreeEntry(
-  ul: HTMLUListElement,
-  entry: TreeEntry,
-  prefix: string,
-  selectedPath: string | undefined,
-  onFileSelect: FileSelectHandler,
-  options?: RenderDirOptions,
-) {
-  if (entry.kind === "directory") {
-    await appendDirectoryEntry(ul, entry, prefix, selectedPath, onFileSelect, options);
-    return;
-  }
-
-  await appendFileEntry(ul, entry, prefix, selectedPath, onFileSelect);
-}
-
-export async function renderDir(
-  dirHandle: FileSystemDirectoryHandle,
-  container: HTMLElement,
-  onFileSelect: FileSelectHandler,
-  options?: RenderDirOptions,
-) {
-  const prefix = options?.prefix ?? "";
-  const selectedPath = options?.selectedPath;
-
-  const entries = await readDir(dirHandle);
-  const ul = document.createElement("ul");
-
-  for (const entry of entries) {
-    await appendTreeEntry(ul, entry, prefix, selectedPath, onFileSelect, options);
-  }
-
-  container.appendChild(ul);
 }

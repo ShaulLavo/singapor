@@ -1,18 +1,19 @@
 import { describe, expect, it } from "vitest";
 
+import type { SourceFile } from "../../src/githubSource.ts";
 import { createSidebar } from "../../src/components/sidebar.ts";
 
 describe("createSidebar", () => {
-  it("renders a directory tree, selects files, and clears restored expansion state", async () => {
+  it("renders a repository tree, selects files, and clears restored expansion state", async () => {
     const sidebar = createSidebar();
-    const selectedFiles: Array<{ path: string; content: string }> = [];
-    const root = directoryHandle("root", [
-      directoryHandle("src", [fileHandle("main.ts", "console.log(1);")]),
-      fileHandle("README.md", "# Project"),
-    ]);
+    const selectedFiles: string[] = [];
+    const files = [
+      sourceFile("src/main.ts", "console.log(1);"),
+      sourceFile("README.md", "# Project"),
+    ];
 
-    await sidebar.renderDirectory(root, (path, content) => {
-      selectedFiles.push({ path, content });
+    await sidebar.renderSource(files, (file) => {
+      selectedFiles.push(`${file.path}:${file.text}`);
     });
 
     expect(entryLabels(sidebar.element)).toEqual(["src", "README.md"]);
@@ -23,12 +24,12 @@ describe("createSidebar", () => {
 
     await clickEntry(sidebar.element, "main.ts");
     await waitForSelectedFile(selectedFiles);
-    expect(selectedFiles).toEqual([{ path: "src/main.ts", content: "console.log(1);" }]);
+    expect(selectedFiles).toEqual(["src/main.ts:console.log(1);"]);
 
     sidebar.clear();
     expect(sidebar.element.childElementCount).toBe(0);
 
-    await sidebar.renderDirectory(root, () => undefined, { preserveExpandedPaths: true });
+    await sidebar.renderSource(files, () => undefined, { preserveExpandedPaths: true });
     expect(entryLabels(sidebar.element)).toEqual(["src", "README.md"]);
   });
 });
@@ -65,23 +66,11 @@ async function waitForSelectedFile(selectedFiles: readonly unknown[]): Promise<v
   throw new Error("Timed out waiting for file selection");
 }
 
-function fileHandle(name: string, content: string): FileSystemFileHandle {
+function sourceFile(path: string, text: string): SourceFile {
   return {
-    kind: "file",
-    name,
-    getFile: async () => new File([content], name),
-  } as FileSystemFileHandle;
-}
-
-function directoryHandle(
-  name: string,
-  children: Array<FileSystemFileHandle | FileSystemDirectoryHandle>,
-): FileSystemDirectoryHandle {
-  return {
-    kind: "directory",
-    name,
-    entries: async function* () {
-      for (const child of children) yield [child.name, child] as const;
-    },
-  } as unknown as FileSystemDirectoryHandle;
+    path,
+    text,
+    sha: `${path}-sha`,
+    size: text.length,
+  };
 }

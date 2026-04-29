@@ -134,27 +134,11 @@ test("routes native line break input at a placed caret", async ({ page }) => {
     .toContain("beforeinput:insertLineBreak:");
 });
 
-test("focuses the editor for typing after selecting a file", async ({ page }) => {
-  await page.addInitScript(() => {
-    const fileHandle = {
-      kind: "file",
-      name: "note.txt",
-      getFile: async () => new File(["abc"], "note.txt"),
-    };
-    const directoryHandle = {
-      kind: "directory",
-      name: "mock",
-      entries: async function* () {
-        yield ["note.txt", fileHandle] as const;
-      },
-    };
-
-    window.showDirectoryPicker = async () =>
-      directoryHandle as unknown as FileSystemDirectoryHandle;
-  });
+test("focuses the editor for typing after loading a GitHub source file", async ({ page }) => {
+  await mockGitHubSource(page, "README.md", "abc");
   await page.goto("/");
 
-  await page.locator("#open-btn").click();
+  await expect(page.locator(".entry.file")).toContainText("README.md");
   await page.locator(".entry.file").click();
   await expect(page.locator(".editor-virtualized-input")).toBeFocused();
 
@@ -162,6 +146,26 @@ test("focuses the editor for typing after selecting a file", async ({ page }) =>
 
   await expect(page.locator(".editor-virtualized")).toContainText("abcXYZ");
 });
+
+async function mockGitHubSource(page: Page, path: string, text: string): Promise<void> {
+  await page.route(
+    "https://api.github.com/repos/ShaulLavo/Editor/git/trees/main?recursive=1",
+    (route) =>
+      route.fulfill({
+        json: {
+          sha: "tree-sha",
+          truncated: false,
+          tree: [{ path, type: "blob", sha: "file-sha", size: text.length }],
+        },
+      }),
+  );
+  await page.route(`https://raw.githubusercontent.com/ShaulLavo/Editor/main/${path}`, (route) =>
+    route.fulfill({
+      body: text,
+      contentType: "text/plain",
+    }),
+  );
+}
 
 test("preserves scroll when refocusing a scrolled editor", async ({ page }) => {
   await page.goto("/");

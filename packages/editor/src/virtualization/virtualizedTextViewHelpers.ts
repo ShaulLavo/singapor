@@ -18,7 +18,6 @@ import type {
 
 export const DEFAULT_ROW_HEIGHT = 20;
 export const DEFAULT_OVERSCAN = 12;
-// TODO: Size the gutter to the widest visible row marker instead of a constant.
 export const DEFAULT_GUTTER_WIDTH = 36;
 export const DEFAULT_SELECTION_HIGHLIGHT = "editor-virtualized-selection";
 export const DEFAULT_LONG_LINE_CHUNK_SIZE = 2048;

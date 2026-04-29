@@ -45,5 +45,17 @@ describe.skipIf(typeof globalThis.Highlight === "undefined")(
       expect(validation.caretChecks).toBeGreaterThan(0);
       expect(validation.selectionChecks).toBeGreaterThan(0);
     });
+
+    it("measures generated gutter markers with the active CSS counter style", () => {
+      view!.scrollElement.style.setProperty("--editor-gutter-style", "decimal");
+      view!.setText(Array.from({ length: 10_000 }, (_, index) => `line ${index}`).join("\n"));
+      view!.setScrollMetrics(9_999 * 20, 20);
+
+      const gutterWidth = Number.parseFloat(
+        view!.scrollElement.style.getPropertyValue("--editor-gutter-width"),
+      );
+
+      expect(gutterWidth).toBeGreaterThan(36);
+    });
   },
 );

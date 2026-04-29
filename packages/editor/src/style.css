@@ -82,17 +82,34 @@
 
 .editor-virtualized-gutter-row {
   align-items: center;
+  box-sizing: border-box;
   column-gap: 2px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 10px;
+  grid-template-columns: max-content 10px;
   height: var(--editor-row-height);
+  justify-content: end;
   line-height: var(--editor-row-height);
   left: 0;
+  padding-left: 2px;
   padding-right: 4px;
   position: absolute;
   right: 0;
   top: 0;
   user-select: none;
+}
+
+.editor-virtualized-gutter-measure {
+  left: -10000px;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  visibility: hidden;
+  width: max-content;
+}
+
+.editor-virtualized-gutter-measure .editor-virtualized-gutter-row {
+  position: static;
+  width: max-content;
 }
 
 .editor-virtualized-gutter-label {

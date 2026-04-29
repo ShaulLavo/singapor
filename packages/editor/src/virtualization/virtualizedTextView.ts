@@ -53,7 +53,6 @@ import {
   normalizeGutterWidth,
   normalizeHorizontalOverscan,
   normalizeRowHeight,
-  parseCssPixels,
   pointVerticalDirection,
   preventFoldButtonMouseDown,
   rangesIntersectInclusive,
@@ -112,12 +111,18 @@ type TokenRenderEntry = {
   readonly sourceIndex: number;
 };
 
+const GUTTER_EXHAUSTIVE_MEASUREMENT_LIMIT = 2_000;
+const GUTTER_STRATIFIED_SAMPLE_COUNT = 512;
+const GUTTER_WIDTH_SAFETY_PX = 4;
+
 export class VirtualizedTextView {
   public readonly scrollElement: HTMLDivElement;
   public readonly inputElement: HTMLTextAreaElement;
 
   private readonly spacer: HTMLDivElement;
   private readonly gutterElement: HTMLDivElement;
+  private readonly gutterMeasureElement: HTMLDivElement;
+  private readonly minimumGutterWidth: number;
   private readonly caretElement: HTMLDivElement;
   private readonly styleEl: HTMLStyleElement;
   private readonly virtualizer: FixedRowVirtualizer;
@@ -152,6 +157,8 @@ export class VirtualizedTextView {
   private selectionStart: number | null = null;
   private selectionEnd: number | null = null;
   private lastRenderedRowsKey = "";
+  private gutterWidthDirty = true;
+  private currentGutterWidth = DEFAULT_GUTTER_WIDTH;
   private contentWidth = 0;
   private maxVisualColumnsSeen = 0;
   private lastWidthScanStart = 0;
@@ -166,6 +173,8 @@ export class VirtualizedTextView {
     const overscan = options.overscan ?? DEFAULT_OVERSCAN;
     const gutterWidth = normalizeGutterWidth(options.gutterWidth);
 
+    this.minimumGutterWidth = gutterWidth;
+    this.currentGutterWidth = gutterWidth;
     this.highlightRegistry = options.highlightRegistry ?? getDefaultHighlightRegistry();
     this.selectionHighlightName = options.selectionHighlightName ?? DEFAULT_SELECTION_HIGHLIGHT;
     this.selectionHighlight = new Highlight();
@@ -177,6 +186,7 @@ export class VirtualizedTextView {
     this.inputElement = createInputElement(container);
     this.spacer = container.ownerDocument.createElement("div");
     this.gutterElement = container.ownerDocument.createElement("div");
+    this.gutterMeasureElement = this.createGutterMeasureElement();
     this.caretElement = container.ownerDocument.createElement("div");
     this.longLineChunkSize = normalizeChunkSize(options.longLineChunkSize);
     this.longLineChunkThreshold = normalizeChunkThreshold(
@@ -199,6 +209,7 @@ export class VirtualizedTextView {
     this.spacer.appendChild(this.gutterElement);
     this.spacer.appendChild(this.caretElement);
     this.scrollElement.appendChild(this.spacer);
+    this.scrollElement.appendChild(this.gutterMeasureElement);
     this.scrollElement.appendChild(this.inputElement);
     container.ownerDocument.head.appendChild(this.styleEl);
 
@@ -222,7 +233,9 @@ export class VirtualizedTextView {
     this.textRevision += 1;
     this.tokenRangesFollowLastTextEdit = false;
     this.tokenRenderIndexDirty = true;
+    const previousLineCount = this.lineStarts.length;
     this.lineStarts = computeLineStarts(text);
+    if (previousLineCount !== this.lineStarts.length) this.gutterWidthDirty = true;
     this.foldMap = foldMapMatchesText(this.foldMap, text) ? this.foldMap : null;
     this.rebuildDisplayRows();
     this.clampStoredSelection();
@@ -268,6 +281,7 @@ export class VirtualizedTextView {
     const rowHeight = normalizeRowHeight(measured.rowHeight);
     this.metrics = { rowHeight, characterWidth: measured.characterWidth };
     this.applyRowHeight(rowHeight);
+    this.gutterWidthDirty = true;
     this.refreshDisplayRowsForWrapWidth();
     this.lastRenderedRowsKey = "";
     this.virtualizer.updateOptions({ rowHeight, rowSizes: this.rowSizes() });
@@ -511,6 +525,7 @@ export class VirtualizedTextView {
 
     this.lastRenderedRowsKey = rowsKey;
     this.applyTotalHeight(snapshot.totalSize);
+    this.updateGutterWidthIfNeeded();
     this.updateContentWidth(snapshot.virtualItems);
     this.reconcileRows(snapshot.virtualItems);
     this.renderTokenHighlights();
@@ -525,6 +540,28 @@ export class VirtualizedTextView {
     }
 
     this.removeReusableRows(reusableRows);
+  }
+
+  private createGutterMeasureElement(): HTMLDivElement {
+    const document = this.scrollElement.ownerDocument;
+    const measureElement = document.createElement("div");
+    const rowElement = document.createElement("div");
+    const labelElement = document.createElement("span");
+    const foldButtonElement = document.createElement("button");
+
+    measureElement.className = "editor-virtualized-gutter-measure";
+    measureElement.setAttribute("aria-hidden", "true");
+    rowElement.className = "editor-virtualized-gutter-row";
+    labelElement.className = "editor-virtualized-gutter-label editor-virtualized-line-number";
+    foldButtonElement.className = "editor-virtualized-fold-toggle";
+    foldButtonElement.type = "button";
+    foldButtonElement.hidden = true;
+    foldButtonElement.disabled = true;
+    foldButtonElement.tabIndex = -1;
+    rowElement.appendChild(labelElement);
+    rowElement.appendChild(foldButtonElement);
+    measureElement.appendChild(rowElement);
+    return measureElement;
   }
 
   private mountOrUpdateRow(
@@ -1038,6 +1075,66 @@ export class VirtualizedTextView {
     this.lastWidthScanEnd = -1;
   }
 
+  private updateGutterWidthIfNeeded(): void {
+    if (!this.gutterWidthDirty) return;
+
+    this.gutterWidthDirty = false;
+    const width = this.measureDocumentGutterWidth();
+    this.applyGutterWidth(width);
+  }
+
+  private measureDocumentGutterWidth(): number {
+    let measuredWidth = 0;
+    for (const lineNumber of this.gutterMeasurementLineNumbers()) {
+      measuredWidth = Math.max(measuredWidth, this.measureGutterMarkerWidth(lineNumber));
+    }
+
+    return Math.ceil(Math.max(this.minimumGutterWidth, measuredWidth + GUTTER_WIDTH_SAFETY_PX));
+  }
+
+  private gutterMeasurementLineNumbers(): readonly number[] {
+    const lineCount = this.lineStarts.length;
+    if (lineCount <= GUTTER_EXHAUSTIVE_MEASUREMENT_LIMIT) {
+      return Array.from({ length: lineCount }, (_, index) => index + 1);
+    }
+
+    const lineNumbers = new Set<number>([1, lineCount]);
+    const stride = Math.ceil(lineCount / GUTTER_STRATIFIED_SAMPLE_COUNT);
+    for (let lineNumber = stride; lineNumber < lineCount; lineNumber += stride) {
+      lineNumbers.add(lineNumber);
+    }
+    for (let magnitude = 10; magnitude <= lineCount * 10; magnitude *= 10) {
+      addGutterMeasurementLineNumber(lineNumbers, magnitude - 1, lineCount);
+      addGutterMeasurementLineNumber(lineNumbers, magnitude, lineCount);
+      addGutterMeasurementLineNumber(
+        lineNumbers,
+        repeatedDigitNumber("8", String(magnitude - 1).length),
+        lineCount,
+      );
+    }
+
+    return [...lineNumbers].toSorted((left, right) => left - right);
+  }
+
+  private measureGutterMarkerWidth(lineNumber: number): number {
+    const label = this.gutterMeasureElement.querySelector(".editor-virtualized-line-number");
+    if (!(label instanceof HTMLElement)) return 0;
+
+    setCounterSet(label, `editor-line ${lineNumber}`);
+    const rect = this.gutterMeasureElement.getBoundingClientRect();
+    if (!Number.isFinite(rect.width) || rect.width <= 0) return 0;
+    return rect.width;
+  }
+
+  private applyGutterWidth(width: number): void {
+    const nextWidth = Math.max(0, Math.ceil(width));
+    if (nextWidth === this.currentGutterWidth) return;
+
+    this.currentGutterWidth = nextWidth;
+    this.scrollElement.style.setProperty("--editor-gutter-width", `${nextWidth}px`);
+    this.applySpacerWidth();
+  }
+
   private updateContentWidth(items: readonly FixedRowVirtualItem[]): void {
     const first = items[0];
     const last = items.at(-1);
@@ -1090,7 +1187,11 @@ export class VirtualizedTextView {
     if (width === this.contentWidth) return;
 
     this.contentWidth = width;
-    this.spacer.style.width = `${width + this.gutterWidth()}px`;
+    this.applySpacerWidth();
+  }
+
+  private applySpacerWidth(): void {
+    this.spacer.style.width = `${this.contentWidth + this.gutterWidth()}px`;
   }
 
   private applyRowHeight(rowHeight: number): void {
@@ -1934,8 +2035,7 @@ export class VirtualizedTextView {
   }
 
   private gutterWidth(): number {
-    const value = this.scrollElement.style.getPropertyValue("--editor-gutter-width");
-    return parseCssPixels(value) ?? DEFAULT_GUTTER_WIDTH;
+    return this.currentGutterWidth;
   }
 
   private caretPosition(offset: number): {
@@ -1956,6 +2056,19 @@ export class VirtualizedTextView {
       height: row.height,
     };
   }
+}
+
+function addGutterMeasurementLineNumber(
+  lineNumbers: Set<number>,
+  lineNumber: number,
+  lineCount: number,
+): void {
+  if (lineNumber < 1 || lineNumber > lineCount) return;
+  lineNumbers.add(lineNumber);
+}
+
+function repeatedDigitNumber(digit: string, count: number): number {
+  return Number.parseInt(digit.repeat(count), 10);
 }
 
 function compareTokenRenderEntries(left: TokenRenderEntry, right: TokenRenderEntry): number {

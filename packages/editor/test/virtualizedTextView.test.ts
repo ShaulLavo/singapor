@@ -98,6 +98,42 @@ describe("VirtualizedTextView", () => {
     expect(firstLabel.style.counterSet).toBe("editor-line 1");
   });
 
+  it("sizes the gutter from cached document marker measurements", () => {
+    view.dispose();
+    view = new VirtualizedTextView(container, {
+      gutterWidth: 24,
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: "test-selection",
+    });
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    let gutterMeasurements = 0;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.classList.contains("editor-virtualized-gutter-measure")) {
+        gutterMeasurements += 1;
+        const label = this.querySelector(".editor-virtualized-line-number") as HTMLElement;
+        const line = Number(label.style.counterSet.match(/\d+$/)?.[0] ?? 0);
+        if (line === 1_234) return mockRect(0, 0, 97, 20);
+        return mockRect(0, 0, String(line).length * 12 + 16, 20);
+      }
+
+      return original.call(this);
+    };
+
+    try {
+      view.setText(createLines(1_500));
+      view.setScrollMetrics(1_499 * 20, 20);
+      const measurementsAfterInitialRender = gutterMeasurements;
+      view.setScrollMetrics(0, 20);
+      expect(gutterMeasurements).toBe(measurementsAfterInitialRender);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = original;
+    }
+
+    expect(view.scrollElement.style.getPropertyValue("--editor-gutter-width")).toBe("101px");
+  });
+
   it("updates mounted rows when scrolling", () => {
     view.setText(createLines(200));
     view.setScrollMetrics(2_000, 60);

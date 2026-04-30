@@ -13,7 +13,7 @@
 
 ## 2. Non-Goals (for now)
 
-- Collaboration (CRDT/OT) — maybe later (structural constraints preserved, see [Collaboration](docs/planning/collaboration.md))
+- Collaboration (CRDT/OT) — maybe later
 - Full IDE features (LSP, etc.)
 - Accessibility completeness
 - Mobile-first UX
@@ -134,8 +134,6 @@ See: [Syntax: Tree-sitter](docs/syntax/tree-sitter.md)
 Designed as a two-level scheduler: a small main-thread frame scheduler for input, mounted-row DOM
 work, and viewport reconciliation, plus a worker-side document scheduler for serialized
 transactions and derived projections.
-
-See: [Scheduling](docs/planning/scheduling.md)
 
 **Locked:** typing is never queued behind derived work; document transactions are serialized per
 document; syntax, folds, decorations, and background analysis are snapshot-tagged, coalesced, and

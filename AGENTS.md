@@ -33,13 +33,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 
 - [Tree-sitter](docs/syntax/tree-sitter.md) — Committed syntax engine for highlighting, folds, structural selection, indentation, injections, and query-driven features
 
-### Planning
-
-- [Phases](docs/planning/phases.md) — Phase 1 through 6 deliverables and acceptance criteria
-- [Performance](docs/planning/performance.md) — Targets, GC budget, system pressure, risks
-- [Collaboration](docs/planning/collaboration.md) — Structural constraints on single-user design for future collaboration
-- [Open Work](docs/planning/open-work.md) — Consolidated validation and measurement tasks
-
 ## Codebase
 
 ### Packages
@@ -54,21 +47,17 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 
 - **Piece table** — Treap with persistent snapshots, insert/delete/read, structural sharing
 - **CSS Highlight API renderer** — Token-based syntax highlighting via `Highlight` objects
-- **Incremental tokenizer** — Existing Shiki demo path; not the committed long-term syntax engine
+- **Anchors and selections** — Durable anchor resolution, selection sets, and snapshot-aware history helpers
+- **Tree-sitter syntax path** — Worker-backed parsing/query support and structural selection integration
+- **Display transforms and virtualization** — FoldMap, row virtualization, long-line chunking, and mounted-range highlight painting
+- **Incremental tokenizer** — Existing Shiki demo path; legacy beside the Tree-sitter syntax engine
 - **Example app** — File System Access API browser + editor integration
 
-### What's Designed but Not Built
+### Still Evolving
 
-- Line-break augmentation (Phase 1)
-- Opaque BufferId + chunked append buffer (Phase 1)
-- Anchor system (Phase 2)
-- Persistent reverse index (Phase 2)
-- Selection model (Phase 3)
-- Tree-sitter syntax system (Phase 4)
-- Display transforms / FoldMap (Phase 5)
-- Viewport & virtualization
-- Scheduling system
-- Decoration system
+- Worker transaction ownership and scheduling boundaries
+- Decoration system beyond current syntax/selection highlight paths
+- Performance validation for very large files, dense decorations, and rapid editing
 
 ### Key Types (in code)
 

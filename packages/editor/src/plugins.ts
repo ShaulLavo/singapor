@@ -118,6 +118,7 @@ export type EditorGutterRowContext = {
   readonly text: string;
   readonly kind: "text" | "block";
   readonly primaryText: boolean;
+  readonly cursorLine: boolean;
   readonly foldMarker: VirtualizedFoldMarker | null;
   readonly lineCount: number;
   toggleFold(marker: VirtualizedFoldMarker): void;

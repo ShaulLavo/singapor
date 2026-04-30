@@ -28,6 +28,7 @@ import {
   updateMutableRowChunks,
 } from "./virtualizedTextViewHelpers";
 import {
+  bufferRowForOffset,
   bufferRowForVirtualRow,
   displayRowKind,
   getRowHeight,
@@ -595,18 +596,59 @@ function createGutterRowContext(
   item: FixedRowVirtualItem,
 ): EditorGutterRowContext {
   const index = item.index;
+  const bufferRow = bufferRowForVirtualRow(view, index);
+
   return {
     index,
-    bufferRow: bufferRowForVirtualRow(view, index),
+    bufferRow,
     startOffset: lineStartOffset(view, index),
     endOffset: lineEndOffset(view, index),
     text: lineText(view, index),
     kind: displayRowKind(view, index),
     primaryText: isPrimaryTextRow(view, index),
+    cursorLine: isCursorLineGutterRow(view, index, bufferRow),
     foldMarker: foldMarkerForVirtualRow(view, index),
     lineCount: view.lineStarts.length,
     toggleFold: (marker) => view.onFoldToggle?.(marker),
   };
+}
+
+export function cursorLineBufferRow(view: VirtualizedTextViewInternal): number | null {
+  if (view.selectionHead === null) return null;
+
+  return bufferRowForOffset(view, view.selectionHead);
+}
+
+export function refreshCursorLineGutterRows(
+  view: VirtualizedTextViewInternal,
+  previousBufferRow: number | null,
+): void {
+  if (view.gutterContributions.length === 0) return;
+
+  const nextBufferRow = cursorLineBufferRow(view);
+  if (previousBufferRow === nextBufferRow) return;
+
+  for (const row of view.rowElements.values()) {
+    if (row.bufferRow !== previousBufferRow && row.bufferRow !== nextBufferRow) continue;
+
+    updateGutterContributionCells(view, row, {
+      index: row.index,
+      size: row.height,
+      start: row.top,
+    });
+  }
+}
+
+function isCursorLineGutterRow(
+  view: VirtualizedTextViewInternal,
+  row: number,
+  bufferRow: number,
+): boolean {
+  const cursorBufferRow = cursorLineBufferRow(view);
+  if (cursorBufferRow === null) return false;
+  if (!isPrimaryTextRow(view, row)) return false;
+
+  return bufferRow === cursorBufferRow;
 }
 
 export function foldMarkerForVirtualRow(

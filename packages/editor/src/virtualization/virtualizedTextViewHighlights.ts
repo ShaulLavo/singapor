@@ -21,7 +21,12 @@ import {
   tokenRowSignature,
   tokenStylesEqual,
 } from "./virtualizedTextViewHelpers";
-import { caretPosition, getMountedRows } from "./virtualizedTextViewRows";
+import {
+  caretPosition,
+  cursorLineBufferRow,
+  getMountedRows,
+  refreshCursorLineGutterRows,
+} from "./virtualizedTextViewRows";
 import type {
   MountedVirtualizedTextRow,
   TokenGroup,
@@ -66,20 +71,26 @@ export function setSelection(
   anchorOffset: number,
   headOffset: number,
 ): void {
+  const previousCursorLine = cursorLineBufferRow(view);
   view.selectionStart = clamp(Math.min(anchorOffset, headOffset), 0, view.text.length);
   view.selectionEnd = clamp(
     Math.max(anchorOffset, headOffset),
     view.selectionStart,
     view.text.length,
   );
+  view.selectionHead = clamp(headOffset, 0, view.text.length);
   renderSelectionHighlight(view);
+  refreshCursorLineGutterRows(view, previousCursorLine);
 }
 
 export function clearSelection(view: VirtualizedTextViewInternal): void {
+  const previousCursorLine = cursorLineBufferRow(view);
   view.selectionStart = null;
   view.selectionEnd = null;
+  view.selectionHead = null;
   clearSelectionHighlight(view);
   renderCaret(view);
+  refreshCursorLineGutterRows(view, previousCursorLine);
 }
 
 export function renderSelectionHighlight(view: VirtualizedTextViewInternal): void {
@@ -200,6 +211,8 @@ export function clampStoredSelection(view: VirtualizedTextViewInternal): void {
 
   view.selectionStart = clamp(view.selectionStart, 0, view.text.length);
   view.selectionEnd = clamp(view.selectionEnd, view.selectionStart, view.text.length);
+  if (view.selectionHead !== null)
+    view.selectionHead = clamp(view.selectionHead, 0, view.text.length);
 }
 
 export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {

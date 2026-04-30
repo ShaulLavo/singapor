@@ -150,6 +150,34 @@ describe("VirtualizedTextView", () => {
     );
   });
 
+  it("highlights the line gutter number for the cursor row", () => {
+    view.dispose();
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: "test-selection",
+      gutterContributions: [createLineGutterContribution()],
+    });
+    view.setText("alpha\nbeta\ngamma");
+    view.setScrollMetrics(0, 80);
+
+    const firstLabel = container.querySelector(
+      '[data-editor-virtual-gutter-row="0"] .editor-virtualized-line-number',
+    ) as HTMLSpanElement;
+    const secondLabel = container.querySelector(
+      '[data-editor-virtual-gutter-row="1"] .editor-virtualized-line-number',
+    ) as HTMLSpanElement;
+
+    view.setSelection(0, 0);
+    expect(firstLabel.classList.contains("editor-virtualized-line-number-active")).toBe(true);
+    expect(secondLabel.classList.contains("editor-virtualized-line-number-active")).toBe(false);
+
+    view.setSelection(6, 6);
+    expect(firstLabel.classList.contains("editor-virtualized-line-number-active")).toBe(false);
+    expect(secondLabel.classList.contains("editor-virtualized-line-number-active")).toBe(true);
+  });
+
   it("sizes the gutter from deterministic CSS columns", () => {
     view.dispose();
     view = new VirtualizedTextView(container, {

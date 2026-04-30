@@ -170,6 +170,7 @@ export class VirtualizedTextView {
       nextTokenHighlightSlotId: 0,
       selectionStart: null,
       selectionEnd: null,
+      selectionHead: null,
       lastSelectionHighlightSignature: "",
       lastRenderedRowsKey: "",
       gutterWidthDirty: true,

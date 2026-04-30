@@ -3,6 +3,7 @@
   --editor-foreground: #d4d4d4;
   --editor-gutter-background: var(--editor-background);
   --editor-gutter-foreground: #71717a;
+  --editor-gutter-active-foreground: var(--editor-foreground);
   --editor-caret-color: var(--editor-foreground);
   --editor-minimap-background: var(--editor-background);
   --editor-syntax-attribute: #99f6e4;
@@ -44,6 +45,7 @@
   --editor-foreground: #d4d4d4;
   --editor-gutter-background: var(--editor-background);
   --editor-gutter-foreground: #71717a;
+  --editor-gutter-active-foreground: var(--editor-foreground);
   --editor-caret-color: var(--editor-foreground);
   --editor-minimap-background: var(--editor-background);
   --editor-syntax-attribute: #99f6e4;
@@ -166,6 +168,10 @@
 
 .editor-virtualized-line-number::before {
   content: counter(editor-line, var(--editor-line-gutter-counter-style, decimal));
+}
+
+.editor-virtualized-line-number-active {
+  color: var(--editor-gutter-active-foreground);
 }
 
 .editor-virtualized-row {

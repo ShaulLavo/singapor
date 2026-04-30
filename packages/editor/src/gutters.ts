@@ -153,6 +153,10 @@ export function createFoldGutterContribution(
 
 function updateLineGutterCell(element: HTMLElement, row: EditorGutterRowContext): void {
   setElementHidden(element, !row.primaryText);
+  element.classList.toggle(
+    "editor-virtualized-line-number-active",
+    row.primaryText && row.cursorLine,
+  );
   if (!row.primaryText) return;
 
   setCounterSet(element, `editor-line ${row.bufferRow + 1}`);

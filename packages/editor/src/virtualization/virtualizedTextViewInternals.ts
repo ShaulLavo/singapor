@@ -68,6 +68,7 @@ export interface VirtualizedTextViewInternal {
   nextTokenHighlightSlotId: number;
   selectionStart: number | null;
   selectionEnd: number | null;
+  selectionHead: number | null;
   lastSelectionHighlightSignature: string;
   lastRenderedRowsKey: string;
   gutterWidthDirty: boolean;

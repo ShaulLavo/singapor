@@ -16,6 +16,7 @@ import { mouseSelectionAutoScrollDelta } from "../src/editor/mouseSelection";
 import { nextWordOffset, previousWordOffset } from "../src/editor/navigation";
 import { lineRangeAtOffset, wordRangeAtOffset } from "../src/editor/textRanges";
 import { appendTiming, eventStartMs, mergeChangeTimings } from "../src/editor/timing";
+import { createDocumentSession, type DocumentSessionChange } from "../src/documentSession";
 import {
   projectTokensThroughEdit,
   tokenProjectionLiveRangeStatus,
@@ -126,7 +127,7 @@ describe("text range helpers", () => {
 
 describe("timing helpers", () => {
   it("appends and merges timing measurements", () => {
-    const change = { snapshot: createPieceTableSnapshot("a"), edits: [], timings: [] };
+    const change = createEmptyChange();
     const withTiming = appendTiming(change, "apply", eventStartMs(new Event("input")));
     const merged = mergeChangeTimings(
       { ...change, timings: [{ name: "render", durationMs: 1 }] },
@@ -137,6 +138,10 @@ describe("timing helpers", () => {
     expect(merged.timings.map((timing) => timing.name)).toEqual(["apply", "render"]);
   });
 });
+
+function createEmptyChange(): DocumentSessionChange {
+  return { ...createDocumentSession("a").applyText(""), timings: [] };
+}
 
 describe("token projection", () => {
   it("shifts, expands, and drops tokens across edits", () => {

@@ -97,6 +97,25 @@ class MemoryDirectoryHandle {
     if (options?.recursive) return;
     throw new DOMException("Not found", "NotFoundError");
   }
+
+  async isSameEntry(other: FileSystemHandle): Promise<boolean> {
+    return other === this;
+  }
+
+  async resolve(possibleDescendant: FileSystemHandle): Promise<string[] | null> {
+    if (possibleDescendant === this) return [];
+
+    for (const [name, directory] of this.directories) {
+      const childPath = await directory.resolve(possibleDescendant);
+      if (childPath) return [name, ...childPath];
+    }
+
+    for (const [name, file] of this.files) {
+      if (await file.isSameEntry(possibleDescendant)) return [name];
+    }
+
+    return null;
+  }
 }
 
 class MemoryFileHandle {
@@ -112,6 +131,10 @@ class MemoryFileHandle {
     return new File([this.text], this.name);
   }
 
+  async isSameEntry(other: FileSystemHandle): Promise<boolean> {
+    return other === this;
+  }
+
   async createWritable(): Promise<FileSystemWritableFileStream> {
     let nextText = "";
 
@@ -124,5 +147,9 @@ class MemoryFileHandle {
         this.writeLog.push(this.name);
       },
     } as FileSystemWritableFileStream;
+  }
+
+  async createSyncAccessHandle(): Promise<FileSystemSyncAccessHandle> {
+    throw new DOMException("Not supported", "NotSupportedError");
   }
 }

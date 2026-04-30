@@ -123,6 +123,13 @@ function createViewContributionPlugin(events: ViewContributionEvent[]): EditorPl
   };
 }
 
+function requireViewContributionContext(
+  context: EditorViewContributionContext | null,
+): EditorViewContributionContext {
+  if (!context) throw new Error("missing view contribution context");
+  return context;
+}
+
 function createTestLanguagePlugin(): EditorPlugin {
   return createTreeSitterLanguagePlugin([
     {
@@ -576,7 +583,7 @@ describe("Editor", () => {
 
       const text = Array.from({ length: 10_000 }, (_, row) => `line ${row}`).join("\n");
       editor.openDocument({ documentId: "long.txt", text });
-      if (!contributionContext) throw new Error("missing view contribution context");
+      const context = requireViewContributionContext(contributionContext);
 
       const originalIndexOf = String.prototype.indexOf;
       let lineStartScans = 0;
@@ -590,7 +597,7 @@ describe("Editor", () => {
       };
 
       try {
-        contributionContext.reserveOverlayWidth("right", 120);
+        context.reserveOverlayWidth("right", 120);
       } finally {
         String.prototype.indexOf = originalIndexOf;
       }
@@ -617,10 +624,10 @@ describe("Editor", () => {
       };
       editor.dispose();
       editor = new Editor(container, { plugins: [plugin] });
-      if (!contributionContext) throw new Error("missing view contribution context");
+      const context = requireViewContributionContext(contributionContext);
 
-      contributionContext.reserveOverlayWidth("right", 80);
-      contributionContext.reserveOverlayWidth("right", 80);
+      context.reserveOverlayWidth("right", 80);
+      context.reserveOverlayWidth("right", 80);
 
       expect(events.filter((kind) => kind === "layout")).toHaveLength(1);
     });

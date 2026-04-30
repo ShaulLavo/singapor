@@ -21,7 +21,7 @@ type SourceCacheManifestFile = {
 };
 
 export async function loadCachedSourceSnapshot(
-  root = getOpfsRoot(),
+  root: FileSystemDirectoryHandle | Promise<FileSystemDirectoryHandle> = getOpfsRoot(),
 ): Promise<SourceSnapshot | null> {
   try {
     const cacheDir = await getCacheDirectory(await root, false);
@@ -41,7 +41,7 @@ export async function loadCachedSourceSnapshot(
 
 export async function saveSourceSnapshotToCache(
   snapshot: SourceSnapshot,
-  root = getOpfsRoot(),
+  root: FileSystemDirectoryHandle | Promise<FileSystemDirectoryHandle> = getOpfsRoot(),
 ): Promise<void> {
   const cacheDir = requireDirectory(await getCacheDirectory(await root, true));
   const objectsDir = requireDirectory(await getObjectsDirectory(cacheDir, true));
@@ -55,7 +55,9 @@ function requireDirectory(directory: FileSystemDirectoryHandle | null): FileSyst
   return directory;
 }
 
-export async function clearSourceCache(root = getOpfsRoot()): Promise<void> {
+export async function clearSourceCache(
+  root: FileSystemDirectoryHandle | Promise<FileSystemDirectoryHandle> = getOpfsRoot(),
+): Promise<void> {
   try {
     await (await root).removeEntry(CACHE_DIR, { recursive: true });
   } catch {

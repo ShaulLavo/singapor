@@ -19,6 +19,9 @@
     "turbo": "^2.9.2"
   },
   "dependencies": {
-    "better-result": "^2.7.0"
+    "@tailwindcss/vite": "^4.2.4",
+    "basecoat-css": "^0.3.11",
+    "better-result": "^2.7.0",
+    "tailwindcss": "^4.2.4"
   }
 }

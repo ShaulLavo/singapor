@@ -22,6 +22,9 @@ function handleRequest(request: MinimapWorkerRequest): void {
         styles: request.baseStyles,
       });
       return;
+    case "updateBaseStyles":
+      renderer.setBaseStyles(request.baseStyles);
+      return;
     case "openDocument":
     case "replaceDocument":
       renderer.setDocument(request.document);

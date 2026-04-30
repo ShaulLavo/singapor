@@ -129,9 +129,9 @@ describe("VirtualizedTextView", () => {
     view.setScrollMetrics(1_499 * 20, 20);
 
     const spacer = container.querySelector(".editor-virtualized-spacer") as HTMLElement;
-    expect(view.scrollElement.style.getPropertyValue("--editor-gutter-label-columns")).toBe("7");
+    expect(view.scrollElement.style.getPropertyValue("--editor-gutter-label-columns")).toBe("4");
     expect(view.scrollElement.style.getPropertyValue("--editor-gutter-min-width")).toBe("24px");
-    expect(spacer.style.width).toBe("146px");
+    expect(spacer.style.width).toBe("122px");
   });
 
   it("updates mounted rows when scrolling", () => {

@@ -85,6 +85,13 @@ export class MinimapWorkerRenderer {
     this.state.decorationsDirty = true;
   }
 
+  public setBaseStyles(styles: MinimapBaseStyles): void {
+    if (!this.state) return;
+    this.state.styles = styles;
+    this.state.linesDirty = true;
+    this.state.decorationsDirty = true;
+  }
+
   public setTokens(tokens: readonly MinimapToken[]): void {
     if (!this.state) return;
     this.state.document = { ...this.state.document, tokens };

@@ -137,6 +137,7 @@ export type MinimapBaseStyles = {
 
 export type MinimapWorkerRequest =
   | MinimapWorkerInitRequest
+  | { readonly type: "updateBaseStyles"; readonly baseStyles: MinimapBaseStyles }
   | { readonly type: "openDocument"; readonly document: MinimapDocumentPayload }
   | { readonly type: "replaceDocument"; readonly document: MinimapDocumentPayload }
   | {

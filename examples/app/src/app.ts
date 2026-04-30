@@ -1,8 +1,7 @@
 import { Editor } from "@editor/core/editor";
 import "@editor/core/style.css";
-import { createMinimapPlugin } from "@editor/minimap";
 import "@editor/minimap/style.css";
-import { createShikiHighlighterPlugin } from "@editor/shiki";
+import { createMinimapPlugin } from "@editor/minimap";
 import { css, html, javaScript, json, typeScript } from "@editor/tree-sitter-languages";
 import { createEditorPane } from "./components/editorPane.ts";
 import { el } from "./components/dom.ts";

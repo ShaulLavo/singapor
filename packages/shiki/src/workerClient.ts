@@ -80,7 +80,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       });
 
       this.text = text;
-      return { tokens: result?.tokens ?? [] };
+      return { tokens: result?.tokens ?? [], theme: result?.theme };
     });
   }
 
@@ -89,7 +89,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       const payload = this.editPayloadForText(change.text);
       const result = await postRequest(payload);
       this.text = change.text;
-      return { tokens: result?.tokens ?? [] };
+      return { tokens: result?.tokens ?? [], theme: result?.theme };
     });
   }
 

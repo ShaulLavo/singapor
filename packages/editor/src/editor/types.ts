@@ -5,6 +5,7 @@ import type {
   EditorSyntaxSessionOptions,
 } from "../syntax/session";
 import type { EditorPlugin } from "../plugins";
+import type { EditorTheme } from "../theme";
 import type { EditorKeymapOptions } from "./keymap";
 import type { TextEdit } from "../tokens";
 
@@ -42,6 +43,7 @@ export type EditorChangeHandler = (
 
 export type EditorOptions = {
   readonly defaultText?: string;
+  readonly theme?: EditorTheme;
   readonly onChange?: EditorChangeHandler;
   readonly plugins?: readonly EditorPlugin[];
   readonly keymap?: EditorKeymapOptions;

@@ -12,6 +12,7 @@ import {
   type EditorHighlightResult,
   type EditorHighlighterSession,
   type EditorPlugin,
+  type EditorTheme,
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
   type EditorState,
@@ -79,8 +80,10 @@ function createMockSyntaxSession(
 
 function createHighlightResult(
   tokens = [{ start: 0, end: 5, style: { color: "#00ff00" } }],
+  theme?: EditorTheme | null,
 ): EditorHighlightResult {
-  return { tokens };
+  if (theme === undefined) return { tokens };
+  return { tokens, theme };
 }
 
 function createMockHighlighterSession(
@@ -427,6 +430,42 @@ describe("Editor", () => {
         length: 1,
         canUndo: true,
       });
+    });
+
+    it("applies configured theme variables for Tree-sitter capture themes", () => {
+      editor.dispose();
+      editor = new Editor(container, {
+        plugins: withTestLanguagePlugins(),
+        theme: {
+          backgroundColor: "#ffffff",
+          foregroundColor: "#24292e",
+          gutterForegroundColor: "#1b1f234d",
+          caretColor: "#044289",
+          syntax: { keywordDeclaration: "#d73a49", string: "#032f62" },
+        },
+      });
+
+      const root = editorRoot();
+      expect(root.style.getPropertyValue("--editor-background")).toBe("#ffffff");
+      expect(root.style.getPropertyValue("--editor-foreground")).toBe("#24292e");
+      expect(root.style.getPropertyValue("--editor-gutter-foreground")).toBe("#1b1f234d");
+      expect(root.style.getPropertyValue("--editor-caret-color")).toBe("#044289");
+      expect(root.style.getPropertyValue("--editor-syntax-keyword-declaration")).toBe("#d73a49");
+      expect(root.style.getPropertyValue("--editor-syntax-string")).toBe("#032f62");
+    });
+  });
+
+  describe("setTheme", () => {
+    it("updates and clears configured editor theme variables", () => {
+      editor.setTheme({ backgroundColor: "#ffffff", foregroundColor: "#24292e" });
+
+      expect(editorRoot().style.getPropertyValue("--editor-background")).toBe("#ffffff");
+      expect(editorRoot().style.getPropertyValue("--editor-foreground")).toBe("#24292e");
+
+      editor.setTheme(null);
+
+      expect(editorRoot().style.getPropertyValue("--editor-background")).toBe("");
+      expect(editorRoot().style.getPropertyValue("--editor-foreground")).toBe("");
     });
   });
 
@@ -1678,6 +1717,36 @@ describe("Editor", () => {
       expect(created[0]).toEqual(expect.objectContaining({ includeHighlights: false }));
       expect(tokenHighlightRanges()).toHaveLength(1);
       expect(tokenHighlightRanges()[0]?.startOffset).toBe(6);
+    });
+
+    it("applies highlighter theme colors without dropping configured Tree-sitter syntax colors", async () => {
+      const highlighter = createMockHighlighterSession({
+        refresh: async () =>
+          createHighlightResult([], {
+            backgroundColor: "#ffffff",
+            foregroundColor: "#24292e",
+            gutterForegroundColor: "#6e7781",
+          }),
+      });
+      editor.dispose();
+      editor = new Editor(container, {
+        plugins: withTestLanguagePlugins(createHighlighterPlugin(highlighter)),
+        theme: { syntax: { keyword: "#cf222e" } },
+      });
+      setEditorSyntaxSessionFactory(() => createMockSyntaxSession());
+
+      editor.openDocument({
+        documentId: "main.ts",
+        languageId: "typescript",
+        text: "const a = 1;",
+      });
+      await flushMicrotasks();
+
+      const root = editorRoot();
+      expect(root.style.getPropertyValue("--editor-background")).toBe("#ffffff");
+      expect(root.style.getPropertyValue("--editor-foreground")).toBe("#24292e");
+      expect(root.style.getPropertyValue("--editor-gutter-foreground")).toBe("#6e7781");
+      expect(root.style.getPropertyValue("--editor-syntax-keyword")).toBe("#cf222e");
     });
 
     it("keeps Tree-sitter folds when plugin highlights are active", async () => {

@@ -1,5 +1,6 @@
 import type { DocumentSessionChange } from "./documentSession";
 import type { PieceTableSnapshot } from "./pieceTable/pieceTableTypes";
+import type { EditorTheme } from "./theme";
 import type { EditorToken } from "./tokens";
 import type { EditorSyntaxLanguageId } from "./syntax/session";
 import {
@@ -17,6 +18,7 @@ export type EditorDisposable = {
 
 export type EditorHighlightResult = {
   readonly tokens: readonly EditorToken[];
+  readonly theme?: EditorTheme | null;
 };
 
 export type EditorHighlighterSessionOptions = {

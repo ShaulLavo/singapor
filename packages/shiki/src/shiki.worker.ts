@@ -1,6 +1,7 @@
 import { createHighlighter, type HighlighterGeneric } from "shiki";
 import { createIncrementalTokenizer, type IncrementalTokenizer } from "./tokenizer";
 import { snapshotToEditorTokens } from "./editor-tokens";
+import type { EditorTheme } from "@editor/core";
 import type {
   ShikiWorkerDocumentOptions,
   ShikiWorkerEditRequest,
@@ -14,7 +15,14 @@ type DocumentState = {
   readonly documentId: string;
   readonly lang: string;
   readonly theme: string;
+  readonly highlighter: HighlighterGeneric<string, string>;
   readonly tokenizer: IncrementalTokenizer;
+};
+
+type ShikiThemeLike = {
+  readonly bg?: string;
+  readonly fg?: string;
+  readonly colors?: Readonly<Record<string, string | undefined>>;
 };
 
 const documents = new Map<string, DocumentState>();
@@ -84,6 +92,7 @@ const openDocument = async (payload: ShikiWorkerOpenRequest): Promise<ShikiWorke
     documentId: payload.documentId,
     lang: payload.lang,
     theme: payload.theme,
+    highlighter,
     tokenizer,
   };
   documents.set(payload.documentId, state);
@@ -123,6 +132,7 @@ const ensureHighlighter = (
 const resultFromState = (state: DocumentState): ShikiWorkerResult => ({
   documentId: state.documentId,
   tokens: snapshotToEditorTokens(state.tokenizer.getSnapshot()),
+  theme: editorThemeFromHighlighter(state.highlighter, state.theme),
 });
 
 const documentMatches = (state: DocumentState, payload: ShikiWorkerDocumentOptions): boolean =>
@@ -158,3 +168,28 @@ const createErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   return String(error);
 };
+
+function editorThemeFromHighlighter(
+  highlighter: HighlighterGeneric<string, string>,
+  themeName: string,
+): EditorTheme | undefined {
+  const getTheme = (highlighter as Partial<Pick<HighlighterGeneric<string, string>, "getTheme">>)
+    .getTheme;
+  if (!getTheme) return undefined;
+
+  return editorThemeFromShikiTheme(getTheme.call(highlighter, themeName));
+}
+
+function editorThemeFromShikiTheme(theme: ShikiThemeLike): EditorTheme {
+  const backgroundColor = theme.bg ?? theme.colors?.["editor.background"];
+  const foregroundColor = theme.fg ?? theme.colors?.["editor.foreground"];
+
+  return {
+    backgroundColor,
+    foregroundColor,
+    gutterBackgroundColor: theme.colors?.["editorGutter.background"] ?? backgroundColor,
+    gutterForegroundColor: theme.colors?.["editorLineNumber.foreground"],
+    caretColor: theme.colors?.["editorCursor.foreground"] ?? foregroundColor,
+    minimapBackgroundColor: backgroundColor,
+  };
+}

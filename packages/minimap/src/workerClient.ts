@@ -49,6 +49,7 @@ export class MinimapWorkerClient {
   private renderInFlight = false;
   private latestSliderHeight = 0;
   private latestSliderNeeded = false;
+  private latestBaseStylesSignature = "";
   private disposed = false;
 
   public constructor(options: MinimapWorkerClientOptions) {
@@ -92,10 +93,12 @@ export class MinimapWorkerClient {
   private init(snapshot: EditorViewSnapshot): void {
     const mainCanvas = this.host.mainCanvas.transferControlToOffscreen();
     const decorationsCanvas = this.host.decorationsCanvas.transferControlToOffscreen();
+    const baseStyles = this.baseStyles();
+    this.latestBaseStylesSignature = baseStylesSignature(baseStyles);
     const request: MinimapWorkerRequest = {
       type: "init",
       options: this.options,
-      baseStyles: this.baseStyles(),
+      baseStyles,
       mainCanvas,
       decorationsCanvas,
     };
@@ -141,6 +144,9 @@ export class MinimapWorkerClient {
     kind: string,
     change: DocumentSessionChange | null | undefined,
   ): void {
+    if (shouldRefreshColorCache(kind)) this.colorResolver.clear();
+    this.syncBaseStyles();
+
     if (kind === "tokens") {
       this.post({ type: "updateTokens", tokens: this.tokens(snapshot.tokens) });
       return;
@@ -163,6 +169,16 @@ export class MinimapWorkerClient {
     }
 
     this.post({ type: "replaceDocument", document: this.documentPayload(snapshot) });
+  }
+
+  private syncBaseStyles(): void {
+    const styles = this.baseStyles();
+    const signature = baseStylesSignature(styles);
+    if (signature === this.latestBaseStylesSignature) return;
+
+    this.latestBaseStylesSignature = signature;
+    this.colorResolver.clear();
+    this.post({ type: "updateBaseStyles", baseStyles: styles });
   }
 
   private postRender(snapshot: EditorViewSnapshot): void {
@@ -393,6 +409,10 @@ function shadowVisible(snapshot: EditorViewSnapshot): boolean {
   return viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth;
 }
 
+function baseStylesSignature(styles: MinimapBaseStyles): string {
+  return JSON.stringify(styles);
+}
+
 function mergePendingUpdate(
   current: PendingMinimapUpdate | null,
   next: PendingMinimapUpdate,
@@ -415,6 +435,13 @@ function canUseLatestKind(currentKind: string, nextKind: string): boolean {
 
 function isViewportOnly(kind: string): boolean {
   return kind === "viewport" || kind === "layout";
+}
+
+function shouldRefreshColorCache(kind: string): boolean {
+  if (kind === "tokens") return true;
+  if (kind === "document") return true;
+  if (kind === "content") return true;
+  return kind === "clear";
 }
 
 function requestFrame(callback: () => void): number {
@@ -454,8 +481,12 @@ class ColorResolver {
     return resolved;
   }
 
-  public dispose(): void {
+  public clear(): void {
     this.cache.clear();
+  }
+
+  public dispose(): void {
+    this.clear();
     this.probe.remove();
   }
 }

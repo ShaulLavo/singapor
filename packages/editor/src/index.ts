@@ -12,6 +12,7 @@ export * from "./pieceTable";
 export * from "./plugins";
 export * from "./selections";
 export * from "./syntax";
+export * from "./theme";
 export * from "./virtualization";
 export type { EditorCommandContext, EditorCommandId } from "./editor/commands";
 export type { EditorKeyBinding, EditorKeymapOptions } from "./editor/keymap";
@@ -30,3 +31,4 @@ export type {
   HighlightRegistry,
 } from "./editor";
 export type { EditorDocument, EditorToken, EditorTokenStyle, TextEdit } from "./tokens";
+export type { EditorSyntaxTheme, EditorSyntaxThemeColor, EditorTheme } from "./theme";

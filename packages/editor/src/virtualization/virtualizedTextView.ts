@@ -1,6 +1,8 @@
 import type { FoldMap } from "../foldMap";
 import type { BlockRow } from "../displayTransforms";
+import type { EditorTheme } from "../theme";
 import type { EditorToken, TextEdit } from "../tokens";
+import { applyEditorTheme } from "../theme";
 import { measureBrowserTextMetrics, type BrowserTextMetrics } from "./browserMetrics";
 import { FixedRowVirtualizer, type FixedRowVirtualizerSnapshot } from "./fixedRowVirtualizer";
 import {
@@ -276,6 +278,10 @@ export class VirtualizedTextView {
 
   public adoptTokens(tokens: readonly EditorToken[]): void {
     adoptViewTokens(this.view, tokens);
+  }
+
+  public setTheme(theme: EditorTheme | null | undefined): void {
+    applyEditorTheme(this.scrollElement, theme);
   }
 
   public setEditable(editable: boolean): void {

@@ -1,4 +1,4 @@
-import type { EditorToken, TextEdit } from "@editor/core";
+import type { EditorTheme, EditorToken, TextEdit } from "@editor/core";
 
 export type ShikiWorkerDocumentOptions = {
   readonly documentId: string;
@@ -36,6 +36,7 @@ export type ShikiWorkerRequestPayload =
 export type ShikiWorkerResult = {
   readonly documentId: string;
   readonly tokens: readonly EditorToken[];
+  readonly theme?: EditorTheme;
 };
 
 export type ShikiWorkerRequest = {

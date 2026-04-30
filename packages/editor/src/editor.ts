@@ -60,6 +60,8 @@ import {
   type EditorSyntaxSession,
 } from "./syntax/session";
 import type { FoldRange } from "./syntax/treeSitter/types";
+import type { EditorTheme } from "./theme";
+import { mergeEditorThemes } from "./theme";
 import type { EditorDocument, EditorToken, TextEdit } from "./tokens";
 import { clamp } from "./style-utils";
 import {
@@ -86,6 +88,7 @@ export type {
 } from "./editor/types";
 export type { EditorCommandContext, EditorCommandId } from "./editor/commands";
 export type { EditorKeyBinding, EditorKeymapOptions } from "./editor/keymap";
+export type { EditorSyntaxTheme, EditorSyntaxThemeColor, EditorTheme } from "./theme";
 export type {
   EditorDisposable,
   EditorHighlightResult,
@@ -167,6 +170,8 @@ export class Editor {
   private syntaxStatus: EditorSyntaxStatus = "plain";
   private syntaxSession: EditorSyntaxSession | null = null;
   private highlighterSession: EditorHighlighterSession | null = null;
+  private configuredTheme: EditorTheme | null = null;
+  private highlighterTheme: EditorTheme | null = null;
   private readonly syntaxRequests = new LatestAsyncRequest<EditorSyntaxResult>();
   private readonly highlightRequests = new LatestAsyncRequest<EditorHighlightResult>();
   private tokens: readonly EditorToken[] = [];
@@ -178,6 +183,7 @@ export class Editor {
 
   constructor(container: HTMLElement, options: EditorOptions = {}) {
     this.options = options;
+    this.configuredTheme = options.theme ?? null;
     this.pluginHost = new EditorPluginHost(options.plugins);
     this.highlightPrefix = `editor-token-${editorInstanceCount++}`;
     this.view = new VirtualizedTextView(container, {
@@ -189,6 +195,7 @@ export class Editor {
     });
     this.foldState = new EditorFoldState(this.view, () => this.session?.getSnapshot() ?? null);
     this.el = this.view.scrollElement;
+    this.applyResolvedTheme();
     this.keymap = new EditorKeymapController({
       target: this.el,
       keymap: options.keymap,
@@ -311,6 +318,12 @@ export class Editor {
 
   focus(): void {
     this.view.focusInput();
+  }
+
+  setTheme(theme: EditorTheme | null | undefined): void {
+    this.configuredTheme = theme ?? null;
+    this.applyResolvedTheme();
+    this.notifyViewContributions("tokens", null);
   }
 
   dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
@@ -436,6 +449,7 @@ export class Editor {
     this.highlightRequests.cancel();
     this.highlighterSession?.dispose();
     this.highlighterSession = null;
+    this.setHighlighterTheme(null);
   }
 
   private createViewContributionContext(container: HTMLElement): EditorViewContributionContext {
@@ -1263,6 +1277,7 @@ export class Editor {
   ): void {
     if (!this.session || documentVersion !== this.documentVersion) return;
 
+    if (result.theme !== undefined) this.setHighlighterTheme(result.theme);
     const tokenChange = this.session.adoptTokens(result.tokens);
     const timedChange = appendTiming(tokenChange, "editor.highlight", startedAt);
     this.adoptTokens(result.tokens);
@@ -1293,10 +1308,20 @@ export class Editor {
   private applyHighlightError(documentVersion: number, startedAt: number): void {
     if (!this.session || documentVersion !== this.documentVersion) return;
 
+    this.setHighlighterTheme(null);
     const tokenChange = this.session.adoptTokens([]);
     const timedChange = appendTiming(tokenChange, "editor.highlightError", startedAt);
     this.adoptTokens([]);
     this.notifyChange(timedChange);
+  }
+
+  private setHighlighterTheme(theme: EditorTheme | null | undefined): void {
+    this.highlighterTheme = theme ?? null;
+    this.applyResolvedTheme();
+  }
+
+  private applyResolvedTheme(): void {
+    this.view.setTheme(mergeEditorThemes(this.configuredTheme, this.highlighterTheme));
   }
 
   private syncDomSelection(): void {

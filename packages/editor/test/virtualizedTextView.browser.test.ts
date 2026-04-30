@@ -50,7 +50,10 @@ describe.skipIf(typeof globalThis.Highlight === "undefined")(
       view!.setText(Array.from({ length: 10_000 }, (_, index) => `line ${index}`).join("\n"));
       view!.setScrollMetrics(9_999 * 20, 20, 360);
 
-      expect(view!.scrollElement.style.getPropertyValue("--editor-gutter-label-columns")).toBe("8");
+      expect(getComputedStyle(view!.scrollElement).getPropertyValue("--editor-gutter-style")).toBe(
+        "",
+      );
+      expect(view!.scrollElement.style.getPropertyValue("--editor-gutter-label-columns")).toBe("5");
       expect(view!.scrollElement.style.getPropertyValue("--editor-gutter-width")).toBe("");
     });
   },

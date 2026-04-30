@@ -51,7 +51,6 @@ import type { VirtualizedTextViewInternal } from "./virtualizedTextViewInternals
 
 const GUTTER_EXTRA_WIDTH_PX = 18;
 const MIN_GUTTER_LABEL_COLUMNS = 3;
-const HEBREW_GUTTER_LABEL_PADDING_COLUMNS = 3;
 
 export function rowsKey(
   view: VirtualizedTextViewInternal,
@@ -1022,7 +1021,7 @@ export function pageRowDelta(view: VirtualizedTextViewInternal): number {
 
 function gutterLabelColumns(lineCount: number): number {
   if (lineCount < 100) return MIN_GUTTER_LABEL_COLUMNS;
-  return decimalDigitCount(lineCount) + HEBREW_GUTTER_LABEL_PADDING_COLUMNS;
+  return decimalDigitCount(lineCount);
 }
 
 function decimalDigitCount(value: number): number {

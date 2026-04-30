@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   applyBatchToPieceTable,
@@ -15,6 +15,8 @@ import {
   treeSitterCapturesToEditorTokens,
 } from "../src/syntax";
 import { createTextDiffEdit, createTreeSitterEditPayload } from "../src/syntax/session";
+import { createTreeSitterSourceDescriptor } from "../src/syntax/treeSitter/source";
+import type { TreeSitterEditRequest, TreeSitterParseRequest } from "../src/syntax/treeSitter/types";
 
 describe("Tree-sitter syntax capture conversion", () => {
   it("maps known capture names to editor token styles", () => {
@@ -143,6 +145,42 @@ describe("Tree-sitter syntax capture conversion", () => {
         },
       ],
     });
+  });
+
+  it("keeps worker parse and edit requests source-based", () => {
+    const snapshot = createPieceTableSnapshot("const a = 1;\n");
+    const source = createTreeSitterSourceDescriptor(snapshot, { useSharedBuffers: false });
+    const parseRequest: TreeSitterParseRequest = {
+      type: "parse",
+      documentId: "file.ts",
+      snapshotVersion: 1,
+      languageId: "typescript",
+      includeHighlights: true,
+      source,
+      generation: 1,
+    };
+    const editRequest: TreeSitterEditRequest = {
+      type: "edit",
+      documentId: "file.ts",
+      snapshotVersion: 2,
+      languageId: "typescript",
+      includeHighlights: true,
+      source,
+      edits: [],
+      inputEdits: [],
+      generation: 2,
+    };
+
+    expect("source" in parseRequest).toBe(true);
+    expect("snapshot" in parseRequest).toBe(false);
+    expect("text" in parseRequest).toBe(false);
+    expect("source" in editRequest).toBe(true);
+    expect("snapshot" in editRequest).toBe(false);
+    expect("text" in editRequest).toBe(false);
+    expectTypeOf<"snapshot">().not.toMatchTypeOf<keyof TreeSitterParseRequest>();
+    expectTypeOf<"text">().not.toMatchTypeOf<keyof TreeSitterParseRequest>();
+    expectTypeOf<"snapshot">().not.toMatchTypeOf<keyof TreeSitterEditRequest>();
+    expectTypeOf<"text">().not.toMatchTypeOf<keyof TreeSitterEditRequest>();
   });
 
   it("builds incremental payloads for multi-edits", () => {

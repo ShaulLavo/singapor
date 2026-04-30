@@ -10,9 +10,12 @@ import {
 import parserWasmUrl from "web-tree-sitter/web-tree-sitter.wasm?url";
 import type { TreeSitterLanguageDescriptor } from "./registry";
 import {
-  createTreeSitterPieceTableInput,
+  clearTreeSitterSourceCache,
+  disposeTreeSitterSourceDocument,
   readTreeSitterInputRange,
   readTreeSitterPieceTableInput,
+  resolveTreeSitterSourceDescriptor,
+  type TreeSitterSourceCache,
   type TreeSitterPieceTableInput,
 } from "./source";
 import type {
@@ -101,6 +104,7 @@ const languageDescriptors = new Map<TreeSitterLanguageId, TreeSitterLanguageDesc
 const languageDescriptorOrder: TreeSitterLanguageId[] = [];
 const runtimePromises = new Map<TreeSitterLanguageId, Promise<Runtime>>();
 const documentCaches = new Map<string, DocumentCache>();
+const sourceCache: TreeSitterSourceCache = new Map();
 
 class SyntaxRequestCancelled extends Error {
   public constructor() {
@@ -207,7 +211,11 @@ const parseDocument = async (
 ): Promise<TreeSitterParseResult | undefined> =>
   runCancellableRequest(request, async (context) => {
     const runtime = await ensureRuntime(request.languageId);
-    const source = createTreeSitterPieceTableInput(request.snapshot);
+    const source = resolveTreeSitterSourceDescriptor(
+      sourceCache,
+      request.documentId,
+      request.source,
+    );
     const parseStart = nowMs();
     const tree = parseSource(runtime.parser, source, null, context);
     const parseMs = nowMs() - parseStart;
@@ -252,7 +260,11 @@ const editDocument = async (
     const editStart = nowMs();
     const reusableTree = editReusableTree(cached.tree, request.inputEdits);
     const editMs = nowMs() - editStart;
-    const source = createTreeSitterPieceTableInput(request.snapshot);
+    const source = resolveTreeSitterSourceDescriptor(
+      sourceCache,
+      request.documentId,
+      request.source,
+    );
     const parseStart = nowMs();
     const tree = parseSource(runtime.parser, source, reusableTree, context);
     const parseMs = nowMs() - parseStart;
@@ -854,6 +866,7 @@ const disposeCachedSnapshot = (snapshot: CachedSyntaxSnapshot): void => {
 
 const disposeDocument = (documentId: string): void => {
   const cache = documentCaches.get(documentId);
+  disposeTreeSitterSourceDocument(sourceCache, documentId);
   if (!cache) return;
 
   for (const snapshot of cache.snapshots) disposeCachedSnapshot(snapshot);
@@ -891,6 +904,7 @@ const disposeAll = (): void => {
   }
 
   documentCaches.clear();
+  clearTreeSitterSourceCache(sourceCache);
   languageDescriptors.clear();
   languageDescriptorOrder.length = 0;
   for (const promise of runtimePromises.values()) {
@@ -1092,7 +1106,7 @@ export const __treeSitterWorkerInternalsForTests = {
   applyTextEdits,
   collectBracket,
   collectError,
-  createTreeSitterPieceTableInput,
+  resolveTreeSitterSourceDescriptor,
   readTreeSitterPieceTableInput,
 };
 

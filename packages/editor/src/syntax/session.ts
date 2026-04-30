@@ -114,7 +114,6 @@ class TreeSitterSyntaxSession implements EditorSyntaxSession {
       snapshotVersion,
       languageId: this.languageId,
       includeHighlights: this.includeHighlights,
-      text,
       snapshot,
     });
 

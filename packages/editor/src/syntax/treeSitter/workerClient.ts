@@ -12,6 +12,7 @@ import type {
   TreeSitterWorkerResult,
 } from "./types";
 import type { PieceTableSnapshot } from "../../pieceTable/pieceTableTypes";
+import { createTreeSitterSourceDescriptor, type TreeSitterSourceDescriptor } from "./source";
 
 type PendingRequest = {
   readonly documentId: string | null;
@@ -24,21 +25,28 @@ type TreeSitterParseDocumentRequest = Omit<
   TreeSitterParseRequest,
   "generation" | "cancellationBuffer"
 >;
-type TreeSitterEditDocumentRequest = TreeSitterEditPayload & { readonly type: "edit" };
+type TreeSitterEditDocumentRequest = Omit<
+  TreeSitterEditRequest,
+  "generation" | "cancellationBuffer"
+>;
 
 export type TreeSitterParsePayload = {
   readonly documentId: string;
   readonly snapshotVersion: number;
   readonly languageId: TreeSitterLanguageId;
   readonly includeHighlights?: boolean;
-  readonly text: string;
   readonly snapshot: PieceTableSnapshot;
 };
 
-export type TreeSitterEditPayload = Omit<
-  TreeSitterEditRequest,
-  "type" | "generation" | "cancellationBuffer"
->;
+export type TreeSitterEditPayload = {
+  readonly documentId: string;
+  readonly snapshotVersion: number;
+  readonly languageId: TreeSitterLanguageId;
+  readonly includeHighlights: boolean;
+  readonly snapshot: PieceTableSnapshot;
+  readonly edits: readonly TreeSitterEditRequest["edits"][number][];
+  readonly inputEdits: readonly TreeSitterEditRequest["inputEdits"][number][];
+};
 export type TreeSitterSelectionPayload = Omit<TreeSitterSelectionRequest, "type">;
 
 const supportsWorkers = (): boolean => typeof Worker !== "undefined";
@@ -49,6 +57,7 @@ let nextRequestId = 1;
 let nextGeneration = 1;
 let initPromise: Promise<void> | null = null;
 const pendingRequests = new Map<number, PendingRequest>();
+const sentSourceChunkIds = new Map<string, Set<string>>();
 
 const getWorker = (): Worker | null => {
   if (!supportsWorkers()) return null;
@@ -90,10 +99,14 @@ export const parseWithTreeSitter = async (
 ): Promise<TreeSitterParseResult | undefined> => {
   const handle = await ensureWorkerReady();
   if (!handle) return undefined;
+  const source = createSourceDescriptor(payload.documentId, payload.snapshot);
   const request: TreeSitterParseDocumentRequest = {
     type: "parse",
-    ...payload,
+    documentId: payload.documentId,
+    snapshotVersion: payload.snapshotVersion,
+    languageId: payload.languageId,
     includeHighlights: payload.includeHighlights ?? true,
+    source,
   };
   const result = await postDocumentRequest(request);
   return isTreeSitterParseResult(result) ? result : undefined;
@@ -104,7 +117,17 @@ export const editWithTreeSitter = async (
 ): Promise<TreeSitterParseResult | undefined> => {
   const handle = await ensureWorkerReady();
   if (!handle) return undefined;
-  const result = await postDocumentRequest({ type: "edit", ...payload });
+  const source = createSourceDescriptor(payload.documentId, payload.snapshot);
+  const result = await postDocumentRequest({
+    type: "edit",
+    documentId: payload.documentId,
+    snapshotVersion: payload.snapshotVersion,
+    languageId: payload.languageId,
+    includeHighlights: payload.includeHighlights,
+    source,
+    edits: payload.edits,
+    inputEdits: payload.inputEdits,
+  });
   return isTreeSitterParseResult(result) ? result : undefined;
 };
 
@@ -118,6 +141,7 @@ export const selectWithTreeSitter = async (
 };
 
 export const disposeTreeSitterDocument = (documentId: string): void => {
+  sentSourceChunkIds.delete(documentId);
   void postRequest({ type: "disposeDocument", documentId }).catch(() => undefined);
 };
 
@@ -130,6 +154,7 @@ export const disposeTreeSitterWorker = async (): Promise<void> => {
     worker.terminate();
     worker = null;
     initPromise = null;
+    sentSourceChunkIds.clear();
     rejectPendingRequests(new Error("Tree-sitter worker disposed"));
   }
 };
@@ -149,6 +174,7 @@ const postRequest = (payload: TreeSitterWorkerRequestPayload): Promise<TreeSitte
       reject,
     });
     handle.postMessage(request);
+    markSourceChunksAsSent(payload);
   });
 };
 
@@ -206,6 +232,7 @@ const handleWorkerError = (event: ErrorEvent): void => {
   const error = new Error(event.message || "Tree-sitter worker failed");
   rejectPendingRequests(error);
   initPromise = null;
+  sentSourceChunkIds.clear();
 };
 
 const rejectPendingRequests = (error: Error): void => {
@@ -222,6 +249,30 @@ const cancellationFlagForPayload = (payload: TreeSitterWorkerRequestPayload): In
   if (!("cancellationBuffer" in payload)) return null;
   if (!payload.cancellationBuffer) return null;
   return new Int32Array(payload.cancellationBuffer);
+};
+
+const createSourceDescriptor = (
+  documentId: string,
+  snapshot: PieceTableSnapshot,
+): TreeSitterSourceDescriptor =>
+  createTreeSitterSourceDescriptor(snapshot, {
+    sentChunkIds: sourceChunkIdsForDocument(documentId),
+  });
+
+const sourceChunkIdsForDocument = (documentId: string): Set<string> => {
+  const existing = sentSourceChunkIds.get(documentId);
+  if (existing) return existing;
+
+  const sent = new Set<string>();
+  sentSourceChunkIds.set(documentId, sent);
+  return sent;
+};
+
+const markSourceChunksAsSent = (payload: TreeSitterWorkerRequestPayload): void => {
+  if (!("source" in payload)) return;
+
+  const sent = sourceChunkIdsForDocument(payload.documentId);
+  for (const chunk of payload.source.chunks) sent.add(chunk.chunkId);
 };
 
 const isTreeSitterParseResult = (result: TreeSitterWorkerResult): result is TreeSitterParseResult =>

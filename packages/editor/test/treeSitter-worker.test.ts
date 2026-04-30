@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { Node } from "web-tree-sitter";
 
-import { createPieceTableSnapshot, insertIntoPieceTable } from "../src";
+import {
+  applyBatchToPieceTable,
+  createPieceTableSnapshot,
+  getPieceTableText,
+  insertIntoPieceTable,
+} from "../src";
+import {
+  createTreeSitterSourceDescriptor,
+  readTreeSitterInputRange,
+  resolveTreeSitterSourceDescriptor,
+  type TreeSitterSourceCache,
+} from "../src/syntax/treeSitter/source.ts";
 import { __treeSitterWorkerInternalsForTests } from "../src/syntax/treeSitter/treeSitter.worker.ts";
 
 const {
@@ -9,7 +20,6 @@ const {
   applyTextEdits,
   collectBracket,
   collectError,
-  createTreeSitterPieceTableInput,
   readTreeSitterPieceTableInput,
 } = __treeSitterWorkerInternalsForTests;
 
@@ -31,12 +41,74 @@ describe("tree-sitter worker internals", () => {
 
   it("reads parser input from piece-table chunks without flattening", () => {
     const snapshot = insertIntoPieceTable(createPieceTableSnapshot("a😀\n"), 4, "tail");
-    const input = createTreeSitterPieceTableInput(snapshot);
+    const descriptor = createTreeSitterSourceDescriptor(snapshot, { useSharedBuffers: false });
+    const input = resolveTreeSitterSourceDescriptor(new Map(), "doc", descriptor);
 
     expect(input.chunks.length).toBeGreaterThan(1);
     expect(readTreeSitterPieceTableInput(input, 0)).toBe("a😀\n");
     expect(readTreeSitterPieceTableInput(input, 4)).toBe("tail");
     expect(readTreeSitterPieceTableInput(input, snapshot.length)).toBeUndefined();
+  });
+
+  it("builds full descriptors with only unsent chunk payloads", () => {
+    const snapshot = createPieceTableSnapshot("const answer = 1;\n");
+    const first = createTreeSitterSourceDescriptor(snapshot, { useSharedBuffers: false });
+    const sent = new Set(first.chunks.map((chunk) => chunk.chunkId));
+    const second = createTreeSitterSourceDescriptor(snapshot, {
+      sentChunkIds: sent,
+      useSharedBuffers: false,
+    });
+
+    expect(first.length).toBe(snapshot.length);
+    expect(first.pieces.map((piece) => piece.length).reduce((sum, length) => sum + length, 0)).toBe(
+      snapshot.length,
+    );
+    expect(first.chunks.length).toBeGreaterThan(0);
+    expect(second.pieces).toEqual(first.pieces);
+    expect(second.chunks).toEqual([]);
+  });
+
+  it("sends only new chunks after edits while preserving current ordered spans", () => {
+    const previous = createPieceTableSnapshot("ab\ncd");
+    const first = createTreeSitterSourceDescriptor(previous, { useSharedBuffers: false });
+    const sent = new Set(first.chunks.map((chunk) => chunk.chunkId));
+    const next = applyBatchToPieceTable(previous, [{ from: 3, to: 5, text: "xyz" }]);
+    const edited = createTreeSitterSourceDescriptor(next, {
+      sentChunkIds: sent,
+      useSharedBuffers: false,
+    });
+    const input = resolveTreeSitterSourceDescriptor(cacheWith("doc", first), "doc", edited);
+
+    expect(edited.length).toBe(next.length);
+    expect(edited.chunks).toHaveLength(1);
+    expect(readTreeSitterInputRange(input, 0, next.length)).toBe(getPieceTableText(next));
+  });
+
+  it("reads string and shared UTF-16 source chunks across piece boundaries", () => {
+    const snapshot = insertIntoPieceTable(createPieceTableSnapshot("a😀\n"), 4, "tail");
+    const stringInput = resolveTreeSitterSourceDescriptor(
+      new Map(),
+      "strings",
+      createTreeSitterSourceDescriptor(snapshot, { useSharedBuffers: false }),
+    );
+    const sharedInput = resolveTreeSitterSourceDescriptor(
+      new Map(),
+      "shared",
+      createTreeSitterSourceDescriptor(snapshot, { useSharedBuffers: true }),
+    );
+
+    expect(readTreeSitterInputRange(stringInput, 0, snapshot.length)).toBe("a😀\ntail");
+    expect(readTreeSitterInputRange(sharedInput, 0, snapshot.length)).toBe("a😀\ntail");
+    expect(readTreeSitterPieceTableInput(sharedInput, 1)).toBe("😀\n");
+  });
+
+  it("resolves empty descriptors", () => {
+    const snapshot = createPieceTableSnapshot("");
+    const descriptor = createTreeSitterSourceDescriptor(snapshot, { useSharedBuffers: false });
+    const input = resolveTreeSitterSourceDescriptor(new Map(), "empty", descriptor);
+
+    expect(descriptor).toEqual({ length: 0, pieces: [], chunks: [] });
+    expect(readTreeSitterPieceTableInput(input, 0)).toBeUndefined();
   });
 
   it("tracks bracket depth while walking open and close nodes", () => {
@@ -67,6 +139,15 @@ describe("tree-sitter worker internals", () => {
     expect(collectError(node("identifier", 0, 10))).toBeNull();
   });
 });
+
+function cacheWith(
+  documentId: string,
+  descriptor: ReturnType<typeof createTreeSitterSourceDescriptor>,
+): TreeSitterSourceCache {
+  const cache: TreeSitterSourceCache = new Map();
+  resolveTreeSitterSourceDescriptor(cache, documentId, descriptor);
+  return cache;
+}
 
 function node(
   type: string,

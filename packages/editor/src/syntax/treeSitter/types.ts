@@ -1,6 +1,6 @@
-import type { PieceTableSnapshot } from "../../pieceTable/pieceTableTypes";
 import type { TextEdit } from "../../tokens";
 import type { TreeSitterLanguageDescriptor, TreeSitterLanguageId } from "./registry";
+import type { TreeSitterSourceDescriptor } from "./source";
 
 export type { TreeSitterLanguageId } from "./registry";
 
@@ -86,8 +86,7 @@ export type TreeSitterParseRequest = {
   readonly snapshotVersion: number;
   readonly languageId: TreeSitterLanguageId;
   readonly includeHighlights: boolean;
-  readonly text: string;
-  readonly snapshot: PieceTableSnapshot;
+  readonly source: TreeSitterSourceDescriptor;
   readonly generation: number;
   readonly cancellationBuffer?: SharedArrayBuffer;
 };
@@ -98,7 +97,7 @@ export type TreeSitterEditRequest = {
   readonly snapshotVersion: number;
   readonly languageId: TreeSitterLanguageId;
   readonly includeHighlights: boolean;
-  readonly snapshot: PieceTableSnapshot;
+  readonly source: TreeSitterSourceDescriptor;
   readonly edits: readonly TextEdit[];
   readonly inputEdits: readonly TreeSitterInputEdit[];
   readonly generation: number;

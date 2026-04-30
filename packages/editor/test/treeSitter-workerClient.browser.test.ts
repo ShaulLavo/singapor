@@ -7,7 +7,6 @@ import {
   createPieceTableSnapshot,
   createSelectionSet,
   expandTreeSitterSelection,
-  getPieceTableText,
   resolveTreeSitterLanguageContribution,
   resolveSelection,
   selectTreeSitterToken,
@@ -37,7 +36,6 @@ describe.skipIf(typeof Worker === "undefined")("tree-sitter worker client", () =
       documentId,
       snapshotVersion: 1,
       languageId: "typescript",
-      text: "const answer = 1;\n",
       snapshot,
     });
 
@@ -70,7 +68,6 @@ describe.skipIf(typeof Worker === "undefined")("tree-sitter worker client", () =
       documentId,
       snapshotVersion: 1,
       languageId: "html",
-      text,
       snapshot,
     });
 
@@ -100,7 +97,6 @@ describe.skipIf(typeof Worker === "undefined")("tree-sitter worker client", () =
       snapshotVersion: 1,
       languageId: "html",
       includeHighlights: false,
-      text,
       snapshot,
     });
 
@@ -133,7 +129,6 @@ describe.skipIf(typeof Worker === "undefined")("tree-sitter worker client", () =
       documentId: "file.consumer-js",
       snapshotVersion: 1,
       languageId: "consumer-javascript",
-      text,
       snapshot,
     });
 
@@ -155,7 +150,6 @@ describe.skipIf(typeof Worker === "undefined")("tree-sitter worker client", () =
       documentId,
       snapshotVersion: 1,
       languageId: "typescript",
-      text,
       snapshot,
     });
     const languages = [
@@ -175,7 +169,6 @@ describe.skipIf(typeof Worker === "undefined")("tree-sitter worker client", () =
       documentId,
       snapshotVersion: 1,
       languageId: "typescript",
-      text: getPieceTableText(snapshot),
       snapshot,
     });
 

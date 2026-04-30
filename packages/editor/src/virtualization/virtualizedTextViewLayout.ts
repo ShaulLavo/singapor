@@ -5,6 +5,8 @@ import {
   createDisplayRows,
   visualColumnToBufferColumn,
   type BlockRow,
+  type DisplayRow,
+  type DisplayTextRow,
 } from "../displayTransforms";
 import type { TextEdit } from "../tokens";
 import { clamp } from "../style-utils";
@@ -127,7 +129,11 @@ export function rowSizes(view: VirtualizedTextViewInternal): readonly number[] |
 }
 
 export function hasVariableRows(view: VirtualizedTextViewInternal): boolean {
-  return view.displayRows.some((row) => row.kind === "block" && row.heightRows !== 1);
+  for (const row of view.blockRows) {
+    if (normalizeBlockHeightRows(row.heightRows) !== 1) return true;
+  }
+
+  return false;
 }
 
 export function rowTop(view: VirtualizedTextViewInternal, row: number): number {
@@ -226,14 +232,13 @@ export function sameLineEditPatch(
 }
 
 export function rowForOffset(view: VirtualizedTextViewInternal, offset: number): number {
-  const displayRow = view.displayRows.find((row) => {
-    if (row.kind !== "text") return false;
-    if (offset < row.startOffset) return false;
-    return offset <= row.endOffset;
-  });
+  const bufferRow = bufferRowForOffset(view, offset);
+  if (!usesDisplayRowTransforms(view)) return foldVirtualRowForBufferRow(view, bufferRow);
+
+  const displayRow = textDisplayRowForOffset(view, clamp(offset, 0, view.text.length));
   if (displayRow) return displayRow.index;
 
-  return virtualRowForBufferRow(view, bufferRowForOffset(view, offset));
+  return virtualRowForBufferRow(view, bufferRow);
 }
 
 export function bufferRowForOffset(view: VirtualizedTextViewInternal, offset: number): number {
@@ -300,12 +305,12 @@ export function foldBufferRowForVisibleRow(view: VirtualizedTextViewInternal, ro
 }
 
 export function virtualRowForBufferRow(view: VirtualizedTextViewInternal, row: number): number {
-  const match = view.displayRows.find((displayRow) => {
-    return displayRow.kind === "text" && displayRow.bufferRow === row;
-  });
+  if (!usesDisplayRowTransforms(view)) return foldVirtualRowForBufferRow(view, row);
+
+  const match = textDisplayRowForBufferRow(view.displayRows, row);
   if (match) return match.index;
 
-  return foldVirtualRowForBufferRow(view, row);
+  return transformedRowForProjectedBufferRow(view, row);
 }
 
 export function foldVirtualRowForBufferRow(view: VirtualizedTextViewInternal, row: number): number {
@@ -336,4 +341,106 @@ export function rowForSnapshotOffset(
   }
 
   return visibleLineCount(view) - 1;
+}
+
+function usesDisplayRowTransforms(view: VirtualizedTextViewInternal): boolean {
+  if (view.wrapEnabled) return true;
+  return view.blockRows.length > 0;
+}
+
+function normalizeBlockHeightRows(heightRows: number): number {
+  if (!Number.isFinite(heightRows) || heightRows <= 0) return 1;
+  return Math.max(1, Math.floor(heightRows));
+}
+
+function textDisplayRowForOffset(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+): DisplayTextRow | null {
+  const rows = view.displayRows;
+  const start = firstDisplayRowEndingAtOrAfter(rows, offset);
+  if (start === -1) return null;
+
+  for (let index = start; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    if (row.startOffset > offset) return null;
+    if (row.kind !== "text") continue;
+    if (offset <= row.endOffset) return row;
+  }
+
+  return null;
+}
+
+function firstDisplayRowEndingAtOrAfter(rows: readonly DisplayRow[], offset: number): number {
+  let low = 0;
+  let high = rows.length - 1;
+  let result = rows.length;
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (rows[middle]!.endOffset >= offset) {
+      result = middle;
+      high = middle - 1;
+      continue;
+    }
+
+    low = middle + 1;
+  }
+
+  if (result === rows.length) return -1;
+  return result;
+}
+
+function textDisplayRowForBufferRow(
+  rows: readonly DisplayRow[],
+  bufferRow: number,
+): DisplayTextRow | null {
+  const start = firstDisplayRowAtOrAfterBufferRow(rows, bufferRow);
+  if (start === -1) return null;
+
+  for (let index = start; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    const orderRow = displayRowBufferOrder(row);
+    if (orderRow > bufferRow) return null;
+    if (row.kind === "text" && row.bufferRow === bufferRow) return row;
+  }
+
+  return null;
+}
+
+function firstDisplayRowAtOrAfterBufferRow(rows: readonly DisplayRow[], bufferRow: number): number {
+  let low = 0;
+  let high = rows.length - 1;
+  let result = rows.length;
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (displayRowBufferOrder(rows[middle]!) >= bufferRow) {
+      result = middle;
+      high = middle - 1;
+      continue;
+    }
+
+    low = middle + 1;
+  }
+
+  if (result === rows.length) return -1;
+  return result;
+}
+
+function displayRowBufferOrder(row: DisplayRow): number {
+  if (row.kind === "text") return row.bufferRow;
+  return row.anchorBufferRow;
+}
+
+function transformedRowForProjectedBufferRow(
+  view: VirtualizedTextViewInternal,
+  row: number,
+): number {
+  const foldedRow = foldVirtualRowForBufferRow(view, row);
+  const bufferRow = foldBufferRowForVisibleRow(view, foldedRow);
+  const match = textDisplayRowForBufferRow(view.displayRows, bufferRow);
+  if (match) return match.index;
+
+  return foldedRow;
 }

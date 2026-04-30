@@ -793,6 +793,136 @@ describe("VirtualizedTextView", () => {
     expect(button?.dataset.editorFoldKey).toBe("fold-400");
   });
 
+  it("renders legacy fold indicators inside the fold icon element", () => {
+    view.dispose();
+    view = createFoldGutterTestView(
+      container,
+      createFoldGutterContribution({ expandedIndicator: "open", collapsedIndicator: "closed" }),
+    );
+
+    mountFoldMarker(view, createSingleFoldMarker({ collapsed: false }));
+
+    expect(visibleFoldButton(container).dataset.editorFoldIndicator).toBe("open");
+    expect(foldIconElement(container).textContent).toBe("open");
+
+    view.setFoldMarkers([createSingleFoldMarker({ collapsed: true })]);
+
+    expect(visibleFoldButton(container).dataset.editorFoldIndicator).toBe("closed");
+    expect(foldIconElement(container).textContent).toBe("closed");
+  });
+
+  it("keeps shared fold icons mounted across state changes for CSS rotation", () => {
+    const iconFactory = vi.fn(({ document }: { readonly document: Document }) => {
+      const icon = document.createElement("span");
+      icon.dataset.testFoldIcon = "shared";
+      icon.textContent = ">";
+      return icon;
+    });
+
+    view.dispose();
+    view = createFoldGutterTestView(container, createFoldGutterContribution({ icon: iconFactory }));
+    mountFoldMarker(view, createSingleFoldMarker({ collapsed: false }));
+
+    const firstIcon = foldIconElement(container);
+    const firstCustomIcon = firstIcon.querySelector("[data-test-fold-icon='shared']");
+    view.setFoldMarkers([createSingleFoldMarker({ collapsed: true })]);
+
+    const button = visibleFoldButton(container);
+    expect(iconFactory).toHaveBeenCalledTimes(1);
+    expect(foldIconElement(container)).toBe(firstIcon);
+    expect(firstIcon.querySelector("[data-test-fold-icon='shared']")).toBe(firstCustomIcon);
+    expect(button.dataset.editorFoldState).toBe("collapsed");
+    expect(button.dataset.editorFoldTransition).toBe("collapse");
+  });
+
+  it("lets state-specific fold icons override a shared icon", () => {
+    view.dispose();
+    view = createFoldGutterTestView(
+      container,
+      createFoldGutterContribution({
+        icon: "shared",
+        expandedIcon: "expanded",
+        collapsedIcon: "collapsed",
+      }),
+    );
+
+    mountFoldMarker(view, createSingleFoldMarker({ collapsed: false }));
+
+    expect(foldIconElement(container).textContent).toBe("expanded");
+
+    view.setFoldMarkers([createSingleFoldMarker({ collapsed: true })]);
+
+    expect(foldIconElement(container).textContent).toBe("collapsed");
+  });
+
+  it("renders DOM factory fold icons without parsing string icons as HTML", () => {
+    view.dispose();
+    view = createFoldGutterTestView(
+      container,
+      createFoldGutterContribution({
+        icon: ({ document }) => document.createElementNS("http://www.w3.org/2000/svg", "svg"),
+      }),
+    );
+    mountFoldMarker(view);
+
+    expect(foldIconElement(container).querySelector("svg")).not.toBeNull();
+
+    view.dispose();
+    view = createFoldGutterTestView(
+      container,
+      createFoldGutterContribution({ icon: "<svg><path /></svg>" }),
+    );
+    mountFoldMarker(view);
+
+    expect(foldIconElement(container).textContent).toBe("<svg><path /></svg>");
+    expect(foldIconElement(container).querySelector("svg")).toBeNull();
+  });
+
+  it("applies user fold icon class names", () => {
+    view.dispose();
+    view = createFoldGutterTestView(
+      container,
+      createFoldGutterContribution({
+        icon: ">",
+        buttonClassName: "custom-fold-button custom-fold-trigger",
+        iconClassName: "custom-fold-icon",
+      }),
+    );
+    mountFoldMarker(view);
+
+    const button = visibleFoldButton(container);
+    expect(button.classList.contains("custom-fold-button")).toBe(true);
+    expect(button.classList.contains("custom-fold-trigger")).toBe(true);
+    expect(foldIconElement(container).classList.contains("custom-fold-icon")).toBe(true);
+  });
+
+  it("sets fold transition hooks only for same-marker state changes", () => {
+    view.dispose();
+    view = createFoldGutterTestView(container, createFoldGutterContribution({ icon: ">" }));
+    mountFoldMarker(view, createSingleFoldMarker({ key: "fold-a", collapsed: false }));
+
+    expect(visibleFoldButton(container).dataset.editorFoldTransition).toBeUndefined();
+
+    view.setFoldMarkers([createSingleFoldMarker({ key: "fold-b", collapsed: false })]);
+
+    expect(visibleFoldButton(container).dataset.editorFoldTransition).toBeUndefined();
+
+    view.setFoldMarkers([createSingleFoldMarker({ key: "fold-b", collapsed: true })]);
+
+    const button = visibleFoldButton(container);
+    expect(button.dataset.editorFoldTransition).toBe("collapse");
+
+    button.dispatchEvent(new Event("animationend", { bubbles: true }));
+    expect(button.dataset.editorFoldTransition).toBeUndefined();
+
+    view.setFoldMarkers([createSingleFoldMarker({ key: "fold-b", collapsed: false })]);
+
+    expect(button.dataset.editorFoldTransition).toBe("expand");
+
+    button.dispatchEvent(new Event("animationcancel", { bubbles: true }));
+    expect(button.dataset.editorFoldTransition).toBeUndefined();
+  });
+
   it("validates native geometry ranges over mounted rows", () => {
     view.setText("abc\ndef");
     view.setScrollMetrics(0, 40);
@@ -825,6 +955,57 @@ describe("VirtualizedTextView", () => {
 
 function createLines(count: number): string {
   return Array.from({ length: count }, (_, index) => `line ${index}`).join("\n");
+}
+
+function createFoldGutterTestView(
+  container: HTMLElement,
+  contribution: ReturnType<typeof createFoldGutterContribution>,
+): VirtualizedTextView {
+  return new VirtualizedTextView(container, {
+    rowHeight: 20,
+    overscan: 2,
+    highlightRegistry: mockRegistry,
+    selectionHighlightName: "test-selection",
+    gutterContributions: [contribution],
+  });
+}
+
+function mountFoldMarker(
+  view: VirtualizedTextView,
+  marker: VirtualizedFoldMarker = createSingleFoldMarker(),
+): void {
+  view.setText("line 0\nline 1\nline 2");
+  view.setFoldMarkers([marker]);
+  view.setScrollMetrics(0, 80);
+}
+
+function createSingleFoldMarker(
+  options: { readonly key?: string; readonly collapsed?: boolean } = {},
+): VirtualizedFoldMarker {
+  return {
+    key: options.key ?? "fold-0",
+    startOffset: 0,
+    endOffset: 13,
+    startRow: 0,
+    endRow: 1,
+    collapsed: options.collapsed ?? false,
+  };
+}
+
+function visibleFoldButton(container: HTMLElement): HTMLButtonElement {
+  const button = container.querySelector<HTMLButtonElement>(
+    ".editor-virtualized-fold-toggle:not([hidden])",
+  );
+  expect(button).not.toBeNull();
+  return button!;
+}
+
+function foldIconElement(container: HTMLElement): HTMLSpanElement {
+  const icon = visibleFoldButton(container).querySelector<HTMLSpanElement>(
+    ".editor-virtualized-fold-icon",
+  );
+  expect(icon).not.toBeNull();
+  return icon!;
 }
 
 function lineStartOffsets(lines: readonly string[]): number[] {

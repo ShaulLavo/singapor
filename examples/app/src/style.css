@@ -101,6 +101,51 @@ body {
   overflow: hidden;
 }
 
+.app-fold-gutter-icon {
+  width: 10px;
+  height: 10px;
+}
+
+.app-fold-chevron {
+  width: 10px;
+  height: 10px;
+  fill: currentColor;
+  transform: rotate(0deg);
+  transform-origin: center;
+}
+
+.editor-virtualized-fold-toggle[data-editor-fold-state="collapsed"] .app-fold-chevron {
+  transform: rotate(-90deg);
+}
+
+.editor-virtualized-fold-toggle[data-editor-fold-transition="collapse"] .app-fold-chevron {
+  animation: app-fold-chevron-collapse 120ms ease-out;
+}
+
+.editor-virtualized-fold-toggle[data-editor-fold-transition="expand"] .app-fold-chevron {
+  animation: app-fold-chevron-expand 120ms ease-out;
+}
+
+@keyframes app-fold-chevron-collapse {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(-90deg);
+  }
+}
+
+@keyframes app-fold-chevron-expand {
+  from {
+    transform: rotate(-90deg);
+  }
+
+  to {
+    transform: rotate(0deg);
+  }
+}
+
 ul {
   list-style: none;
   padding-left: 16px;

@@ -149,9 +149,15 @@
   visibility: hidden;
 }
 
-.editor-virtualized-fold-toggle::before {
-  content: attr(data-editor-fold-indicator);
+.editor-virtualized-fold-icon {
+  align-items: center;
+  color: inherit;
+  display: inline-flex;
+  flex: 0 0 auto;
   font-size: 9px;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
 }
 
 .editor-virtualized-fold-toggle:hover {

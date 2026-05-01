@@ -118,4 +118,4 @@ Token types: `packages/editor/src/tokens.ts` (`EditorToken`, `EditorTokenStyle`,
 
 ### Current implementation note
 
-The demo app still contains a Shiki tokenizer package. That is implementation debt, not the long-term plan. New syntax-system design should target Tree-sitter query output and adapt it to the renderer's decoration/highlight API.
+The repo also contains an optional Shiki highlighter package. Transform design should continue to accept renderer-facing decoration/highlight output from whichever syntax or highlighting package a host chooses.

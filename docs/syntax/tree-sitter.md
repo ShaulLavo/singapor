@@ -2,7 +2,7 @@
 
 ## Decision
 
-Tree-sitter is the committed syntax engine for the editor. Shiki is not the long-term tokenizer/highlighter path.
+Tree-sitter is the default syntax engine for the editor. Shiki remains available as an optional highlighter package for hosts that prefer it.
 
 Tree-sitter provides a single structural model for:
 

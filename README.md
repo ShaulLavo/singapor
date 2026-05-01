@@ -31,7 +31,7 @@ moving, but the current packages include:
   language registration.
 - First-party plugins/packages for line gutters, fold gutters, find/replace, scope lines, minimap,
   TypeScript LSP support, and Tree-sitter language registration.
-- A legacy Shiki highlighter plugin kept beside the Tree-sitter syntax path.
+- An optional Shiki highlighter plugin for hosts that prefer Shiki tokenization.
 - A Vite example app that wires the packages into a file-browser-style demo.
 
 For the implementation history, see [PROGRESS.md](PROGRESS.md). For system design and open
@@ -49,7 +49,7 @@ architecture questions, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | `@editor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON. |
 | `@editor/typescript-lsp` | TypeScript language-service plugin built on the generic LSP layer. |
 | `@editor/lsp` | Generic LSP transport and plugin primitives. |
-| `@editor/shiki` | Legacy/demo Shiki highlighter plugin. Tree-sitter is the main syntax direction. |
+| `@editor/shiki` | Optional Shiki highlighter plugin for hosts that prefer Shiki tokenization. |
 | `@editor/example-app` | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing. |
 
 ## Requirements
@@ -158,7 +158,7 @@ packages/editor/                  Core editor package
 packages/gutters/                 Line and fold gutter plugins
 packages/minimap/                 Minimap plugin and worker renderer
 packages/tree-sitter-languages/   Tree-sitter grammar/query plugin package
-packages/shiki/                   Legacy Shiki highlighter plugin
+packages/shiki/                   Optional Shiki highlighter plugin
 examples/app/                     Demo app
 docs/                             Design documents
 opensrc/                          Local source references for selected dependencies

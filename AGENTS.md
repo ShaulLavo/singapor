@@ -40,7 +40,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 | Package | Purpose | Key files |
 |---|---|---|
 | `packages/editor` | Core editor: piece table + CSS Highlight API renderer | `src/pieceTable/pieceTable.ts`, `src/pieceTable/pieceTableTypes.ts`, `src/editor.ts`, `src/tokens.ts` |
-| `packages/shiki` | Legacy/demo incremental tokenizer; planned to be replaced by Tree-sitter | `src/tokenizer.ts`, `src/editor-tokens.ts` |
+| `packages/shiki` | Optional Shiki highlighter/tokenizer plugin | `src/tokenizer.ts`, `src/editor-tokens.ts` |
 | `examples/app` | Demo app with file browser | `src/app.ts`, `src/main.ts` |
 
 ### What's Implemented
@@ -50,7 +50,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 - **Anchors and selections** — Durable anchor resolution, selection sets, and snapshot-aware history helpers
 - **Tree-sitter syntax path** — Worker-backed parsing/query support and structural selection integration
 - **Display transforms and virtualization** — FoldMap, row virtualization, long-line chunking, and mounted-range highlight painting
-- **Incremental tokenizer** — Existing Shiki demo path; legacy beside the Tree-sitter syntax engine
+- **Shiki highlighter** — Optional highlighter/tokenizer package for hosts that prefer Shiki
 - **Example app** — File System Access API browser + editor integration
 
 ### Still Evolving

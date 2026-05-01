@@ -62,19 +62,26 @@ export type SourceSnapshot = {
   readonly files: readonly SourceFile[];
 };
 
-export async function fetchRepositorySource(): Promise<SourceSnapshot> {
-  const sourceRef = await fetchRepositoryRef();
-  const tree = await fetchRepositoryTree(sourceRef.treeSha);
+export type RepositorySourceRef = {
+  readonly commitSha: string;
+  readonly treeSha: string;
+};
+
+export async function fetchRepositorySource(
+  sourceRef?: RepositorySourceRef,
+): Promise<SourceSnapshot> {
+  const resolvedRef = sourceRef ?? (await fetchRepositoryRef());
+  const tree = await fetchRepositoryTree(resolvedRef.treeSha);
   const entries = parseTreeEntries(tree);
   const files = await mapWithConcurrency(entries, FETCH_CONCURRENCY, (entry) =>
-    fetchSourceFile(sourceRef.commitSha, entry),
+    fetchSourceFile(resolvedRef.commitSha, entry),
   );
 
   return {
     owner: REPOSITORY_OWNER,
     repo: REPOSITORY_NAME,
     branch: REPOSITORY_BRANCH,
-    commitSha: sourceRef.commitSha,
+    commitSha: resolvedRef.commitSha,
     treeSha: tree.sha,
     fetchedAt: Date.now(),
     files,
@@ -91,10 +98,7 @@ export function isSourceTextPath(path: string): boolean {
   return TEXT_EXTENSIONS.has(extensionForPath(path));
 }
 
-async function fetchRepositoryRef(): Promise<{
-  readonly commitSha: string;
-  readonly treeSha: string;
-}> {
+export async function fetchRepositoryRef(): Promise<RepositorySourceRef> {
   const response = await fetch(COMMIT_ENDPOINT);
   if (!response.ok) throw new Error(`GitHub commit fetch failed: ${response.status}`);
 

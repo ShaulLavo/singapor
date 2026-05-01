@@ -4,6 +4,7 @@ import type { Sidebar } from "./components/sidebar.ts";
 import type { StatusBar } from "./components/statusBar.ts";
 import type { TopBar } from "./components/topBar.ts";
 import {
+  fetchRepositoryRef,
   fetchRepositorySource,
   REPOSITORY_NAME,
   REPOSITORY_OWNER,
@@ -81,7 +82,13 @@ export class SourceController {
     this.topBar.setMessage(`Fetching ${REPOSITORY_OWNER}/${REPOSITORY_NAME}`);
 
     try {
-      const snapshot = await fetchRepositorySource();
+      const sourceRef = await fetchRepositoryRef();
+      if (this.currentSnapshot?.commitSha === sourceRef.commitSha) {
+        this.topBar.setRepositoryName(snapshotLabel(this.currentSnapshot));
+        return;
+      }
+
+      const snapshot = await fetchRepositorySource(sourceRef);
       await persistSnapshot(snapshot);
       await this.displaySnapshot(snapshot, {
         selectedPath: this.currentSelectedPath ?? storedSelectedPath(),

@@ -26,6 +26,14 @@ describe("Tree-sitter syntax capture conversion", () => {
     expect(styleForTreeSitterCapture("string")).toEqual({
       color: "var(--editor-syntax-string)",
     });
+    expect(styleForTreeSitterCapture("text.title")).toEqual({
+      color: "var(--editor-syntax-keyword-declaration)",
+      fontWeight: 700,
+    });
+    expect(styleForTreeSitterCapture("text.uri")).toEqual({
+      color: "var(--editor-syntax-string)",
+      textDecoration: "underline",
+    });
     expect(styleForTreeSitterCapture("unknown.scope")).toBeNull();
   });
 

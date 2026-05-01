@@ -39,6 +39,12 @@ const EXACT_CAPTURE_STYLES: Record<string, EditorTokenStyle> = {
   "type.builtin": { color: SYNTAX_COLOR.type },
   "type.definition": { color: SYNTAX_COLOR.typeDefinition },
   "type.parameter": { color: SYNTAX_COLOR.typeParameter },
+  "text.emphasis": { fontStyle: "italic" },
+  "text.literal": { color: SYNTAX_COLOR.string },
+  "text.reference": { color: SYNTAX_COLOR.property },
+  "text.strong": { fontWeight: 700 },
+  "text.title": { color: SYNTAX_COLOR.keywordDeclaration, fontWeight: 700 },
+  "text.uri": { color: SYNTAX_COLOR.string, textDecoration: "underline" },
   "variable.builtin": { color: SYNTAX_COLOR.variableBuiltin },
   "variable.parameter": { color: SYNTAX_COLOR.keywordImport },
 };

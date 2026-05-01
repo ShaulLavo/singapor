@@ -24,7 +24,92 @@ type ShikiThemeLike = {
   readonly bg?: string;
   readonly fg?: string;
   readonly colors?: Readonly<Record<string, string | undefined>>;
+  readonly tokenColors?: readonly ShikiThemeSettingLike[];
+  readonly settings?: readonly ShikiThemeSettingLike[];
 };
+
+type ShikiThemeSettingLike = {
+  readonly scope?: string | readonly string[];
+  readonly settings?: {
+    readonly foreground?: string;
+  };
+};
+
+type SyntaxScopeMapping = {
+  readonly key: keyof NonNullable<EditorTheme["syntax"]>;
+  readonly scopes: readonly string[];
+};
+
+const SYNTAX_SCOPE_MAPPINGS: readonly SyntaxScopeMapping[] = [
+  {
+    key: "attribute",
+    scopes: ["entity.other.attribute-name", "meta.attribute", "support.type.property-name"],
+  },
+  {
+    key: "bracket",
+    scopes: ["punctuation.section", "punctuation.definition", "meta.brace"],
+  },
+  {
+    key: "comment",
+    scopes: ["comment"],
+  },
+  {
+    key: "constant",
+    scopes: ["constant.language", "constant.character", "variable.other.constant"],
+  },
+  {
+    key: "function",
+    scopes: ["entity.name.function", "support.function", "meta.function-call"],
+  },
+  {
+    key: "keyword",
+    scopes: ["keyword", "storage.modifier", "storage.type"],
+  },
+  {
+    key: "keywordDeclaration",
+    scopes: ["storage.type", "keyword.declaration", "keyword.operator.new"],
+  },
+  {
+    key: "keywordImport",
+    scopes: ["keyword.control.import", "keyword.control.from", "keyword.operator.expression.import"],
+  },
+  {
+    key: "namespace",
+    scopes: ["entity.name.namespace", "entity.name.module", "support.module"],
+  },
+  {
+    key: "number",
+    scopes: ["constant.numeric"],
+  },
+  {
+    key: "property",
+    scopes: ["variable.other.property", "meta.object-literal.key", "support.type.property-name"],
+  },
+  {
+    key: "string",
+    scopes: ["string"],
+  },
+  {
+    key: "type",
+    scopes: ["entity.name.type", "entity.name.class", "support.type", "support.class"],
+  },
+  {
+    key: "typeDefinition",
+    scopes: ["entity.name.type.class", "entity.name.class", "entity.name.type"],
+  },
+  {
+    key: "typeParameter",
+    scopes: ["entity.name.type.type-parameter", "meta.type.parameters"],
+  },
+  {
+    key: "variable",
+    scopes: ["variable.other", "variable.parameter", "identifier"],
+  },
+  {
+    key: "variableBuiltin",
+    scopes: ["variable.language", "support.variable", "support.constant"],
+  },
+];
 
 const documents = new Map<string, DocumentState>();
 const documentTasks = new Map<string, Promise<ShikiWorkerResult | undefined>>();
@@ -200,6 +285,7 @@ function editorThemeFromHighlighter(
 function editorThemeFromShikiTheme(theme: ShikiThemeLike): EditorTheme {
   const backgroundColor = theme.bg ?? theme.colors?.["editor.background"];
   const foregroundColor = theme.fg ?? theme.colors?.["editor.foreground"];
+  const syntax = editorSyntaxThemeFromShikiTheme(theme);
 
   return {
     backgroundColor,
@@ -208,5 +294,80 @@ function editorThemeFromShikiTheme(theme: ShikiThemeLike): EditorTheme {
     gutterForegroundColor: theme.colors?.["editorLineNumber.foreground"],
     caretColor: theme.colors?.["editorCursor.foreground"] ?? foregroundColor,
     minimapBackgroundColor: backgroundColor,
+    ...(syntax ? { syntax } : {}),
   };
+}
+
+function editorSyntaxThemeFromShikiTheme(
+  theme: ShikiThemeLike,
+): NonNullable<EditorTheme["syntax"]> | undefined {
+  const syntax: NonNullable<EditorTheme["syntax"]> = {};
+  for (const mapping of SYNTAX_SCOPE_MAPPINGS) {
+    const color = themeColorForScopes(theme, mapping.scopes);
+    if (color !== undefined) syntax[mapping.key] = color;
+  }
+  if (Object.keys(syntax).length === 0) return undefined;
+  return syntax;
+}
+
+function themeColorForScopes(
+  theme: ShikiThemeLike,
+  targetScopes: readonly string[],
+): string | undefined {
+  const settings = shikiThemeSettings(theme);
+  for (let index = settings.length - 1; index >= 0; index -= 1) {
+    const color = settingColorForScopes(settings[index], targetScopes);
+    if (color !== undefined) return color;
+  }
+  return undefined;
+}
+
+function shikiThemeSettings(theme: ShikiThemeLike): readonly ShikiThemeSettingLike[] {
+  return theme.tokenColors ?? theme.settings ?? [];
+}
+
+function settingColorForScopes(
+  setting: ShikiThemeSettingLike | undefined,
+  targetScopes: readonly string[],
+): string | undefined {
+  if (!setting?.settings?.foreground) return undefined;
+  if (!settingMatchesAnyScope(setting, targetScopes)) return undefined;
+  return setting.settings.foreground;
+}
+
+function settingMatchesAnyScope(
+  setting: ShikiThemeSettingLike,
+  targetScopes: readonly string[],
+): boolean {
+  const scopes = normalizedSettingScopes(setting.scope);
+  for (const scope of scopes) {
+    if (scopeMatchesAnyTarget(scope, targetScopes)) return true;
+  }
+  return false;
+}
+
+function normalizedSettingScopes(scope: string | readonly string[] | undefined): readonly string[] {
+  if (scope === undefined) return [];
+  if (typeof scope === "string") return splitScopeList(scope);
+  return scope.flatMap(splitScopeList);
+}
+
+function splitScopeList(scope: string): string[] {
+  return scope
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function scopeMatchesAnyTarget(scope: string, targetScopes: readonly string[]): boolean {
+  for (const target of targetScopes) {
+    if (scopeMatchesTarget(scope, target)) return true;
+  }
+  return false;
+}
+
+function scopeMatchesTarget(scope: string, target: string): boolean {
+  if (scope === target) return true;
+  if (scope.startsWith(`${target}.`)) return true;
+  return target.startsWith(`${scope}.`);
 }

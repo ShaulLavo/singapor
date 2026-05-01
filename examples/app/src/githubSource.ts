@@ -13,6 +13,7 @@ const TEXT_EXTENSIONS = new Set([
   ".json",
   ".lock",
   ".md",
+  ".markdown",
   ".mjs",
   ".scm",
   ".ts",

@@ -25,6 +25,28 @@ test("loads Shiki token highlights for a source file", async ({ page }) => {
   await expect.poll(() => tokenHighlightRangeCount(page)).toBeGreaterThan(0);
 });
 
+test("loads Tree-sitter Markdown highlights for a Markdown file", async ({ page }) => {
+  const file = {
+    path: "README.md",
+    text: ["# Editor", "", "A **fast** editor.", "", "```ts", "const answer = 42;", "```", ""].join(
+      "\n",
+    ),
+  };
+  await mockGitHubSource(page, file.path, file.text);
+  await page.addInitScript((path) => {
+    localStorage.clear();
+    localStorage.setItem("editor-selected-file", path);
+  }, file.path);
+
+  await page.goto("/");
+
+  await expect(page.locator(".editor-virtualized")).toContainText("const answer");
+  await expect(page.locator("#status-syntax")).toContainText("markdown ready", {
+    timeout: 15000,
+  });
+  await expect.poll(() => tokenHighlightRangeCount(page), { timeout: 15000 }).toBeGreaterThan(0);
+});
+
 test("shows TypeScript LSP diagnostics for a source file", async ({ page }) => {
   const file = {
     path: "src/index.ts",

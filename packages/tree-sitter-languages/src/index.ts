@@ -12,8 +12,15 @@ import jsonHighlightQuerySource from "tree-sitter-json/queries/highlights.scm?ra
 import jsonGrammarUrl from "tree-sitter-json/tree-sitter-json.wasm?url";
 import tsGrammarUrl from "tree-sitter-typescript/tree-sitter-typescript.wasm?url";
 import tsxGrammarUrl from "tree-sitter-typescript/tree-sitter-tsx.wasm?url";
+import markdownGrammarUrl from "./grammars/tree-sitter-markdown.wasm?url";
+import markdownInlineGrammarUrl from "./grammars/tree-sitter-markdown-inline.wasm?url";
 import jsFoldQuerySource from "./queries/javascript-folds.scm?raw";
 import jsHighlightQuerySource from "./queries/javascript-highlights.scm?raw";
+import markdownFoldQuerySource from "./queries/markdown-folds.scm?raw";
+import markdownHighlightQuerySource from "./queries/markdown-highlights.scm?raw";
+import markdownInjectionQuerySource from "./queries/markdown-injections.scm?raw";
+import markdownInlineHighlightQuerySource from "./queries/markdown-inline-highlights.scm?raw";
+import markdownInlineInjectionQuerySource from "./queries/markdown-inline-injections.scm?raw";
 import tsFoldQuerySource from "./queries/typescript-folds.scm?raw";
 import tsHighlightQuerySource from "./queries/typescript-highlights.scm?raw";
 import { createTreeSitterLanguagePlugin } from "@editor/core";
@@ -67,12 +74,34 @@ export const JSON_TREE_SITTER_LANGUAGE = {
   injectionQuerySource: EMPTY_QUERY,
 } satisfies TreeSitterLanguageContribution;
 
+export const MARKDOWN_TREE_SITTER_LANGUAGE = {
+  id: "markdown",
+  wasmUrl: markdownGrammarUrl,
+  extensions: [".md", ".markdown"],
+  aliases: ["markdown", "md", "gfm"],
+  highlightQuerySource: markdownHighlightQuerySource,
+  foldQuerySource: markdownFoldQuerySource,
+  injectionQuerySource: markdownInjectionQuerySource,
+} satisfies TreeSitterLanguageContribution;
+
+export const MARKDOWN_INLINE_TREE_SITTER_LANGUAGE = {
+  id: "markdown_inline",
+  wasmUrl: markdownInlineGrammarUrl,
+  extensions: [],
+  aliases: ["markdown_inline"],
+  highlightQuerySource: markdownInlineHighlightQuerySource,
+  foldQuerySource: EMPTY_QUERY,
+  injectionQuerySource: markdownInlineInjectionQuerySource,
+} satisfies TreeSitterLanguageContribution;
+
 export const TREE_SITTER_LANGUAGE_CONTRIBUTIONS = [
   createJavaScriptContribution(true),
   createTypeScriptContribution(true),
   HTML_TREE_SITTER_LANGUAGE,
   CSS_TREE_SITTER_LANGUAGE,
   JSON_TREE_SITTER_LANGUAGE,
+  MARKDOWN_TREE_SITTER_LANGUAGE,
+  MARKDOWN_INLINE_TREE_SITTER_LANGUAGE,
 ] satisfies readonly TreeSitterLanguageContribution[];
 
 export function javaScript(options: JavaScriptTreeSitterLanguageOptions = {}): EditorPlugin {
@@ -103,6 +132,16 @@ export function css(options?: TreeSitterLanguagePluginOptions): EditorPlugin {
 
 export function json(options?: TreeSitterLanguagePluginOptions): EditorPlugin {
   return createLanguagePlugin(JSON_TREE_SITTER_LANGUAGE, "tree-sitter-json", options);
+}
+
+export function markdown(options: TreeSitterLanguagePluginOptions = {}): EditorPlugin {
+  return createTreeSitterLanguagePlugin(
+    [MARKDOWN_TREE_SITTER_LANGUAGE, MARKDOWN_INLINE_TREE_SITTER_LANGUAGE],
+    {
+      ...options,
+      name: options.name ?? "tree-sitter-markdown",
+    },
+  );
 }
 
 function createLanguagePlugin(

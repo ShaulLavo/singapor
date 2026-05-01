@@ -7,7 +7,7 @@ import { createEditorFindPlugin } from "@editor/find";
 import { createFoldGutterPlugin, createLineGutterPlugin } from "@editor/gutters";
 import { createMinimapPlugin } from "@editor/minimap";
 import { createScopeLinesPlugin } from "@editor/scope-lines";
-import { css, html, javaScript, json, typeScript } from "@editor/tree-sitter-languages";
+import { css, html, javaScript, json, markdown, typeScript } from "@editor/tree-sitter-languages";
 import {
   createTypeScriptLspPlugin,
   type TypeScriptLspDiagnosticSummary,
@@ -20,7 +20,6 @@ import { createStatusBar } from "./components/statusBar.ts";
 import { createTopBar } from "./components/topBar.ts";
 import { createFoldChevronIcon } from "./foldGutterIcon.ts";
 import { SourceController } from "./sourceController.ts";
-import { createShikiHighlighterPlugin } from "@editor/shiki";
 
 export function mountApp(): void {
   const app = document.getElementById("app")!;
@@ -65,13 +64,14 @@ export function mountApp(): void {
       html(),
       css(),
       json(),
+      markdown(),
       createLineGutterPlugin(),
       createFoldGutterPlugin({
         width: 16,
         icon: createFoldChevronIcon,
         iconClassName: "app-fold-gutter-icon",
       }),
-      createShikiHighlighterPlugin({ theme: "github-dark" }),
+      // createShikiHighlighterPlugin({ theme: "github-dark" }),
       createEditorFindPlugin(),
       createScopeLinesPlugin(),
       createMinimapPlugin(),

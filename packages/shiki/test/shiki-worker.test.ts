@@ -167,6 +167,61 @@ describe("shiki worker", () => {
       },
     } satisfies ShikiWorkerResponse);
   });
+
+  it("maps Shiki token colors into editor syntax theme colors", async () => {
+    const postMessage = vi.fn();
+    const getTheme = vi.fn(() => ({
+      bg: "#0d1117",
+      fg: "#c9d1d9",
+      tokenColors: [
+        { scope: "comment", settings: { foreground: "#8b949e" } },
+        { scope: "storage.modifier", settings: { foreground: "#ff7b72" } },
+        { scope: "entity.name.function", settings: { foreground: "#d2a8ff" } },
+        { scope: "entity.name.class", settings: { foreground: "#ffa657" } },
+        { scope: "string.quoted", settings: { foreground: "#a5d6ff" } },
+        { scope: "constant.numeric", settings: { foreground: "#79c0ff" } },
+      ],
+    }));
+    (globalThis as { self?: unknown }).self = { postMessage };
+    createHighlighter.mockResolvedValue({ getTheme });
+    await import("../src/shiki.worker");
+
+    const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
+      .onmessage;
+    onmessage(
+      new MessageEvent("message", {
+        data: request("theme", {
+          theme: "github-dark",
+          themes: [],
+        }),
+      }),
+    );
+    await waitFor(() => postMessage.mock.calls.length > 0);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      id: 1,
+      ok: true,
+      result: {
+        theme: {
+          backgroundColor: "#0d1117",
+          foregroundColor: "#c9d1d9",
+          gutterBackgroundColor: "#0d1117",
+          gutterForegroundColor: undefined,
+          caretColor: "#c9d1d9",
+          minimapBackgroundColor: "#0d1117",
+          syntax: {
+            comment: "#8b949e",
+            function: "#d2a8ff",
+            keyword: "#ff7b72",
+            number: "#79c0ff",
+            string: "#a5d6ff",
+            type: "#ffa657",
+            typeDefinition: "#ffa657",
+          },
+        },
+      },
+    } satisfies ShikiWorkerResponse);
+  });
 });
 
 function request(

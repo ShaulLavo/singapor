@@ -227,6 +227,8 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ".js": "javascript",
   ".json": "json",
   ".jsx": "javascript",
+  ".markdown": "markdown",
+  ".md": "markdown",
   ".mjs": "javascript",
   ".mts": "typescript",
   ".ts": "typescript",

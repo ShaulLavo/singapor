@@ -7,6 +7,7 @@ import {
   html,
   javaScript,
   json,
+  markdown,
   typeScript,
 } from "../src";
 
@@ -18,6 +19,8 @@ describe("Tree-sitter language contributions", () => {
       "html",
       "css",
       "json",
+      "markdown",
+      "markdown_inline",
     ]);
     expect(
       TREE_SITTER_LANGUAGE_CONTRIBUTIONS.every((contribution) => {
@@ -33,6 +36,7 @@ describe("Tree-sitter language contributions", () => {
       html(),
       css(),
       json(),
+      markdown(),
     ];
     const context = pluginContext();
 
@@ -44,8 +48,9 @@ describe("Tree-sitter language contributions", () => {
       "tree-sitter-html",
       "tree-sitter-css",
       "tree-sitter-json",
+      "tree-sitter-markdown",
     ]);
-    expect(context.registerTreeSitterLanguage).toHaveBeenCalledTimes(5);
+    expect(context.registerTreeSitterLanguage).toHaveBeenCalledTimes(7);
     expect(context.registerTreeSitterLanguage).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ aliases: expect.arrayContaining(["jsx"]), id: "javascript" }),
@@ -55,6 +60,16 @@ describe("Tree-sitter language contributions", () => {
       2,
       expect.objectContaining({ aliases: expect.arrayContaining(["tsx"]), id: "typescript" }),
       { replace: true },
+    );
+    expect(context.registerTreeSitterLanguage).toHaveBeenNthCalledWith(
+      6,
+      expect.objectContaining({ aliases: expect.arrayContaining(["md"]), id: "markdown" }),
+      { replace: undefined },
+    );
+    expect(context.registerTreeSitterLanguage).toHaveBeenNthCalledWith(
+      7,
+      expect.objectContaining({ aliases: ["markdown_inline"], id: "markdown_inline" }),
+      { replace: undefined },
     );
   });
 });

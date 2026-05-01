@@ -117,6 +117,7 @@ export interface VirtualizedTextViewInternal {
   lastWidthScanStart: number;
   lastWidthScanEnd: number;
   tokenRangesFollowLastTextEdit: boolean;
+  lineHeightOverride: number | null;
   metrics: BrowserTextMetrics;
   hiddenCharacters: HiddenCharactersMode;
 }

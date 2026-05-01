@@ -16,7 +16,7 @@ import type {
   VirtualizedTextRow,
 } from "./virtualizedTextViewTypes";
 
-export const DEFAULT_ROW_HEIGHT = 20;
+export const DEFAULT_ROW_HEIGHT = 24;
 export const DEFAULT_OVERSCAN = 12;
 export const DEFAULT_GUTTER_WIDTH = 36;
 export const DEFAULT_SELECTION_HIGHLIGHT = "editor-virtualized-selection";

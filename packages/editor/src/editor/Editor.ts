@@ -160,6 +160,7 @@ export class Editor {
       gutterContributions: [...this.pluginHost.getGutterContributions()],
       cursorLineHighlight: options.cursorLineHighlight,
       hiddenCharacters: options.hiddenCharacters,
+      lineHeight: options.lineHeight,
       tabSize: this.tabSize,
       onFoldToggle: this.handleFoldToggle,
       onViewportChange: this.handleViewportChange,
@@ -357,6 +358,12 @@ export class Editor {
 
   setHiddenCharacters(mode: HiddenCharactersMode): void {
     this.view.setHiddenCharacters(mode);
+  }
+
+  setLineHeight(lineHeight: number): void {
+    if (!this.view.setLineHeight(lineHeight)) return;
+
+    this.notifyViewContributions("layout", null);
   }
 
   dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {

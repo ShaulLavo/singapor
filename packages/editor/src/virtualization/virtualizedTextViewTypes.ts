@@ -15,6 +15,7 @@ export type DocumentWithCaretHitTesting = Document & {
 };
 
 export type VirtualizedTextViewOptions = {
+  readonly lineHeight?: number;
   readonly rowHeight?: number;
   readonly overscan?: number;
   readonly className?: string;

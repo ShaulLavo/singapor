@@ -134,7 +134,8 @@ export class VirtualizedTextView {
     const styleEl = container.ownerDocument.createElement("style");
     const scrollElement = createScrollElement(container, options.className);
     const measuredMetrics = measureBrowserTextMetrics(scrollElement);
-    const rowHeight = normalizeRowHeight(options.rowHeight ?? measuredMetrics.rowHeight);
+    const lineHeightOverride = options.lineHeight ?? options.rowHeight ?? null;
+    const rowHeight = normalizeRowHeight(lineHeightOverride ?? measuredMetrics.rowHeight);
     const inputElement = createInputElement(container);
     const spacer = container.ownerDocument.createElement("div");
     const gutterElement = container.ownerDocument.createElement("div");
@@ -209,6 +210,7 @@ export class VirtualizedTextView {
       lastWidthScanStart: 0,
       lastWidthScanEnd: -1,
       tokenRangesFollowLastTextEdit: false,
+      lineHeightOverride,
       metrics: { ...measuredMetrics, rowHeight },
       hiddenCharacters: normalizeHiddenCharactersMode(options.hiddenCharacters),
     };
@@ -289,14 +291,34 @@ export class VirtualizedTextView {
   public refreshMetrics(): BrowserTextMetrics {
     const view = this.view;
     const measured = measureBrowserTextMetrics(this.scrollElement);
-    const rowHeightValue = normalizeRowHeight(measured.rowHeight);
-    view.metrics = { rowHeight: rowHeightValue, characterWidth: measured.characterWidth };
+    const rowHeightValue = normalizeRowHeight(view.lineHeightOverride ?? measured.rowHeight);
+    this.applyMetrics({ rowHeight: rowHeightValue, characterWidth: measured.characterWidth });
+    return view.metrics;
+  }
+
+  public setLineHeight(lineHeight: number): boolean {
+    const view = this.view;
+    const rowHeightValue = normalizeRowHeight(lineHeight);
+    view.lineHeightOverride = rowHeightValue;
+    if (view.metrics.rowHeight === rowHeightValue) return false;
+
+    this.applyMetrics({ ...view.metrics, rowHeight: rowHeightValue });
+    return true;
+  }
+
+  public setRowHeight(rowHeight: number): boolean {
+    return this.setLineHeight(rowHeight);
+  }
+
+  private applyMetrics(metrics: BrowserTextMetrics): void {
+    const view = this.view;
+    view.metrics = metrics;
+    const rowHeightValue = metrics.rowHeight;
     applyRowHeight(view, rowHeightValue);
     view.gutterWidthDirty = true;
     this.refreshWrapWidth();
     view.lastRenderedRowsKey = "";
     view.virtualizer.updateOptions({ rowHeight: rowHeightValue, rowSizes: rowSizes(view) });
-    return view.metrics;
   }
 
   public applyEdit(edit: TextEdit, nextText: string): void {

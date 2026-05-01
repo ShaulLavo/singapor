@@ -490,6 +490,20 @@ describe("Editor", () => {
       expect(editorRoot().textContent).toBe("a b\tc");
     });
 
+    it("uses the larger default line height", () => {
+      expect(editorRoot().style.getPropertyValue("--editor-row-height")).toBe("24px");
+    });
+
+    it("forwards configured line height to the text view", () => {
+      editor.dispose();
+      editor = new Editor(container, {
+        defaultText: "a\nb",
+        lineHeight: 26,
+      });
+
+      expect(editorRoot().style.getPropertyValue("--editor-row-height")).toBe("26px");
+    });
+
     it("applies configured theme variables for Tree-sitter capture themes", () => {
       editor.dispose();
       editor = new Editor(container, {
@@ -524,6 +538,14 @@ describe("Editor", () => {
 
       expect(editorRoot().style.getPropertyValue("--editor-background")).toBe("");
       expect(editorRoot().style.getPropertyValue("--editor-foreground")).toBe("");
+    });
+  });
+
+  describe("setLineHeight", () => {
+    it("updates the text view line height", () => {
+      editor.setLineHeight(28);
+
+      expect(editorRoot().style.getPropertyValue("--editor-row-height")).toBe("28px");
     });
   });
 

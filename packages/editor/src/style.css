@@ -72,13 +72,14 @@
   --editor-syntax-variable: #e4e4e7;
   --editor-syntax-variable-builtin: #fdba74;
   --editor-gutter-width: 0px;
-  --editor-row-height: 20px;
+  --editor-row-height: 24px;
 
   flex: 1;
   position: relative;
   overflow: auto;
   font-size: 13px;
   font-family: monospace;
+  line-height: var(--editor-row-height);
   white-space: pre;
   tab-size: var(--editor-tab-size, 4);
   color: var(--editor-foreground);

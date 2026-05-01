@@ -3,7 +3,7 @@ export type BrowserTextMetrics = {
   readonly characterWidth: number;
 };
 
-const DEFAULT_ROW_HEIGHT = 20;
+const DEFAULT_ROW_HEIGHT = 24;
 const DEFAULT_CHARACTER_WIDTH = 8;
 const PROBE_TEXT = "mmmmmmmmmmmmmmmm";
 

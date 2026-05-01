@@ -105,6 +105,7 @@ function editingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] 
     { hotkey: key("H", { mod: true }), command: "findReplace" },
     { hotkey: key("F3"), command: "findNext" },
     { hotkey: key("F3", { shift: true }), command: "findPrevious" },
+    { hotkey: key("F12"), command: "goToDefinition" },
     { hotkey: key("Enter", { alt: true }), command: "selectAllMatches" },
     { hotkey: key("C", { alt: true }), command: "toggleFindCaseSensitive" },
     { hotkey: key("W", { alt: true }), command: "toggleFindWholeWord" },

@@ -6,6 +6,11 @@ import { createEditorFindPlugin } from "@editor/find";
 import { createFoldGutterPlugin, createLineGutterPlugin } from "@editor/gutters";
 import { createMinimapPlugin } from "@editor/minimap";
 import { css, html, javaScript, json, typeScript } from "@editor/tree-sitter-languages";
+import {
+  createTypeScriptLspPlugin,
+  type TypeScriptLspDiagnosticSummary,
+  type TypeScriptLspStatus,
+} from "@editor/typescript-lsp";
 import { createEditorPane } from "./components/editorPane.ts";
 import { el } from "./components/dom.ts";
 import { createSidebar } from "./components/sidebar.ts";
@@ -27,6 +32,25 @@ export function mountApp(): void {
   app.append(topBar.element, main, statusBar.element);
 
   let controller: SourceController | null = null;
+  let typeScriptLspStatus: TypeScriptLspStatus = "idle";
+  let typeScriptDiagnostics: TypeScriptLspDiagnosticSummary | null = null;
+  const syncTypeScriptStatus = (): void => {
+    statusBar.updateTypeScriptLsp(typeScriptLspStatus, typeScriptDiagnostics);
+  };
+  const typeScriptLsp = createTypeScriptLspPlugin({
+    onStatusChange: (status) => {
+      typeScriptLspStatus = status;
+      syncTypeScriptStatus();
+    },
+    onDiagnostics: (summary) => {
+      typeScriptDiagnostics = summary;
+      syncTypeScriptStatus();
+    },
+    onOpenDefinition: (target) => controller?.openDefinition(target) ?? false,
+    onError: (error) => {
+      console.warn("[typescript-lsp]", error);
+    },
+  });
   const editor = new Editor(editorPane.element, {
     cursorLineHighlight: {
       gutterNumber: true,
@@ -48,12 +72,14 @@ export function mountApp(): void {
       createShikiHighlighterPlugin({ theme: "github-dark" }),
       createEditorFindPlugin(),
       createMinimapPlugin(),
+      typeScriptLsp,
     ],
     onChange: (state) => {
       controller?.updateStatus(state);
     },
   });
-  controller = new SourceController(topBar, sidebar, statusBar, editor);
+  controller = new SourceController(topBar, sidebar, statusBar, editor, typeScriptLsp);
 
+  syncTypeScriptStatus();
   controller.start();
 }

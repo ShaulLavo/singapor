@@ -950,6 +950,7 @@ export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
 function rangeHighlightRule(name: string, style: VirtualizedTextHighlightStyle): string {
   const declarations = [`background-color: ${style.backgroundColor};`];
   if (style.color) declarations.push(`color: ${style.color};`);
+  if (style.textDecoration) declarations.push(`text-decoration: ${style.textDecoration};`);
   return `::highlight(${name}) { ${declarations.join(" ")} }`;
 }
 

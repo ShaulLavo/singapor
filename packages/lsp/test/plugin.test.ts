@@ -156,8 +156,12 @@ function viewContributionContext(snapshot: EditorViewSnapshot): EditorViewContri
     scrollElement: element,
     getSnapshot: () => snapshot,
     revealLine: () => undefined,
+    focusEditor: () => undefined,
+    setSelection: () => undefined,
     setScrollTop: () => undefined,
     reserveOverlayWidth: () => undefined,
+    textOffsetFromPoint: () => null,
+    getRangeClientRect: () => null,
   };
 }
 

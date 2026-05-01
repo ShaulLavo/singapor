@@ -5,6 +5,7 @@ export type EditorCommandId =
   | "findReplace"
   | "findNext"
   | "findPrevious"
+  | "goToDefinition"
   | "closeFind"
   | "toggleFindCaseSensitive"
   | "toggleFindWholeWord"

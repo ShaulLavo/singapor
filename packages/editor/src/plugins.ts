@@ -83,10 +83,21 @@ export type EditorOverlaySide = "left" | "right";
 export type EditorViewContributionContext = {
   readonly container: HTMLElement;
   readonly scrollElement: HTMLDivElement;
+  readonly highlightPrefix?: string;
   getSnapshot(): EditorViewSnapshot;
   revealLine(row: number): void;
+  focusEditor(): void;
+  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void;
   setScrollTop(scrollTop: number): void;
   reserveOverlayWidth(side: EditorOverlaySide, width: number): void;
+  textOffsetFromPoint(clientX: number, clientY: number): number | null;
+  getRangeClientRect(start: number, end: number): DOMRect | null;
+  setRangeHighlight?(
+    name: string,
+    ranges: readonly { readonly start: number; readonly end: number }[],
+    style: VirtualizedTextHighlightStyle,
+  ): void;
+  clearRangeHighlight?(name: string): void;
 };
 
 export type EditorViewContributionUpdateKind =

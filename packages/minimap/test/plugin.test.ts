@@ -122,7 +122,11 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
     getSnapshot: () => viewSnapshot,
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
+    focusEditor: vi.fn(),
+    setSelection: vi.fn(),
     setScrollTop: vi.fn(),
+    textOffsetFromPoint: vi.fn(() => null),
+    getRangeClientRect: vi.fn(() => null),
   };
 }
 

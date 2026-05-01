@@ -1,0 +1,34 @@
+{
+  "name": "@editor/typescript-lsp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsgo --noEmit",
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt ."
+  },
+  "dependencies": {
+    "@editor/lsp": "workspace:*",
+    "@typescript/vfs": "^1.6.4",
+    "typescript": "~5.9.3",
+    "vscode-languageserver-protocol": "^3.17.5"
+  },
+  "devDependencies": {
+    "@editor/core": "workspace:*",
+    "@typescript/native-preview": "latest",
+    "happy-dom": "^20.8.9",
+    "oxfmt": "latest",
+    "oxlint": "latest",
+    "vitest": "^3.1.1"
+  },
+  "peerDependencies": {
+    "@editor/core": "workspace:*"
+  }
+}

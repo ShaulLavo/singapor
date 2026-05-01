@@ -38,6 +38,7 @@ export type VirtualizedTextHighlightRange = {
 export type VirtualizedTextHighlightStyle = {
   readonly backgroundColor: string;
   readonly color?: string;
+  readonly textDecoration?: string;
 };
 
 export type VirtualizedTextHighlightGroup = {

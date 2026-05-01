@@ -20,7 +20,8 @@
     "@editor/gutters": "workspace:*",
     "@editor/minimap": "workspace:*",
     "@editor/shiki": "workspace:*",
-    "@editor/tree-sitter-languages": "workspace:*"
+    "@editor/tree-sitter-languages": "workspace:*",
+    "@editor/typescript-lsp": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

@@ -1,4 +1,5 @@
 import type { Editor } from "@editor/core/editor";
+import type { TypeScriptLspDefinitionTarget } from "@editor/typescript-lsp";
 import type { Sidebar } from "./components/sidebar.ts";
 import type { StatusBar } from "./components/statusBar.ts";
 import type { TopBar } from "./components/topBar.ts";
@@ -15,6 +16,11 @@ import { findSourceFile, firstSourceFile } from "./tree.ts";
 const SELECTED_FILE_KEY = "editor-selected-file";
 const DEFAULT_SELECTED_FILE = "README.md";
 
+type SourceWorkspace = {
+  setWorkspaceFiles(files: readonly Pick<SourceFile, "path" | "text">[]): void;
+  clearWorkspaceFiles(): void;
+};
+
 export class SourceController {
   private currentSnapshot: SourceSnapshot | null = null;
   private currentSelectedPath: string | undefined;
@@ -23,12 +29,20 @@ export class SourceController {
   private readonly sidebar: Sidebar;
   private readonly statusBar: StatusBar;
   private readonly editor: Editor;
+  private readonly sourceWorkspace: SourceWorkspace | null;
 
-  constructor(topBar: TopBar, sidebar: Sidebar, statusBar: StatusBar, editor: Editor) {
+  constructor(
+    topBar: TopBar,
+    sidebar: Sidebar,
+    statusBar: StatusBar,
+    editor: Editor,
+    sourceWorkspace: SourceWorkspace | null = null,
+  ) {
     this.topBar = topBar;
     this.sidebar = sidebar;
     this.statusBar = statusBar;
     this.editor = editor;
+    this.sourceWorkspace = sourceWorkspace;
   }
 
   start(): void {
@@ -39,6 +53,24 @@ export class SourceController {
 
   updateStatus(state = this.editor.getState()): void {
     this.statusBar.update(this.currentSelectedPath, state);
+  }
+
+  openDefinition(target: TypeScriptLspDefinitionTarget): boolean {
+    const snapshot = this.currentSnapshot;
+    if (!snapshot) return false;
+
+    const file = findSourceFile(snapshot.files, target.path);
+    if (!file) return false;
+
+    this.displayFile(file, "auto");
+    const start = offsetForPosition(file.text, target.range.start);
+    const end = offsetForPosition(file.text, target.range.end);
+    this.editor.setSelection(start, end, start);
+    void this.sidebar.renderSource(snapshot.files, this.displayFile, {
+      selectedPath: file.path,
+      preserveExpandedPaths: true,
+    });
+    return true;
   }
 
   async refreshSource(): Promise<void> {
@@ -85,6 +117,7 @@ export class SourceController {
     const selectedFile = selectedFileForSnapshot(snapshot, options.selectedPath);
     this.currentSnapshot = snapshot;
     this.currentSelectedPath = selectedFile?.path;
+    this.sourceWorkspace?.setWorkspaceFiles(snapshot.files);
 
     if (!selectedFile) {
       this.clearActiveFile();
@@ -127,6 +160,7 @@ export class SourceController {
 
   private clearActiveFile(): void {
     this.currentSelectedPath = undefined;
+    this.sourceWorkspace?.clearWorkspaceFiles();
     this.editor.clearDocument();
     this.updateStatus();
   }
@@ -171,6 +205,17 @@ function extensionForFilePath(filePath: string): string | null {
   if (dotIndex === -1) return null;
 
   return filePath.slice(dotIndex).toLowerCase();
+}
+
+function offsetForPosition(
+  text: string,
+  position: { readonly line: number; readonly character: number },
+): number {
+  const lines = text.split("\n");
+  const line = Math.min(Math.max(0, position.line), Math.max(0, lines.length - 1));
+  let offset = 0;
+  for (let index = 0; index < line; index += 1) offset += (lines[index]?.length ?? 0) + 1;
+  return Math.min(text.length, offset + Math.max(0, position.character));
 }
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {

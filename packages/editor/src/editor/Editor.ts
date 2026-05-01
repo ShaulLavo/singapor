@@ -301,6 +301,10 @@ export class Editor {
     this.view.focusInput();
   }
 
+  setSelection(anchor: number, head = anchor, revealOffset = head): void {
+    this.applyFindSelection(anchor, head, "editor.setSelection", revealOffset);
+  }
+
   openFind(): boolean {
     return this.findFeature()?.openFind() ?? false;
   }
@@ -538,10 +542,18 @@ export class Editor {
     return {
       container,
       scrollElement: this.el,
+      highlightPrefix: this.highlightPrefix,
       getSnapshot: () => this.createViewSnapshot(),
       revealLine: (row) => this.view.scrollToRow(row),
+      focusEditor: () => this.focus(),
+      setSelection: (anchor, head, timingName, revealOffset) =>
+        this.applyFindSelection(anchor, head, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
       setScrollTop: (scrollTop) => this.setScrollTop(scrollTop),
+      textOffsetFromPoint: (clientX, clientY) => this.textOffsetFromPoint(clientX, clientY),
+      getRangeClientRect: (start, end) => this.rangeClientRect(start, end),
+      setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
+      clearRangeHighlight: (name) => this.view.clearRangeHighlight(name),
     };
   }
 
@@ -738,6 +750,7 @@ export class Editor {
 
   private handleMouseDown = (event: MouseEvent): void => {
     if (!this.session) return;
+    if (event.defaultPrevented) return;
 
     this.view.focusInput();
     if (event.detail >= 4) {
@@ -1618,10 +1631,26 @@ export class Editor {
   }
 
   private textOffsetFromMouseEvent(event: MouseEvent): number | null {
+    return this.textOffsetFromPoint(event.clientX, event.clientY);
+  }
+
+  private textOffsetFromPoint(clientX: number, clientY: number): number | null {
     return (
-      this.view.textOffsetFromPoint(event.clientX, event.clientY) ??
-      this.view.textOffsetFromViewportPoint(event.clientX, event.clientY)
+      this.view.textOffsetFromPoint(clientX, clientY) ??
+      this.view.textOffsetFromViewportPoint(clientX, clientY)
     );
+  }
+
+  private rangeClientRect(start: number, end: number): DOMRect | null {
+    const range = this.view.createRange(start, Math.max(start, end), { scrollIntoView: false });
+    if (!range) return null;
+
+    const firstRect = range.getClientRects()[0];
+    if (firstRect) return firstRect;
+
+    const rect = range.getBoundingClientRect();
+    if (rect.width > 0 || rect.height > 0) return rect;
+    return null;
   }
 
   private externalBoundaryToTextOffset(node: Node, offset: number): number | null {

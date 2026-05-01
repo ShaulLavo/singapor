@@ -18,7 +18,8 @@ describe("source cache", () => {
     await saveSourceSnapshotToCache(snapshot(), opfs);
 
     await expect(loadCachedSourceSnapshot(opfs)).resolves.toMatchObject({
-      repo: "Editor",
+      repo: "singapor",
+      commitSha: "commit-sha",
       treeSha: "tree-sha",
       files: [{ path: "README.md", text: "# Editor" }],
     });
@@ -47,8 +48,9 @@ describe("source cache", () => {
 function snapshot(): SourceSnapshot {
   return {
     owner: "ShaulLavo",
-    repo: "Editor",
+    repo: "singapor",
     branch: "main",
+    commitSha: "commit-sha",
     treeSha: "tree-sha",
     fetchedAt: 1,
     files: [{ path: "README.md", sha: "readme-sha", size: 8, text: "# Editor" }],

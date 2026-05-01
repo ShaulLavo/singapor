@@ -190,7 +190,7 @@ function storedSelectedPath(): string | undefined {
 }
 
 function snapshotLabel(snapshot: SourceSnapshot): string {
-  return `${snapshot.owner}/${snapshot.repo} @ ${snapshot.treeSha.slice(0, 7)}`;
+  return `${snapshot.owner}/${snapshot.repo} @ ${snapshot.commitSha.slice(0, 7)}`;
 }
 
 function languageIdForFilePath(filePath: string): string | null {

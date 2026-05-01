@@ -209,8 +209,16 @@ test("focuses the editor for typing after loading a GitHub source file", async (
 });
 
 async function mockGitHubSource(page: Page, path: string, text: string): Promise<void> {
+  await page.route("https://api.github.com/repos/ShaulLavo/singapor/commits/main", (route) =>
+    route.fulfill({
+      json: {
+        sha: "mock-commit-sha",
+        commit: { tree: { sha: "tree-sha" } },
+      },
+    }),
+  );
   await page.route(
-    "https://api.github.com/repos/ShaulLavo/Editor/git/trees/main?recursive=1",
+    "https://api.github.com/repos/ShaulLavo/singapor/git/trees/tree-sha?recursive=1",
     (route) =>
       route.fulfill({
         json: {
@@ -220,11 +228,13 @@ async function mockGitHubSource(page: Page, path: string, text: string): Promise
         },
       }),
   );
-  await page.route(`https://raw.githubusercontent.com/ShaulLavo/Editor/main/${path}`, (route) =>
-    route.fulfill({
-      body: text,
-      contentType: "text/plain",
-    }),
+  await page.route(
+    `https://raw.githubusercontent.com/ShaulLavo/singapor/mock-commit-sha/${path}`,
+    (route) =>
+      route.fulfill({
+        body: text,
+        contentType: "text/plain",
+      }),
   );
 }
 

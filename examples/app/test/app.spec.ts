@@ -286,8 +286,16 @@ async function mockGitHubSourceFiles(
   page: import("@playwright/test").Page,
   files: readonly { readonly path: string; readonly text: string }[],
 ): Promise<void> {
+  await page.route("https://api.github.com/repos/ShaulLavo/singapor/commits/main", (route) =>
+    route.fulfill({
+      json: {
+        sha: "mock-commit-sha",
+        commit: { tree: { sha: "tree-sha" } },
+      },
+    }),
+  );
   await page.route(
-    "https://api.github.com/repos/ShaulLavo/Editor/git/trees/main?recursive=1",
+    "https://api.github.com/repos/ShaulLavo/singapor/git/trees/tree-sha?recursive=1",
     (route) =>
       route.fulfill({
         json: {
@@ -304,7 +312,7 @@ async function mockGitHubSourceFiles(
   );
   for (const file of files) {
     await page.route(
-      `https://raw.githubusercontent.com/ShaulLavo/Editor/main/${file.path}`,
+      `https://raw.githubusercontent.com/ShaulLavo/singapor/mock-commit-sha/${file.path}`,
       (route) =>
         route.fulfill({
           body: file.text,

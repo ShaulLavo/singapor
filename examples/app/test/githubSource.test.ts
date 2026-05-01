@@ -13,6 +13,7 @@ describe("githubSource", () => {
 
     const snapshot = await fetchRepositorySource();
 
+    expect(snapshot.commitSha).toBe("commit-sha");
     expect(snapshot.treeSha).toBe("tree-sha");
     expect(snapshot.files.map((file) => file.path)).toEqual(["README.md", "src/app.ts"]);
     expect(snapshot.files.map((file) => file.text)).toEqual(["# Editor", "console.log(1);"]);
@@ -21,7 +22,11 @@ describe("githubSource", () => {
   it("rejects truncated GitHub tree responses", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ sha: "tree-sha", truncated: true, tree: [] })),
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/commits/")) return commitResponse();
+        return jsonResponse({ sha: "tree-sha", truncated: true, tree: [] });
+      }),
     );
 
     await expect(fetchRepositorySource()).rejects.toThrow("truncated");
@@ -37,10 +42,18 @@ describe("githubSource", () => {
 
 async function fetchResponse(input: RequestInfo | URL): Promise<Response> {
   const url = String(input);
+  if (url.includes("/commits/")) return commitResponse();
   if (url.includes("/git/trees/")) return treeResponse();
   if (url.endsWith("/README.md")) return textResponse("# Editor");
   if (url.endsWith("/src/app.ts")) return textResponse("console.log(1);");
   return new Response("not found", { status: 404 });
+}
+
+function commitResponse(): Response {
+  return jsonResponse({
+    sha: "commit-sha",
+    commit: { tree: { sha: "tree-sha" } },
+  });
 }
 
 function treeResponse(): Response {

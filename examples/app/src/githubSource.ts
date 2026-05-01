@@ -1,9 +1,8 @@
 export const REPOSITORY_OWNER = "ShaulLavo";
-export const REPOSITORY_NAME = "Editor";
+export const REPOSITORY_NAME = "singapor";
 export const REPOSITORY_BRANCH = "main";
 
-const TREE_ENDPOINT = `https://api.github.com/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/git/trees/${REPOSITORY_BRANCH}?recursive=1`;
-const RAW_SOURCE_BASE = `https://raw.githubusercontent.com/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/${REPOSITORY_BRANCH}`;
+const COMMIT_ENDPOINT = `https://api.github.com/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/commits/${REPOSITORY_BRANCH}`;
 const FETCH_CONCURRENCY = 8;
 
 const TEXT_EXTENSIONS = new Set([
@@ -30,6 +29,15 @@ type GitHubTreeResponse = {
   readonly truncated?: unknown;
 };
 
+type GitHubCommitResponse = {
+  readonly sha?: unknown;
+  readonly commit?: {
+    readonly tree?: {
+      readonly sha?: unknown;
+    };
+  };
+};
+
 type GitHubTreeItem = {
   readonly path?: unknown;
   readonly type?: unknown;
@@ -48,29 +56,34 @@ export type SourceSnapshot = {
   readonly owner: string;
   readonly repo: string;
   readonly branch: string;
+  readonly commitSha: string;
   readonly treeSha: string;
   readonly fetchedAt: number;
   readonly files: readonly SourceFile[];
 };
 
 export async function fetchRepositorySource(): Promise<SourceSnapshot> {
-  const tree = await fetchRepositoryTree();
+  const sourceRef = await fetchRepositoryRef();
+  const tree = await fetchRepositoryTree(sourceRef.treeSha);
   const entries = parseTreeEntries(tree);
-  const files = await mapWithConcurrency(entries, FETCH_CONCURRENCY, fetchSourceFile);
+  const files = await mapWithConcurrency(entries, FETCH_CONCURRENCY, (entry) =>
+    fetchSourceFile(sourceRef.commitSha, entry),
+  );
 
   return {
     owner: REPOSITORY_OWNER,
     repo: REPOSITORY_NAME,
     branch: REPOSITORY_BRANCH,
+    commitSha: sourceRef.commitSha,
     treeSha: tree.sha,
     fetchedAt: Date.now(),
     files,
   };
 }
 
-export function sourceFileRawUrl(path: string): string {
+export function sourceFileRawUrl(path: string, ref = REPOSITORY_BRANCH): string {
   const encodedPath = path.split("/").map(encodeURIComponent).join("/");
-  return `${RAW_SOURCE_BASE}/${encodedPath}`;
+  return `${rawSourceBase(ref)}/${encodedPath}`;
 }
 
 export function isSourceTextPath(path: string): boolean {
@@ -78,8 +91,28 @@ export function isSourceTextPath(path: string): boolean {
   return TEXT_EXTENSIONS.has(extensionForPath(path));
 }
 
-async function fetchRepositoryTree(): Promise<{ readonly sha: string; readonly tree: unknown[] }> {
-  const response = await fetch(TREE_ENDPOINT);
+async function fetchRepositoryRef(): Promise<{
+  readonly commitSha: string;
+  readonly treeSha: string;
+}> {
+  const response = await fetch(COMMIT_ENDPOINT);
+  if (!response.ok) throw new Error(`GitHub commit fetch failed: ${response.status}`);
+
+  const body = (await response.json()) as GitHubCommitResponse;
+  if (typeof body.sha !== "string") throw new Error("GitHub commit response missing sha");
+  if (typeof body.commit?.tree?.sha !== "string")
+    throw new Error("GitHub commit response missing tree sha");
+
+  return {
+    commitSha: body.sha,
+    treeSha: body.commit.tree.sha,
+  };
+}
+
+async function fetchRepositoryTree(
+  treeSha: string,
+): Promise<{ readonly sha: string; readonly tree: unknown[] }> {
+  const response = await fetch(treeEndpoint(treeSha));
   if (!response.ok) throw new Error(`GitHub tree fetch failed: ${response.status}`);
 
   const body = (await response.json()) as GitHubTreeResponse;
@@ -123,8 +156,8 @@ type GitHubTreeFileEntry = {
   readonly size: number;
 };
 
-async function fetchSourceFile(entry: GitHubTreeFileEntry): Promise<SourceFile> {
-  const response = await fetch(sourceFileRawUrl(entry.path));
+async function fetchSourceFile(ref: string, entry: GitHubTreeFileEntry): Promise<SourceFile> {
+  const response = await fetch(sourceFileRawUrl(entry.path, ref));
   if (!response.ok)
     throw new Error(`GitHub raw fetch failed for ${entry.path}: ${response.status}`);
 
@@ -132,6 +165,14 @@ async function fetchSourceFile(entry: GitHubTreeFileEntry): Promise<SourceFile> 
     ...entry,
     text: await response.text(),
   };
+}
+
+function treeEndpoint(treeSha: string): string {
+  return `https://api.github.com/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/git/trees/${treeSha}?recursive=1`;
+}
+
+function rawSourceBase(ref: string): string {
+  return `https://raw.githubusercontent.com/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/${ref}`;
 }
 
 async function mapWithConcurrency<T, R>(

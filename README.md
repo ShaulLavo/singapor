@@ -1,33 +1,37 @@
 # Singapore Editor
 
-Singapore Editor is a browser-based code editor project focused on very low-latency editing,
-persistent text storage, syntax-aware interactions, and browser-native rendering.
+Singapore Editor is a browser-based code editor toolkit focused on very low-latency editing,
+syntax-aware interactions, browser-native rendering, and plugin-driven extension points.
 
 The name is a nod to Monaco Editor: another editor named after a city-state.
 
-The editor core is built around a treap-backed piece table with immutable snapshots,
-anchor-backed positions and selections, Tree-sitter syntax sessions, CSS Highlight API painting,
-display transforms, fixed-row virtualization, long-line chunking, plugin-driven gutters, and a
-worker-backed minimap.
+The editor core owns the in-memory document model and editing runtime. It does not own persistence:
+host applications provide text, decide where files live, and choose how documents are loaded, saved,
+cached, or synchronized.
+
+The package surface is meant to be installed, embedded, and extended. The core editor exposes
+plugins for gutters, view contributions, syntax/language registration, highlighters, themes,
+commands, and editor features. The app in `examples/app` is a demo integration of those packages,
 
 ## Status
 
 This repository is an active implementation workspace. The API and package boundaries are still
-moving, but the current codebase includes:
+moving, but the current packages include:
 
-- Persistent piece-table storage with snapshot isolation and chunked append buffers.
-- Offset/point conversion, durable anchors, anchor-backed selections, and undo/redo helpers.
-- Multi-selection edits, keyboard navigation, fold state, and syntax-aware structural selection.
-- Worker-backed Tree-sitter parsing/query support for syntax highlights and folds.
-- Language plugins for JavaScript, TypeScript, TSX/JSX, HTML, CSS, and JSON.
-- CSS Highlight API rendering scoped to mounted rows and long-line chunks.
-- Fixed-row viewport virtualization with horizontal chunking for very long lines.
-- Fold maps and display transform validation.
-- Plugin APIs for gutters, view contributions, highlighters, themes, and language registration.
-- Line and fold gutter packages.
-- A worker-backed minimap package.
-- A Vite example app with a file browser, editor pane, top bar, and status bar.
+- A core editor package with an in-memory piece-table document model, immutable snapshots,
+  offset/point conversion, durable anchors, selections, and undo/redo helpers.
+- Rendering through the CSS Highlight API, mounted-row painting, fixed-row virtualization, and
+  horizontal chunking for very long lines.
+- Editing behavior for multi-selection edits, keyboard navigation, folds, display transforms, and
+  syntax-aware structural selection.
+- Worker-backed Tree-sitter parsing/query support for syntax highlights, folds, structural
+  selection, and language-specific behavior.
+- Plugin APIs for gutters, view contributions, editor features, highlighters, themes, commands, and
+  language registration.
+- First-party plugins/packages for line gutters, fold gutters, find/replace, scope lines, minimap,
+  TypeScript LSP support, and Tree-sitter language registration.
 - A legacy Shiki highlighter plugin kept beside the Tree-sitter syntax path.
+- A Vite example app that wires the packages into a file-browser-style demo.
 
 For the implementation history, see [PROGRESS.md](PROGRESS.md). For system design and open
 architecture questions, see [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -36,10 +40,14 @@ architecture questions, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 | Package | Purpose |
 | --- | --- |
-| `@editor/core` | Core editor, piece table, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, and plugin contracts. |
+| `@editor/core` | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, and plugin contracts. |
 | `@editor/gutters` | Line-number and fold-gutter plugins for the core editor. |
+| `@editor/find` | Find and replace plugin for the core editor. |
 | `@editor/minimap` | Minimap plugin with worker-backed document rendering. |
+| `@editor/scope-lines` | Scope-line view contribution plugin. |
 | `@editor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON. |
+| `@editor/typescript-lsp` | TypeScript language-service plugin built on the generic LSP layer. |
+| `@editor/lsp` | Generic LSP transport and plugin primitives. |
 | `@editor/shiki` | Legacy/demo Shiki highlighter plugin. Tree-sitter is the main syntax direction. |
 | `@editor/example-app` | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing. |
 
@@ -63,8 +71,22 @@ Run the example app:
 bun run dev
 ```
 
-The root `dev` script runs Turborepo. The app itself lives in `examples/app` and is served by
+The root `dev` script runs Turborepo. The demo app itself lives in `examples/app` and is served by
 Vite.
+
+Minimal editor embedding looks like this:
+
+```ts
+import { Editor } from "@editor/core/editor";
+import "@editor/core/style.css";
+
+const editor = new Editor(document.querySelector("#editor")!);
+editor.openDocument({
+  documentId: "example.ts",
+  text: "const value = 1;\n",
+  languageId: "typescript",
+});
+```
 
 ## Common Commands
 

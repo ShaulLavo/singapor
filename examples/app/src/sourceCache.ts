@@ -9,6 +9,7 @@ type SourceCacheManifest = {
   readonly owner: string;
   readonly repo: string;
   readonly branch: string;
+  readonly commitSha: string;
   readonly treeSha: string;
   readonly fetchedAt: number;
   readonly files: readonly SourceCacheManifestFile[];
@@ -110,6 +111,7 @@ function parseManifest(text: string): SourceCacheManifest | null {
   if (typeof manifest.owner !== "string") return null;
   if (typeof manifest.repo !== "string") return null;
   if (typeof manifest.branch !== "string") return null;
+  if (typeof manifest.commitSha !== "string") return null;
   if (typeof manifest.treeSha !== "string") return null;
   if (typeof manifest.fetchedAt !== "number") return null;
   if (!Array.isArray(manifest.files)) return null;
@@ -119,6 +121,7 @@ function parseManifest(text: string): SourceCacheManifest | null {
     owner: manifest.owner,
     repo: manifest.repo,
     branch: manifest.branch,
+    commitSha: manifest.commitSha,
     treeSha: manifest.treeSha,
     fetchedAt: manifest.fetchedAt,
     files: manifest.files.flatMap(parseManifestFile),
@@ -149,6 +152,7 @@ async function hydrateSnapshot(
     owner: manifest.owner,
     repo: manifest.repo,
     branch: manifest.branch,
+    commitSha: manifest.commitSha,
     treeSha: manifest.treeSha,
     fetchedAt: manifest.fetchedAt,
     files,
@@ -208,6 +212,7 @@ function createManifest(snapshot: SourceSnapshot): SourceCacheManifest {
     owner: snapshot.owner,
     repo: snapshot.repo,
     branch: snapshot.branch,
+    commitSha: snapshot.commitSha,
     treeSha: snapshot.treeSha,
     fetchedAt: snapshot.fetchedAt,
     files: snapshot.files.map(stripFileText),

@@ -50,6 +50,10 @@ import type {
   VirtualizedTextRow,
 } from "./virtualizedTextViewTypes";
 import type { VirtualizedTextViewInternal } from "./virtualizedTextViewInternals";
+import {
+  clearHiddenCharactersForRow,
+  renderHiddenCharacters,
+} from "./virtualizedTextViewHiddenCharacters";
 
 const GUTTER_CELL_CLASS = "editor-virtualized-gutter-cell";
 
@@ -68,6 +72,7 @@ export function renderRows(
   applyTotalHeight(view, snapshot);
   updateContentWidth(view, snapshot.virtualItems);
   reconcileRows(view, snapshot.virtualItems, snapshot, onRemoveSlot);
+  renderHiddenCharacters(view);
 }
 
 export function reconcileRows(
@@ -109,6 +114,7 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
   const gutterElement = document.createElement("div");
   const leftSpacerElement = document.createElement("span");
   const foldPlaceholderElement = document.createElement("span");
+  const hiddenCharactersLayerElement = document.createElement("div");
   const textNode = document.createTextNode("");
   const gutterCells = createGutterCells(view, document);
 
@@ -116,6 +122,8 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
   gutterElement.className = "editor-virtualized-gutter-row";
   leftSpacerElement.className = "editor-virtualized-row-spacer";
   foldPlaceholderElement.className = "editor-virtualized-fold-placeholder";
+  hiddenCharactersLayerElement.className = "editor-virtualized-hidden-character-layer";
+  hiddenCharactersLayerElement.setAttribute("aria-hidden", "true");
   foldPlaceholderElement.textContent = "...";
   foldPlaceholderElement.hidden = true;
   for (const cell of gutterCells.values()) gutterElement.appendChild(cell);
@@ -144,7 +152,9 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
     gutterCells,
     leftSpacerElement,
     foldPlaceholderElement,
+    hiddenCharactersLayerElement,
     textNode,
+    hiddenCharactersKey: "",
   };
 }
 
@@ -804,6 +814,7 @@ function removeReusableRows(
   for (const row of rows) {
     onRemoveSlot(row.tokenHighlightSlotId);
     view.rowTokenSignatures.delete(row.tokenHighlightSlotId);
+    clearHiddenCharactersForRow(row);
   }
 
   retireRowElements(rows);

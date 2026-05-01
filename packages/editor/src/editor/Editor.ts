@@ -74,6 +74,7 @@ import type { EditorDocument, EditorToken, TextEdit } from "../tokens";
 import { clamp } from "../style-utils";
 import {
   VirtualizedTextView,
+  type HiddenCharactersMode,
   type VirtualizedFoldMarker,
 } from "../virtualization/virtualizedTextView";
 
@@ -155,6 +156,7 @@ export class Editor {
       highlightRegistry: getHighlightRegistry(),
       gutterContributions: [...this.pluginHost.getGutterContributions()],
       cursorLineHighlight: options.cursorLineHighlight,
+      hiddenCharacters: options.hiddenCharacters,
       onFoldToggle: this.handleFoldToggle,
       onViewportChange: this.handleViewportChange,
       selectionHighlightName: `${this.highlightPrefix}-selection`,
@@ -343,6 +345,10 @@ export class Editor {
     this.configuredTheme = theme ?? null;
     this.applyResolvedTheme();
     this.notifyViewContributions("tokens", null);
+  }
+
+  setHiddenCharacters(mode: HiddenCharactersMode): void {
+    this.view.setHiddenCharacters(mode);
   }
 
   dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {

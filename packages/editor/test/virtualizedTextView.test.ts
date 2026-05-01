@@ -563,6 +563,99 @@ describe("VirtualizedTextView", () => {
     expect(highlightsMap.get("test-selection")?.size).toBe(2);
   });
 
+  it("shows hidden characters only for selected whitespace by default", () => {
+    view.setText("a b\tc d");
+    view.setScrollMetrics(0, 20);
+
+    expect(hiddenCharacterMarkers(container)).toHaveLength(0);
+
+    view.setSelection(1, 5);
+
+    expect(hiddenCharacterMarkerKinds(container)).toEqual(["space", "tab"]);
+    expect(view.scrollElement.textContent).toBe("a b\tc d");
+
+    view.setSelection(3, 3);
+
+    expect(hiddenCharacterMarkers(container)).toHaveLength(0);
+  });
+
+  it("can hide hidden characters even when whitespace is selected", () => {
+    view.dispose();
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: "test-selection",
+      hiddenCharacters: "hidden",
+    });
+    view.setText("a b\tc");
+    view.setScrollMetrics(0, 20);
+    view.setSelection(1, 4);
+
+    expect(hiddenCharacterMarkers(container)).toHaveLength(0);
+  });
+
+  it("can show all mounted spaces and tabs", () => {
+    view.dispose();
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: "test-selection",
+      hiddenCharacters: "show",
+    });
+    view.setText(" a\tb ");
+    view.setScrollMetrics(0, 20);
+
+    expect(hiddenCharacterMarkerKinds(container)).toEqual(["space", "tab", "space"]);
+    expect(hiddenCharacterMarkerOffsets(container)).toEqual(["0", "2", "4"]);
+    expect(view.scrollElement.textContent).toBe(" a\tb ");
+  });
+
+  it("updates hidden character markers on mode changes for mounted rows", () => {
+    view.setText("a b\tc");
+    view.setScrollMetrics(0, 20);
+
+    expect(hiddenCharacterMarkers(container)).toHaveLength(0);
+
+    view.setHiddenCharacters("show");
+
+    expect(hiddenCharacterMarkerKinds(container)).toEqual(["space", "tab"]);
+
+    view.setHiddenCharacters("hidden");
+
+    expect(hiddenCharacterMarkers(container)).toHaveLength(0);
+
+    view.setSelection(1, 2);
+    view.setHiddenCharacters("show-on-selection");
+
+    expect(hiddenCharacterMarkerKinds(container)).toEqual(["space"]);
+  });
+
+  it("sizes tab hidden character markers from tab visual width", () => {
+    view.dispose();
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: "test-selection",
+      hiddenCharacters: "show",
+    });
+    view.setText("\t ");
+    view.setScrollMetrics(0, 20);
+
+    const markers = hiddenCharacterMarkers(container);
+    const tabMarker = markers[0]!;
+    const spaceMarker = markers[1]!;
+    const characterWidth = view.getState().metrics.characterWidth;
+
+    expect(tabMarker.dataset.editorHiddenCharacter).toBe("tab");
+    expect(Number.parseFloat(tabMarker.style.left)).toBe(0);
+    expect(Number.parseFloat(tabMarker.style.width)).toBeCloseTo(characterWidth * 4);
+    expect(Number.parseFloat(spaceMarker.style.left)).toBeCloseTo(characterWidth * 4);
+    expect(Number.parseFloat(spaceMarker.style.width)).toBeCloseTo(characterWidth);
+  });
+
   it("paints multiple selections and positions multiple carets", () => {
     view.setText("abc\ndef\nxyz");
     view.setScrollMetrics(0, 80);
@@ -1268,6 +1361,22 @@ function tokenHighlightRangeForNode(
   }
 
   return undefined;
+}
+
+function hiddenCharacterMarkers(container: HTMLElement): HTMLElement[] {
+  return [
+    ...container.querySelectorAll<HTMLElement>(".editor-virtualized-hidden-character-marker"),
+  ];
+}
+
+function hiddenCharacterMarkerKinds(container: HTMLElement): string[] {
+  return hiddenCharacterMarkers(container).map((marker) => marker.dataset.editorHiddenCharacter!);
+}
+
+function hiddenCharacterMarkerOffsets(container: HTMLElement): string[] {
+  return hiddenCharacterMarkers(container).map(
+    (marker) => marker.dataset.editorHiddenCharacterOffset!,
+  );
 }
 
 function isTokenStyleSerializationInput(value: unknown): boolean {

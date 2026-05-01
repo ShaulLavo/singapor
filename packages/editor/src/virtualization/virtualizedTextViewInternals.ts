@@ -6,6 +6,7 @@ import type { BrowserTextMetrics } from "./browserMetrics";
 import type { FixedRowVirtualizer } from "./fixedRowVirtualizer";
 import type {
   EditorCursorLineHighlightOptions,
+  HiddenCharactersMode,
   HighlightRegistry,
   MountedVirtualizedTextRow,
   TokenGroup,
@@ -115,4 +116,5 @@ export interface VirtualizedTextViewInternal {
   lastWidthScanEnd: number;
   tokenRangesFollowLastTextEdit: boolean;
   metrics: BrowserTextMetrics;
+  hiddenCharacters: HiddenCharactersMode;
 }

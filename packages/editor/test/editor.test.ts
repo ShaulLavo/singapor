@@ -198,6 +198,12 @@ function editorRoot(): HTMLElement {
   return document.querySelector(".editor-virtualized") as HTMLElement;
 }
 
+function hiddenCharacterKinds(): string[] {
+  return [
+    ...document.querySelectorAll<HTMLElement>(".editor-virtualized-hidden-character-marker"),
+  ].map((marker) => marker.dataset.editorHiddenCharacter!);
+}
+
 function rowTextNode(row = 0): Text {
   const element = document.querySelector(`[data-editor-virtual-row="${row}"]`);
   return element?.firstChild as Text;
@@ -473,6 +479,17 @@ describe("Editor", () => {
       });
     });
 
+    it("forwards hidden character mode to the text view", () => {
+      editor.dispose();
+      editor = new Editor(container, {
+        defaultText: "a b\tc",
+        hiddenCharacters: "show",
+      });
+
+      expect(hiddenCharacterKinds()).toEqual(["space", "tab"]);
+      expect(editorRoot().textContent).toBe("a b\tc");
+    });
+
     it("applies configured theme variables for Tree-sitter capture themes", () => {
       editor.dispose();
       editor = new Editor(container, {
@@ -507,6 +524,23 @@ describe("Editor", () => {
 
       expect(editorRoot().style.getPropertyValue("--editor-background")).toBe("");
       expect(editorRoot().style.getPropertyValue("--editor-foreground")).toBe("");
+    });
+  });
+
+  describe("setHiddenCharacters", () => {
+    it("updates hidden character rendering for mounted rows", () => {
+      editor.setText("a b\tc");
+
+      expect(hiddenCharacterKinds()).toEqual([]);
+
+      editor.setHiddenCharacters("show");
+
+      expect(hiddenCharacterKinds()).toEqual(["space", "tab"]);
+
+      editor.setHiddenCharacters("hidden");
+
+      expect(hiddenCharacterKinds()).toEqual([]);
+      expect(editorRoot().textContent).toBe("a b\tc");
     });
   });
 
@@ -1129,9 +1163,7 @@ describe("Editor", () => {
         { anchor: 2, head: 2, start: 2, end: 2 },
         { anchor: 6, head: 6, start: 6, end: 6 },
       ]);
-      expect(container.querySelectorAll(".editor-virtualized-caret:not([hidden])")).toHaveLength(
-        2,
-      );
+      expect(container.querySelectorAll(".editor-virtualized-caret:not([hidden])")).toHaveLength(2);
     });
 
     it("extends selections with shift arrow keys", () => {
@@ -1162,9 +1194,7 @@ describe("Editor", () => {
         { anchor: 2, head: 3, start: 2, end: 3 },
         { anchor: 5, head: 6, start: 5, end: 6 },
       ]);
-      expect(container.querySelectorAll(".editor-virtualized-caret:not([hidden])")).toHaveLength(
-        2,
-      );
+      expect(container.querySelectorAll(".editor-virtualized-caret:not([hidden])")).toHaveLength(2);
     });
 
     it("keeps vertical navigation on the preferred visual column", () => {

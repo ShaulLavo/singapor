@@ -29,6 +29,7 @@ export type {
   EditorState,
   EditorSyntaxSessionFactory,
   EditorSyntaxStatus,
+  HiddenCharactersMode,
   HighlightRegistry,
 } from "./editor";
 export type { EditorDocument, EditorToken, EditorTokenStyle, TextEdit } from "./tokens";

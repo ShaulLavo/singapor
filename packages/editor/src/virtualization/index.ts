@@ -18,6 +18,7 @@ export type {
 } from "./fixedRowVirtualizer";
 export type {
   EditorCursorLineHighlightOptions,
+  HiddenCharactersMode,
   HighlightRegistry as VirtualizedTextHighlightRegistry,
   NativeGeometryValidation,
   VirtualizedFoldMarker,

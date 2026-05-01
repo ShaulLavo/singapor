@@ -7,6 +7,7 @@
   --editor-cursor-line-gutter-background: rgba(255, 255, 255, 0.06);
   --editor-cursor-line-row-background: rgba(255, 255, 255, 0.06);
   --editor-caret-color: var(--editor-foreground);
+  --editor-hidden-character-foreground: #71717a;
   --editor-minimap-background: var(--editor-background);
   --editor-syntax-attribute: #99f6e4;
   --editor-syntax-bracket: #d4d4d8;
@@ -51,6 +52,7 @@
   --editor-cursor-line-gutter-background: rgba(255, 255, 255, 0.06);
   --editor-cursor-line-row-background: rgba(255, 255, 255, 0.06);
   --editor-caret-color: var(--editor-foreground);
+  --editor-hidden-character-foreground: #71717a;
   --editor-minimap-background: var(--editor-background);
   --editor-syntax-attribute: #99f6e4;
   --editor-syntax-bracket: #d4d4d8;
@@ -152,6 +154,37 @@
   display: inline-block;
   height: 1px;
   pointer-events: none;
+}
+
+.editor-virtualized-hidden-character-layer {
+  height: var(--editor-row-height);
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  user-select: none;
+}
+
+.editor-virtualized-hidden-character-marker {
+  color: var(--editor-hidden-character-foreground);
+  display: inline-block;
+  font: inherit;
+  height: var(--editor-row-height);
+  line-height: var(--editor-row-height);
+  pointer-events: none;
+  position: absolute;
+  text-align: center;
+  top: 0;
+  user-select: none;
+  white-space: pre;
+}
+
+.editor-virtualized-hidden-character-marker[data-editor-hidden-character="space"]::before {
+  content: "\00b7";
+}
+
+.editor-virtualized-hidden-character-marker[data-editor-hidden-character="tab"]::before {
+  content: "\2192";
 }
 
 .editor-virtualized-fold-placeholder {

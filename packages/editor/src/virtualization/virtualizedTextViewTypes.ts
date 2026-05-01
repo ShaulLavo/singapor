@@ -30,7 +30,10 @@ export type VirtualizedTextViewOptions = {
   readonly blockRows?: readonly BlockRow[];
   readonly gutterContributions?: readonly EditorGutterContribution[];
   readonly cursorLineHighlight?: EditorCursorLineHighlightOptions;
+  readonly hiddenCharacters?: HiddenCharactersMode;
 };
+
+export type HiddenCharactersMode = "hidden" | "show" | "show-on-selection";
 
 export type VirtualizedTextHighlightRange = {
   readonly start: number;
@@ -133,11 +136,13 @@ export type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly gutterCells: Map<string, HTMLElement>;
   readonly leftSpacerElement: HTMLSpanElement;
   readonly foldPlaceholderElement: HTMLSpanElement;
+  readonly hiddenCharactersLayerElement: HTMLDivElement;
   readonly top: number;
   readonly height: number;
   readonly textRevision: number;
   readonly tokenHighlightSlotId: number;
   readonly chunkKey: string;
+  readonly hiddenCharactersKey: string;
   readonly foldMarkerKey: string;
   readonly foldCollapsed: boolean;
   readonly displayKind: "text" | "block";

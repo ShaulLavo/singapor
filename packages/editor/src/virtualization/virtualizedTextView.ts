@@ -40,6 +40,10 @@ import {
   setTokens as setViewTokens,
 } from "./virtualizedTextViewHighlights";
 import {
+  normalizeHiddenCharactersMode,
+  renderHiddenCharacters,
+} from "./virtualizedTextViewHiddenCharacters";
+import {
   lineEndOffset,
   lineStartOffset,
   offsetForViewportColumn,
@@ -92,6 +96,7 @@ import type {
 import type {
   DocumentWithCaretHitTesting,
   EditorCursorLineHighlightOptions,
+  HiddenCharactersMode,
   NativeGeometryValidation,
   SameLineEditPatch,
   VirtualizedFoldMarker,
@@ -101,6 +106,7 @@ import type {
 
 export type {
   EditorCursorLineHighlightOptions,
+  HiddenCharactersMode,
   HighlightRegistry,
   NativeGeometryValidation,
   VirtualizedFoldMarker,
@@ -202,6 +208,7 @@ export class VirtualizedTextView {
       lastWidthScanEnd: -1,
       tokenRangesFollowLastTextEdit: false,
       metrics: { ...measuredMetrics, rowHeight },
+      hiddenCharacters: normalizeHiddenCharactersMode(options.hiddenCharacters),
     };
 
     scrollElement.style.setProperty("--editor-gutter-width", "0px");
@@ -358,6 +365,15 @@ export class VirtualizedTextView {
     resetContentWidthScan(view);
     view.lastRenderedRowsKey = "";
     updateVirtualizerRows(view);
+  }
+
+  public setHiddenCharacters(mode: HiddenCharactersMode): void {
+    const view = this.view;
+    const next = normalizeHiddenCharactersMode(mode);
+    if (view.hiddenCharacters === next) return;
+
+    view.hiddenCharacters = next;
+    renderHiddenCharacters(view);
   }
 
   public setBlockRows(blockRows: readonly BlockRow[]): void {
@@ -556,6 +572,7 @@ export class VirtualizedTextView {
     resetContentWidthScan(view);
     updateContentWidth(view, snapshot.virtualItems);
     updateMountedRowsAfterSameLineEdit(view, snapshot.virtualItems, patch, snapshot);
+    renderHiddenCharacters(view);
   }
 
   private refreshWrapWidth(

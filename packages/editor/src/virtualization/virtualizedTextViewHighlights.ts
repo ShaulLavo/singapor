@@ -28,6 +28,7 @@ import {
   getMountedRows,
   refreshCursorLineRows,
 } from "./virtualizedTextViewRows";
+import { renderHiddenCharacters } from "./virtualizedTextViewHiddenCharacters";
 import type {
   MountedVirtualizedTextRow,
   TokenGroup,
@@ -93,6 +94,7 @@ export function setSelections(
   view.selections = stored;
   setPrimarySelection(view, stored[0] ?? null);
   renderSelectionHighlight(view);
+  renderHiddenCharacters(view);
   refreshCursorLineRows(view, previousCursorLine, previousCursorRow);
 }
 
@@ -104,6 +106,7 @@ export function clearSelection(view: VirtualizedTextViewInternal): void {
   view.selectionHead = null;
   view.selections = [];
   clearSelectionHighlight(view);
+  renderHiddenCharacters(view);
   renderCaret(view);
   refreshCursorLineRows(view, previousCursorLine, previousCursorRow);
 }

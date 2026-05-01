@@ -28,6 +28,7 @@ describe.skipIf(typeof globalThis.Highlight === "undefined")(
     });
 
     it("keeps caret, selection, and hit testing inside mounted rows", () => {
+      view!.setHiddenCharacters("show");
       view!.setText("abcdef\nsecond");
       view!.setScrollMetrics(0, 40);
 

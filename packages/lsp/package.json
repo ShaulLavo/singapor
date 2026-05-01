@@ -18,11 +18,15 @@
     "vscode-languageserver-protocol": "^3.17.5"
   },
   "devDependencies": {
+    "@editor/core": "workspace:*",
     "@typescript/native-preview": "latest",
     "happy-dom": "^20.8.9",
     "oxfmt": "latest",
     "oxlint": "latest",
     "typescript": "~5.9.3",
     "vitest": "^3.1.1"
+  },
+  "peerDependencies": {
+    "@editor/core": "workspace:*"
   }
 }

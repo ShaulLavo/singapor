@@ -4,7 +4,6 @@ import { createEditorFindPlugin } from "../../find/src/index.ts";
 import { createFoldGutterPlugin, createLineGutterPlugin } from "../../gutters/src/index.ts";
 import {
   createDocumentSession,
-  createTreeSitterLanguagePlugin,
   Editor,
   resetEditorInstanceCount,
   resolveSelection,
@@ -139,14 +138,10 @@ function requireViewContributionContext(
 }
 
 function createTestLanguagePlugin(): EditorPlugin {
-  return createTreeSitterLanguagePlugin([
-    {
-      id: "typescript",
-      extensions: [".ts"],
-      aliases: ["typescript", "ts"],
-      wasmUrl: "/typescript.wasm",
-    },
-  ]);
+  return {
+    name: "test-language-placeholder",
+    activate: () => undefined,
+  };
 }
 
 function withTestLanguagePlugins(...plugins: readonly EditorPlugin[]): readonly EditorPlugin[] {
@@ -3046,7 +3041,7 @@ describe("Editor", () => {
       expect(editor.getText()).toBe("fn main() {}\n");
       expect(editor.getState()).toMatchObject({
         languageId: "rust",
-        syntaxStatus: "ready",
+        syntaxStatus: "plain",
       });
       expect(highlightsMap.size).toBe(0);
     });

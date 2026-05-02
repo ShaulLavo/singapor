@@ -4,8 +4,9 @@ import {
   normalizeSelectionSet,
   resolveSelection,
   type SelectionSet,
-} from "../selections";
-import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from "../pieceTable/pieceTableTypes";
+  type PieceTableAnchor,
+  type PieceTableSnapshot,
+} from "@editor/core";
 import { selectWithTreeSitter } from "./treeSitter/workerClient";
 import type {
   TreeSitterLanguageId,

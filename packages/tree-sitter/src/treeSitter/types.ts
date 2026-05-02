@@ -1,4 +1,4 @@
-import type { TextEdit } from "../../tokens";
+import type { TextEdit } from "@editor/core";
 import type { TreeSitterLanguageDescriptor, TreeSitterLanguageId } from "./registry";
 import type { TreeSitterSourceDescriptor } from "./source";
 

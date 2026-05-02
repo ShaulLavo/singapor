@@ -25,7 +25,7 @@ moving, but the current packages include:
   horizontal chunking for very long lines.
 - Editing behavior for multi-selection edits, keyboard navigation, folds, display transforms, and
   syntax-aware structural selection.
-- Worker-backed Tree-sitter parsing/query support for syntax highlights, folds, structural
+- Optional worker-backed Tree-sitter runtime package for syntax highlights, folds, structural
   selection, and language-specific behavior.
 - Plugin APIs for gutters, view contributions, editor features, highlighters, themes, commands, and
   language registration.
@@ -46,6 +46,7 @@ architecture questions, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | `@editor/find` | Find and replace plugin for the core editor. |
 | `@editor/minimap` | Minimap plugin with worker-backed document rendering. |
 | `@editor/scope-lines` | Scope-line view contribution plugin. |
+| `@editor/tree-sitter` | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers. |
 | `@editor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON. |
 | `@editor/typescript-lsp` | TypeScript language-service plugin built on the generic LSP layer. |
 | `@editor/lsp` | Generic LSP transport and plugin primitives. |
@@ -133,7 +134,7 @@ Editor benchmarks live in `packages/editor/bench`:
 ```sh
 bun --cwd packages/editor run bench:piece-table
 bun --cwd packages/editor run bench:anchors
-bun --cwd packages/editor run bench:syntax
+bun --cwd packages/tree-sitter run bench:syntax
 bun --cwd packages/editor run bench:fold-map
 bun --cwd packages/editor run bench:transforms
 bun --cwd packages/editor run bench:virtualization
@@ -157,6 +158,7 @@ bun --cwd packages/editor run bench:virtualization
 packages/editor/                  Core editor package
 packages/gutters/                 Line and fold gutter plugins
 packages/minimap/                 Minimap plugin and worker renderer
+packages/tree-sitter/             Optional Tree-sitter runtime and worker client
 packages/tree-sitter-languages/   Tree-sitter grammar/query plugin package
 packages/shiki/                   Optional Shiki highlighter plugin
 examples/app/                     Demo app

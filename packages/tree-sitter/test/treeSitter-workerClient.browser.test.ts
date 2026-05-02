@@ -6,19 +6,21 @@ import {
   createAnchorSelection,
   createPieceTableSnapshot,
   createSelectionSet,
+  resolveSelection,
+} from "@editor/core";
+import {
   expandTreeSitterSelection,
   resolveTreeSitterLanguageContribution,
-  resolveSelection,
   selectTreeSitterToken,
   shrinkTreeSitterSelection,
 } from "../src";
-import { createTreeSitterEditPayload } from "../src/syntax/session.ts";
+import { createTreeSitterEditPayload } from "../src/session.ts";
 import {
   disposeTreeSitterWorker,
   editWithTreeSitter,
   parseWithTreeSitter,
   registerTreeSitterLanguagesWithWorker,
-} from "../src/syntax/treeSitter/workerClient.ts";
+} from "../src/treeSitter/workerClient.ts";
 
 describe.skipIf(typeof Worker === "undefined")("tree-sitter worker client", () => {
   beforeEach(async () => {

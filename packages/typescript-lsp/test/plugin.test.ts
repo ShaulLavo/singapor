@@ -514,7 +514,7 @@ function activatePlugin(
   let provider: EditorViewContributionProvider | null = null;
   plugin.activate({
     registerHighlighter: () => ({ dispose: () => undefined }),
-    registerTreeSitterLanguage: () => ({ dispose: () => undefined }),
+    registerSyntaxProvider: () => ({ dispose: () => undefined }),
     registerViewContribution: (value) => {
       provider = value;
       return { dispose: () => undefined };

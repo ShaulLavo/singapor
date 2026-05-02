@@ -4,7 +4,7 @@ Instructions for AI coding agents working with this codebase.
 
 ## Project Overview
 
-Browser-based code editor targeting ultra-low latency typing (<1-2ms perceived). Treap-backed piece table with persistent immutable snapshots, CSS Highlight API rendering, and a committed Tree-sitter syntax system.
+Browser-based code editor targeting ultra-low latency typing (<1-2ms perceived). Treap-backed piece table with persistent immutable snapshots, CSS Highlight API rendering, and optional Tree-sitter syntax plugins.
 
 ## Architecture
 
@@ -40,6 +40,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 | Package | Purpose | Key files |
 |---|---|---|
 | `packages/editor` | Core editor: piece table + CSS Highlight API renderer | `src/pieceTable/pieceTable.ts`, `src/pieceTable/pieceTableTypes.ts`, `src/editor.ts`, `src/tokens.ts` |
+| `packages/tree-sitter` | Optional Tree-sitter runtime, worker client, language registry, and structural selection helpers | `src/session.ts`, `src/treeSitter/workerClient.ts`, `src/treeSitter/treeSitter.worker.ts` |
+| `packages/tree-sitter-languages` | First-party lazy Tree-sitter language plugins | `src/index.ts`, `src/queries/*` |
 | `packages/shiki` | Optional Shiki highlighter/tokenizer plugin | `src/tokenizer.ts`, `src/editor-tokens.ts` |
 | `examples/app` | Demo app with file browser | `src/app.ts`, `src/main.ts` |
 
@@ -48,7 +50,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 - **Piece table** — Treap with persistent snapshots, insert/delete/read, structural sharing
 - **CSS Highlight API renderer** — Token-based syntax highlighting via `Highlight` objects
 - **Anchors and selections** — Durable anchor resolution, selection sets, and snapshot-aware history helpers
-- **Tree-sitter syntax path** — Worker-backed parsing/query support and structural selection integration
+- **Tree-sitter syntax path** — Optional worker-backed parsing/query support and structural selection integration
 - **Display transforms and virtualization** — FoldMap, row virtualization, long-line chunking, and mounted-range highlight painting
 - **Shiki highlighter** — Optional highlighter/tokenizer package for hosts that prefer Shiki
 - **Example app** — File System Access API browser + editor integration
@@ -68,6 +70,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 | `PieceTreeNode` | `packages/editor/src/pieceTable/pieceTableTypes.ts` |
 | `PieceTableSnapshot` | `packages/editor/src/pieceTable/pieceTableTypes.ts` |
 | `EditorToken`, `EditorTokenStyle`, `TextEdit` | `packages/editor/src/tokens.ts` |
+| `TreeSitterLanguageContribution`, `TreeSitterBackend` | `packages/tree-sitter/src/index.ts` |
 | `TokenPatch`, `IncrementalTokenizer` | `packages/shiki/src/tokenizer.ts` |
 | `Editor` (class) | `packages/editor/src/editor.ts` |
 

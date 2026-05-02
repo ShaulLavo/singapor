@@ -140,7 +140,7 @@ function activatePlugin(
       return { dispose: () => undefined };
     },
     registerHighlighter: () => ({ dispose: () => undefined }),
-    registerTreeSitterLanguage: () => ({ dispose: () => undefined }),
+    registerSyntaxProvider: () => ({ dispose: () => undefined }),
     registerEditorFeatureContribution: () => ({ dispose: () => undefined }),
     registerGutterContribution: () => ({ dispose: () => undefined }),
   } satisfies EditorPluginContext);

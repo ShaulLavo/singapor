@@ -21,6 +21,38 @@ const METHOD_NOT_FOUND = -32601;
 const INTERNAL_ERROR = -32603;
 const TEXT_DOCUMENT_SYNC_INCREMENTAL = 2;
 const DEFAULT_DIAGNOSTIC_DELAY_MS = 150;
+const REACT_JSX_RUNTIME_PACKAGE_JSON = "/node_modules/react/package.json";
+const REACT_INDEX_TYPES = "/node_modules/react/index.d.ts";
+const REACT_JSX_RUNTIME_TYPES = "/node_modules/react/jsx-runtime.d.ts";
+const REACT_JSX_RUNTIME_FALLBACK_PACKAGE_JSON = `{"name":"react","version":"0.0.0","type":"module","exports":{"./jsx-runtime":"./jsx-runtime.d.ts",".":"./index.d.ts"}}`;
+const REACT_INDEX_FALLBACK_TYPES = `export type ReactNode = unknown;
+export type Key = string | number;
+export interface Attributes {
+  key?: Key | null | undefined;
+}
+export const Fragment: unique symbol;
+`;
+const REACT_JSX_RUNTIME_FALLBACK_TYPES = `export namespace JSX {
+  export interface Element {}
+  export interface ElementClass {}
+  export interface ElementAttributesProperty {
+    props: {};
+  }
+  export interface ElementChildrenAttribute {
+    children: {};
+  }
+  export interface IntrinsicAttributes {
+    key?: string | number | null | undefined;
+  }
+  export interface IntrinsicElements {
+    [elementName: string]: any;
+  }
+}
+
+export const Fragment: unique symbol;
+export function jsx(type: unknown, props: unknown, key?: string): JSX.Element;
+export function jsxs(type: unknown, props: unknown, key?: string): JSX.Element;
+`;
 
 type WorkerDocument = {
   readonly uri: lsp.DocumentUri;
@@ -310,6 +342,7 @@ async function createService(): Promise<TypeScriptServiceState> {
     ts,
   );
   addWorkspaceFiles(fsMap);
+  addReactJsxRuntimeFallbackFiles(fsMap);
   addOpenDocuments(fsMap);
   const system = createSystem(fsMap);
   const rootFiles = rootFileNames(fsMap, projectConfig);
@@ -324,6 +357,17 @@ function addWorkspaceFiles(fsMap: Map<string, string>): void {
 
 function addOpenDocuments(fsMap: Map<string, string>): void {
   for (const document of documents.values()) fsMap.set(document.fileName, document.text);
+}
+
+function addReactJsxRuntimeFallbackFiles(fsMap: Map<string, string>): void {
+  setFallbackFile(fsMap, REACT_JSX_RUNTIME_PACKAGE_JSON, REACT_JSX_RUNTIME_FALLBACK_PACKAGE_JSON);
+  setFallbackFile(fsMap, REACT_INDEX_TYPES, REACT_INDEX_FALLBACK_TYPES);
+  setFallbackFile(fsMap, REACT_JSX_RUNTIME_TYPES, REACT_JSX_RUNTIME_FALLBACK_TYPES);
+}
+
+function setFallbackFile(fsMap: Map<string, string>, fileName: string, text: string): void {
+  if (fsMap.has(fileName)) return;
+  fsMap.set(fileName, text);
 }
 
 function addWorkspacePackageMirrors(fsMap: Map<string, string>): void {

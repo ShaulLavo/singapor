@@ -2,7 +2,7 @@
 
 ## Decision
 
-Tree-sitter is the default syntax engine for the editor. Shiki remains available as an optional highlighter package for hosts that prefer it.
+Tree-sitter is the first-party structural syntax engine, delivered through the optional `@editor/tree-sitter` runtime plugin. Core editing remains plain when no syntax provider is registered. Shiki remains available as an optional highlighter package for hosts that prefer it.
 
 Tree-sitter provides a single structural model for:
 
@@ -32,7 +32,7 @@ This preserves correctness when:
 
 ## Worker Ownership
 
-Tree-sitter is worker-owned. Parser creation, grammar loading, parsing, incremental reparsing, query execution, injected-language parsing, and syntax-tree traversal all run in workers.
+Tree-sitter is owned by the optional runtime package and runs behind a syntax backend. The default backend is a local browser worker. Parser creation, grammar loading, parsing, incremental reparsing, query execution, injected-language parsing, and syntax-tree traversal all run off the main thread.
 
 The main thread may render syntax results, but it must not synchronously parse or query during typing. It should only consume compact, snapshot-tagged worker outputs:
 
@@ -57,8 +57,8 @@ Each parse result is tied to a document snapshot/version. Consumers must be able
 Open implementation details:
 
 - exact Tree-sitter input adapter for piece-table reads
-- worker protocol for parse/query requests and result cancellation
-- parser package loading and language registry beyond the current plugin descriptor contract
+- websocket backend protocol beyond the local worker backend
+- parser package loading policy for third-party language plugins
 - query asset format beyond raw highlight/fold/injection query strings
 - parse tree retention across undo/redo
 - memory limits and eviction policy

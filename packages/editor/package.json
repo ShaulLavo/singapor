@@ -16,18 +16,16 @@
     "bench:transforms": "bun bench/displayTransforms.ts",
     "bench:fold-map": "bun bench/foldMap.ts",
     "bench:piece-table": "bun bench/pieceTable-insertions.ts",
-    "bench:syntax": "bun bench/treeSitter-syntax.ts",
     "bench:virtualization": "bun bench/virtualization.ts",
     "test": "vitest run",
-    "test:browser": "vitest run --browser.enabled --browser.headless test/treeSitter-workerClient.browser.test.ts test/virtualizedTextView.browser.test.ts",
+    "test:browser": "vitest run --browser.enabled --browser.headless test/virtualizedTextView.browser.test.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
     "format:check": "oxfmt ."
   },
   "dependencies": {
-    "@tanstack/hotkeys": "0.8.0",
-    "web-tree-sitter": "^0.26.8"
+    "@tanstack/hotkeys": "0.8.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

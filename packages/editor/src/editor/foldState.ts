@@ -1,6 +1,6 @@
 import { createFoldMap } from "../foldMap";
 import type { PieceTableSnapshot } from "../pieceTable/pieceTableTypes";
-import type { FoldRange } from "../syntax/treeSitter/types";
+import type { FoldRange } from "../syntax/session";
 import type {
   VirtualizedFoldMarker,
   VirtualizedTextView,

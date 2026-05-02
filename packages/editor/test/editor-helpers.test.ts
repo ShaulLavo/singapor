@@ -22,7 +22,7 @@ import {
   tokenProjectionLiveRangeStatus,
 } from "../src/editor/tokenProjection";
 import { createPieceTableSnapshot } from "../src/pieceTable/pieceTable";
-import type { FoldRange } from "../src/syntax/treeSitter/types";
+import type { FoldRange } from "../src/syntax";
 
 describe("editor DOM boundary helpers", () => {
   it("maps element boundaries and child nodes to text positions", () => {

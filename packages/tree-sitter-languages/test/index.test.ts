@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { EditorPluginContext } from "@editor/core";
+import { createPieceTableSnapshot, type EditorPluginContext } from "@editor/core";
 import {
   TREE_SITTER_LANGUAGE_CONTRIBUTIONS,
   css,
@@ -22,11 +22,9 @@ describe("Tree-sitter language contributions", () => {
       "markdown",
       "markdown_inline",
     ]);
-    expect(
-      TREE_SITTER_LANGUAGE_CONTRIBUTIONS.every((contribution) => {
-        return "wasmUrl" in contribution && contribution.wasmUrl.includes(".wasm");
-      }),
-    ).toBe(true);
+    expect(TREE_SITTER_LANGUAGE_CONTRIBUTIONS.every((contribution) => "load" in contribution)).toBe(
+      true,
+    );
   });
 
   it("exports one configurable plugin per language", () => {
@@ -39,6 +37,7 @@ describe("Tree-sitter language contributions", () => {
       markdown(),
     ];
     const context = pluginContext();
+    const registerSyntaxProvider = vi.mocked(context.registerSyntaxProvider);
 
     for (const plugin of plugins) plugin.activate(context);
 
@@ -50,34 +49,28 @@ describe("Tree-sitter language contributions", () => {
       "tree-sitter-json",
       "tree-sitter-markdown",
     ]);
-    expect(context.registerTreeSitterLanguage).toHaveBeenCalledTimes(7);
-    expect(context.registerTreeSitterLanguage).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ aliases: expect.arrayContaining(["jsx"]), id: "javascript" }),
-      { replace: undefined },
+    expect(registerSyntaxProvider).toHaveBeenCalledTimes(1);
+    expect(registerSyntaxProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ createSession: expect.any(Function) }),
     );
-    expect(context.registerTreeSitterLanguage).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ aliases: expect.arrayContaining(["tsx"]), id: "typescript" }),
-      { replace: true },
-    );
-    expect(context.registerTreeSitterLanguage).toHaveBeenNthCalledWith(
-      6,
-      expect.objectContaining({ aliases: expect.arrayContaining(["md"]), id: "markdown" }),
-      { replace: undefined },
-    );
-    expect(context.registerTreeSitterLanguage).toHaveBeenNthCalledWith(
-      7,
-      expect.objectContaining({ aliases: ["markdown_inline"], id: "markdown_inline" }),
-      { replace: undefined },
-    );
+    expect(
+      registerSyntaxProvider.mock.calls[0]?.[0].createSession({
+        documentId: "main.ts",
+        languageId: "typescript",
+        includeHighlights: true,
+        text: "const a = 1;",
+        snapshot: createPieceTableSnapshot("const a = 1;"),
+      }),
+    ).not.toBeNull();
   });
 });
 
 function pluginContext(): EditorPluginContext {
   return {
     registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
-    registerTreeSitterLanguage: vi.fn(() => ({ dispose: vi.fn() })),
+    registerSyntaxProvider: vi.fn<EditorPluginContext["registerSyntaxProvider"]>(() => ({
+      dispose: vi.fn(),
+    })),
     registerViewContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerEditorFeatureContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),

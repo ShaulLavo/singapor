@@ -1,6 +1,4 @@
-import type { PieceBufferId, PieceTableSnapshot } from "../../pieceTable/pieceTableTypes";
-import { getBufferText } from "../../pieceTable/buffers";
-import { flattenPieces } from "../../pieceTable/tree";
+import { debugPieceTable, type PieceBufferId, type PieceTableSnapshot } from "@editor/core";
 
 export type TreeSitterSourcePieceSpan = {
   readonly chunkId: string;
@@ -70,7 +68,7 @@ export const createTreeSitterSourceDescriptor = (
   const emittedChunkIds = new Set<string>();
   const useSharedBuffers = options.useSharedBuffers ?? supportsSharedTreeSitterSource();
 
-  for (const piece of flattenPieces(snapshot.root, [])) {
+  for (const piece of debugPieceTable(snapshot)) {
     if (!piece.visible) continue;
     appendPieceSpans(snapshot, piece.buffer, piece.start, piece.length, {
       pieces,
@@ -161,7 +159,7 @@ const appendPieceSpans = (
   length: number,
   builder: PieceSpanBuilder,
 ): void => {
-  const text = getBufferText(snapshot.buffers, bufferId);
+  const text = getSnapshotBufferText(snapshot, bufferId);
   let offset = start;
   let remaining = length;
 
@@ -216,6 +214,12 @@ const createSharedUtf16Buffer = (text: string): SharedArrayBuffer => {
 };
 
 const sourceChunkId = (bufferId: string, chunkStart: number): string => `${bufferId}:${chunkStart}`;
+
+const getSnapshotBufferText = (snapshot: PieceTableSnapshot, bufferId: PieceBufferId): string => {
+  const text = snapshot.buffers.chunks.get(bufferId);
+  if (text !== undefined) return text;
+  throw new Error("piece buffer not found");
+};
 
 const supportsSharedTreeSitterSource = (): boolean => {
   if (typeof SharedArrayBuffer === "undefined") return false;

@@ -107,7 +107,7 @@ function createContext(
 ): EditorPluginContext {
   return {
     registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
-    registerTreeSitterLanguage: vi.fn(() => ({ dispose: vi.fn() })),
+    registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerViewContribution,
     registerEditorFeatureContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),

@@ -323,6 +323,9 @@ export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
     return;
   }
 
+  // TODO: Smooth first syntax paint without forcing CSS Highlight API color animation.
+  // Highlight pseudo styles do not reliably animate color, so this likely needs a
+  // separate transition/overlay strategy that preserves the current range model.
   const mountedRows = getMountedRows(view);
   const segmentsByRow = tokenSegmentsForRows(view, mountedRows);
   for (const row of mountedRows) {

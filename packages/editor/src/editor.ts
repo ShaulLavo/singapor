@@ -28,6 +28,7 @@ export type {
   HiddenCharactersMode,
 } from "./virtualization/virtualizedTextViewTypes";
 export type { EditorSyntaxTheme, EditorSyntaxThemeColor, EditorTheme } from "./theme";
+export type { EditorSyntaxProvider } from "./syntax";
 export type {
   EditorDisposable,
   EditorGutterContribution,

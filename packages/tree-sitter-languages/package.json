@@ -16,6 +16,7 @@
     "format:check": "oxfmt ."
   },
   "dependencies": {
+    "@editor/tree-sitter": "workspace:*",
     "@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
     "tree-sitter-css": "^0.25.0",
     "tree-sitter-html": "^0.23.2",
@@ -33,6 +34,7 @@
     "vitest": "^3.1.1"
   },
   "peerDependencies": {
-    "@editor/core": "workspace:*"
+    "@editor/core": "workspace:*",
+    "@editor/tree-sitter": "workspace:*"
   }
 }

@@ -1,8 +1,7 @@
-import { createEditorSyntaxSession } from "../syntax/session";
 import type { EditorSyntaxSessionFactory, HighlightRegistry } from "./types";
 
 let editorInstanceCount = 0;
-let editorSyntaxSessionFactory: EditorSyntaxSessionFactory = createEditorSyntaxSession;
+let editorSyntaxSessionFactory: EditorSyntaxSessionFactory | undefined;
 let highlightRegistry: HighlightRegistry | undefined;
 
 export function nextEditorHighlightPrefix(): string {
@@ -29,9 +28,9 @@ export function getHighlightRegistry(): HighlightRegistry | undefined {
 export function setEditorSyntaxSessionFactory(
   factory: EditorSyntaxSessionFactory | undefined,
 ): void {
-  editorSyntaxSessionFactory = factory ?? createEditorSyntaxSession;
+  editorSyntaxSessionFactory = factory;
 }
 
-export function getEditorSyntaxSessionFactory(): EditorSyntaxSessionFactory {
+export function getEditorSyntaxSessionFactory(): EditorSyntaxSessionFactory | undefined {
   return editorSyntaxSessionFactory;
 }

@@ -4,7 +4,7 @@ import {
   createEditorTokenIndexBuilder,
   finishEditorTokenIndex,
 } from "../editor/tokenIndex";
-import type { TreeSitterCapture } from "./treeSitter/types";
+import type { EditorSyntaxCapture } from "./session";
 
 const SYNTAX_COLOR = {
   attribute: "var(--editor-syntax-attribute)",
@@ -82,7 +82,7 @@ const sharedStyleForTreeSitterCapture = (captureName: string): EditorTokenStyle 
 };
 
 export const treeSitterCapturesToEditorTokens = (
-  captures: readonly TreeSitterCapture[],
+  captures: readonly EditorSyntaxCapture[],
 ): EditorToken[] => {
   const tokens: EditorToken[] = [];
   const indexBuilder = createEditorTokenIndexBuilder();
@@ -99,7 +99,7 @@ export const treeSitterCapturesToEditorTokens = (
   return tokens;
 };
 
-const captureToEditorToken = (capture: TreeSitterCapture): EditorToken | null => {
+const captureToEditorToken = (capture: EditorSyntaxCapture): EditorToken | null => {
   if (capture.endIndex <= capture.startIndex) return null;
 
   const style = sharedStyleForTreeSitterCapture(capture.captureName);

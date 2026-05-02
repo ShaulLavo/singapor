@@ -4,18 +4,20 @@ import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from "../../tree-sitter-languages/
 import {
   applyBatchToPieceTable,
   createPieceTableSnapshot,
-  resolveTreeSitterLanguageContribution,
   type PieceTableSnapshot,
-} from "../src";
-import { createTreeSitterEditPayload } from "../src/syntax/session";
+  type TextEdit,
+} from "@editor/core";
+import { resolveTreeSitterLanguageContribution } from "../src";
+import { createTreeSitterEditPayload } from "../src/session";
 import {
   disposeTreeSitterWorker,
   editWithTreeSitter,
   parseWithTreeSitter,
   registerTreeSitterLanguagesWithWorker,
-} from "../src/syntax/treeSitter/workerClient";
-import type { TreeSitterParseResult } from "../src/syntax/treeSitter/types";
-import type { TextEdit } from "../src/tokens";
+} from "../src/treeSitter/workerClient";
+import type { TreeSitterParseResult } from "../src/treeSitter/types";
+
+declare const Bun: { gc?: (force?: boolean) => void } | undefined;
 
 type MemorySample = {
   readonly heapUsedMb: number;
@@ -105,7 +107,6 @@ const measureSyntax = async (lines: number): Promise<SyntaxSample> => {
     documentId,
     snapshotVersion: 1,
     languageId: "typescript",
-    text,
     snapshot,
   });
   const initialTotalMs = performance.now() - parseStart;

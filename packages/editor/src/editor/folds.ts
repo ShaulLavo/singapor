@@ -1,4 +1,4 @@
-import type { FoldRange } from "../syntax/treeSitter/types";
+import type { FoldRange } from "../syntax/session";
 import type { TextEdit } from "../tokens";
 import type { VirtualizedFoldMarker } from "../virtualization/virtualizedTextView";
 

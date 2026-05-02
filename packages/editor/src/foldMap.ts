@@ -8,7 +8,7 @@ import type {
   ResolvedAnchor,
 } from "./pieceTable/pieceTableTypes";
 import { offsetToPoint, pointToOffset } from "./pieceTable/positions";
-import type { FoldRange } from "./syntax/treeSitter/types";
+import type { FoldRange } from "./syntax/session";
 
 declare const foldPointBrand: unique symbol;
 

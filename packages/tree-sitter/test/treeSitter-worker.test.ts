@@ -6,14 +6,14 @@ import {
   createPieceTableSnapshot,
   getPieceTableText,
   insertIntoPieceTable,
-} from "../src";
+} from "@editor/core";
 import {
   createTreeSitterSourceDescriptor,
   readTreeSitterInputRange,
   resolveTreeSitterSourceDescriptor,
   type TreeSitterSourceCache,
-} from "../src/syntax/treeSitter/source.ts";
-import { __treeSitterWorkerInternalsForTests } from "../src/syntax/treeSitter/treeSitter.worker.ts";
+} from "../src/treeSitter/source.ts";
+import { __treeSitterWorkerInternalsForTests } from "../src/treeSitter/treeSitter.worker.ts";
 
 const {
   applyTextEdit,

@@ -68,7 +68,7 @@ import {
   type EditorSyntaxResult,
   type EditorSyntaxSession,
 } from "../syntax/session";
-import type { FoldRange } from "../syntax/treeSitter/types";
+import type { FoldRange } from "../syntax/session";
 import type { EditorTheme } from "../theme";
 import { mergeEditorThemes } from "../theme";
 import type { EditorDocument, EditorToken, TextEdit } from "../tokens";
@@ -442,7 +442,6 @@ export class Editor {
       options.documentId ??
       (options.persistentIdentity ? this.generatedDocumentId(documentVersion) : null);
     this.languageId = document.languageId ?? null;
-    this.syntaxStatus = this.languageId ? "loading" : "plain";
     this.disposeSyntaxSession();
     this.disposeHighlighterSession();
 
@@ -455,22 +454,31 @@ export class Editor {
       text: document.text,
       snapshot: this.session.getSnapshot(),
     });
-    this.syntaxSession = this.languageId
-      ? getEditorSyntaxSessionFactory()({
-          documentId: internalDocumentId,
-          languageId: this.languageId,
-          languageResolver: this.pluginHost,
-          includeHighlights: !this.highlighterSession,
-          text: document.text,
-          snapshot: this.session.getSnapshot(),
-        })
-      : null;
+    this.syntaxSession = this.createSyntaxSession(internalDocumentId, document.text);
+    this.syntaxStatus = this.syntaxSession ? "loading" : "plain";
     this.view.setEditable(true);
     this.setDocument({ text: this.session.getText(), tokens: [] });
     this.applyDocumentScrollPosition(options.scrollPosition);
     this.syncDomSelection();
     this.notifyViewContributions("document", null);
     return documentVersion;
+  }
+
+  private createSyntaxSession(documentId: string, text: string): EditorSyntaxSession | null {
+    if (!this.languageId || !this.session) return null;
+
+    const options = {
+      documentId,
+      languageId: this.languageId,
+      includeHighlights: !this.highlighterSession,
+      text,
+      snapshot: this.session.getSnapshot(),
+    };
+    return (
+      this.pluginHost.createSyntaxSession(options) ??
+      getEditorSyntaxSessionFactory()?.(options) ??
+      null
+    );
   }
 
   private initializeDefaultText(): void {

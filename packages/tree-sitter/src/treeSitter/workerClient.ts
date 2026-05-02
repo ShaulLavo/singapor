@@ -11,7 +11,7 @@ import type {
   TreeSitterWorkerResponse,
   TreeSitterWorkerResult,
 } from "./types";
-import type { PieceTableSnapshot } from "../../pieceTable/pieceTableTypes";
+import type { PieceTableSnapshot } from "@editor/core";
 import { createTreeSitterSourceDescriptor, type TreeSitterSourceDescriptor } from "./source";
 
 type PendingRequest = {
@@ -48,6 +48,15 @@ export type TreeSitterEditPayload = {
   readonly inputEdits: readonly TreeSitterEditRequest["inputEdits"][number][];
 };
 export type TreeSitterSelectionPayload = Omit<TreeSitterSelectionRequest, "type">;
+
+export type TreeSitterBackend = {
+  registerLanguages(languages: readonly TreeSitterLanguageDescriptor[]): Promise<void>;
+  parse(payload: TreeSitterParsePayload): Promise<TreeSitterParseResult | undefined>;
+  edit(payload: TreeSitterEditPayload): Promise<TreeSitterParseResult | undefined>;
+  select(payload: TreeSitterSelectionPayload): Promise<TreeSitterSelectionResult | undefined>;
+  disposeDocument(documentId: string): void;
+  dispose?(): Promise<void>;
+};
 
 const supportsWorkers = (): boolean => typeof Worker !== "undefined";
 const supportsSharedCancellation = (): boolean => typeof SharedArrayBuffer !== "undefined";
@@ -158,6 +167,15 @@ export const disposeTreeSitterWorker = async (): Promise<void> => {
     rejectPendingRequests(new Error("Tree-sitter worker disposed"));
   }
 };
+
+export const createTreeSitterWorkerBackend = (): TreeSitterBackend => ({
+  registerLanguages: registerTreeSitterLanguagesWithWorker,
+  parse: parseWithTreeSitter,
+  edit: editWithTreeSitter,
+  select: selectWithTreeSitter,
+  disposeDocument: disposeTreeSitterDocument,
+  dispose: disposeTreeSitterWorker,
+});
 
 const postRequest = (payload: TreeSitterWorkerRequestPayload): Promise<TreeSitterWorkerResult> => {
   const handle = getWorker();

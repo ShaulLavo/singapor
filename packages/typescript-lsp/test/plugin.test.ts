@@ -176,6 +176,11 @@ describe("createTypeScriptLspPlugin", () => {
   it("renders hover quick info with diagnostics at the pointer", async () => {
     vi.useFakeTimers();
     const worker = new FakeWorker();
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     const context = viewContributionContext(editorSnapshot());
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker });
     const provider = activatePlugin(plugin);
@@ -215,7 +220,37 @@ describe("createTypeScriptLspPlugin", () => {
       /^--editor-typescript-lsp-hover-/,
     );
     expect(tooltipElement().style.getPropertyValue("position-area")).toBe("top center");
+    expect(tooltipElement().style.pointerEvents).toBe("auto");
+    expect(tooltipElement().style.userSelect).toBe("text");
     expect(tooltipAnchorElement().style.display).toBe("block");
+    expect(copyButton().textContent).toBe("");
+    expect(copyButton().querySelector("svg")).not.toBeNull();
+    expect(copyButton().getAttribute("aria-label")).toBe("Copy hover text");
+    expect(copyButton().style.background).toBe("transparent");
+
+    const hoverRequestCount = worker.sent.filter(hasMethod("textDocument/hover")).length;
+    mockElementRect(tooltipElement(), new DOMRect(0, 0, 160, 72));
+    mockElementRect(tooltipAnchorElement(), new DOMRect(12, 78, 40, 18));
+    vi.mocked(context.textOffsetFromPoint).mockReturnValue(3);
+    context.scrollElement.dispatchEvent(
+      new PointerEvent("pointermove", { clientX: 18, clientY: 76, buttons: 0 }),
+    );
+    await vi.advanceTimersByTimeAsync(260);
+    expect(worker.sent.filter(hasMethod("textDocument/hover"))).toHaveLength(hoverRequestCount);
+
+    copyButton().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith("const value: string\n\nerror: bad assignment");
+    expect(copyButton().getAttribute("aria-label")).toBe("Copied hover text");
+
+    context.scrollElement.dispatchEvent(new PointerEvent("pointerleave"));
+    tooltipElement().dispatchEvent(new PointerEvent("pointerenter"));
+    await vi.advanceTimersByTimeAsync(190);
+    expect(tooltipElement().hidden).toBe(false);
+
+    tooltipElement().dispatchEvent(new PointerEvent("pointerleave"));
+    await vi.advanceTimersByTimeAsync(190);
+    expect(tooltipElement().hidden).toBe(true);
   });
 
   it("jumps to same-file definitions from the current selection", async () => {
@@ -609,6 +644,19 @@ function tooltipAnchorElement(): HTMLElement {
   const element = document.querySelector<HTMLElement>(".editor-typescript-lsp-hover-anchor");
   if (!element) throw new Error("missing tooltip anchor");
   return element;
+}
+
+function copyButton(): HTMLButtonElement {
+  const element = document.querySelector<HTMLButtonElement>(".editor-typescript-lsp-hover-copy");
+  if (!element) throw new Error("missing copy button");
+  return element;
+}
+
+function mockElementRect(element: HTMLElement, rect: DOMRect): void {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () => rect,
+  });
 }
 
 function message(item: unknown): JsonMessage {

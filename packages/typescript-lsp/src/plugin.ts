@@ -75,8 +75,11 @@ type TooltipAnchorNames = {
 const DEFAULT_DIAGNOSTIC_DELAY_MS = 150;
 const DEFAULT_TIMEOUT_MS = 15000;
 const HOVER_DELAY_MS = 250;
+const HOVER_HIDE_DELAY_MS = 180;
+const COPY_BUTTON_RESET_DELAY_MS = 1200;
 const TOOLTIP_GAP_PX = 8;
 const TOOLTIP_VIEWPORT_MARGIN_PX = 12;
+const SVG_NS = "http://www.w3.org/2000/svg";
 let nextTooltipAnchorId = 0;
 const LINK_HIGHLIGHT_STYLE: VirtualizedTextHighlightStyle = {
   backgroundColor: "transparent",
@@ -194,12 +197,14 @@ class TypeScriptLspContribution implements EditorViewContribution {
   private readonly tooltip: HTMLDivElement;
   private readonly tooltipAnchor: HTMLDivElement;
   private hoverTimer: ReturnType<typeof setTimeout> | null = null;
+  private hoverHideTimer: ReturnType<typeof setTimeout> | null = null;
   private hoverAbort: AbortController | null = null;
   private hoverRequestId = 0;
   private definitionRequestId = 0;
   private definitionHoverRequestId = 0;
   private lastPointerOffset: number | null = null;
   private linkRange: OffsetRange | null = null;
+  private tooltipPointerDown = false;
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -420,6 +425,24 @@ class TypeScriptLspContribution implements EditorViewContribution {
     this.context.scrollElement.addEventListener("mousedown", this.handleMouseDown, {
       capture: true,
     });
+    this.tooltip.addEventListener("pointerenter", this.handleTooltipPointerEnter);
+    this.tooltip.addEventListener("pointerleave", this.handleTooltipPointerLeave);
+    this.tooltip.addEventListener("pointerdown", this.handleTooltipPointerDown);
+    this.context.container.ownerDocument.addEventListener(
+      "pointerdown",
+      this.handleDocumentPointerDown,
+      {
+        capture: true,
+      },
+    );
+    this.context.container.ownerDocument.addEventListener(
+      "pointerup",
+      this.handleDocumentPointerUp,
+    );
+    this.context.container.ownerDocument.addEventListener(
+      "pointercancel",
+      this.handleDocumentPointerUp,
+    );
     this.context.container.ownerDocument.addEventListener("keydown", this.handleKeyDown);
     this.context.container.ownerDocument.addEventListener("keyup", this.handleKeyUp);
   }
@@ -430,12 +453,34 @@ class TypeScriptLspContribution implements EditorViewContribution {
     this.context.scrollElement.removeEventListener("mousedown", this.handleMouseDown, {
       capture: true,
     });
+    this.tooltip.removeEventListener("pointerenter", this.handleTooltipPointerEnter);
+    this.tooltip.removeEventListener("pointerleave", this.handleTooltipPointerLeave);
+    this.tooltip.removeEventListener("pointerdown", this.handleTooltipPointerDown);
+    this.context.container.ownerDocument.removeEventListener(
+      "pointerdown",
+      this.handleDocumentPointerDown,
+      { capture: true },
+    );
+    this.context.container.ownerDocument.removeEventListener(
+      "pointerup",
+      this.handleDocumentPointerUp,
+    );
+    this.context.container.ownerDocument.removeEventListener(
+      "pointercancel",
+      this.handleDocumentPointerUp,
+    );
     this.context.container.ownerDocument.removeEventListener("keydown", this.handleKeyDown);
     this.context.container.ownerDocument.removeEventListener("keyup", this.handleKeyUp);
   }
 
   private readonly handlePointerMove = (event: PointerEvent): void => {
     if (event.buttons !== 0) return this.clearPointerUi();
+    if (this.pointInTooltipHoverZone(event.clientX, event.clientY)) {
+      this.lastPointerOffset = null;
+      this.clearDefinitionLink();
+      this.cancelHoverHide();
+      return;
+    }
     if (!this.activeDocument) return this.clearPointerUi();
 
     const offset = this.context.textOffsetFromPoint(event.clientX, event.clientY);
@@ -451,9 +496,15 @@ class TypeScriptLspContribution implements EditorViewContribution {
     this.scheduleHover(offset);
   };
 
-  private readonly handlePointerLeave = (): void => {
+  private readonly handlePointerLeave = (event: PointerEvent): void => {
     this.lastPointerOffset = null;
-    this.clearPointerUi();
+    this.clearDefinitionLink();
+    if (targetInsideElement(this.tooltip, event.relatedTarget)) {
+      this.cancelHoverHide();
+      return;
+    }
+
+    this.scheduleHoverHide();
   };
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
@@ -467,6 +518,36 @@ class TypeScriptLspContribution implements EditorViewContribution {
     event.stopImmediatePropagation();
     this.context.focusEditor();
     this.goToDefinitionAtOffset(offset);
+  };
+
+  private readonly handleTooltipPointerEnter = (): void => {
+    this.cancelHoverHide();
+  };
+
+  private readonly handleTooltipPointerLeave = (event: PointerEvent): void => {
+    if (this.tooltipPointerDown) return;
+    if (targetInsideElement(this.context.scrollElement, event.relatedTarget)) return;
+
+    this.scheduleHoverHide();
+  };
+
+  private readonly handleTooltipPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0) return;
+
+    this.tooltipPointerDown = true;
+    this.cancelHoverHide();
+  };
+
+  private readonly handleDocumentPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0) return;
+    if (targetInsideElement(this.tooltip, event.target)) return;
+
+    this.tooltipPointerDown = false;
+    this.clearPointerUi();
+  };
+
+  private readonly handleDocumentPointerUp = (): void => {
+    this.tooltipPointerDown = false;
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -484,6 +565,7 @@ class TypeScriptLspContribution implements EditorViewContribution {
   };
 
   private scheduleHover(offset: number): void {
+    this.cancelHoverHide();
     if (this.hoverTimer) clearTimeout(this.hoverTimer);
     this.hoverTimer = setTimeout(() => {
       this.hoverTimer = null;
@@ -627,13 +709,33 @@ class TypeScriptLspContribution implements EditorViewContribution {
 
   private hideHover(): void {
     if (this.hoverTimer) clearTimeout(this.hoverTimer);
+    if (this.hoverHideTimer) clearTimeout(this.hoverHideTimer);
     this.hoverTimer = null;
+    this.hoverHideTimer = null;
     this.hoverAbort?.abort();
     this.hoverAbort = null;
     this.hoverRequestId += 1;
+    this.tooltipPointerDown = false;
     this.tooltip.hidden = true;
     this.tooltipAnchor.style.display = "none";
     this.tooltip.replaceChildren();
+  }
+
+  private scheduleHoverHide(): void {
+    if (this.tooltipPointerDown) return;
+    if (this.hoverHideTimer) clearTimeout(this.hoverHideTimer);
+
+    this.hoverHideTimer = setTimeout(() => {
+      this.hoverHideTimer = null;
+      this.hideHover();
+    }, HOVER_HIDE_DELAY_MS);
+  }
+
+  private cancelHoverHide(): void {
+    if (!this.hoverHideTimer) return;
+
+    clearTimeout(this.hoverHideTimer);
+    this.hoverHideTimer = null;
   }
 
   private clearPointerUi(): void {
@@ -651,6 +753,15 @@ class TypeScriptLspContribution implements EditorViewContribution {
   private handleRequestError(error: unknown): void {
     if (isAbortError(error)) return;
     this.handleError(error);
+  }
+
+  private pointInTooltipHoverZone(clientX: number, clientY: number): boolean {
+    if (this.tooltip.hidden) return false;
+
+    const tooltipRect = this.tooltip.getBoundingClientRect();
+    const anchorRect = this.tooltipAnchor.getBoundingClientRect();
+    const hoverZone = expandRect(unionRects(tooltipRect, anchorRect), TOOLTIP_GAP_PX);
+    return rectContainsPoint(hoverZone, clientX, clientY);
   }
 }
 
@@ -768,9 +879,13 @@ function createTooltipElement(document: Document, names: TooltipAnchorNames): HT
     background: "rgba(24, 24, 27, 0.98)",
     color: "#e4e4e7",
     boxShadow: "0 12px 34px rgba(0, 0, 0, 0.36)",
+    display: "grid",
+    gap: "6px",
     font: "12px/1.45 system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
     whiteSpace: "normal",
-    pointerEvents: "none",
+    pointerEvents: "auto",
+    userSelect: "text",
+    cursor: "text",
   });
   applyCssAnchorPosition(element, names);
   return element;
@@ -784,14 +899,174 @@ function renderTooltip(
   },
 ): void {
   element.replaceChildren();
+  const body = element.ownerDocument.createElement("div");
+  body.style.minWidth = "0";
   if (content.hoverText) {
-    element.append(renderTooltipMarkdown(element.ownerDocument, content.hoverText));
+    body.append(renderTooltipMarkdown(element.ownerDocument, content.hoverText));
   }
   if (content.diagnostics.length > 0) {
-    element.append(diagnosticSection(element.ownerDocument, content.diagnostics));
+    body.append(diagnosticSection(element.ownerDocument, content.diagnostics));
   }
 
+  element.append(createCopyButton(element.ownerDocument, tooltipCopyText(content)), body);
   element.hidden = false;
+}
+
+function createCopyButton(document: Document, copyText: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "editor-typescript-lsp-hover-copy";
+  Object.assign(button.style, {
+    display: "inline-grid",
+    placeItems: "center",
+    justifySelf: "end",
+    width: "22px",
+    height: "22px",
+    margin: "-2px -3px 0 0",
+    border: "1px solid transparent",
+    borderRadius: "4px",
+    padding: "0",
+    background: "transparent",
+    color: "#a1a1aa",
+    cursor: "pointer",
+    opacity: "0.72",
+    userSelect: "none",
+  });
+  setCopyButtonState(button, "idle");
+  button.addEventListener("mouseenter", () => styleCopyButtonHover(button, true));
+  button.addEventListener("mouseleave", () => styleCopyButtonHover(button, false));
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void handleCopyButtonClick(button, copyText);
+  });
+  return button;
+}
+
+type CopyButtonState = "idle" | "copied" | "failed";
+
+function setCopyButtonState(button: HTMLButtonElement, state: CopyButtonState): void {
+  button.title = copyButtonLabel(state);
+  button.setAttribute("aria-label", copyButtonLabel(state));
+  button.style.color = copyButtonColor(state);
+  button.replaceChildren(copyButtonIcon(button.ownerDocument, state));
+}
+
+function styleCopyButtonHover(button: HTMLButtonElement, active: boolean): void {
+  Object.assign(button.style, {
+    background: active ? "rgba(82, 82, 91, 0.28)" : "transparent",
+    borderColor: active ? "rgba(113, 113, 122, 0.34)" : "transparent",
+    opacity: active ? "1" : "0.72",
+  });
+}
+
+function copyButtonLabel(state: CopyButtonState): string {
+  if (state === "copied") return "Copied hover text";
+  if (state === "failed") return "Copy failed";
+  return "Copy hover text";
+}
+
+function copyButtonColor(state: CopyButtonState): string {
+  if (state === "copied") return "#86efac";
+  if (state === "failed") return "#f87171";
+  return "#a1a1aa";
+}
+
+function copyButtonIcon(document: Document, state: CopyButtonState): SVGSVGElement {
+  const icon = document.createElementNS(SVG_NS, "svg") as SVGSVGElement;
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("width", "14");
+  icon.setAttribute("height", "14");
+  icon.setAttribute("aria-hidden", "true");
+  icon.setAttribute("fill", "none");
+  icon.setAttribute("stroke", "currentColor");
+  icon.setAttribute("stroke-width", "2");
+  icon.setAttribute("stroke-linecap", "round");
+  icon.setAttribute("stroke-linejoin", "round");
+
+  for (const pathData of copyButtonIconPaths(state)) {
+    const path = document.createElementNS(SVG_NS, "path");
+    path.setAttribute("d", pathData);
+    icon.append(path);
+  }
+
+  return icon;
+}
+
+function copyButtonIconPaths(state: CopyButtonState): readonly string[] {
+  if (state === "copied") return ["M20 6 9 17l-5-5"];
+  if (state === "failed") return ["M12 8v5", "M12 17h.01", "M10.3 4h3.4L22 19H2L10.3 4Z"];
+  return ["M8 8h12v12H8Z", "M4 4h12v2", "M4 4v12h2"];
+}
+
+async function handleCopyButtonClick(button: HTMLButtonElement, copyText: string): Promise<void> {
+  const copied = await copyTextToClipboard(button.ownerDocument, copyText);
+  showCopyButtonStatus(button, copied);
+}
+
+function showCopyButtonStatus(button: HTMLButtonElement, copied: boolean): void {
+  setCopyButtonState(button, copied ? "copied" : "failed");
+  setTimeout(() => {
+    if (!button.isConnected) return;
+    setCopyButtonState(button, "idle");
+  }, COPY_BUTTON_RESET_DELAY_MS);
+}
+
+async function copyTextToClipboard(document: Document, text: string): Promise<boolean> {
+  const clipboard = document.defaultView?.navigator.clipboard;
+  if (!clipboard) return copyTextWithTextarea(document, text);
+
+  try {
+    await clipboard.writeText(text);
+    return true;
+  } catch {
+    return copyTextWithTextarea(document, text);
+  }
+}
+
+function copyTextWithTextarea(document: Document, text: string): boolean {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  Object.assign(textarea.style, {
+    position: "fixed",
+    top: "-9999px",
+    left: "-9999px",
+    opacity: "0",
+  });
+  document.body.append(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+function tooltipCopyText(content: {
+  readonly hoverText: string | null;
+  readonly diagnostics: readonly lsp.Diagnostic[];
+}): string {
+  const parts = [
+    plainHoverText(content.hoverText),
+    ...content.diagnostics.map(diagnosticCopyText),
+  ].filter((part) => part.length > 0);
+  return parts.join("\n\n");
+}
+
+function plainHoverText(markdown: string | null): string {
+  if (!markdown) return "";
+  return markdown
+    .replace(/^```[^\n]*\n/gm, "")
+    .replace(/^```\s*$/gm, "")
+    .trim();
+}
+
+function diagnosticCopyText(diagnostic: lsp.Diagnostic): string {
+  return `${severityForDiagnostic(diagnostic)}: ${diagnostic.message}`.trim();
 }
 
 function diagnosticSection(
@@ -1032,6 +1307,35 @@ function diagnosticColor(diagnostic: lsp.Diagnostic): string {
 
 function isNavigationModifier(event: { readonly metaKey: boolean; readonly ctrlKey: boolean }): boolean {
   return event.metaKey || event.ctrlKey;
+}
+
+function targetInsideElement(element: Element, target: EventTarget | null): boolean {
+  if (!(target instanceof Node)) return false;
+  return element.contains(target);
+}
+
+function unionRects(left: DOMRect, right: DOMRect): DOMRect {
+  const x = Math.min(left.left, right.left);
+  const y = Math.min(left.top, right.top);
+  const rightEdge = Math.max(left.right, right.right);
+  const bottomEdge = Math.max(left.bottom, right.bottom);
+  return new DOMRect(x, y, Math.max(0, rightEdge - x), Math.max(0, bottomEdge - y));
+}
+
+function expandRect(rect: DOMRect, amount: number): DOMRect {
+  return new DOMRect(
+    rect.left - amount,
+    rect.top - amount,
+    rect.width + amount * 2,
+    rect.height + amount * 2,
+  );
+}
+
+function rectContainsPoint(rect: DOMRect, clientX: number, clientY: number): boolean {
+  if (clientX < rect.left) return false;
+  if (clientX > rect.right) return false;
+  if (clientY < rect.top) return false;
+  return clientY <= rect.bottom;
 }
 
 function isAbortError(error: unknown): boolean {

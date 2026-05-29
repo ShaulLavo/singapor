@@ -1076,7 +1076,7 @@ export function createStaticDocumentSession(text: string): DocumentSession {
 type DocumentSessionChangeFields = DocumentSessionChange
 
 function createDocumentSessionChange(fields: DocumentSessionChangeFields): DocumentSessionChange {
-  return { ...fields }
+  return { ...fields } // TODO why do we need this func??
 }
 
 export function documentSessionChangeTextSnapshot(
@@ -1119,7 +1119,7 @@ function invertTextEdits(
 ): readonly TextEdit[] {
   let delta = 0
   const inverse: TextEdit[] = []
-  const sorted = edits.toSorted((left, right) => left.from - right.from || left.to - right.to)
+  const sorted = edits.toSorted((left, right) => left.from - right.from || left.to - right.to) // TODO check if we can sort in place
   for (const edit of sorted) {
     const from = edit.from + delta
     const to = from + edit.text.length

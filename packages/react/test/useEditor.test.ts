@@ -1,5 +1,9 @@
 import type { Editor } from '@editor/core/editor'
-import { createDocumentSession } from '@editor/core/document'
+import {
+  createDocumentSession,
+  createEditorTextBuffer,
+  createEditorViewSession,
+} from '@editor/core/document'
 import type { EditorResolvedSelection } from '@editor/core/extensions'
 import { act, createElement, useLayoutEffect, type ReactElement } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -295,6 +299,56 @@ describe('useEditor', () => {
 
     expect(attachSpy).not.toHaveBeenCalled()
     expect(mounted.controller.materializeFullText()).toBe('alpha')
+
+    mounted.dispose()
+  })
+
+  it('keeps live buffer sessions attached across buffer revision renders', () => {
+    const buffer = createEditorTextBuffer('alpha')
+    const view = createEditorViewSession(buffer)
+    const mounted = mountReactEditor({
+      document: {
+        buffer,
+        documentId: 'a.ts',
+        text: buffer.materializeFullText(),
+        view,
+      },
+    })
+    const instance = mounted.controller.getEditor()
+    expect(instance).not.toBeNull()
+    const attachSpy = vi.spyOn(instance as Editor, 'attachSession')
+
+    act(() => mounted.controller.commands.edit({ from: 5, to: 5, text: '!' }))
+    mounted.render({
+      document: {
+        buffer,
+        documentId: 'a.ts',
+        text: buffer.materializeFullText(),
+        view,
+      },
+    })
+
+    expect(attachSpy).not.toHaveBeenCalled()
+    expect(mounted.controller.materializeFullText()).toBe('alpha!')
+
+    mounted.dispose()
+  })
+
+  it('restores live buffer view scroll position without a reactive scroll prop', () => {
+    const buffer = createEditorTextBuffer('alpha')
+    const view = createEditorViewSession(buffer)
+    view.setScrollPosition({ top: 18, left: 3 })
+
+    const mounted = mountReactEditor({
+      document: {
+        buffer,
+        documentId: 'a.ts',
+        text: buffer.materializeFullText(),
+        view,
+      },
+    })
+
+    expect(mounted.controller.getEditor()?.getScrollPosition()).toEqual({ top: 18, left: 3 })
 
     mounted.dispose()
   })

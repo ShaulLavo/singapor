@@ -568,7 +568,7 @@ function syncDocument(
     editor.attachSession(session, {
       documentId: document.documentId,
       languageId: document.languageId,
-      scrollPosition: document.scrollPosition,
+      scrollPosition: reactEditorDocumentScrollPosition(document),
     })
     return
   }
@@ -577,7 +577,7 @@ function syncDocument(
     editor.syncText(document.text, {
       documentMode: document.documentMode,
       languageId: document.languageId,
-      scrollPosition: document.scrollPosition,
+      scrollPosition: reactEditorDocumentScrollPosition(document),
     })
     return
   }
@@ -586,7 +586,7 @@ function syncDocument(
     documentId: document.documentId,
     documentMode: document.documentMode,
     languageId: document.languageId,
-    scrollPosition: document.scrollPosition,
+    scrollPosition: reactEditorDocumentScrollPosition(document),
     text: document.text,
   })
 }
@@ -785,7 +785,7 @@ function documentRevisionKey(
     object,
   incremental: boolean,
 ) {
-  if (documentHasLiveBuffer(document)) return document.buffer?.getRevision() ?? ''
+  if (documentHasLiveBuffer(document)) return ''
   if (incremental) return ''
   if (documentHasLiveSession(document)) return ''
 
@@ -899,6 +899,12 @@ function reactEditorDocumentSession(
   }
 
   return document.session ?? null
+}
+
+function reactEditorDocumentScrollPosition(
+  document: ReactEditorDocument,
+): EditorScrollPosition | undefined {
+  return document.scrollPosition ?? document.view?.getScrollPosition()
 }
 
 function bufferViewSession(buffer: EditorTextBuffer, view: EditorViewSession): EditorBufferSession {

@@ -145,12 +145,23 @@ export class FixedRowVirtualizer {
     this.cachedRowGap = this.options.rowGap
   }
 
-  public updateOptions(options: Partial<FixedRowVirtualizerOptions>): void {
+  public updateOptions(options: Partial<FixedRowVirtualizerOptions>): boolean {
     const next = normalizeOptions({ ...denormalizeOptions(this.options), ...options })
+    const nextScrollTop = clampScrollTopForGeometry(
+      this.scrollTop,
+      scrollGeometryForOptions(next, this.viewportHeight),
+    )
+    if (sameNormalizedOptions(this.options, next) && nextScrollTop === this.scrollTop) return false
+
     this.updateCacheForFixedRows(next.rowHeight, next.rowGap)
     this.options = next
-    this.scrollTop = clampScrollTopForGeometry(this.scrollTop, this.scrollGeometry())
+    this.scrollTop = nextScrollTop
     this.syncAttachedNativeScrollTop()
+    this.emitChange()
+    return true
+  }
+
+  public refresh(): void {
     this.emitChange()
   }
 
@@ -347,7 +358,7 @@ export class FixedRowVirtualizer {
 
     const size = resizeEntrySize(entry)
     this.setScrollMetrics({
-      scrollTop: this.logicalScrollTopFromNativeElement(size.content.height),
+      scrollTop: this.scrollTop,
       scrollLeft: element.scrollLeft,
       borderBoxHeight: size.border.height,
       borderBoxWidth: size.border.width,
@@ -467,6 +478,29 @@ function denormalizeOptions(
     enabled: options.enabled,
     maxScrollHeight: options.maxScrollHeight,
   }
+}
+
+function sameNormalizedOptions(
+  left: NormalizedFixedRowVirtualizerOptions,
+  right: NormalizedFixedRowVirtualizerOptions,
+): boolean {
+  return (
+    left.count === right.count &&
+    left.rowHeight === right.rowHeight &&
+    left.rowGap === right.rowGap &&
+    left.overscan === right.overscan &&
+    left.enabled === right.enabled &&
+    left.maxScrollHeight === right.maxScrollHeight &&
+    sameRowSizes(left.rowSizes, right.rowSizes)
+  )
+}
+
+function sameRowSizes(left: readonly number[] | null, right: readonly number[] | null): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  if (left.length !== right.length) return false
+
+  return left.every((size, index) => size === right[index])
 }
 
 function computeTotalSize(options: NormalizedFixedRowVirtualizerOptions): number {
@@ -795,15 +829,27 @@ function createNativeScrollTopAccess(element: HTMLElement): {
   readonly write: (value: number) => void
 } {
   const descriptor = findPropertyDescriptor(element, 'scrollTop')
-  let fallback = 0
+  let lastKnownValue = 0
 
   return {
-    read: () => normalizeNumber(readNativeScrollTop(element, descriptor, fallback)),
+    read: () => {
+      lastKnownValue = normalizeNativeScrollTop(
+        readNativeScrollTop(element, descriptor, lastKnownValue),
+      )
+      return lastKnownValue
+    },
     write: (value) => {
-      fallback = Math.max(0, normalizeNumber(value))
-      writeNativeScrollTop(element, descriptor, fallback)
+      const nextValue = normalizeNativeScrollTop(value)
+      if (nextValue === lastKnownValue) return
+
+      lastKnownValue = nextValue
+      writeNativeScrollTop(element, descriptor, nextValue)
     },
   }
+}
+
+function normalizeNativeScrollTop(value: number): number {
+  return Math.max(0, normalizeNumber(value))
 }
 
 function readNativeScrollTop(

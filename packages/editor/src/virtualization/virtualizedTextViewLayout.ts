@@ -198,12 +198,13 @@ export function setInjectedTextRowsLayout(
 }
 
 export function updateVirtualizerRows(view: VirtualizedTextViewInternal): void {
-  view.virtualizer.updateOptions({
+  const changed = view.virtualizer.updateOptions({
     count: visibleLineCount(view),
     rowGap: view.rowGap,
     rowHeight: getRowHeight(view),
     rowSizes: rowSizes(view),
   })
+  if (!changed && view.lastRenderedRowsKey === '') view.virtualizer.refresh()
 }
 
 export function rowSizes(view: VirtualizedTextViewInternal): readonly number[] | undefined {

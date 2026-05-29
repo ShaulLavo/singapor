@@ -108,6 +108,116 @@ describe('fixed row virtualizer', () => {
     virtualizer.dispose()
   })
 
+  it('does not write native scrollTop when option updates keep the native offset unchanged', () => {
+    const virtualizer = new FixedRowVirtualizer({
+      count: 1,
+      rowHeight: 20,
+    })
+    const element = document.createElement('div')
+    let nativeScrollTop = 0
+    const setNativeScrollTop = vi.fn((value: number) => {
+      nativeScrollTop = value
+    })
+
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => nativeScrollTop,
+      set: setNativeScrollTop,
+    })
+
+    virtualizer.attachScrollElement(element, undefined, {
+      readInitialScrollPosition: false,
+    })
+    virtualizer.updateOptions({ count: 10_000 })
+
+    expect(setNativeScrollTop).not.toHaveBeenCalled()
+
+    virtualizer.setScrollMetrics({ scrollTop: 200, viewportHeight: 100 })
+    expect(setNativeScrollTop).toHaveBeenCalledWith(200)
+
+    setNativeScrollTop.mockClear()
+    virtualizer.updateOptions({ count: 20_000 })
+
+    expect(setNativeScrollTop).not.toHaveBeenCalled()
+
+    virtualizer.dispose()
+  })
+
+  it('does not emit changes when option updates keep the normalized geometry unchanged', () => {
+    const onChange = vi.fn()
+    const virtualizer = new FixedRowVirtualizer({
+      count: 10,
+      overscan: 2,
+      rowHeight: 20,
+    })
+    const element = document.createElement('div')
+
+    virtualizer.attachScrollElement(element, onChange, {
+      readInitialScrollPosition: false,
+    })
+    virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 60 })
+    onChange.mockClear()
+
+    virtualizer.updateOptions({ count: 10, overscan: 2, rowHeight: 20 })
+
+    expect(onChange).not.toHaveBeenCalled()
+
+    virtualizer.updateOptions({ count: 11 })
+
+    expect(onChange).toHaveBeenCalledTimes(1)
+
+    virtualizer.dispose()
+  })
+
+  it('does not read native scrollTop while syncing resize entries', () => {
+    const originalResizeObserver = globalThis.ResizeObserver
+    const observers: TestResizeObserver[] = []
+
+    globalThis.ResizeObserver = class extends TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        super(callback)
+        observers.push(this)
+      }
+    } as typeof ResizeObserver
+
+    try {
+      const virtualizer = new FixedRowVirtualizer({
+        count: 100,
+        rowHeight: 20,
+      })
+      const element = document.createElement('div')
+      let nativeScrollTop = 0
+      const getNativeScrollTop = vi.fn(() => nativeScrollTop)
+
+      Object.defineProperty(element, 'scrollTop', {
+        configurable: true,
+        get: getNativeScrollTop,
+        set: (value: number) => {
+          nativeScrollTop = value
+        },
+      })
+
+      virtualizer.attachScrollElement(element, undefined, {
+        readInitialScrollPosition: false,
+      })
+      virtualizer.setScrollMetrics({ scrollTop: 200, viewportHeight: 100 })
+
+      getNativeScrollTop.mockClear()
+      observers[0]?.resize(element, 320, 160)
+
+      expect(getNativeScrollTop).not.toHaveBeenCalled()
+      expect(virtualizer.getSnapshot()).toMatchObject({
+        scrollTop: 200,
+        viewportHeight: 160,
+        viewportWidth: 320,
+      })
+
+      virtualizer.dispose()
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+    }
+  })
+
   it('tracks the viewport border box separately from the content box', () => {
     const virtualizer = new FixedRowVirtualizer({
       count: 100,
@@ -250,3 +360,46 @@ describe('fixed row virtualizer', () => {
     virtualizer.dispose()
   })
 })
+
+class TestResizeObserver implements ResizeObserver {
+  public readonly observe = vi.fn()
+  public readonly unobserve = vi.fn()
+  public readonly disconnect = vi.fn()
+
+  public constructor(private readonly callback: ResizeObserverCallback) {}
+
+  public takeRecords(): ResizeObserverEntry[] {
+    return []
+  }
+
+  public resize(target: Element, width: number, height: number): void {
+    this.callback([resizeEntry(target, width, height)], this)
+  }
+}
+
+function resizeEntry(target: Element, width: number, height: number): ResizeObserverEntry {
+  return {
+    borderBoxSize: [resizeBox(width, height)],
+    contentBoxSize: [resizeBox(width, height)],
+    contentRect: {
+      bottom: height,
+      height,
+      left: 0,
+      right: width,
+      top: 0,
+      width,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRectReadOnly,
+    devicePixelContentBoxSize: [resizeBox(width, height)],
+    target,
+  }
+}
+
+function resizeBox(width: number, height: number): ResizeObserverSize {
+  return {
+    blockSize: height,
+    inlineSize: width,
+  }
+}

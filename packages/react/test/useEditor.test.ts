@@ -1,4 +1,5 @@
-import type { Editor } from '@editor/core/editor'
+import { Editor } from '@editor/core/editor'
+import type { EditorPlugin } from '@editor/core/extensions'
 import {
   createDocumentSession,
   createEditorTextBuffer,
@@ -475,6 +476,39 @@ describe('useEditor', () => {
     mounted.dispose()
   })
 
+  it('does not resubmit constructor plugins on initial controlled sync', () => {
+    const plugin = pluginFixture('probe')
+    const nextPlugin = pluginFixture('next')
+    const setPluginsSpy = vi.spyOn(Editor.prototype, 'setPlugins')
+    let mounted: MountedEditor | null = null
+
+    try {
+      mounted = mountReactEditor({
+        document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+        plugins: [plugin],
+      })
+
+      expect(setPluginsSpy).not.toHaveBeenCalled()
+
+      mounted.render({
+        document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+        plugins: [plugin],
+      })
+
+      expect(setPluginsSpy).not.toHaveBeenCalled()
+
+      mounted.render({
+        document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+        plugins: [nextPlugin],
+      })
+
+      expect(setPluginsSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      mounted?.dispose()
+      setPluginsSpy.mockRestore()
+    }
+  })
+
   it('exports a command facade that safely handles missing editor instances', () => {
     const mounted = mountReactEditor()
     const { controller } = mounted
@@ -716,6 +750,13 @@ function mockEditorViewport(
       toJSON: () => ({}),
     }),
   })
+}
+
+function pluginFixture(name: string): EditorPlugin {
+  return {
+    name,
+    activate: () => undefined,
+  }
 }
 
 function cursorsEqual(left: EditorCursor | null, right: EditorCursor | null): boolean {

@@ -168,6 +168,7 @@ type ReactEditorControllerPrivate = ReactEditorController & {
 
 const CONTROLLER_PRIVATE = Symbol('controller-private')
 const NO_DOCUMENT = Symbol('no-document')
+const EMPTY_PLUGINS: readonly EditorPlugin[] = []
 const useEditorLayoutEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect
 
 const selectEditor = (snapshot: ReactEditorStoreSnapshot): Editor | null => snapshot.editor
@@ -242,6 +243,8 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   public readonly commands: ReactEditorCommands
   private readonly reactSyncPlugin: EditorPlugin
   private readonly documentState = createDocumentState()
+  private syncedPlugins: readonly EditorPlugin[] | null = null
+  private syncedStoreSyncMode: ReactEditorStoreSyncMode | null = null
   private options: ReactEditorOptions
 
   public constructor(options: ReactEditorOptions) {
@@ -251,13 +254,18 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   }
 
   public mount(element: HTMLElement): void {
-    this.dispose()
-    this.mountEditor(element)
+    this.store.batch(() => {
+      this.dispose()
+      this.mountEditor(element)
+    })
   }
 
   public dispose(): void {
-    disposeEditor(this.store)
-    this.documentState.clear()
+    this.store.batch(() => {
+      disposeEditor(this.store)
+      this.documentState.clear()
+      this.clearSyncedPlugins()
+    })
   }
 
   public setOptions(options: ReactEditorOptions): void {
@@ -341,7 +349,12 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   }
 
   public syncPluginsOption(): void {
-    syncPlugins(this.getEditor(), this.reactSyncPlugin, this.options)
+    const editor = this.getEditor()
+    if (!editor) return
+    if (this.pluginsSynced(this.options)) return
+
+    syncPlugins(editor, this.reactSyncPlugin, this.options)
+    this.markPluginsSynced(this.options)
   }
 
   public syncSnapshot(
@@ -374,6 +387,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
 
   private mountEditor(element: HTMLElement): void {
     const instance = new Editor(element, this.createConstructorOptions())
+    this.markPluginsSynced(this.options)
 
     this.store.update({
       editor: instance,
@@ -422,12 +436,29 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   private shouldSyncStore(): boolean {
     return reactEditorStoreSyncMode(this.options) === 'full'
   }
+
+  private pluginsSynced(options: ReactEditorOptions): boolean {
+    if (this.syncedStoreSyncMode !== reactEditorStoreSyncMode(options)) return false
+    return samePlugins(this.syncedPlugins, options.plugins ?? EMPTY_PLUGINS)
+  }
+
+  private markPluginsSynced(options: ReactEditorOptions): void {
+    this.syncedPlugins = [...(options.plugins ?? EMPTY_PLUGINS)]
+    this.syncedStoreSyncMode = reactEditorStoreSyncMode(options)
+  }
+
+  private clearSyncedPlugins(): void {
+    this.syncedPlugins = null
+    this.syncedStoreSyncMode = null
+  }
 }
 
 class ReactEditorStore {
   private snapshot = createEmptyStoreSnapshot()
   private readonly subscriptions = new Set<ReactEditorSelectorSubscription<unknown>>()
   private version = 0
+  private batchDepth = 0
+  private notifyAfterBatch = false
 
   public read(): ReactEditorStoreSnapshot {
     return this.snapshot
@@ -438,7 +469,17 @@ class ReactEditorStore {
 
     this.snapshot = createStoreSnapshot(mergeStorePatch(this.snapshot, patch))
     this.version += 1
-    this.notify()
+    this.queueNotify()
+  }
+
+  public batch<T>(run: () => T): T {
+    this.batchDepth += 1
+    try {
+      return run()
+    } finally {
+      this.batchDepth -= 1
+      this.flushBatchedNotify()
+    }
   }
 
   public createSubscription<T>(
@@ -481,6 +522,23 @@ class ReactEditorStore {
     for (const subscription of this.subscriptions) {
       this.notifySubscription(subscription)
     }
+  }
+
+  private queueNotify(): void {
+    if (this.batchDepth === 0) {
+      this.notify()
+      return
+    }
+
+    this.notifyAfterBatch = true
+  }
+
+  private flushBatchedNotify(): void {
+    if (this.batchDepth > 0) return
+    if (!this.notifyAfterBatch) return
+
+    this.notifyAfterBatch = false
+    this.notify()
   }
 
   private notifySubscription<T>(subscription: ReactEditorSelectorSubscription<T>): void {
@@ -697,6 +755,16 @@ function editorPluginsForOptions(
 
 function reactEditorStoreSyncMode(options: ReactEditorOptions): ReactEditorStoreSyncMode {
   return options.storeSync ?? 'full'
+}
+
+function samePlugins(
+  left: readonly EditorPlugin[] | null,
+  right: readonly EditorPlugin[],
+): boolean {
+  if (!left) return false
+  if (left.length !== right.length) return false
+
+  return left.every((plugin, index) => plugin === right[index])
 }
 
 function disposeEditor(store: ReactEditorStore): void {

@@ -86,15 +86,18 @@
   tab-size: var(--editor-tab-size, 4);
   color: var(--editor-foreground);
   background: var(--editor-background);
+  contain: layout paint style;
 }
 
 .editor-virtualized-spacer {
+  contain: layout paint style;
   min-width: max-content;
   position: relative;
 }
 
 .editor-virtualized-gutter {
   background: var(--editor-gutter-background);
+  height: 100%;
   left: 0;
   pointer-events: none;
   position: sticky;

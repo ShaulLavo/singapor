@@ -81,7 +81,7 @@ export class EditorFindController {
   private readonly matchHighlightName: string
   private readonly currentHighlightName: string
   private readonly scopeHighlightName: string
-  private readonly widget: EditorFindWidget
+  private widget: EditorFindWidget | null = null
   private state: EditorFindState = {
     searchString: '',
     replaceString: '',
@@ -106,26 +106,12 @@ export class EditorFindController {
     this.matchHighlightName = `${highlightPrefix}-find-match`
     this.currentHighlightName = `${highlightPrefix}-find-current`
     this.scopeHighlightName = `${highlightPrefix}-find-scope`
-    this.widget = new EditorFindWidget(host.container, host.scrollElement, {
-      onSearchInput: (value) => this.setSearchString(value),
-      onReplaceInput: (value) => this.setReplaceString(value),
-      onToggleReplace: () => this.toggleReplace(),
-      onPrevious: () => this.findPrevious(),
-      onNext: () => this.findNext(),
-      onClose: () => this.close(),
-      onToggleCase: () => this.toggleMatchCase(),
-      onToggleWholeWord: () => this.toggleWholeWord(),
-      onToggleRegex: () => this.toggleRegex(),
-      onToggleScope: () => this.toggleFindInSelection(),
-      onTogglePreserveCase: () => this.togglePreserveCase(),
-      onReplaceOne: () => this.replaceOne(),
-      onReplaceAll: () => this.replaceAll(),
-    })
   }
 
   public dispose(): void {
     this.clearHighlights()
-    this.widget.dispose()
+    this.widget?.dispose()
+    this.widget = null
   }
 
   public openFind(): boolean {
@@ -148,7 +134,7 @@ export class EditorFindController {
     this.scopes = null
     this.currentIndex = -1
     this.clearHighlights()
-    this.widget.hide()
+    this.widget?.hide()
     this.host.focusEditor()
     return true
   }
@@ -284,7 +270,7 @@ export class EditorFindController {
       replaceRevealed: options.replace || this.state.replaceRevealed,
     }
     this.applyAutoFindInSelection()
-    this.widget.show(this.state.replaceRevealed)
+    this.ensureWidget().show(this.state.replaceRevealed)
     this.research(false)
     this.focusWidget(options.focus)
     return true
@@ -368,7 +354,10 @@ export class EditorFindController {
   }
 
   private updateWidget(): void {
-    this.widget.update({
+    const widget = this.widget
+    if (!widget) return
+
+    widget.update({
       ...this.state,
       matchesCount: this.matches.length,
       matchesPosition: this.currentIndex >= 0 ? this.currentIndex + 1 : 0,
@@ -376,8 +365,40 @@ export class EditorFindController {
   }
 
   private focusWidget(focus: 'find' | 'replace' | 'none'): void {
-    if (focus === 'find') this.widget.focusFindInput()
-    if (focus === 'replace') this.widget.focusReplaceInput()
+    const widget = this.widget
+    if (!widget) return
+
+    if (focus === 'find') widget.focusFindInput()
+    if (focus === 'replace') widget.focusReplaceInput()
+  }
+
+  private ensureWidget(): EditorFindWidget {
+    if (this.widget) return this.widget
+
+    this.widget = new EditorFindWidget(
+      this.host.container,
+      this.host.scrollElement,
+      this.createWidgetOptions(),
+    )
+    return this.widget
+  }
+
+  private createWidgetOptions(): EditorFindWidgetOptions {
+    return {
+      onSearchInput: (value) => this.setSearchString(value),
+      onReplaceInput: (value) => this.setReplaceString(value),
+      onToggleReplace: () => this.toggleReplace(),
+      onPrevious: () => this.findPrevious(),
+      onNext: () => this.findNext(),
+      onClose: () => this.close(),
+      onToggleCase: () => this.toggleMatchCase(),
+      onToggleWholeWord: () => this.toggleWholeWord(),
+      onToggleRegex: () => this.toggleRegex(),
+      onToggleScope: () => this.toggleFindInSelection(),
+      onTogglePreserveCase: () => this.togglePreserveCase(),
+      onReplaceOne: () => this.replaceOne(),
+      onReplaceAll: () => this.replaceAll(),
+    }
   }
 
   private seedSearchString(): string {

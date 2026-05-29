@@ -1704,7 +1704,6 @@ function applyTotalHeight(
   const transform = offset === 0 ? '' : `translateY(${offset}px)`
   setStyleValue(view.spacer, 'height', height)
   setStyleValue(view.spacer, 'transform', transform)
-  setStyleValue(view.gutterElement, 'height', height)
 }
 
 export function getMountedRows(

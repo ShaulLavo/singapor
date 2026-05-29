@@ -3534,6 +3534,8 @@ describe('Editor', () => {
       const session = createDocumentSession('foo bar foo')
       editor.attachSession(session)
 
+      expect(container.querySelector('.editor-find-widget')).toBeNull()
+
       dispatchEditorKey('f', primaryModifier())
       expect(container.querySelector('.editor-find-widget')).not.toBeNull()
 

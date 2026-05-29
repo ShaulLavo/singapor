@@ -89,7 +89,7 @@ export class EditorViewContributionController {
     const snapshot = this.createSnapshot()
     this.activeUpdateKind = kind
     try {
-      for (const contribution of [...this.contributions])
+      for (const contribution of Array.from(this.contributions))
         this.updateContribution(contribution, snapshot, kind, change, 'update')
     } finally {
       this.activeUpdateKind = null

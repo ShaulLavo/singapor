@@ -1778,7 +1778,7 @@ export class Editor {
     const sources = this.rowDecorationSourcesByOwner.get(owner)
     if (!sources) return
 
-    for (const sourceId of [...sources]) this.clearSourceRowDecorations(sourceId, owner)
+    for (const sourceId of Array.from(sources)) this.clearSourceRowDecorations(sourceId, owner)
   }
 
   private applyComposedRowDecorations(): void {
@@ -2046,10 +2046,10 @@ export class Editor {
   }
 
   private notifyEditorFeatureContributions(change: DocumentSessionChange | null): void {
-    for (const contribution of [...this.decorationContributions])
+    for (const contribution of Array.from(this.decorationContributions))
       this.notifyContributionChange(contribution, change, 'decoration')
 
-    for (const contribution of [...this.editorFeatureContributions])
+    for (const contribution of Array.from(this.editorFeatureContributions))
       this.notifyContributionChange(contribution, change, 'feature')
   }
 

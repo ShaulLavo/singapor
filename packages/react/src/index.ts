@@ -14,7 +14,15 @@ import {
   type EditorSetTextOptions,
   type EditorState,
 } from '@editor/core/editor'
-import type { DocumentSession, DocumentSessionChange, TextSnapshot } from '@editor/core/document'
+import {
+  createEditorBufferSession,
+  type DocumentSession,
+  type DocumentSessionChange,
+  type EditorBufferSession,
+  type EditorTextBuffer,
+  type EditorViewSession,
+  type TextSnapshot,
+} from '@editor/core/document'
 import type { EditorSyntaxLanguageId } from '@editor/core/syntax'
 import type { EditorTheme, HiddenCharactersMode } from '@editor/core/rendering'
 import type {
@@ -46,6 +54,8 @@ export {
 export type ReactEditorDocument = {
   readonly documentId?: string
   readonly revision?: string | number
+  readonly buffer?: EditorTextBuffer | null
+  readonly view?: EditorViewSession | null
   readonly session?: DocumentSession | null
   readonly text: string
   readonly documentMode?: EditorDocumentMode
@@ -553,8 +563,9 @@ function syncDocument(
     return
   }
 
-  if (document.session) {
-    editor.attachSession(document.session, {
+  const session = reactEditorDocumentSession(document)
+  if (session) {
+    editor.attachSession(session, {
       documentId: document.documentId,
       languageId: document.languageId,
       scrollPosition: document.scrollPosition,
@@ -738,6 +749,7 @@ function createDocumentState(): ReactEditorDocumentState {
 function documentKey(
   document:
     | (Readonly<{
+        readonly buffer?: EditorTextBuffer | null
         readonly documentId?: string
         readonly documentMode?: EditorDocumentMode
         readonly languageId?: EditorSyntaxLanguageId | null
@@ -745,6 +757,7 @@ function documentKey(
         readonly session?: DocumentSession | null
         readonly text?: string
         readonly textSyncMode?: ReactEditorDocumentTextSyncMode
+        readonly view?: EditorViewSession | null
       }> &
         object)
     | null
@@ -753,8 +766,8 @@ function documentKey(
   if (!document) return NO_DOCUMENT
 
   const incremental = document.textSyncMode === 'incremental'
-  const liveSession = documentHasLiveSession(document)
-  const revision = incremental || liveSession ? '' : (document.revision ?? '')
+  const liveSession = documentHasLiveBuffer(document) || documentHasLiveSession(document)
+  const revision = documentRevisionKey(document, incremental)
   const textVersion = incremental && !liveSession ? (document.text ?? '') : ''
   const identityKey = documentIdentityKey(document)
   if (identityKey === NO_DOCUMENT) return NO_DOCUMENT
@@ -762,13 +775,32 @@ function documentKey(
   return `${identityKey}\u0000${revision}\u0000${textVersion}`
 }
 
+function documentRevisionKey(
+  document: Readonly<{
+    readonly buffer?: EditorTextBuffer | null
+    readonly revision?: string | number
+    readonly session?: DocumentSession | null
+    readonly view?: EditorViewSession | null
+  }> &
+    object,
+  incremental: boolean,
+) {
+  if (documentHasLiveBuffer(document)) return document.buffer?.getRevision() ?? ''
+  if (incremental) return ''
+  if (documentHasLiveSession(document)) return ''
+
+  return document.revision ?? ''
+}
+
 function documentIdentityKey(
   document:
     | (Readonly<{
+        readonly buffer?: EditorTextBuffer | null
         readonly documentId?: string
         readonly documentMode?: EditorDocumentMode
         readonly languageId?: EditorSyntaxLanguageId | null
         readonly session?: DocumentSession | null
+        readonly view?: EditorViewSession | null
       }> &
         object)
     | null
@@ -777,13 +809,23 @@ function documentIdentityKey(
   if (!document) return NO_DOCUMENT
 
   const session = 'session' in document ? document.session : null
+  const buffer = 'buffer' in document ? document.buffer : null
+  const view = 'view' in document ? document.view : null
   return `${document.documentId ?? ''}\u0000${document.documentMode ?? ''}\u0000${
     document.languageId ?? ''
-  }\u0000${sessionIdentity(session)}`
+  }\u0000${sessionIdentity(session)}\u0000${bufferViewIdentity(buffer, view)}`
 }
 
 const sessionKeys = new WeakMap<DocumentSession, number>()
+const bufferKeys = new WeakMap<EditorTextBuffer, number>()
+const viewKeys = new WeakMap<EditorViewSession, number>()
+const bufferViewSessions = new WeakMap<
+  EditorTextBuffer,
+  WeakMap<EditorViewSession, EditorBufferSession>
+>()
 let nextSessionKey = 1
+let nextBufferKey = 1
+let nextViewKey = 1
 
 function sessionIdentity(session: DocumentSession | null | undefined): string {
   if (!session) return ''
@@ -797,10 +839,83 @@ function sessionIdentity(session: DocumentSession | null | undefined): string {
   return `${key}`
 }
 
+function bufferViewIdentity(
+  buffer: EditorTextBuffer | null | undefined,
+  view: EditorViewSession | null | undefined,
+): string {
+  if (!buffer || !view) return ''
+
+  return `${bufferIdentity(buffer)}:${viewIdentity(view)}`
+}
+
+function bufferIdentity(buffer: EditorTextBuffer): string {
+  const existing = bufferKeys.get(buffer)
+  if (existing !== undefined) return `${existing}`
+
+  const key = nextBufferKey
+  nextBufferKey += 1
+  bufferKeys.set(buffer, key)
+  return `${key}`
+}
+
+function viewIdentity(view: EditorViewSession): string {
+  const existing = viewKeys.get(view)
+  if (existing !== undefined) return `${existing}`
+
+  const key = nextViewKey
+  nextViewKey += 1
+  viewKeys.set(view, key)
+  return `${key}`
+}
+
 function documentHasLiveSession(
   document: Readonly<{ readonly session?: DocumentSession | null }> & object,
 ): boolean {
   return 'session' in document && document.session !== null && document.session !== undefined
+}
+
+function documentHasLiveBuffer(
+  document: Readonly<{
+    readonly buffer?: EditorTextBuffer | null
+    readonly view?: EditorViewSession | null
+  }> &
+    object,
+): boolean {
+  return (
+    'buffer' in document &&
+    'view' in document &&
+    document.buffer !== null &&
+    document.buffer !== undefined &&
+    document.view !== null &&
+    document.view !== undefined
+  )
+}
+
+function reactEditorDocumentSession(
+  document: ReactEditorDocument,
+): DocumentSession | EditorBufferSession | null {
+  if (document.buffer && document.view) {
+    return bufferViewSession(document.buffer, document.view)
+  }
+
+  return document.session ?? null
+}
+
+function bufferViewSession(buffer: EditorTextBuffer, view: EditorViewSession): EditorBufferSession {
+  const existingViews = bufferViewSessions.get(buffer)
+  const existing = existingViews?.get(view)
+  if (existing) return existing
+
+  const session = createEditorBufferSession(buffer, view)
+  if (existingViews) {
+    existingViews.set(view, session)
+    return session
+  }
+
+  const views = new WeakMap<EditorViewSession, EditorBufferSession>()
+  views.set(view, session)
+  bufferViewSessions.set(buffer, views)
+  return session
 }
 
 function createEmptyStoreSnapshot(): ReactEditorStoreSnapshot {

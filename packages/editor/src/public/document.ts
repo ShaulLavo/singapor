@@ -18,7 +18,13 @@ export {
   streamPieceTablePieces,
   streamPieceTableTextChunks,
 } from '../pieceTable'
-export { createDocumentSession, createStaticDocumentSession } from '../documentSession'
+export {
+  createDocumentSession,
+  createEditorBufferSession,
+  createEditorTextBuffer,
+  createEditorViewSession,
+  createStaticDocumentSession,
+} from '../documentSession'
 export { createDocumentTextSnapshot, createStringTextSnapshot } from '../documentTextSnapshot'
 export {
   characterClassAt,
@@ -58,7 +64,14 @@ export type {
   DocumentSessionSelectionRange,
   DocumentTransaction,
   DocumentTransactionMetadata,
+  EditorBufferSession,
+  EditorTextBuffer,
+  EditorTextBufferChange,
+  EditorTextBufferChangeListener,
   EditorTimingMeasurement,
+  EditorViewMetadataValue,
+  EditorViewScrollPosition,
+  EditorViewSession,
 } from '../documentSession'
 export type { DocumentTextSnapshot, TextSnapshot } from '../documentTextSnapshot'
 export type { EditorDocument, TextEdit } from '../tokens'

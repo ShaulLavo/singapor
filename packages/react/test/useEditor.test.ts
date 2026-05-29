@@ -33,6 +33,11 @@ type Diagnostic = {
   readonly name: string
 }
 
+type EditorCursor = {
+  readonly column: number
+  readonly row: number
+}
+
 type DiagnosticGlobal = typeof globalThis & {
   __EDITOR_PERFORMANCE_DIAGNOSTICS__?: ((diagnostic: Diagnostic) => void) | null
 }
@@ -120,6 +125,62 @@ describe('useEditor', () => {
     })
 
     mounted.dispose()
+  })
+
+  it('syncs state cursor while dragging a mouse selection', () => {
+    const cursors: (EditorCursor | null)[] = []
+    let controller!: ReactEditorController
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    document.body.append(host)
+
+    act(() => {
+      root.render(
+        createElement(DragCursorHarness, {
+          onController: (nextController) => {
+            controller = nextController
+          },
+          onCursor: (cursor) => cursors.push(cursor),
+        }),
+      )
+    })
+
+    try {
+      const editor = editorElement(host)
+      if (!editor) throw new Error('Missing editor element')
+
+      mockEditorViewport(editor, 120, 40)
+      act(() => {
+        editor.dispatchEvent(
+          new MouseEvent('mousedown', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 10,
+            clientY: 10,
+            detail: 1,
+          }),
+        )
+      })
+      act(() => {
+        document.dispatchEvent(
+          new MouseEvent('mousemove', { cancelable: true, clientX: 30, clientY: 10 }),
+        )
+      })
+
+      expect(cursors.at(-1)).toEqual({ column: 3, row: 0 })
+      expect(controller.getSnapshot()?.selections[0]).toMatchObject({
+        anchorOffset: 1,
+        headOffset: 3,
+      })
+    } finally {
+      act(() => {
+        document.dispatchEvent(
+          new MouseEvent('mouseup', { cancelable: true, clientX: 30, clientY: 10 }),
+        )
+        root.unmount()
+      })
+      host.remove()
+    }
   })
 
   it('can update selection without revealing it through commands', () => {
@@ -509,6 +570,49 @@ function FineGrainedHarness({
   )
 }
 
+function DragCursorHarness({
+  onController,
+  onCursor,
+}: {
+  readonly onController: (controller: ReactEditorController) => void
+  readonly onCursor: (cursor: EditorCursor | null) => void
+}): ReactElement {
+  const controller = useEditor({
+    document: { text: 'abcdef', documentId: 'a.ts', revision: 1 },
+  })
+
+  useLayoutEffect(() => {
+    onController(controller)
+  }, [controller, onController])
+
+  return createElement(
+    'div',
+    null,
+    createElement(EditorHost, { controller }),
+    createElement(CursorProbe, { controller, onCursor }),
+  )
+}
+
+function CursorProbe({
+  controller,
+  onCursor,
+}: {
+  readonly controller: ReactEditorController
+  readonly onCursor: (cursor: EditorCursor | null) => void
+}): null {
+  const cursor = useEditorSelector(
+    controller,
+    (snapshot) => snapshot.state?.cursor ?? null,
+    cursorsEqual,
+  )
+
+  useLayoutEffect(() => {
+    onCursor(cursor)
+  }, [cursor, onCursor])
+
+  return null
+}
+
 function TextProbe({
   controller,
   renders,
@@ -612,6 +716,13 @@ function mockEditorViewport(
       toJSON: () => ({}),
     }),
   })
+}
+
+function cursorsEqual(left: EditorCursor | null, right: EditorCursor | null): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+
+  return left.column === right.column && left.row === right.row
 }
 
 function selectionsEqual(

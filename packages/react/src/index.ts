@@ -351,12 +351,15 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   ): void {
     if (!this.shouldSyncStore()) return
 
-    this.store.update({
+    const patch = {
       snapshot,
       textSnapshot: snapshot.textSnapshot ?? null,
       lastChange: change,
       updateKind: kind,
-    })
+      ...(kind === 'selection' ? { state: this.getEditor()?.getState() ?? null } : {}),
+    } satisfies ReactEditorStorePatch
+
+    this.store.update(patch)
   }
 
   public syncChange(state: EditorState, change: DocumentSessionChange | null): void {

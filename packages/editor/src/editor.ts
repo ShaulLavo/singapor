@@ -3,6 +3,7 @@ export {
   EDITOR_MERGE_CONFLICT_FEATURE,
   EDITOR_MERGE_CONFLICT_FEATURE_ID,
 } from './mergeConflictPlugin'
+export type { EditorFindFeature } from './editor/findFeature'
 export { Editor } from './editor/Editor'
 export {
   observeEditorMountTiming,

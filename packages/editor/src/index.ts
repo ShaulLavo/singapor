@@ -45,6 +45,7 @@ export {
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
 } from './public/extensions'
+export type { EditorFindFeature } from './public/extensions'
 export { applyEditorTheme, editorThemesEqual, mergeEditorThemes } from './public/rendering'
 export {
   createEditorSyntaxSession,

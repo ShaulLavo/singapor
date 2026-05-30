@@ -4,6 +4,7 @@ export {
   EDITOR_MINIMAP_FEATURE_ID,
 } from '../plugins'
 export { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '../editor/findFeature'
+export type { EditorFindFeature } from '../editor/findFeature'
 export type {
   EditorCapabilityToken,
   EditorCapabilityContribution,

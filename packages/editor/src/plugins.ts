@@ -189,12 +189,18 @@ export type EditorViewContributionContext = {
   readonly container: HTMLElement
   readonly scrollElement: HTMLDivElement
   readonly highlightPrefix?: string
+  hasDocument(): boolean
   getSnapshot(): EditorViewSnapshot
   getFeature?<T>(token: EditorCapabilityToken<T>): T | null
   log?(event: EditorLogInput): void
   revealLine(row: number): void
   focusEditor(): void
   setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
+  setSelections(
+    selections: readonly EditorSelectionRange[],
+    timingName: string,
+    revealOffset?: number,
+  ): void
   setScrollTop(scrollTop: number): void
   reserveOverlayWidth(side: EditorOverlaySide, width: number): void
   textOffsetFromPoint(clientX: number, clientY: number): number | null

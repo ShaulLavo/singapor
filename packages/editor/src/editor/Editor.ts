@@ -1828,6 +1828,7 @@ export class Editor {
       container,
       scrollElement: this.el,
       highlightPrefix: this.highlightPrefix,
+      hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
       getFeature: (key) => this.getFeature(key),
       log: (event) => this.log(event),
@@ -1835,6 +1836,8 @@ export class Editor {
       focusEditor: () => this.focus(),
       setSelection: (anchor, head, timingName, revealOffset) =>
         this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset),
+      setSelections: (selections, timingName, revealOffset) =>
+        this.inputSelection.applyFindSelections(selections, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
       setScrollTop: (scrollTop) => this.setScrollTop(scrollTop),
       textOffsetFromPoint: (clientX, clientY) =>

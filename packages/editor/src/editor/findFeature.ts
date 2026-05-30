@@ -4,6 +4,7 @@ export const EDITOR_FIND_FEATURE_ID = 'editor.find'
 
 export type EditorFindFeature = {
   openFind(): boolean
+  toggleFind(): boolean
   openFindReplace(): boolean
   closeFind(): boolean
   findNext(): boolean

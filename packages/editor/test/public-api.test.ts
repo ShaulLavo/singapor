@@ -11,6 +11,9 @@ import {
 import { Editor } from '@editor/core/editor'
 import {
   createEditorCapabilityToken,
+  EDITOR_FIND_FEATURE,
+  EDITOR_FIND_FEATURE_ID,
+  type EditorFindFeature,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   type EditorPluginContext,
@@ -65,9 +68,23 @@ describe('public API facade', () => {
     const syntax = createEmptySyntaxResult()
     const theme: EditorTheme = { foregroundColor: 'red' }
     const token = createEditorCapabilityToken('test.capability')
+    const findFeature = {
+      openFind: () => false,
+      toggleFind: () => false,
+      openFindReplace: () => false,
+      closeFind: () => false,
+      findNext: () => false,
+      findPrevious: () => false,
+      replaceOne: () => false,
+      replaceAll: () => false,
+      selectAllMatches: () => false,
+    } satisfies EditorFindFeature
 
+    expect(EDITOR_FIND_FEATURE_ID).toBe('editor.find')
+    expect(EDITOR_FIND_FEATURE.id).toBe('editor.find')
     expect(EDITOR_MINIMAP_FEATURE_ID).toBe('editor.minimap')
     expect(EDITOR_MINIMAP_FEATURE.id).toBe('editor.minimap')
+    expect(findFeature.openFind()).toBe(false)
     expect(token.id).toBe('test.capability')
     expect(applyEditorTheme).toBeTypeOf('function')
     expect(theme.foregroundColor).toBe('red')

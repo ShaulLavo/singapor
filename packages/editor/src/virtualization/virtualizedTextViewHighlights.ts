@@ -5,7 +5,8 @@ import {
   tokenProjectionLiveRangeStatus,
 } from '../editor/tokenProjection'
 import { getEditorTokenIndex, type EditorTokenIndex } from '../editor/tokenIndex'
-import { buildHighlightRule, clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
+import { clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
+import { getSharedTokenHighlights } from './sharedTokenHighlights'
 import {
   addTokenRangeToChunk,
   appendTokenRange,
@@ -754,31 +755,31 @@ function ensureTokenGroup(
   const existing = view.tokenGroups.get(styleKey)
   if (existing) return { group: existing, created: false }
 
-  const name = `${view.selectionHighlightName}-token-${view.nextTokenGroupId++}`
-  const highlight = new Highlight()
-  if (!highlight) return { group: null, created: false }
+  const shared = getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)
+  if (!shared) return { group: null, created: false }
 
+  const handle = shared.acquire(styleKey, style)
   const group = {
-    name,
-    highlight,
+    name: handle.name,
+    highlight: handle.highlight,
     style,
     styleKey,
   }
   view.tokenGroups.set(styleKey, group)
-  view.highlightRegistry?.set(name, group.highlight)
   return { group, created: true }
 }
 
 export function clearTokenHighlights(view: VirtualizedTextViewInternal): void {
   if (view.tokenGroups.size === 0 && view.rowTokenRanges.size === 0) return
 
-  for (const group of view.tokenGroups.values()) {
-    view.highlightRegistry?.delete(group.name)
-  }
+  // Deletes this view's ranges out of the (shared) Highlight objects via tokenGroups,
+  // so it must run before tokenGroups is cleared.
+  clearRowTokenState(view)
+
+  const shared = getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)
+  for (const group of view.tokenGroups.values()) shared?.release(group.styleKey)
 
   view.tokenGroups.clear()
-  clearRowTokenState(view)
-  view.nextTokenGroupId = 0
   rebuildStyleRules(view)
 }
 
@@ -818,11 +819,13 @@ function removeUnusedTokenGroups(
   view: VirtualizedTextViewInternal,
   styleKeys: ReadonlySet<string>,
 ): boolean {
+  const shared = getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)
   let removed = false
   for (const [key, group] of view.tokenGroups) {
     if (styleKeys.has(key)) continue
 
-    view.highlightRegistry?.delete(group.name)
+    deleteViewTokenRangesForStyle(view, key, group.highlight)
+    shared?.release(key)
     view.tokenGroups.delete(key)
     removed = true
   }
@@ -831,6 +834,20 @@ function removeUnusedTokenGroups(
 
   clearRowTokenState(view)
   return true
+}
+
+function deleteViewTokenRangesForStyle(
+  view: VirtualizedTextViewInternal,
+  styleKey: string,
+  highlight: Highlight,
+): void {
+  for (const rangesByStyle of view.rowTokenRanges.values()) {
+    const ranges = rangesByStyle.get(styleKey)
+    if (!ranges) continue
+
+    for (const range of ranges) highlight.delete(range)
+    rangesByStyle.delete(styleKey)
+  }
 }
 
 function canKeepLiveTokenRanges(
@@ -1112,13 +1129,15 @@ function hideSecondaryCaretElements(view: VirtualizedTextViewInternal, startInde
 }
 
 export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
+  // Token highlight rules live in the shared per-document stylesheet
+  // (sharedTokenHighlights), written once here per batch. The per-view style element only
+  // carries range/decoration highlight rules, which are specific to this view's ranges.
+  getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)?.flush()
+
   const rules: string[] = []
   for (const group of view.rangeHighlightGroups.values()) {
     const rule = rangeHighlightRule(group.name, group.style)
     if (rule) rules.push(rule)
-  }
-  for (const group of view.tokenGroups.values()) {
-    rules.push(buildHighlightRule(group.name, group.style))
   }
 
   const nextRules = rules.join('\n')

@@ -107,6 +107,54 @@ describe('VirtualizedTextView', () => {
     })
   })
 
+  it('mounts all rows without vertical spacer churn in static scroll mode', () => {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      scrollMode: 'static',
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+    })
+    view.setText(createLines(10))
+    view.setScrollMetrics(60, 40)
+
+    const spacer = container.querySelector('.editor-virtualized-spacer') as HTMLElement
+    expect(view.scrollElement.dataset.editorScrollMode).toBe('static')
+    expect(view.getState()).toMatchObject({
+      scrollHeight: 200,
+      scrollTop: 0,
+      totalHeight: 200,
+      viewportHeight: 200,
+      visibleRange: { start: 0, end: 10 },
+    })
+    expect(view.getState().mountedRows.map((row) => row.index)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+    ])
+    expect(spacer.style.height).toBe('200px')
+    expect(spacer.style.transform).toBe('')
+
+    view.setScrollMetrics(120, 40)
+
+    expect(view.getState().scrollTop).toBe(0)
+    expect(spacer.style.height).toBe('200px')
+    expect(spacer.style.transform).toBe('')
+  })
+
+  it('keeps mounted rows stable across same-range viewport resizes', () => {
+    view.setText(createLines(100))
+    view.setScrollMetrics(0, 100, 240)
+
+    const mountedBefore = Array.from(container.querySelectorAll('[data-editor-virtual-row]'))
+    const stateBefore = view.getState()
+
+    view.setScrollMetrics(0, 99, 320)
+
+    const mountedAfter = Array.from(container.querySelectorAll('[data-editor-virtual-row]'))
+    expect(view.getState().visibleRange).toEqual(stateBefore.visibleRange)
+    expect(mountedAfter).toEqual(mountedBefore)
+  })
+
   it('reuses cached browser text metrics for matching editor styles', () => {
     clearBrowserTextMetricsCache()
     const first = document.createElement('div')

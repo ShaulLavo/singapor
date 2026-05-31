@@ -11,6 +11,7 @@ import type {
   VirtualizedFoldMarker,
   VirtualizedTextChunk,
   VirtualizedTextRow,
+  VirtualizedTextViewScrollMode,
 } from './virtualizedTextViewTypes'
 import {
   chunkContainsDomBoundary,
@@ -64,6 +65,14 @@ export function normalizeHorizontalOverscan(overscan: number | undefined): numbe
   }
 
   return Math.floor(overscan)
+}
+
+export function normalizeScrollMode(
+  scrollMode: VirtualizedTextViewScrollMode | undefined,
+): VirtualizedTextViewScrollMode {
+  if (scrollMode === 'static') return 'static'
+
+  return 'virtualized'
 }
 
 export function normalizeFoldMarkers(
@@ -148,6 +157,7 @@ export function createVirtualizerOptions(
   rowHeight: number,
   overscan: number,
   rowGap?: number,
+  scrollMode?: VirtualizedTextViewScrollMode,
 ): FixedRowVirtualizerOptions {
   return {
     count: 1,
@@ -155,6 +165,7 @@ export function createVirtualizerOptions(
     rowGap: normalizeRowGap(rowGap),
     overscan,
     enabled: true,
+    scrollMode: normalizeScrollMode(scrollMode),
   }
 }
 

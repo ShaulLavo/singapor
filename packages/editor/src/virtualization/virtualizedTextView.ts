@@ -30,6 +30,7 @@ import {
   normalizeHorizontalOverscan,
   normalizeRowGap,
   normalizeRowHeight,
+  normalizeScrollMode,
 } from './virtualizedTextViewHelpers'
 import {
   adoptTokens as adoptViewTokens,
@@ -128,6 +129,7 @@ import type {
   VirtualizedFoldMarker,
   VirtualizedTextRowDecoration,
   VirtualizedTextViewOptions,
+  VirtualizedTextViewScrollMode,
   VirtualizedTextViewState,
 } from './virtualizedTextViewTypes'
 
@@ -146,6 +148,7 @@ export type {
   VirtualizedTextRowDecoration,
   VirtualizedTextRow,
   VirtualizedTextViewOptions,
+  VirtualizedTextViewScrollMode,
   VirtualizedTextViewState,
 } from './virtualizedTextViewTypes'
 
@@ -162,6 +165,13 @@ function normalizeGutterWidthProvider(
   if (gutterWidth === undefined) return null
 
   return () => gutterWidth
+}
+
+function setScrollModeAttribute(
+  element: HTMLElement,
+  scrollMode: VirtualizedTextViewScrollMode,
+): void {
+  element.dataset.editorScrollMode = scrollMode
 }
 
 export class VirtualizedTextView {
@@ -181,6 +191,7 @@ export class VirtualizedTextView {
     const lineHeightOverride = options.lineHeight ?? options.rowHeight ?? null
     const rowHeight = normalizeRowHeight(lineHeightOverride ?? measuredMetrics.rowHeight)
     const rowGap = normalizeRowGap(options.rowGap)
+    const scrollMode = normalizeScrollMode(options.scrollMode)
     const inputElement = createInputElement(container)
     const spacer = container.ownerDocument.createElement('div')
     const gutterElement = container.ownerDocument.createElement('div')
@@ -194,7 +205,7 @@ export class VirtualizedTextView {
     )
     const tabSize = normalizeTabSize(options.tabSize)
     const virtualizer = new FixedRowVirtualizer(
-      createVirtualizerOptions(rowHeight, overscan, rowGap),
+      createVirtualizerOptions(rowHeight, overscan, rowGap, scrollMode),
     )
     const initialTextSnapshot = createStringTextSnapshot('')
     const initialBlockRows = options.blockRows ?? []
@@ -223,6 +234,7 @@ export class VirtualizedTextView {
       secondaryCaretElements: [],
       styleEl,
       virtualizer,
+      scrollMode,
       longLineChunkSize,
       longLineChunkThreshold,
       horizontalOverscanColumns: normalizeHorizontalOverscan(options.horizontalOverscanColumns),
@@ -266,7 +278,6 @@ export class VirtualizedTextView {
       rowTokenSignatures: new Map(),
       rowTokenRanges: new Map(),
       tokenProjectionDirtyStartRow: null,
-      nextTokenGroupId: 0,
       nextTokenHighlightSlotId: 0,
       selectionStart: null,
       selectionEnd: null,
@@ -274,6 +285,9 @@ export class VirtualizedTextView {
       selections: [],
       lastSelectionHighlightSignature: '',
       lastRenderedRowsKey: '',
+      lastSpacerHeight: '',
+      lastSpacerTransform: '',
+      lastSpacerWidth: '',
       gutterContributionWidths: new Map(),
       gutterWidthDirty: true,
       currentGutterWidth: 0,
@@ -291,6 +305,7 @@ export class VirtualizedTextView {
 
     scrollElement.style.setProperty('--editor-gutter-width', '0px')
     scrollElement.style.setProperty('--editor-tab-size', String(tabSize))
+    setScrollModeAttribute(scrollElement, scrollMode)
     setBlockLanesLayout(this.view, options.blockLanes ?? [])
     applyRowHeight(this.view, rowHeight)
     spacer.className = 'editor-virtualized-spacer'
@@ -402,6 +417,18 @@ export class VirtualizedTextView {
     clearRowGeometryCaches(view)
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
+    return true
+  }
+
+  public setScrollMode(scrollMode: VirtualizedTextViewScrollMode | undefined): boolean {
+    const view = this.view
+    const nextScrollMode = normalizeScrollMode(scrollMode)
+    if (view.scrollMode === nextScrollMode) return false
+
+    view.scrollMode = nextScrollMode
+    setScrollModeAttribute(view.scrollElement, nextScrollMode)
+    view.lastRenderedRowsKey = ''
+    view.virtualizer.updateOptions({ scrollMode: nextScrollMode })
     return true
   }
 
@@ -715,12 +742,12 @@ export class VirtualizedTextView {
 
   private renderSnapshot(snapshot: FixedRowVirtualizerSnapshot): void {
     const view = this.view
-    updateGutterWidthIfNeeded(view)
+    const gutterWidthChanged = updateGutterWidthIfNeeded(view)
     updateSpacerHeight(view, snapshot)
-    updateSpacerWidth(view)
-    renderBlockLanes(view, snapshot)
+    updateSpacerWidth(view, snapshot.viewportWidth)
     const key = rowsKey(view, snapshot)
     if (key === view.lastRenderedRowsKey) {
+      if (gutterWidthChanged) renderBlockLanes(view, snapshot)
       view.onViewportChange?.()
       return
     }

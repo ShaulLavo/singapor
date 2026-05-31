@@ -1515,23 +1515,24 @@ export function resetContentWidthScan(view: VirtualizedTextViewInternal): void {
   view.lastWidthScanEnd = -1
 }
 
-export function updateGutterWidthIfNeeded(view: VirtualizedTextViewInternal): void {
-  if (!view.gutterWidthDirty) return
+export function updateGutterWidthIfNeeded(view: VirtualizedTextViewInternal): boolean {
+  if (!view.gutterWidthDirty) return false
 
   view.gutterWidthDirty = false
-  applyGutterWidth(view)
+  return applyGutterWidth(view)
 }
 
-function applyGutterWidth(view: VirtualizedTextViewInternal): void {
+function applyGutterWidth(view: VirtualizedTextViewInternal): boolean {
   const widths = gutterContributionWidthMap(view)
   updateGutterContributionWidths(view, widths)
 
   const nextWidth = fixedGutterWidth(view) + totalGutterContributionWidth(widths)
   setStyleValue(view.scrollElement, '--editor-gutter-width', `${nextWidth}px`)
-  if (nextWidth === view.currentGutterWidth) return
+  if (nextWidth === view.currentGutterWidth) return false
 
   view.currentGutterWidth = nextWidth
   applySpacerWidth(view)
+  return true
 }
 
 function fixedGutterWidth(view: VirtualizedTextViewInternal): number {
@@ -1668,15 +1669,19 @@ function applyContentWidth(view: VirtualizedTextViewInternal, visualColumns: num
   applySpacerWidth(view)
 }
 
-function applySpacerWidth(view: VirtualizedTextViewInternal): void {
-  const width = `${spacerWidth(view)}px`
-  if (view.spacer.style.width === width) return
+function applySpacerWidth(
+  view: VirtualizedTextViewInternal,
+  viewportWidth = view.virtualizer.getSnapshot().viewportWidth,
+): void {
+  const width = `${spacerWidth(view, viewportWidth)}px`
+  if (view.lastSpacerWidth === width) return
 
+  view.lastSpacerWidth = width
   view.spacer.style.width = width
 }
 
-export function updateSpacerWidth(view: VirtualizedTextViewInternal): void {
-  applySpacerWidth(view)
+export function updateSpacerWidth(view: VirtualizedTextViewInternal, viewportWidth?: number): void {
+  applySpacerWidth(view, viewportWidth)
 }
 
 export function updateSpacerHeight(
@@ -1686,8 +1691,7 @@ export function updateSpacerHeight(
   applyTotalHeight(view, snapshot)
 }
 
-function spacerWidth(view: VirtualizedTextViewInternal): number {
-  const viewportWidth = view.virtualizer.getSnapshot().viewportWidth
+function spacerWidth(view: VirtualizedTextViewInternal, viewportWidth: number): number {
   return Math.max(viewportWidth, view.contentWidth + gutterWidth(view))
 }
 
@@ -1702,8 +1706,22 @@ function applyTotalHeight(
   const height = `${snapshot.nativeScrollHeight}px`
   const offset = snapshot.nativeScrollTop - snapshot.scrollTop
   const transform = offset === 0 ? '' : `translateY(${offset}px)`
-  setStyleValue(view.spacer, 'height', height)
-  setStyleValue(view.spacer, 'transform', transform)
+  setSpacerHeight(view, height)
+  setSpacerTransform(view, transform)
+}
+
+function setSpacerHeight(view: VirtualizedTextViewInternal, height: string): void {
+  if (view.lastSpacerHeight === height) return
+
+  view.lastSpacerHeight = height
+  view.spacer.style.height = height
+}
+
+function setSpacerTransform(view: VirtualizedTextViewInternal, transform: string): void {
+  if (view.lastSpacerTransform === transform) return
+
+  view.lastSpacerTransform = transform
+  view.spacer.style.transform = transform
 }
 
 export function getMountedRows(

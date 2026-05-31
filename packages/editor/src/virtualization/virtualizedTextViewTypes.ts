@@ -26,6 +26,7 @@ export type VirtualizedTextViewOptions = {
   readonly rowHeight?: number
   readonly rowGap?: number
   readonly overscan?: number
+  readonly scrollMode?: VirtualizedTextViewScrollMode
   readonly className?: string
   readonly gutterWidth?: number | ((context: EditorGutterWidthContext) => number)
   readonly longLineChunkSize?: number
@@ -47,6 +48,8 @@ export type VirtualizedTextViewOptions = {
   readonly tabSize?: number
   readonly textMetrics?: BrowserTextMetrics
 }
+
+export type VirtualizedTextViewScrollMode = 'virtualized' | 'static'
 
 export type VirtualizedBlockRowMount = (
   container: HTMLElement,

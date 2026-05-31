@@ -108,6 +108,54 @@ describe('fixed row virtualizer', () => {
     virtualizer.dispose()
   })
 
+  it('renders the full document range in static scroll mode', () => {
+    const virtualizer = new FixedRowVirtualizer({
+      count: 5,
+      rowHeight: 20,
+      overscan: 0,
+      scrollMode: 'static',
+    })
+
+    virtualizer.setScrollMetrics({ scrollTop: 60, viewportHeight: 40 })
+
+    expect(virtualizer.getSnapshot()).toMatchObject({
+      nativeScrollHeight: 100,
+      nativeScrollTop: 0,
+      scrollHeight: 100,
+      scrollTop: 0,
+      totalSize: 100,
+      viewportHeight: 100,
+      visibleRange: { start: 0, end: 5 },
+      virtualItems: [
+        { index: 0, start: 0, size: 20 },
+        { index: 1, start: 20, size: 20 },
+        { index: 2, start: 40, size: 20 },
+        { index: 3, start: 60, size: 20 },
+        { index: 4, start: 80, size: 20 },
+      ],
+    })
+  })
+
+  it('skips scroll listeners and logical scroll properties in static scroll mode', () => {
+    const virtualizer = new FixedRowVirtualizer({
+      count: 100,
+      rowHeight: 20,
+      scrollMode: 'static',
+    })
+    const element = document.createElement('div')
+    const addEventListener = vi.spyOn(element, 'addEventListener')
+
+    virtualizer.attachScrollElement(element, undefined, {
+      readInitialScrollPosition: false,
+    })
+
+    expect(addEventListener).not.toHaveBeenCalled()
+    expect(Object.getOwnPropertyDescriptor(element, 'scrollTop')).toBeUndefined()
+    expect(Object.getOwnPropertyDescriptor(element, 'scrollHeight')).toBeUndefined()
+
+    virtualizer.dispose()
+  })
+
   it('does not write native scrollTop when option updates keep the native offset unchanged', () => {
     const virtualizer = new FixedRowVirtualizer({
       count: 1,
@@ -171,6 +219,7 @@ describe('fixed row virtualizer', () => {
 
   it('does not read native scrollTop while syncing resize entries', () => {
     const originalResizeObserver = globalThis.ResizeObserver
+    const frameScheduler = installFrameScheduler()
     const observers: TestResizeObserver[] = []
 
     globalThis.ResizeObserver = class extends TestResizeObserver {
@@ -208,6 +257,15 @@ describe('fixed row virtualizer', () => {
       expect(getNativeScrollTop).not.toHaveBeenCalled()
       expect(virtualizer.getSnapshot()).toMatchObject({
         scrollTop: 200,
+        viewportHeight: 100,
+        viewportWidth: 0,
+      })
+
+      frameScheduler.flush()
+
+      expect(getNativeScrollTop).not.toHaveBeenCalled()
+      expect(virtualizer.getSnapshot()).toMatchObject({
+        scrollTop: 200,
         viewportHeight: 160,
         viewportWidth: 320,
       })
@@ -215,6 +273,193 @@ describe('fixed row virtualizer', () => {
       virtualizer.dispose()
     } finally {
       globalThis.ResizeObserver = originalResizeObserver
+      frameScheduler.restore()
+    }
+  })
+
+  it('coalesces resize entries into one frame update with the latest dimensions', () => {
+    const originalResizeObserver = globalThis.ResizeObserver
+    const frameScheduler = installFrameScheduler()
+    const observers: TestResizeObserver[] = []
+
+    globalThis.ResizeObserver = class extends TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        super(callback)
+        observers.push(this)
+      }
+    } as typeof ResizeObserver
+
+    try {
+      const onChange = vi.fn()
+      const virtualizer = new FixedRowVirtualizer({
+        count: 100,
+        rowHeight: 20,
+      })
+      const element = document.createElement('div')
+
+      virtualizer.attachScrollElement(element, onChange, {
+        readInitialScrollPosition: false,
+      })
+      virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 100, viewportWidth: 100 })
+      onChange.mockClear()
+
+      observers[0]?.resize(element, 320, 160)
+      observers[0]?.resize(element, 640, 240)
+
+      expect(onChange).not.toHaveBeenCalled()
+      expect(frameScheduler.pendingCount()).toBe(1)
+
+      frameScheduler.flush()
+
+      expect(onChange).toHaveBeenCalledTimes(1)
+      expect(virtualizer.getSnapshot()).toMatchObject({
+        viewportHeight: 240,
+        viewportWidth: 640,
+      })
+
+      virtualizer.dispose()
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+      frameScheduler.restore()
+    }
+  })
+
+  it('combines a pending resize with the next scroll sync', () => {
+    const originalResizeObserver = globalThis.ResizeObserver
+    const frameScheduler = installFrameScheduler()
+    const observers: TestResizeObserver[] = []
+
+    globalThis.ResizeObserver = class extends TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        super(callback)
+        observers.push(this)
+      }
+    } as typeof ResizeObserver
+
+    try {
+      const onChange = vi.fn()
+      const virtualizer = new FixedRowVirtualizer({
+        count: 100,
+        rowHeight: 20,
+      })
+      const element = document.createElement('div')
+      let nativeScrollTop = 0
+
+      Object.defineProperty(element, 'scrollTop', {
+        configurable: true,
+        get: () => nativeScrollTop,
+        set: (value: number) => {
+          nativeScrollTop = value
+        },
+      })
+
+      virtualizer.attachScrollElement(element, onChange, {
+        readInitialScrollPosition: false,
+      })
+      virtualizer.setScrollMetrics({ scrollTop: 200, viewportHeight: 100, viewportWidth: 100 })
+      onChange.mockClear()
+
+      observers[0]?.resize(element, 320, 160)
+      nativeScrollTop = 260
+      element.scrollLeft = 12
+      element.dispatchEvent(new Event('scroll'))
+
+      expect(frameScheduler.pendingCount()).toBe(1)
+
+      frameScheduler.flush()
+
+      expect(onChange).toHaveBeenCalledTimes(1)
+      expect(virtualizer.getSnapshot()).toMatchObject({
+        scrollLeft: 12,
+        scrollTop: 260,
+        viewportHeight: 160,
+        viewportWidth: 320,
+      })
+
+      virtualizer.dispose()
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+      frameScheduler.restore()
+    }
+  })
+
+  it('combines a pending resize with logical scrollTop writes', () => {
+    const originalResizeObserver = globalThis.ResizeObserver
+    const frameScheduler = installFrameScheduler()
+    const observers: TestResizeObserver[] = []
+
+    globalThis.ResizeObserver = class extends TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        super(callback)
+        observers.push(this)
+      }
+    } as typeof ResizeObserver
+
+    try {
+      const virtualizer = new FixedRowVirtualizer({
+        count: 100,
+        rowHeight: 20,
+      })
+      const element = document.createElement('div')
+
+      virtualizer.attachScrollElement(element, undefined, {
+        readInitialScrollPosition: false,
+      })
+      virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 100, viewportWidth: 100 })
+
+      observers[0]?.resize(element, 320, 160)
+      element.scrollTop = 260
+
+      expect(frameScheduler.pendingCount()).toBe(0)
+      expect(virtualizer.getSnapshot()).toMatchObject({
+        scrollTop: 260,
+        viewportHeight: 160,
+        viewportWidth: 320,
+      })
+
+      virtualizer.dispose()
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+      frameScheduler.restore()
+    }
+  })
+
+  it('cancels pending resize work when detached', () => {
+    const originalResizeObserver = globalThis.ResizeObserver
+    const frameScheduler = installFrameScheduler()
+    const observers: TestResizeObserver[] = []
+
+    globalThis.ResizeObserver = class extends TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        super(callback)
+        observers.push(this)
+      }
+    } as typeof ResizeObserver
+
+    try {
+      const onChange = vi.fn()
+      const virtualizer = new FixedRowVirtualizer({
+        count: 100,
+        rowHeight: 20,
+      })
+      const element = document.createElement('div')
+
+      virtualizer.attachScrollElement(element, onChange, {
+        readInitialScrollPosition: false,
+      })
+      virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 100 })
+      onChange.mockClear()
+
+      observers[0]?.resize(element, 320, 160)
+      expect(frameScheduler.pendingCount()).toBe(1)
+
+      virtualizer.dispose()
+      frameScheduler.flush()
+
+      expect(onChange).not.toHaveBeenCalled()
+    } finally {
+      globalThis.ResizeObserver = originalResizeObserver
+      frameScheduler.restore()
     }
   })
 
@@ -375,6 +620,56 @@ class TestResizeObserver implements ResizeObserver {
   public resize(target: Element, width: number, height: number): void {
     this.callback([resizeEntry(target, width, height)], this)
   }
+}
+
+function installFrameScheduler(): {
+  flush(): void
+  pendingCount(): number
+  restore(): void
+} {
+  const originalRequest = Reflect.get(globalThis, 'requestAnimationFrame') as
+    | typeof requestAnimationFrame
+    | undefined
+  const originalCancel = Reflect.get(globalThis, 'cancelAnimationFrame') as
+    | typeof cancelAnimationFrame
+    | undefined
+  let nextHandle = 1
+  const callbacks = new Map<number, FrameRequestCallback>()
+
+  globalThis.requestAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {
+    const handle = nextHandle
+    nextHandle += 1
+    callbacks.set(handle, callback)
+    return handle
+  })
+  globalThis.cancelAnimationFrame = vi.fn((handle: number): void => {
+    callbacks.delete(handle)
+  })
+
+  return {
+    flush: () => {
+      const pending = Array.from(callbacks.values())
+      callbacks.clear()
+      for (const callback of pending) callback(0)
+    },
+    pendingCount: () => callbacks.size,
+    restore: () => {
+      restoreFrameFunction('requestAnimationFrame', originalRequest)
+      restoreFrameFunction('cancelAnimationFrame', originalCancel)
+    },
+  }
+}
+
+function restoreFrameFunction(
+  name: 'requestAnimationFrame' | 'cancelAnimationFrame',
+  value: typeof requestAnimationFrame | typeof cancelAnimationFrame | undefined,
+): void {
+  if (value) {
+    Reflect.set(globalThis, name, value)
+    return
+  }
+
+  Reflect.deleteProperty(globalThis, name)
 }
 
 function resizeEntry(target: Element, width: number, height: number): ResizeObserverEntry {

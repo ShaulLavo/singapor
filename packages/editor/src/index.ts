@@ -114,6 +114,7 @@ export type {
   EditorOpenDocumentOptions,
   EditorOptions,
   EditorRangeDecoration,
+  EditorScrollMode,
   EditorScrollPosition,
   EditorSelectionRevealOptions,
   EditorSelectionRevealTarget,

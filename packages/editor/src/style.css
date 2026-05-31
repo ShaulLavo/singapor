@@ -89,6 +89,11 @@
   contain: layout paint style;
 }
 
+.editor-virtualized[data-editor-scroll-mode='static'] {
+  overflow-x: auto;
+  overflow-y: clip;
+}
+
 .editor-virtualized-spacer {
   contain: layout paint style;
   min-width: max-content;

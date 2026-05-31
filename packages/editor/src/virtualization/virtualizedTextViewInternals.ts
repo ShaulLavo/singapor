@@ -15,6 +15,7 @@ import type {
   VirtualizedBlockLaneMount,
   VirtualizedBlockRowMount,
   VirtualizedFoldMarker,
+  VirtualizedTextViewScrollMode,
   VirtualizedTextRowDecoration,
 } from './virtualizedTextViewTypes'
 
@@ -81,6 +82,7 @@ export interface VirtualizedTextViewInternal {
   readonly secondaryCaretElements: HTMLDivElement[]
   readonly styleEl: HTMLStyleElement
   readonly virtualizer: FixedRowVirtualizer
+  scrollMode: VirtualizedTextViewScrollMode
   readonly longLineChunkSize: number
   readonly longLineChunkThreshold: number
   readonly horizontalOverscanColumns: number
@@ -124,7 +126,6 @@ export interface VirtualizedTextViewInternal {
   rowTokenSignatures: Map<number, string>
   rowTokenRanges: Map<number, Map<string, readonly AbstractRange[]>>
   tokenProjectionDirtyStartRow: number | null
-  nextTokenGroupId: number
   nextTokenHighlightSlotId: number
   selectionStart: number | null
   selectionEnd: number | null
@@ -132,6 +133,9 @@ export interface VirtualizedTextViewInternal {
   selections: readonly VirtualizedStoredSelection[]
   lastSelectionHighlightSignature: string
   lastRenderedRowsKey: string
+  lastSpacerHeight: string
+  lastSpacerTransform: string
+  lastSpacerWidth: string
   gutterContributionWidths: ReadonlyMap<string, number>
   gutterWidthDirty: boolean
   currentGutterWidth: number

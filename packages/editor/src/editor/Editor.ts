@@ -292,6 +292,7 @@ export class Editor {
       hiddenCharacters: options.hiddenCharacters,
       lineHeight: options.lineHeight,
       rowGap: options.rowGap,
+      scrollMode: options.scrollMode,
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
       blockRowMount: (container, row) => this.blockSurfaces.mountRow(container, row),
@@ -928,6 +929,17 @@ export class Editor {
       action: 'editor.layout.row_gap_changed',
       level: 'info',
       layout: { rowGap },
+    })
+  }
+
+  setScrollMode(scrollMode: EditorOptions['scrollMode']): void {
+    if (!this.view.setScrollMode(scrollMode)) return
+
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.layout.scroll_mode_changed',
+      level: 'info',
+      layout: { scrollMode },
     })
   }
 

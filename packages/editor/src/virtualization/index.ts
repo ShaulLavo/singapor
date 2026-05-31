@@ -10,6 +10,7 @@ export type { BrowserTextMetrics } from './browserMetrics'
 export type { VirtualizedTextSelection } from './virtualizedTextViewInternals'
 export type {
   FixedRowScrollMetrics,
+  FixedRowScrollMode,
   FixedRowVirtualItem,
   FixedRowVirtualizerChangeHandler,
   FixedRowVirtualizerOptions,
@@ -33,5 +34,6 @@ export type {
   VirtualizedTextRowDecoration,
   VirtualizedTextRow,
   VirtualizedTextViewOptions,
+  VirtualizedTextViewScrollMode,
   VirtualizedTextViewState,
 } from './virtualizedTextViewTypes'

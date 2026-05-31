@@ -340,6 +340,10 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     syncRowGap(this.getEditor(), this.options.rowGap)
   }
 
+  public syncScrollModeOption(): void {
+    syncScrollMode(this.getEditor(), this.options.scrollMode)
+  }
+
   public syncSelectionOption(): void {
     syncSelection(this.getEditor(), this.options.selection)
   }
@@ -429,6 +433,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     syncEditability(editor, this.options.editability)
     syncRangeDecorations(editor, this.options.rangeDecorations)
     syncRowGap(editor, this.options.rowGap)
+    syncScrollMode(editor, this.options.scrollMode)
     syncSelection(editor, this.options.selection)
     syncScrollPosition(editor, this.options.scrollPosition)
   }
@@ -579,6 +584,10 @@ function useControlledOptionSync(
   )
   useEditorLayoutEffect(() => controller.syncRowGapOption(), [controller, options.rowGap])
   useEditorLayoutEffect(
+    () => controller.syncScrollModeOption(),
+    [controller, options.scrollMode],
+  )
+  useEditorLayoutEffect(
     () => controller.syncSelectionOption(),
     [controller, selection?.anchor, selection?.head, selection?.reveal, selection?.revealOffset],
   )
@@ -706,6 +715,12 @@ function syncRowGap(editor: Editor | null, rowGap: number | undefined): void {
   if (!editor || rowGap === undefined) return
 
   editor.setRowGap(rowGap)
+}
+
+function syncScrollMode(editor: Editor | null, scrollMode: EditorOptions['scrollMode']): void {
+  if (!editor) return
+
+  editor.setScrollMode(scrollMode)
 }
 
 function syncSelection(

@@ -17,6 +17,7 @@ import {
   chunkContainsDomBoundary,
   clearRowGeometryCache,
   createDomRangeForChunkRange,
+  createStaticRangeForChunkRange,
 } from './virtualizedTextViewGeometry'
 
 export const DEFAULT_ROW_HEIGHT = 24
@@ -357,34 +358,96 @@ export function getOrCreateTokenSegments(
   return segments
 }
 
+export type TokenSegmentAppendResult = 'added' | 'merged-adjacent' | 'merged-gap' | 'skipped'
+
 export function appendTokenSegmentForChunk(
   segments: TokenRowSegment[],
   chunk: VirtualizedTextChunk,
   range: OffsetRange,
   style: EditorTokenStyle,
   styleKey: string,
-): void {
-  if (!rangesIntersect(range.start, range.end, chunk.startOffset, chunk.endOffset)) return
+): TokenSegmentAppendResult {
+  if (!rangesIntersect(range.start, range.end, chunk.startOffset, chunk.endOffset)) {
+    return 'skipped'
+  }
+
+  const start = Math.max(range.start, chunk.startOffset)
+  const end = Math.min(range.end, chunk.endOffset)
+  if (end <= start) return 'skipped'
+
+  const last = segments.at(-1)
+  if (last) {
+    const mergeResult = tokenSegmentMergeResult(last, chunk, start, style, styleKey)
+    if (mergeResult) {
+      segments[segments.length - 1] = {
+        ...last,
+        end: Math.max(last.end, end),
+      }
+      return mergeResult
+    }
+  }
 
   segments.push({
     chunk,
-    start: Math.max(range.start, chunk.startOffset),
-    end: Math.min(range.end, chunk.endOffset),
+    start,
+    end,
     style,
     styleKey,
   })
+  return 'added'
+}
+
+function tokenSegmentMergeResult(
+  segment: TokenRowSegment,
+  chunk: VirtualizedTextChunk,
+  start: number,
+  style: EditorTokenStyle,
+  styleKey: string,
+): TokenSegmentAppendResult | null {
+  if (segment.chunk !== chunk) return null
+  if (segment.styleKey !== styleKey) return null
+  if (start <= segment.end) return 'merged-adjacent'
+  if (!tokenStyleCanCoverWhitespaceGap(style)) return null
+
+  return chunkRangeIsPlainWhitespace(chunk, segment.end, start) ? 'merged-gap' : null
+}
+
+function tokenStyleCanCoverWhitespaceGap(style: EditorTokenStyle): boolean {
+  return !style.backgroundColor && !style.textDecoration
+}
+
+function chunkRangeIsPlainWhitespace(
+  chunk: VirtualizedTextChunk,
+  startOffset: number,
+  endOffset: number,
+): boolean {
+  const localStart = startOffset - chunk.startOffset
+  const localEnd = endOffset - chunk.startOffset
+  if (localEnd <= localStart) return true
+
+  for (let index = localStart; index < localEnd; index += 1) {
+    const charCode = chunk.text.charCodeAt(index)
+    if (charCode === 32 || charCode === 9) continue
+    return false
+  }
+
+  return true
 }
 
 export function tokenRowSignature(
   row: MountedVirtualizedTextRow,
   segments: readonly TokenRowSegment[],
 ): string {
-  const parts = [`${row.chunkKey}:${row.text.length}`]
+  const parts = [tokenRowBaseSignature(row)]
   for (const segment of segments) {
     parts.push(tokenSegmentSignature(segment))
   }
 
   return parts.join('|')
+}
+
+function tokenRowBaseSignature(row: MountedVirtualizedTextRow): string {
+  return `${row.chunkKey}:${row.text.length}`
 }
 
 function tokenSegmentSignature(segment: TokenRowSegment): string {
@@ -399,8 +462,10 @@ export function addTokenRangeToChunk(
   chunk: VirtualizedTextChunk,
   start: number,
   end: number,
-): Range | null {
-  const range = createDomRangeForChunkRange(document, chunk, start, end)
+): AbstractRange | null {
+  const range =
+    createStaticRangeForChunkRange(document, chunk, start, end) ??
+    createDomRangeForChunkRange(document, chunk, start, end)
   if (!range) return null
 
   highlight.add(range)
@@ -725,6 +790,8 @@ export function asFoldPoint(point: { readonly row: number; readonly column: numb
 }
 
 export function getDefaultHighlightRegistry(): HighlightRegistry | null {
+  // TODO: Track Firefox CSS Custom Highlight API quirks. Firefox can expose
+  // CSS.highlights while intermittently failing to paint registered ranges.
   const css = globalThis.CSS as { highlights?: HighlightRegistry } | undefined
   return css?.highlights ?? null
 }

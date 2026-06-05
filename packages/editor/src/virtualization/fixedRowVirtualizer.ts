@@ -151,6 +151,7 @@ export class FixedRowVirtualizer {
   private itemCache = new Map<number, FixedRowVirtualItem>()
   private cachedRowHeight = DEFAULT_ROW_HEIGHT
   private cachedRowGap = DEFAULT_ROW_GAP
+  private stableVirtualWindow: FixedRowVisibleRange | null = null
   private logicalScrollProperties: LogicalScrollProperties | null = null
 
   public constructor(options: FixedRowVirtualizerOptions) {
@@ -167,6 +168,7 @@ export class FixedRowVirtualizer {
     this.updateCacheForFixedRows(next.rowHeight, next.rowGap)
     this.options = next
     this.scrollTop = nextScrollTop
+    this.stableVirtualWindow = null
     this.syncAttachedScrollMode()
     this.syncAttachedNativeScrollTop()
     this.emitChange()
@@ -233,6 +235,7 @@ export class FixedRowVirtualizer {
       metrics.viewportHeight,
     )
     const nextScrollTop = this.normalizeScrollTopForMetrics(metrics.scrollTop, nextViewportHeight)
+    const viewportHeightChanged = nextViewportHeight !== this.viewportHeight
     if (
       nextScrollTop === this.scrollTop &&
       nextScrollLeft === this.scrollLeft &&
@@ -249,6 +252,7 @@ export class FixedRowVirtualizer {
     this.viewportHeight = nextViewportHeight
     this.borderBoxWidth = nextBorderBoxWidth
     this.borderBoxHeight = nextBorderBoxHeight
+    if (viewportHeightChanged) this.stableVirtualWindow = null
     this.syncAttachedNativeScrollTop()
     this.emitChange()
   }
@@ -305,11 +309,32 @@ export class FixedRowVirtualizer {
     }
 
     const window = computeOverscannedRange(count, range, this.options.overscan)
+    const stableWindow = this.stableWindowForRange(range, window, count)
     if (this.options.rowHeightIndex)
-      return collectVariableVirtualItems(this.options.rowHeightIndex, window)
+      return collectVariableVirtualItems(this.options.rowHeightIndex, stableWindow)
 
-    this.pruneItemCache(window)
-    return this.collectVirtualItems(window)
+    this.pruneItemCache(stableWindow)
+    return this.collectVirtualItems(stableWindow)
+  }
+
+  private stableWindowForRange(
+    visibleRange: FixedRowVisibleRange,
+    desiredWindow: FixedRowVisibleRange,
+    count: number,
+  ): FixedRowVisibleRange {
+    const currentWindow = this.stableVirtualWindow
+    const deadband = stableWindowDeadband(this.options.overscan)
+    if (!currentWindow || deadband === 0) {
+      this.stableVirtualWindow = desiredWindow
+      return desiredWindow
+    }
+
+    if (stableWindowContainsVisibleRange(currentWindow, visibleRange, deadband, count)) {
+      return currentWindow
+    }
+
+    this.stableVirtualWindow = desiredWindow
+    return desiredWindow
   }
 
   private collectVirtualItems(range: FixedRowVisibleRange): FixedRowVirtualItem[] {
@@ -343,6 +368,7 @@ export class FixedRowVirtualizer {
     this.cachedRowHeight = rowHeight
     this.cachedRowGap = rowGap
     this.itemCache.clear()
+    this.stableVirtualWindow = null
   }
 
   private syncScrollPositionFromElement(): void {
@@ -554,6 +580,30 @@ function computeOverscannedRange(
     start: clamp(range.start - normalizedOverscan, 0, count),
     end: clamp(range.end + normalizedOverscan, 0, count),
   }
+}
+
+function stableWindowDeadband(overscan: number): number {
+  if (overscan < 2) return 0
+
+  // TODO(editor-perf): Make WebKit faster without weakening syntax quality.
+  // 2026-06-05 seeded platform scroll bench, 80 x 36px steps:
+  // before stable windows, Chrome ran 80 token-highlight range updates
+  // (21.3ms total range work, 13.67ms segment work). This capped deadband
+  // measured 10 updates in Chrome (3.83ms range, 2.27ms segment, 0 long frames),
+  // WebKit still averaged 36.64ms/frame with 11.5 long frames. Keep this gate:
+  // `bun run --cwd apps/web bench:editor-scroll:gate`.
+  return Math.min(2, Math.floor(overscan / 2))
+}
+
+function stableWindowContainsVisibleRange(
+  window: FixedRowVisibleRange,
+  visibleRange: FixedRowVisibleRange,
+  deadband: number,
+  count: number,
+): boolean {
+  const safeStart = window.start === 0 ? window.start : window.start + deadband
+  const safeEnd = window.end === count ? window.end : window.end - deadband
+  return visibleRange.start >= safeStart && visibleRange.end <= safeEnd
 }
 
 function createVirtualItem(index: number, rowHeight: number, rowGap: number): FixedRowVirtualItem {

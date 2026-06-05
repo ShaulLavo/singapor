@@ -54,6 +54,29 @@ describe('fixed row virtualizer', () => {
     ])
   })
 
+  it('keeps a stable virtual window until the visible range reaches the deadband', () => {
+    const virtualizer = new FixedRowVirtualizer({
+      count: 100,
+      rowHeight: 10,
+      overscan: 4,
+    })
+
+    virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 30 })
+    expect(virtualizer.getSnapshot().virtualItems.map((item) => item.index)).toEqual([
+      0, 1, 2, 3, 4, 5, 6,
+    ])
+
+    virtualizer.setScrollMetrics({ scrollTop: 10, viewportHeight: 30 })
+    expect(virtualizer.getSnapshot().virtualItems.map((item) => item.index)).toEqual([
+      0, 1, 2, 3, 4, 5, 6,
+    ])
+
+    virtualizer.setScrollMetrics({ scrollTop: 30, viewportHeight: 30 })
+    expect(virtualizer.getSnapshot().virtualItems.map((item) => item.index)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+    ])
+  })
+
   it('computes fixed row gaps without adding a trailing gap', () => {
     const virtualizer = new FixedRowVirtualizer({
       count: 3,

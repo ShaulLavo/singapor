@@ -487,7 +487,7 @@ function updateRowFrame(
   if (row.index !== item.index) row.element.dataset.editorVirtualRow = String(item.index)
   if (row.element.dataset.editorVirtualRowKind !== kind)
     row.element.dataset.editorVirtualRowKind = kind
-  if (row.top !== item.start) row.element.style.transform = rowTranslateY(item.start)
+  if (row.top !== item.start) positionRowElement(view, row.element, item.start)
 
   const height = `${item.size}px`
   if (row.element.style.height !== height) row.element.style.height = height
@@ -1132,14 +1132,25 @@ function updateGutterRowElement(
     row.gutterElement.dataset.editorVirtualGutterRow = String(item.index)
   }
   if (row.top !== item.start) {
-    row.gutterElement.style.transform = rowTranslateY(item.start)
+    positionRowElement(view, row.gutterElement, item.start)
   }
 
   updateGutterContributionCells(view, row, state)
 }
 
-function rowTranslateY(top: number): string {
-  return `translateY(${top}px)`
+function positionRowElement(
+  view: VirtualizedTextViewInternal,
+  element: HTMLElement,
+  top: number,
+): void {
+  if (view.rowPositioning === 'top') {
+    element.style.transform = ''
+    element.style.top = `${top}px`
+    return
+  }
+
+  element.style.top = '0px'
+  element.style.transform = `translateY(${top}px)`
 }
 
 function updateGutterContributionCells(

@@ -192,6 +192,7 @@ export class VirtualizedTextView {
     const rowHeight = normalizeRowHeight(lineHeightOverride ?? measuredMetrics.rowHeight)
     const rowGap = normalizeRowGap(options.rowGap)
     const scrollMode = normalizeScrollMode(options.scrollMode)
+    const rowPositioning = options.rowPositioning ?? 'transform'
     const inputElement = createInputElement(container)
     const spacer = container.ownerDocument.createElement('div')
     const gutterElement = container.ownerDocument.createElement('div')
@@ -235,6 +236,7 @@ export class VirtualizedTextView {
       styleEl,
       virtualizer,
       scrollMode,
+      rowPositioning,
       longLineChunkSize,
       longLineChunkThreshold,
       horizontalOverscanColumns: normalizeHorizontalOverscan(options.horizontalOverscanColumns),
@@ -306,6 +308,7 @@ export class VirtualizedTextView {
     scrollElement.style.setProperty('--editor-gutter-width', '0px')
     scrollElement.style.setProperty('--editor-tab-size', String(tabSize))
     setScrollModeAttribute(scrollElement, scrollMode)
+    scrollElement.dataset.editorRowPositioning = rowPositioning
     setBlockLanesLayout(this.view, options.blockLanes ?? [])
     applyRowHeight(this.view, rowHeight)
     spacer.className = 'editor-virtualized-spacer'

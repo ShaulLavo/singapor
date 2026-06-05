@@ -264,6 +264,39 @@ export function createDomRangeForChunkRange(
   start: number,
   end: number,
 ): Range | null {
+  const boundaries = domBoundariesForChunkRange(chunk, start, end)
+  if (!boundaries) return null
+
+  const range = document.createRange()
+  range.setStart(boundaries.start.node, boundaries.start.offset)
+  range.setEnd(boundaries.end.node, boundaries.end.offset)
+  return range
+}
+
+export function createStaticRangeForChunkRange(
+  document: Document,
+  chunk: VirtualizedTextChunk,
+  start: number,
+  end: number,
+): StaticRange | null {
+  const boundaries = domBoundariesForChunkRange(chunk, start, end)
+  const StaticRangeConstructor = document.defaultView?.StaticRange
+  if (!boundaries || !StaticRangeConstructor) return null
+
+  return new StaticRangeConstructor({
+    endContainer: boundaries.end.node,
+    endOffset: boundaries.end.offset,
+    startContainer: boundaries.start.node,
+    startOffset: boundaries.start.offset,
+  })
+}
+
+function domBoundariesForChunkRange(
+  chunk: VirtualizedTextChunk,
+  start: number,
+  end: number,
+): { readonly start: DomBoundary; readonly end: DomBoundary } | null {
+  if (end <= start) return null
   if (end <= chunk.startOffset || start >= chunk.endOffset) return null
 
   const localStart = chunk.localStart + clamp(start - chunk.startOffset, 0, chunk.text.length)
@@ -272,10 +305,7 @@ export function createDomRangeForChunkRange(
   const endBoundary = domBoundaryForChunkLocalOffset(chunk, localEnd)
   if (!startBoundary || !endBoundary) return null
 
-  const range = document.createRange()
-  range.setStart(startBoundary.node, startBoundary.offset)
-  range.setEnd(endBoundary.node, endBoundary.offset)
-  return range
+  return { end: endBoundary, start: startBoundary }
 }
 
 export function domBoundaryForOffset(

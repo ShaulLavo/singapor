@@ -9,6 +9,7 @@ import type { EditorTheme } from '../theme'
 import type {
   EditorCursorLineHighlightOptions,
   HiddenCharactersMode,
+  VirtualizedTextViewRowPositioning,
   VirtualizedTextViewScrollMode,
 } from '../virtualization/virtualizedTextViewTypes'
 import type { BrowserTextMetrics } from '../virtualization/browserMetrics'
@@ -30,6 +31,8 @@ export type EditorDocumentMode = 'session' | 'static'
 export type EditorSelectionSyncMode = 'sync' | 'none'
 
 export type EditorScrollMode = VirtualizedTextViewScrollMode
+
+export type EditorRowPositioning = VirtualizedTextViewRowPositioning
 
 export type EditorRangeDecoration = {
   readonly className?: string
@@ -83,6 +86,7 @@ export type EditorOptions = {
   readonly lineHeight?: number
   readonly rangeDecorations?: readonly EditorRangeDecoration[]
   readonly rowGap?: number
+  readonly rowPositioning?: EditorRowPositioning
   readonly scrollMode?: EditorScrollMode
   readonly selectionSyncMode?: EditorSelectionSyncMode
   readonly tabSize?: number

@@ -1326,6 +1326,21 @@ describe('VirtualizedTextView', () => {
     expect(highlightsMap.get(tokenHighlight!)?.size).toBe(1)
   })
 
+  it('ignores empty token ranges before registering token highlights', () => {
+    view.setText('const x = 1;')
+    view.setScrollMetrics(0, 40)
+    view.setTokens([
+      { start: 0, end: 0, style: { color: '#ff0000' } },
+      { start: 0, end: 5, style: { color: '#ff0000' } },
+    ])
+
+    const ranges = tokenHighlightRanges()
+
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0]?.startOffset).toBe(0)
+    expect(ranges[0]?.endOffset).toBe(5)
+  })
+
   it('splits token highlights across intersecting mounted rows', () => {
     view.setText('alpha\nbeta\ngamma')
     view.setScrollMetrics(0, 80)

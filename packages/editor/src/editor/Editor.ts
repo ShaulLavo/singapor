@@ -292,6 +292,7 @@ export class Editor {
       hiddenCharacters: options.hiddenCharacters,
       lineHeight: options.lineHeight,
       rowGap: options.rowGap,
+      rowPositioning: options.rowPositioning,
       scrollMode: options.scrollMode,
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,

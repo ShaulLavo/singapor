@@ -15,6 +15,7 @@ import type {
   VirtualizedBlockLaneMount,
   VirtualizedBlockRowMount,
   VirtualizedFoldMarker,
+  VirtualizedTextViewRowPositioning,
   VirtualizedTextViewScrollMode,
   VirtualizedTextRowDecoration,
 } from './virtualizedTextViewTypes'
@@ -83,6 +84,7 @@ export interface VirtualizedTextViewInternal {
   readonly styleEl: HTMLStyleElement
   readonly virtualizer: FixedRowVirtualizer
   scrollMode: VirtualizedTextViewScrollMode
+  readonly rowPositioning: VirtualizedTextViewRowPositioning
   readonly longLineChunkSize: number
   readonly longLineChunkThreshold: number
   readonly horizontalOverscanColumns: number

@@ -1,5 +1,9 @@
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 import {
+  editorPerformanceDiagnosticsEnabled,
+  recordEditorPerformanceDiagnostic,
+} from '../editor/performanceDiagnostics'
+import {
   copyTokenProjectionMetadata,
   sourceTokensForProjectedTokens,
   tokenProjectionLiveRangeStatus,
@@ -15,6 +19,7 @@ import {
   getOrCreateTokenSegments,
   setElementHidden,
   setStyleValue,
+  type TokenSegmentAppendResult,
   tokenRowSignature,
   tokenStylesEqual,
 } from './virtualizedTextViewHelpers'
@@ -49,6 +54,35 @@ import type {
 type TokenStyleSource = {
   readonly entriesByIndex: ReadonlyMap<number, TokenRenderEntry> | null
   readonly tokens: readonly EditorToken[]
+}
+
+type TokenSegmentBuildStats = {
+  addedSegmentCount: number
+  adjacentMergedSegmentCount: number
+  chunkCount: number
+  gapMergedSegmentCount: number
+  mergedSegmentCount: number
+  rawSegmentCount: number
+  readonly rowCount: number
+  tokenScanCount: number
+}
+
+type TokenRangeAddResult = {
+  readonly addedRangeCount: number
+  readonly liveRangeCount: number
+  readonly staticRangeCount: number
+  readonly styleRulesDirty: boolean
+}
+
+type TokenRangeReconcileStats = {
+  addedRangeCount: number
+  deletedRangeCount: number
+  liveRangeCount: number
+  readonly mountedRowCount: number
+  rebuiltRowCount: number
+  skippedRowCount: number
+  staticRangeCount: number
+  readonly tokenRenderIndexDirty: boolean
 }
 
 export function setTokens(view: VirtualizedTextViewInternal, tokens: readonly EditorToken[]): void {
@@ -310,6 +344,8 @@ export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
   // Highlight pseudo styles do not reliably animate color, so this likely needs a
   // separate transition/overlay strategy that preserves the current range model.
   const mountedRows = getMountedRows(view)
+  const reconcileStats = createTokenRangeReconcileStats(view, mountedRows)
+  const reconcileStartedAt = reconcileStats ? performanceNow() : 0
   const segmentsByRow = tokenSegmentsForRows(view, mountedRows)
   let styleRulesDirty = false
   for (const row of mountedRows) {
@@ -319,8 +355,10 @@ export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
         row,
         segmentsByRow.get(row.tokenHighlightSlotId) ?? [],
         shouldForceTokenRowRebuild(row, null),
+        reconcileStats,
       ) || styleRulesDirty
   }
+  recordTokenRangeReconcileStats(reconcileStats, reconcileStartedAt)
   if (styleRulesDirty) rebuildStyleRules(view)
 }
 
@@ -329,15 +367,29 @@ function reconcileTokenHighlightsForRow(
   row: MountedVirtualizedTextRow,
   segments: readonly TokenRowSegment[],
   force = false,
+  stats: TokenRangeReconcileStats | null = null,
 ): boolean {
   const signature = tokenRowSignature(row, segments)
   const previousSignature = view.rowTokenSignatures.get(row.tokenHighlightSlotId)
-  if (!force && previousSignature === signature) return false
+  if (!force && previousSignature === signature) {
+    if (stats) stats.skippedRowCount += 1
+    return false
+  }
 
-  deleteTokenRangesForRow(view, row.tokenHighlightSlotId)
-  const styleRulesDirty = addTokenSegmentsForRow(view, row, segments)
+  const deletedRangeCount = deleteTokenRangesForRow(view, row.tokenHighlightSlotId)
+  if (stats) {
+    stats.rebuiltRowCount += 1
+    stats.deletedRangeCount += deletedRangeCount
+  }
+
+  const result = addTokenSegmentsForRow(view, row, segments)
+  if (stats) {
+    stats.addedRangeCount += result.addedRangeCount
+    stats.liveRangeCount += result.liveRangeCount
+    stats.staticRangeCount += result.staticRangeCount
+  }
   view.rowTokenSignatures.set(row.tokenHighlightSlotId, signature)
-  return styleRulesDirty
+  return result.styleRulesDirty
 }
 
 function reconcileTokenHighlightsAfterSameLineEdit(
@@ -613,20 +665,30 @@ function tokenSegmentsForRows(
   styleSource: TokenStyleSource | null = null,
 ): Map<number, TokenRowSegment[]> {
   const segmentsByRow = new Map<number, TokenRowSegment[]>()
-  if (rows.length === 0) return segmentsByRow
+  const stats = createTokenSegmentBuildStats(rows)
+  const startedAt = stats ? performanceNow() : 0
 
-  if (appendIndexedTokenSegmentsForRows(view, segmentsByRow, rows, styleSource)) {
-    return segmentsByRow
-  }
+  appendTokenSegmentsForRows(view, segmentsByRow, rows, styleSource, stats)
+  recordTokenSegmentBuildStats(stats, segmentsByRow, startedAt)
+  return segmentsByRow
+}
+
+function appendTokenSegmentsForRows(
+  view: VirtualizedTextViewInternal,
+  segmentsByRow: Map<number, TokenRowSegment[]>,
+  rows: readonly MountedVirtualizedTextRow[],
+  styleSource: TokenStyleSource | null,
+  stats: TokenSegmentBuildStats | null,
+): void {
+  if (rows.length === 0) return
+  if (appendIndexedTokenSegmentsForRows(view, segmentsByRow, rows, styleSource, stats)) return
 
   ensureTokenRenderIndex(view)
-  if (view.tokenRenderEntries.length === 0) return segmentsByRow
+  if (view.tokenRenderEntries.length === 0) return
 
   for (const row of rows) {
-    appendTokenSegmentsForMountedRow(view, segmentsByRow, row)
+    appendTokenSegmentsForMountedRow(view, segmentsByRow, row, stats)
   }
-
-  return segmentsByRow
 }
 
 function appendIndexedTokenSegmentsForRows(
@@ -634,12 +696,13 @@ function appendIndexedTokenSegmentsForRows(
   segmentsByRow: Map<number, TokenRowSegment[]>,
   rows: readonly MountedVirtualizedTextRow[],
   styleSource: TokenStyleSource | null,
+  stats: TokenSegmentBuildStats | null,
 ): boolean {
   const tokenIndex = getEditorTokenIndex(view.tokens)
   if (!tokenIndex?.sortedByStart) return false
 
   for (const row of rows) {
-    appendIndexedTokenSegmentsForMountedRow(view, tokenIndex, segmentsByRow, row, styleSource)
+    appendIndexedTokenSegmentsForMountedRow(view, tokenIndex, segmentsByRow, row, styleSource, stats)
   }
 
   return true
@@ -651,11 +714,20 @@ function appendIndexedTokenSegmentsForMountedRow(
   segmentsByRow: Map<number, TokenRowSegment[]>,
   row: MountedVirtualizedTextRow,
   styleSource: TokenStyleSource | null,
+  stats: TokenSegmentBuildStats | null,
 ): void {
   if (row.kind !== 'text') return
 
   for (const chunk of row.chunks) {
-    appendIndexedTokenSegmentsForChunk(view, tokenIndex, segmentsByRow, row, chunk, styleSource)
+    appendIndexedTokenSegmentsForChunk(
+      view,
+      tokenIndex,
+      segmentsByRow,
+      row,
+      chunk,
+      styleSource,
+      stats,
+    )
   }
 }
 
@@ -666,8 +738,10 @@ function appendIndexedTokenSegmentsForChunk(
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   styleSource: TokenStyleSource | null,
+  stats: TokenSegmentBuildStats | null,
 ): void {
   if (chunk.endOffset <= chunk.startOffset) return
+  if (stats) stats.chunkCount += 1
 
   const endIndex = firstIndexedTokenStartingAtOrAfter(view.tokens, chunk.endOffset)
   const startIndex = firstIndexedTokenEndingAfter(tokenIndex, chunk.startOffset, endIndex)
@@ -675,10 +749,13 @@ function appendIndexedTokenSegmentsForChunk(
 
   const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId)
   for (let index = startIndex; index < endIndex; index += 1) {
+    if (stats) stats.tokenScanCount += 1
+
     const token = tokenRenderEntry(view, view.tokens[index]!, index, styleSource)
     if (!token) continue
     if (token.end <= chunk.startOffset) continue
-    appendTokenSegmentForChunk(segments, chunk, token, token.style, token.styleKey)
+    const result = appendTokenSegmentForChunk(segments, chunk, token, token.style, token.styleKey)
+    recordTokenSegmentAppend(stats, result)
   }
 }
 
@@ -686,11 +763,12 @@ function appendTokenSegmentsForMountedRow(
   view: VirtualizedTextViewInternal,
   segmentsByRow: Map<number, TokenRowSegment[]>,
   row: MountedVirtualizedTextRow,
+  stats: TokenSegmentBuildStats | null,
 ): void {
   if (row.kind !== 'text') return
 
   for (const chunk of row.chunks) {
-    appendTokenSegmentsForChunk(view, segmentsByRow, row, chunk)
+    appendTokenSegmentsForChunk(view, segmentsByRow, row, chunk, stats)
   }
 }
 
@@ -699,8 +777,10 @@ function appendTokenSegmentsForChunk(
   segmentsByRow: Map<number, TokenRowSegment[]>,
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
+  stats: TokenSegmentBuildStats | null,
 ): void {
   if (chunk.endOffset <= chunk.startOffset) return
+  if (stats) stats.chunkCount += 1
 
   const endIndex = firstTokenRenderEntryStartingAtOrAfter(view, chunk.endOffset)
   const startIndex = firstTokenRenderEntryEndingAfter(view, chunk.startOffset, endIndex)
@@ -708,19 +788,143 @@ function appendTokenSegmentsForChunk(
 
   const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId)
   for (let index = startIndex; index < endIndex; index += 1) {
+    if (stats) stats.tokenScanCount += 1
+
     const token = view.tokenRenderEntries[index]!
     if (token.end <= chunk.startOffset) continue
-    appendTokenSegmentForChunk(segments, chunk, token, token.style, token.styleKey)
+    const result = appendTokenSegmentForChunk(segments, chunk, token, token.style, token.styleKey)
+    recordTokenSegmentAppend(stats, result)
   }
+}
+
+function createTokenSegmentBuildStats(
+  rows: readonly MountedVirtualizedTextRow[],
+): TokenSegmentBuildStats | null {
+  if (!editorPerformanceDiagnosticsEnabled()) return null
+
+  return {
+    addedSegmentCount: 0,
+    adjacentMergedSegmentCount: 0,
+    chunkCount: 0,
+    gapMergedSegmentCount: 0,
+    mergedSegmentCount: 0,
+    rawSegmentCount: 0,
+    rowCount: rows.length,
+    tokenScanCount: 0,
+  }
+}
+
+function recordTokenSegmentAppend(
+  stats: TokenSegmentBuildStats | null,
+  result: TokenSegmentAppendResult,
+): void {
+  if (!stats) return
+  if (result === 'skipped') return
+
+  stats.rawSegmentCount += 1
+  if (result === 'merged-adjacent') {
+    stats.adjacentMergedSegmentCount += 1
+    stats.mergedSegmentCount += 1
+    return
+  }
+
+  if (result === 'merged-gap') {
+    stats.gapMergedSegmentCount += 1
+    stats.mergedSegmentCount += 1
+    return
+  }
+
+  stats.addedSegmentCount += 1
+}
+
+function recordTokenSegmentBuildStats(
+  stats: TokenSegmentBuildStats | null,
+  segmentsByRow: ReadonlyMap<number, readonly TokenRowSegment[]>,
+  startedAt: number,
+): void {
+  if (!stats) return
+
+  const finalSegmentCount = tokenSegmentCount(segmentsByRow)
+  recordEditorPerformanceDiagnostic(
+    'editor.tokenHighlights.segments',
+    {
+      addedSegmentCount: stats.addedSegmentCount,
+      adjacentMergedSegmentCount: stats.adjacentMergedSegmentCount,
+      chunkCount: stats.chunkCount,
+      finalSegmentCount,
+      gapMergedSegmentCount: stats.gapMergedSegmentCount,
+      mergedSegmentCount: stats.mergedSegmentCount,
+      rawSegmentCount: stats.rawSegmentCount,
+      rowCount: stats.rowCount,
+      rowSlotCount: segmentsByRow.size,
+      tokenScanCount: stats.tokenScanCount,
+    },
+    performanceNow() - startedAt,
+  )
+}
+
+function tokenSegmentCount(
+  segmentsByRow: ReadonlyMap<number, readonly TokenRowSegment[]>,
+): number {
+  let count = 0
+  for (const segments of segmentsByRow.values()) count += segments.length
+  return count
+}
+
+function performanceNow(): number {
+  return globalThis.performance?.now() ?? Date.now()
+}
+
+function createTokenRangeReconcileStats(
+  view: VirtualizedTextViewInternal,
+  mountedRows: readonly MountedVirtualizedTextRow[],
+): TokenRangeReconcileStats | null {
+  if (!editorPerformanceDiagnosticsEnabled()) return null
+
+  return {
+    addedRangeCount: 0,
+    deletedRangeCount: 0,
+    liveRangeCount: 0,
+    mountedRowCount: mountedRows.length,
+    rebuiltRowCount: 0,
+    skippedRowCount: 0,
+    staticRangeCount: 0,
+    tokenRenderIndexDirty: view.tokenRenderIndexDirty,
+  }
+}
+
+function recordTokenRangeReconcileStats(
+  stats: TokenRangeReconcileStats | null,
+  startedAt: number,
+): void {
+  if (!stats) return
+
+  recordEditorPerformanceDiagnostic(
+    'editor.tokenHighlights.ranges',
+    {
+      addedRangeCount: stats.addedRangeCount,
+      deletedRangeCount: stats.deletedRangeCount,
+      liveRangeCount: stats.liveRangeCount,
+      mountedRowCount: stats.mountedRowCount,
+      rebuiltRowCount: stats.rebuiltRowCount,
+      skippedRowCount: stats.skippedRowCount,
+      staticRangeCount: stats.staticRangeCount,
+      tokenRenderIndexDirty: stats.tokenRenderIndexDirty,
+    },
+    performanceNow() - startedAt,
+  )
 }
 
 function addTokenSegmentsForRow(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   segments: readonly TokenRowSegment[],
-): boolean {
+): TokenRangeAddResult {
   const rangesByStyle = new Map<string, AbstractRange[]>()
   const document = view.scrollElement.ownerDocument
+  let addedRangeCount = 0
+  let liveRangeCount = 0
+  let staticRangeCount = 0
   let styleRulesDirty = false
   for (const segment of segments) {
     const result = ensureTokenGroup(view, segment.styleKey, segment.style)
@@ -736,6 +940,9 @@ function addTokenSegmentsForRow(
     )
     if (!range) continue
 
+    addedRangeCount += 1
+    if (isLiveRange(document, range)) liveRangeCount += 1
+    else staticRangeCount += 1
     styleRulesDirty = styleRulesDirty || result.created
     appendTokenRange(rangesByStyle, segment.styleKey, range)
   }
@@ -744,7 +951,12 @@ function addTokenSegmentsForRow(
     view.rowTokenRanges.set(row.tokenHighlightSlotId, rangesByStyle)
   }
 
-  return styleRulesDirty
+  return { addedRangeCount, liveRangeCount, staticRangeCount, styleRulesDirty }
+}
+
+function isLiveRange(document: Document, range: AbstractRange): boolean {
+  const RangeConstructor = document.defaultView?.Range
+  return RangeConstructor ? range instanceof RangeConstructor : false
 }
 
 function ensureTokenGroup(
@@ -868,10 +1080,11 @@ function canKeepLiveTokenRanges(
 export function deleteTokenRangesForRow(
   view: VirtualizedTextViewInternal,
   rowSlotId: number,
-): void {
+): number {
   const rangesByStyle = view.rowTokenRanges.get(rowSlotId)
-  if (!rangesByStyle) return
+  if (!rangesByStyle) return 0
 
+  let deletedRangeCount = 0
   for (const [styleKey, capturedRanges] of rangesByStyle) {
     const group = view.tokenGroups.get(styleKey)
     if (!group) continue
@@ -879,9 +1092,11 @@ export function deleteTokenRangesForRow(
     for (const range of capturedRanges) {
       group.highlight.delete(range)
     }
+    deletedRangeCount += capturedRanges.length
   }
 
   view.rowTokenRanges.delete(rowSlotId)
+  return deletedRangeCount
 }
 
 export function clearRowTokenState(view: VirtualizedTextViewInternal): void {

@@ -40,9 +40,16 @@ export type Piece = {
 
 export type PieceTableBuffers = {
   readonly original: PieceBufferId
-  readonly chunks: ReadonlyMap<PieceBufferId, string>
+  readonly chunks: PieceBufferChunks
   readonly nextBufferSequence: number
   readonly prioritySeed: number
+}
+
+export type PieceBufferChunks = {
+  readonly size: number
+  get(buffer: PieceBufferId): string | undefined
+  keys(): IterableIterator<PieceBufferId>
+  [Symbol.iterator](): IterableIterator<[PieceBufferId, string]>
 }
 
 export type PieceTreeNode = {

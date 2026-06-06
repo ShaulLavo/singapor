@@ -702,7 +702,14 @@ function appendIndexedTokenSegmentsForRows(
   if (!tokenIndex?.sortedByStart) return false
 
   for (const row of rows) {
-    appendIndexedTokenSegmentsForMountedRow(view, tokenIndex, segmentsByRow, row, styleSource, stats)
+    appendIndexedTokenSegmentsForMountedRow(
+      view,
+      tokenIndex,
+      segmentsByRow,
+      row,
+      styleSource,
+      stats,
+    )
   }
 
   return true
@@ -863,9 +870,7 @@ function recordTokenSegmentBuildStats(
   )
 }
 
-function tokenSegmentCount(
-  segmentsByRow: ReadonlyMap<number, readonly TokenRowSegment[]>,
-): number {
+function tokenSegmentCount(segmentsByRow: ReadonlyMap<number, readonly TokenRowSegment[]>): number {
   let count = 0
   for (const segments of segmentsByRow.values()) count += segments.length
   return count

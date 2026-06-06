@@ -1129,11 +1129,8 @@ const flattenLayer = async (
   if (includeHighlights) {
     appendItems(
       result.captures,
-      runOptionalWorkerPhase(
-        'collect highlights',
-        [] as TreeSitterCapture[],
-        result.degraded,
-        () => collectCaptures(layer.tree, runtime, context),
+      runOptionalWorkerPhase('collect highlights', [] as TreeSitterCapture[], result.degraded, () =>
+        collectCaptures(layer.tree, runtime, context),
       ),
     )
   }

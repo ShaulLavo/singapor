@@ -182,6 +182,7 @@ export type {
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
 } from './public/extensions'
+export type { BrowserTextMetrics } from './virtualization'
 export type {
   BoundedSize,
   EditorBlock,

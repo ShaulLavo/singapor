@@ -1,4 +1,4 @@
-import type { Piece, PieceBufferId, PieceTableBuffers } from './pieceTableTypes'
+import type { Piece, PieceBufferChunks, PieceBufferId, PieceTableBuffers } from './pieceTableTypes'
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_PIECE_TABLE_PRIORITY_SEED } from './priority'
 
@@ -6,7 +6,7 @@ const BUFFER_CHUNK_SIZE = 16 * 1024
 const BUFFER_ID_PREFIX = 'buffer:'
 const BUFFER_STORE_PAGE_SIZE = 1024
 
-class PieceBufferChunkStore implements ReadonlyMap<PieceBufferId, string> {
+class PieceBufferChunkStore implements PieceBufferChunks {
   public readonly [Symbol.toStringTag] = 'PieceBufferChunkStore'
 
   public constructor(
@@ -31,7 +31,7 @@ class PieceBufferChunkStore implements ReadonlyMap<PieceBufferId, string> {
   }
 
   public forEach(
-    callback: (value: string, key: PieceBufferId, map: ReadonlyMap<PieceBufferId, string>) => void,
+    callback: (value: string, key: PieceBufferId, map: PieceBufferChunks) => void,
     thisArg?: unknown,
   ): void {
     for (const [key, value] of this.entries()) {
@@ -178,9 +178,9 @@ export const appendChunksToBuffers = (
 }
 
 const appendChunkTexts = (
-  chunks: ReadonlyMap<PieceBufferId, string>,
+  chunks: PieceBufferChunks,
   chunkTexts: readonly string[],
-): ReadonlyMap<PieceBufferId, string> => {
+): PieceBufferChunks => {
   if (chunks instanceof PieceBufferChunkStore) return chunks.append(chunkTexts)
 
   const next = new Map(chunks)

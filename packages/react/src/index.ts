@@ -583,10 +583,7 @@ function useControlledOptionSync(
     [controller, options.rangeDecorations],
   )
   useEditorLayoutEffect(() => controller.syncRowGapOption(), [controller, options.rowGap])
-  useEditorLayoutEffect(
-    () => controller.syncScrollModeOption(),
-    [controller, options.scrollMode],
-  )
+  useEditorLayoutEffect(() => controller.syncScrollModeOption(), [controller, options.scrollMode])
   useEditorLayoutEffect(
     () => controller.syncSelectionOption(),
     [controller, selection?.anchor, selection?.head, selection?.reveal, selection?.revealOffset],

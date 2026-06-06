@@ -859,18 +859,20 @@ const queryOptions = (
 const treeSitterQueryIndex = (index: number): number => index * Uint16Array.BYTES_PER_ELEMENT
 
 const collectCaptures = (
-  tree: Tree,
+  tree: Tree | null,
   runtime: Runtime,
   context: CancellationContext,
   range?: TreeSitterSyntaxRange,
 ): TreeSitterCapture[] => {
   const query = ensureQuery(runtime, 'highlight')
   if (!query) return []
+  const rootNode = tree?.rootNode
+  if (!rootNode) return []
 
   const captures: TreeSitterCapture[] = []
   const seen = new Set<string>()
   if (range) {
-    const queryCaptures = query.captures(tree.rootNode, queryOptions(context, range))
+    const queryCaptures = query.captures(rootNode, queryOptions(context, range))
     assertNotCancelled(context)
 
     for (const capture of queryCaptures) {
@@ -880,7 +882,7 @@ const collectCaptures = (
     return captures
   }
 
-  const matches = query.matches(tree.rootNode, queryOptions(context, range))
+  const matches = query.matches(rootNode, queryOptions(context, range))
   assertNotCancelled(context)
 
   for (const match of matches) {
@@ -891,17 +893,19 @@ const collectCaptures = (
 }
 
 const collectFolds = (
-  tree: Tree,
+  tree: Tree | null,
   runtime: Runtime,
   context: CancellationContext,
   range?: TreeSitterSyntaxRange,
 ): FoldRange[] => {
   const query = ensureQuery(runtime, 'fold')
   if (!query) return []
+  const rootNode = tree?.rootNode
+  if (!rootNode) return []
 
   const folds: FoldRange[] = []
   const seen = new Set<string>()
-  const matches = query.matches(tree.rootNode, queryOptions(context, range))
+  const matches = query.matches(rootNode, queryOptions(context, range))
   assertNotCancelled(context)
 
   for (const match of matches) {
@@ -930,8 +934,11 @@ const collectCapture = (
   languageId: TreeSitterLanguageId,
   range?: TreeSitterSyntaxRange,
 ): void => {
-  const startIndex = capture.node.startIndex
-  const endIndex = capture.node.endIndex
+  const node = capture.node
+  if (!node) return
+
+  const startIndex = node.startIndex
+  const endIndex = node.endIndex
   const captureName = capture.name ?? ''
   const key = `${startIndex}:${endIndex}:${captureName}:${languageId}`
   if (seen.has(key)) return
@@ -951,6 +958,8 @@ const collectMatchFolds = (
 ): void => {
   for (const capture of matchCaptures) {
     const node = capture.node
+    if (!node) continue
+
     const startLine = node.startPosition.row
     const endLine = node.endPosition.row
     if (endLine <= startLine) continue
@@ -1338,13 +1347,14 @@ const sortInjections = (
   injections.toSorted((a, b) => a.startIndex - b.startIndex || a.endIndex - b.endIndex)
 
 const collectTreeData = (
-  tree: Tree,
+  tree: Tree | null,
   range?: TreeSitterSyntaxRange,
 ): Pick<TreeSitterParseResult, 'brackets' | 'errors'> => {
   const brackets: BracketInfo[] = []
   const errors: TreeSitterError[] = []
   const bracketStack: { char: string; index: number }[] = []
-  const cursor = tree.walk()
+  const cursor = tree?.walk()
+  if (!cursor) return emptyTreeData()
 
   try {
     if (range) {

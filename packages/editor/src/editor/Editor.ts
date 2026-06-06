@@ -155,6 +155,41 @@ type SyntaxScrollDirection = -1 | 0 | 1
 type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'feature' | 'view'
 type EditorContributionFailurePhase = 'dispose' | 'factory' | 'initial-update' | 'update'
 
+type EditorLifecycleSummary = {
+  readonly pluginNames: Set<string>
+  readonly plugin: {
+    activatedCount: number
+    deactivatedCount: number
+    disposedCount: number
+    failedCount: number
+    installedCount: number
+    slowestActivationMs: number | null
+    updatedCount: number
+  }
+  readonly folds: {
+    firstSyntaxRejection: Record<string, unknown> | null
+    syntaxRejectedCount: number
+  }
+  readonly syntax: {
+    refreshScheduledCount: number
+  }
+  readonly document: {
+    attachedCount: number
+    clearedCount: number
+    detachedCount: number
+    openedCount: number
+    setTextCount: number
+    startedCount: number
+    syncedTextCount: number
+  }
+  readonly content: {
+    setCount: number
+  }
+  mountDurationMs: number | null
+  mountedAt: string | null
+  disposingAt: string | null
+}
+
 export class Editor {
   private readonly container: HTMLElement
   private readonly view: VirtualizedTextView
@@ -216,6 +251,7 @@ export class Editor {
   private configuredTheme: EditorTheme | null = null
   private appliedRangeDecorationNames: readonly string[] = []
   private appliedInjectedTextRows: readonly InjectedTextRow[] = []
+  private readonly lifecycleSummary = createEditorLifecycleSummary()
   private readonly tabSize: number
 
   private get text(): string {
@@ -330,7 +366,7 @@ export class Editor {
       setSyntaxFolds: (folds) => this.setSyntaxFolds(folds),
       notifyChange: (change) => this.notifyChange(change),
       notifyThemeChanged: () => this.applyResolvedTheme(),
-      log: (event) => this.log(event),
+      log: (event) => this.logSyntaxLifecycleEvent(event),
     })
     this.inputSelection = new InputSelectionController({
       el: this.el,
@@ -387,71 +423,22 @@ export class Editor {
     )
     this.pluginHost.setEvents({
       onPluginInstalled: (name, durationMs) =>
-        this.log({
-          action: 'editor.plugin.installed',
-          level: 'info',
-          durationMs,
-          plugin: { name },
-        }),
+        this.recordPluginLifecycle('installed', name, durationMs),
       onPluginInstallFailed: (name, error, durationMs) =>
-        this.log({
-          action: 'editor.plugin.install_failed',
-          level: 'error',
-          durationMs,
-          error: editorLogError(error),
-          plugin: { name },
-        }),
+        this.logPluginFailure('editor.plugin.install_failed', name, error, durationMs),
       onPluginActivated: (name, durationMs) =>
-        this.log({
-          action: 'editor.plugin.activated',
-          level: 'info',
-          durationMs,
-          plugin: { name },
-        }),
+        this.recordPluginLifecycle('activated', name, durationMs),
       onPluginActivationFailed: (name, error, durationMs) =>
-        this.log({
-          action: 'editor.plugin.activation_failed',
-          level: 'error',
-          durationMs,
-          error: editorLogError(error),
-          plugin: { name },
-        }),
+        this.logPluginFailure('editor.plugin.activation_failed', name, error, durationMs),
       onPluginUpdated: (name, durationMs) =>
-        this.log({
-          action: 'editor.plugin.updated',
-          level: 'debug',
-          durationMs,
-          plugin: { name },
-        }),
+        this.recordPluginLifecycle('updated', name, durationMs),
       onPluginUpdateFailed: (name, error, durationMs) =>
-        this.log({
-          action: 'editor.plugin.update_failed',
-          level: 'error',
-          durationMs,
-          error: editorLogError(error),
-          plugin: { name },
-        }),
+        this.logPluginFailure('editor.plugin.update_failed', name, error, durationMs),
       onPluginDeactivated: (name, durationMs) =>
-        this.log({
-          action: 'editor.plugin.deactivated',
-          level: 'info',
-          durationMs,
-          plugin: { name },
-        }),
+        this.recordPluginLifecycle('deactivated', name, durationMs),
       onPluginDeactivateFailed: (name, error, durationMs) =>
-        this.log({
-          action: 'editor.plugin.deactivate_failed',
-          level: 'error',
-          durationMs,
-          error: editorLogError(error),
-          plugin: { name },
-        }),
-      onPluginDisposed: (name) =>
-        this.log({
-          action: 'editor.plugin.disposed',
-          level: 'info',
-          plugin: { name },
-        }),
+        this.logPluginFailure('editor.plugin.deactivate_failed', name, error, durationMs),
+      onPluginDisposed: (name) => this.recordPluginLifecycle('disposed', name),
       onHighlighterProvidersChanged: () => this.syntax.reloadHighlighterAndSyntax(),
       onSyntaxProvidersChanged: () => this.syntax.reloadSyntaxSession(),
       onViewContributionProviderAdded: (provider) => this.addViewContributionProvider(provider),
@@ -486,19 +473,7 @@ export class Editor {
     const mountDurationMs = nowMs() - mountStart
     recordEditorMountTiming(mountDurationMs)
     this.logInitialPlugins()
-    this.log({
-      action: 'editor.lifecycle.mounted',
-      level: 'info',
-      durationMs: mountDurationMs,
-      plugins: this.pluginHost.getActivePluginNames(),
-      settings: {
-        defaultTextLength: options.defaultText?.length ?? 0,
-        hiddenCharacters: options.hiddenCharacters ?? null,
-        lineHeight: options.lineHeight ?? null,
-        rowGap: options.rowGap ?? null,
-        tabSize: this.tabSize,
-      },
-    })
+    this.recordEditorMounted(mountDurationMs)
   }
 
   setContent(text: string): void {
@@ -511,14 +486,7 @@ export class Editor {
     this.clearSyntaxFolds()
     this.applyRangeDecorations()
     this.notifyViewContributions('content', null)
-    this.log({
-      action: 'editor.content.set',
-      level: 'info',
-      content: {
-        length: text.length,
-        lineCount: this.view.getLineCount(),
-      },
-    })
+    this.recordContentSet()
   }
 
   setTokens(tokens: readonly EditorToken[]): void {
@@ -620,14 +588,7 @@ export class Editor {
     )
     this.notifyChange(null)
     this.refreshSyntax(documentVersion, null)
-    this.log({
-      action: 'editor.document.set_text',
-      level: 'info',
-      document: {
-        length: text.length,
-        mode: options.documentMode ?? this.documentMode,
-      },
-    })
+    this.lifecycleSummary.document.setTextCount += 1
   }
 
   syncText(text: string, options: EditorSetTextOptions = {}): void {
@@ -649,13 +610,7 @@ export class Editor {
       syncDomSelection: false,
     })
     this.applyDocumentScrollPosition(scrollPosition)
-    this.log({
-      action: 'editor.document.synced_text',
-      level: 'info',
-      document: {
-        length: text.length,
-      },
-    })
+    this.lifecycleSummary.document.syncedTextCount += 1
   }
 
   edit(editOrEdits: EditorEditInput, options: EditorEditOptions = {}): void {
@@ -679,14 +634,7 @@ export class Editor {
     })
     this.notifyChange(null)
     this.refreshSyntax(documentVersion, null)
-    this.log({
-      action: 'editor.document.opened',
-      level: 'info',
-      document: {
-        id: document.documentId ?? null,
-        length: document.text.length,
-      },
-    })
+    this.lifecycleSummary.document.openedCount += 1
   }
 
   private ensureAnonymousSession(): void {
@@ -985,6 +933,7 @@ export class Editor {
       textSnapshot: attachment.textSnapshot,
       snapshot: attachment.session.getSnapshot(),
     })
+    this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
     this.setDocument({ text: attachment.fullText, tokens: [] })
     this.applyDocumentScrollPosition(options.scrollPosition)
@@ -992,26 +941,14 @@ export class Editor {
     this.notifyViewContributions('document', null)
     this.notifyChange(null)
     this.refreshSyntax(attachment.documentVersion, null)
-    this.log({
-      action: 'editor.document.attached',
-      level: 'info',
-      document: {
-        id: options.documentId ?? null,
-        length: attachment.fullText.length,
-      },
-    })
+    this.lifecycleSummary.document.attachedCount += 1
   }
 
   detachSession(): void {
-    const previousDocumentId = this.documentId
     this.document.detachSession()
     this.inputSelection.clearSelectionHighlight()
     this.view.setEditable(false)
-    this.log({
-      action: 'editor.document.detached',
-      level: 'info',
-      document: { id: previousDocumentId },
-    })
+    this.lifecycleSummary.document.detachedCount += 1
   }
 
   clear(): void {
@@ -1022,17 +959,11 @@ export class Editor {
     this.setContent('')
     this.applyDocumentScrollPosition()
     this.notifyViewContributions('clear', null)
-    this.log({
-      action: 'editor.document.cleared',
-      level: 'info',
-    })
+    this.lifecycleSummary.document.clearedCount += 1
   }
 
   dispose(): void {
-    this.log({
-      action: 'editor.lifecycle.disposing',
-      level: 'info',
-    })
+    this.lifecycleSummary.disposingAt = new Date().toISOString()
     this.secondaryWork.dispose()
     this.displayProjections.clear()
     this.blockSurfaces.dispose()
@@ -1046,6 +977,7 @@ export class Editor {
     this.keymap.dispose()
     this.syntax.dispose()
     this.detachSession()
+    this.logLifecycleSummary()
     this.pluginHost.dispose()
     this.view.dispose()
   }
@@ -1061,6 +993,7 @@ export class Editor {
       textSnapshot: attachment.textSnapshot,
       snapshot: attachment.session.getSnapshot(),
     })
+    this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
     this.setDocument({ text: attachment.fullText, tokens: [] })
     this.applyRangeDecorations()
@@ -1414,12 +1347,98 @@ export class Editor {
 
   private logInitialPlugins(): void {
     for (const name of this.pluginHost.getActivePluginNames()) {
-      this.log({
-        action: 'editor.plugin.activated',
-        level: 'info',
-        plugin: { name, initial: true },
-      })
+      this.recordPluginLifecycle('activated', name)
     }
+  }
+
+  private recordEditorMounted(durationMs: number): void {
+    this.lifecycleSummary.mountDurationMs = durationMs
+    this.lifecycleSummary.mountedAt = new Date().toISOString()
+
+    for (const name of this.pluginHost.getActivePluginNames()) {
+      this.lifecycleSummary.pluginNames.add(name)
+    }
+  }
+
+  private recordContentSet(): void {
+    this.lifecycleSummary.content.setCount += 1
+  }
+
+  private recordPluginLifecycle(
+    phase: 'activated' | 'deactivated' | 'disposed' | 'installed' | 'updated',
+    name: string,
+    durationMs?: number,
+  ): void {
+    this.lifecycleSummary.pluginNames.add(name)
+    if (phase === 'activated') this.recordPluginActivation(durationMs)
+    if (phase === 'deactivated') this.lifecycleSummary.plugin.deactivatedCount += 1
+    if (phase === 'disposed') this.lifecycleSummary.plugin.disposedCount += 1
+    if (phase === 'installed') this.lifecycleSummary.plugin.installedCount += 1
+    if (phase === 'updated') this.lifecycleSummary.plugin.updatedCount += 1
+  }
+
+  private recordPluginActivation(durationMs?: number): void {
+    this.lifecycleSummary.plugin.activatedCount += 1
+    if (durationMs === undefined) return
+
+    const slowest = this.lifecycleSummary.plugin.slowestActivationMs
+    if (slowest !== null && slowest >= durationMs) return
+
+    this.lifecycleSummary.plugin.slowestActivationMs = durationMs
+  }
+
+  private logPluginFailure(
+    action:
+      | 'editor.plugin.activation_failed'
+      | 'editor.plugin.deactivate_failed'
+      | 'editor.plugin.install_failed'
+      | 'editor.plugin.update_failed',
+    name: string,
+    error: unknown,
+    durationMs: number,
+  ): void {
+    this.lifecycleSummary.pluginNames.add(name)
+    this.lifecycleSummary.plugin.failedCount += 1
+    this.log({
+      action,
+      level: 'error',
+      durationMs,
+      error: editorLogError(error),
+      plugin: { name },
+    })
+  }
+
+  private logSyntaxLifecycleEvent(event: EditorLogInput): void {
+    if (event.action === 'editor.syntax.refresh_scheduled') {
+      this.lifecycleSummary.syntax.refreshScheduledCount += 1
+      return
+    }
+
+    this.log(event)
+  }
+
+  private logLifecycleSummary(): void {
+    const disposingPluginNames = this.pluginHost.getActivePluginNames()
+    this.log({
+      action: 'editor.lifecycle.summary',
+      level: 'info',
+      content: this.lifecycleSummary.content,
+      document: this.lifecycleSummary.document,
+      folds: this.lifecycleSummary.folds,
+      lifecycle: {
+        disposingAt: this.lifecycleSummary.disposingAt,
+        mountDurationMs: this.lifecycleSummary.mountDurationMs,
+        mountedAt: this.lifecycleSummary.mountedAt,
+      },
+      plugin: {
+        ...this.lifecycleSummary.plugin,
+        deactivatedCount:
+          this.lifecycleSummary.plugin.deactivatedCount + disposingPluginNames.length,
+        disposedCount: this.lifecycleSummary.plugin.disposedCount + disposingPluginNames.length,
+        names: [...this.lifecycleSummary.pluginNames].toSorted(),
+      },
+      syntax: this.lifecycleSummary.syntax,
+    })
   }
 
   private log(event: EditorLogInput): void {
@@ -1620,9 +1639,10 @@ export class Editor {
     const first = rejected[0]
     if (!first) return
 
-    this.log({
-      action: 'editor.folds.syntax.rejected',
-      level: 'warn',
+    this.lifecycleSummary.folds.syntaxRejectedCount += rejected.length
+    if (this.lifecycleSummary.folds.firstSyntaxRejection) return
+
+    this.lifecycleSummary.folds.firstSyntaxRejection = {
       message: 'Rejected invalid syntax fold projection ranges',
       syntax: {
         firstRejectedFold: foldLogContext(first.fold),
@@ -1630,7 +1650,7 @@ export class Editor {
         reason: first.kind,
         rejectedFoldCount: rejected.length,
       },
-    })
+    }
   }
 
   private syntaxFoldProjection(): readonly FoldRange[] {
@@ -2522,6 +2542,43 @@ export class Editor {
 
   private resolvedTheme(): EditorTheme | null {
     return mergeEditorThemes(this.syntax.providerTheme, this.syntax.theme, this.configuredTheme)
+  }
+}
+
+function createEditorLifecycleSummary(): EditorLifecycleSummary {
+  return {
+    pluginNames: new Set<string>(),
+    plugin: {
+      activatedCount: 0,
+      deactivatedCount: 0,
+      disposedCount: 0,
+      failedCount: 0,
+      installedCount: 0,
+      slowestActivationMs: null,
+      updatedCount: 0,
+    },
+    folds: {
+      firstSyntaxRejection: null,
+      syntaxRejectedCount: 0,
+    },
+    syntax: {
+      refreshScheduledCount: 0,
+    },
+    document: {
+      attachedCount: 0,
+      clearedCount: 0,
+      detachedCount: 0,
+      openedCount: 0,
+      setTextCount: 0,
+      startedCount: 0,
+      syncedTextCount: 0,
+    },
+    content: {
+      setCount: 0,
+    },
+    mountDurationMs: null,
+    mountedAt: null,
+    disposingAt: null,
   }
 }
 

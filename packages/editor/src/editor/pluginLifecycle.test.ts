@@ -202,7 +202,7 @@ describe('editor plugin lifecycle', () => {
     editor.dispose()
   })
 
-  test('registered loggers receive structured editor events', () => {
+  test('registered loggers receive structured editor events and lifecycle summary', () => {
     const events: EditorLogEvent[] = []
     const editor = createEditor({
       plugins: [createEditorLoggingPlugin((event) => events.push(event))],
@@ -210,10 +210,21 @@ describe('editor plugin lifecycle', () => {
 
     editor.edit({ from: 0, to: 0, text: 'x' })
     editor.dispatchCommand('selectAll')
+    editor.dispose()
 
-    expect(events.some((event) => event.action === 'editor.lifecycle.mounted')).toBe(true)
-    expect(events.some((event) => event.action === 'editor.plugin.activated')).toBe(true)
+    expect(events.some((event) => event.action === 'editor.lifecycle.summary')).toBe(true)
+    expect(events.some((event) => event.action === 'editor.plugin.activated')).toBe(false)
     expect(events.some((event) => event.action === 'editor.command.dispatched')).toBe(true)
+
+    const summary = events.find((event) => event.action === 'editor.lifecycle.summary')
+    expect(summary).toMatchObject({
+      level: 'info',
+      plugin: {
+        activatedCount: 1,
+        disposedCount: 1,
+      },
+      source: 'editor',
+    })
 
     const change = events.find(
       (event) =>
@@ -228,7 +239,6 @@ describe('editor plugin lifecycle', () => {
         languageId: null,
       },
     })
-    editor.dispose()
   })
 
   test('contains plugin activation failure and cleans partial registrations', () => {

@@ -163,6 +163,14 @@ describe('tree-sitter worker internals', () => {
     expect(collectTreeData(fakeTree(root)).errors).toHaveLength(1)
   })
 
+  it('returns empty diagnostics when tree-sitter provides no tree cursor', () => {
+    expect(collectTreeData(null)).toEqual({ brackets: [], errors: [] })
+    expect(collectTreeData({ walk: () => null } as unknown as Tree)).toEqual({
+      brackets: [],
+      errors: [],
+    })
+  })
+
   it('appends large worker result arrays without spreading call arguments', () => {
     const items = Array.from({ length: 200_000 }, (_, index) => index)
     const target: number[] = []
@@ -191,25 +199,8 @@ describe('tree-sitter worker internals', () => {
         return [{ name: 'variable', node: highlightedNode }]
       },
     } as unknown as Query
-    const runtime = {
-      descriptor: {
-        id: 'typescript',
-        extensions: [],
-        aliases: [],
-        wasmUrl: 'test.wasm',
-        highlightQuerySource: '(identifier) @variable',
-      },
-      language: {},
-      parser: {},
-      highlightQuery: query,
-      foldQuery: null,
-      injectionQuery: null,
-    } as unknown as Parameters<typeof collectCaptures>[1]
-    const context = {
-      startedAt: globalThis.performance?.now() ?? Date.now(),
-      budgetMs: 1_000,
-      flag: null,
-    } as Parameters<typeof collectCaptures>[2]
+    const runtime = highlightedRuntime(query)
+    const context = cancellationContext()
 
     expect(
       collectCaptures(fakeTree(node('program', 0, 100)), runtime, context, {
@@ -224,6 +215,24 @@ describe('tree-sitter worker internals', () => {
         languageId: 'typescript',
       },
     ])
+  })
+
+  it('skips highlights when tree-sitter provides null trees or capture nodes', () => {
+    const query = {
+      matches: () => [{ captures: [{ name: 'variable', node: null }] }],
+      captures: () => [{ name: 'variable', node: null }],
+    } as unknown as Query
+    const runtime = highlightedRuntime(query)
+    const context = cancellationContext()
+
+    expect(collectCaptures(null, runtime, context)).toEqual([])
+    expect(collectCaptures(fakeTree(node('program', 0, 100)), runtime, context)).toEqual([])
+    expect(
+      collectCaptures(fakeTree(node('program', 0, 100)), runtime, context, {
+        startIndex: 0,
+        endIndex: 100,
+      }),
+    ).toEqual([])
   })
 })
 
@@ -273,6 +282,31 @@ function fakeTree(root: TestNode): Tree {
     rootNode: root,
     walk: () => new FakeTreeCursor(root),
   } as unknown as Tree
+}
+
+function highlightedRuntime(query: Query): Parameters<typeof collectCaptures>[1] {
+  return {
+    descriptor: {
+      id: 'typescript',
+      extensions: [],
+      aliases: [],
+      wasmUrl: 'test.wasm',
+      highlightQuerySource: '(identifier) @variable',
+    },
+    language: {},
+    parser: {},
+    highlightQuery: query,
+    foldQuery: null,
+    injectionQuery: null,
+  } as unknown as Parameters<typeof collectCaptures>[1]
+}
+
+function cancellationContext(): Parameters<typeof collectCaptures>[2] {
+  return {
+    startedAt: globalThis.performance?.now() ?? Date.now(),
+    budgetMs: 1_000,
+    flag: null,
+  }
 }
 
 function treeSitterRange(startIndex: number, endIndex: number): TreeSitterRange {

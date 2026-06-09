@@ -1,4 +1,4 @@
-import type { DocumentSessionChange } from '@editor/core/document'
+import type { DocumentSessionChange } from '@singapor/core/document'
 import type {
   EditorDisposable,
   EditorCapabilityContribution,
@@ -10,8 +10,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
-import { EDITOR_MINIMAP_FEATURE } from '@editor/core/extensions'
+} from '@singapor/core/extensions'
+import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
 import { resolveMinimapOptions } from './options'
 import type { EditorMinimapOptions, ResolvedMinimapOptions } from './types'
 import { canUseMinimapWorker, MinimapWorkerClient, type MinimapHost } from './workerClient'

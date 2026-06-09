@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import * as core from '@editor/core'
+import * as core from '@singapor/core'
 import {
   createPieceTableSnapshot,
   materializePieceTableFullText,
   readPieceTableTextRange,
   wordRangeAtOffset,
   type TextEdit,
-} from '@editor/core/document'
-import { Editor } from '@editor/core/editor'
+} from '@singapor/core/document'
+import { Editor } from '@singapor/core/editor'
 import {
   createEditorCapabilityToken,
   EDITOR_FIND_FEATURE,
@@ -17,20 +17,23 @@ import {
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   type EditorPluginContext,
-} from '@editor/core/extensions'
-import { applyEditorTheme, type EditorTheme } from '@editor/core/rendering'
-import { EditorSecondaryTextView, EditorSecondaryViewScheduler } from '@editor/core/secondary-views'
-import { createEmptySyntaxResult, treeSitterCapturesToEditorTokens } from '@editor/core/syntax'
-import { EditorPluginHost } from '@editor/core/testing'
-import { debugPieceTable } from '@editor/core/debug'
-import { VirtualizedTextView } from '@editor/core/internal'
+} from '@singapor/core/extensions'
+import { applyEditorTheme, type EditorTheme } from '@singapor/core/rendering'
+import {
+  EditorSecondaryTextView,
+  EditorSecondaryViewScheduler,
+} from '@singapor/core/secondary-views'
+import { createEmptySyntaxResult, treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
+import { EditorPluginHost } from '@singapor/core/testing'
+import { debugPieceTable } from '@singapor/core/debug'
+import { VirtualizedTextView } from '@singapor/core/internal'
 import {
   createMergeConflictDocumentText,
   EDITOR_MERGE_CONFLICT_FEATURE,
   parseMergeConflicts,
   type EditorState,
   type MergeConflictRegion,
-} from '@editor/core'
+} from '@singapor/core'
 
 describe('public API facade', () => {
   it('exports reviewed root entrypoints without internal debug surfaces', () => {

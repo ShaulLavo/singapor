@@ -8,7 +8,7 @@ import {
   type Tree,
   type TreeCursor,
 } from 'web-tree-sitter'
-import { treeSitterCapturesToEditorTokens } from '@editor/core/syntax'
+import { treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
 import type { TreeSitterLanguageDescriptor } from './registry'
 import {

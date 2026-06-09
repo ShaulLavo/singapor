@@ -1,20 +1,20 @@
-import { createMergeConflictPlugin, Editor, type EditorPlugin } from '@editor/core/editor'
-import { createEditorDiffPlugin } from '@editor/diff'
-import '@editor/core/style.css'
-import '@editor/diff/style.css'
-import '@editor/find/style.css'
-import '@editor/minimap/style.css'
-import '@editor/scope-lines/style.css'
-import { createEditorFindPlugin } from '@editor/find'
-import { createFoldGutterPlugin, createLineGutterPlugin } from '@editor/gutters'
-import { createMinimapPlugin } from '@editor/minimap'
-import { createScopeLinesPlugin } from '@editor/scope-lines'
-import { css, html, javaScript, json, markdown, typeScript } from '@editor/tree-sitter-languages'
+import { createMergeConflictPlugin, Editor, type EditorPlugin } from '@singapor/core/editor'
+import { createEditorDiffPlugin } from '@singapor/diff'
+import '@singapor/core/style.css'
+import '@singapor/diff/style.css'
+import '@singapor/find/style.css'
+import '@singapor/minimap/style.css'
+import '@singapor/scope-lines/style.css'
+import { createEditorFindPlugin } from '@singapor/find'
+import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapor/gutters'
+import { createMinimapPlugin } from '@singapor/minimap'
+import { createScopeLinesPlugin } from '@singapor/scope-lines'
+import { css, html, javaScript, json, markdown, typeScript } from '@singapor/tree-sitter-languages'
 import {
   createTypeScriptLspPlugin,
   type TypeScriptLspDiagnosticSummary,
   type TypeScriptLspStatus,
-} from '@editor/typescript-lsp'
+} from '@singapor/typescript-lsp'
 import { createEditorPane } from './components/editorPane.ts'
 import { el } from './components/dom.ts'
 import { createSidebar } from './components/sidebar.ts'
@@ -71,7 +71,7 @@ export function mountApp(): void {
   })
   const sharedPlugins: readonly EditorPlugin[] = [
     foldGutter,
-    // Shiki highlighter: import createShikiHighlighterPlugin from "@editor/core/shiki".
+    // Shiki highlighter: import createShikiHighlighterPlugin from "@singapor/core/shiki".
     // createShikiHighlighterPlugin({ theme: "github-dark" }),
     createMergeConflictPlugin(),
     createEditorFindPlugin(),

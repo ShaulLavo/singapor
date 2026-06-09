@@ -1,11 +1,11 @@
-import type { DocumentSessionChange, TextEdit } from '@editor/core/document'
+import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
 import {
   lspPositionToOffset,
   lspPositionToOffsetInSnapshot,
   offsetToLspPosition,
   offsetToLspPositionInSnapshot,
   type LspTextDocumentSnapshot,
-} from '@editor/lsp'
+} from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 /**

@@ -1,4 +1,4 @@
-import { offsetToLspPosition } from '@editor/lsp/positions'
+import { offsetToLspPosition } from '@singapor/lsp/positions'
 import ts from 'typescript'
 import type * as lsp from 'vscode-languageserver-protocol'
 

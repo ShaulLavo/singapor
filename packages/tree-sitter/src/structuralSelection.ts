@@ -1,4 +1,4 @@
-import type { PieceTableSnapshot } from '@editor/core/document'
+import type { PieceTableSnapshot } from '@singapor/core/document'
 import {
   createAnchorSelection,
   createSelectionSet,
@@ -6,7 +6,7 @@ import {
   type PieceTableAnchor,
   resolveSelection,
   type SelectionSet,
-} from '@editor/core/internal'
+} from '@singapor/core/internal'
 import type { TreeSitterBackend } from './treeSitter/workerClient'
 import type {
   TreeSitterLanguageId,

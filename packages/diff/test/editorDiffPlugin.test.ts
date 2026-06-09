@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { Editor } from '@editor/core/editor'
+import { Editor } from '@singapor/core/editor'
 import { createEditorDiffPlugin } from '../src'
 
 describe('createEditorDiffPlugin', () => {

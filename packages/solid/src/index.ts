@@ -13,15 +13,15 @@ import {
   type EditorSelectionRevealTarget,
   type EditorSetTextOptions,
   type EditorState,
-} from '@editor/core/editor'
-import type { DocumentSessionChange, TextSnapshot } from '@editor/core/document'
-import type { EditorSyntaxLanguageId } from '@editor/core/syntax'
-import type { EditorTheme, HiddenCharactersMode } from '@editor/core/rendering'
+} from '@singapor/core/editor'
+import type { DocumentSessionChange, TextSnapshot } from '@singapor/core/document'
+import type { EditorSyntaxLanguageId } from '@singapor/core/syntax'
+import type { EditorTheme, HiddenCharactersMode } from '@singapor/core/rendering'
 import type {
   EditorPlugin,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
+} from '@singapor/core/extensions'
 import { batch, createEffect, createSignal, onCleanup, untrack, type Accessor } from 'solid-js'
 
 export type SolidEditorReactiveValue<T> = T | Accessor<T>

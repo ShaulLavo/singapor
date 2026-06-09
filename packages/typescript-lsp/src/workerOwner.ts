@@ -1,4 +1,4 @@
-import type { LspWorkerLike } from '@editor/lsp'
+import type { LspWorkerLike } from '@singapor/lsp'
 
 export type TypeScriptLspWorkerLifecycleState = 'ready' | 'disposed' | 'crashed'
 

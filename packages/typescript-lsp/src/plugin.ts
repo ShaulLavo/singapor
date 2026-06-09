@@ -1,14 +1,14 @@
-import type { EditorDisposable } from '@editor/core/extensions'
-import { createEditorCapabilityToken } from '@editor/core/extensions'
-import type { LspClient, LspWebSocketTransportOptions, LspWorkerLike } from '@editor/lsp'
+import type { EditorDisposable } from '@singapor/core/extensions'
+import { createEditorCapabilityToken } from '@singapor/core/extensions'
+import type { LspClient, LspWebSocketTransportOptions, LspWorkerLike } from '@singapor/lsp'
 import {
   createLanguageServerAdapterPlugin,
   createWebSocketLspTransportFactory,
   createWorkerLspTransportFactory,
   type LanguageServerConnectionContext,
   type LspConnectionTransportFactory,
-} from '@editor/lsp-plugin'
-import type { LanguageServerCompletionEditFeature } from '@editor/lsp-plugin/completion'
+} from '@singapor/lsp-plugin'
+import type { LanguageServerCompletionEditFeature } from '@singapor/lsp-plugin/completion'
 
 import { isTypeScriptLspSourceFileName } from './paths'
 import type {

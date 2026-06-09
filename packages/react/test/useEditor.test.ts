@@ -1,11 +1,11 @@
-import { Editor } from '@editor/core/editor'
-import type { EditorPlugin } from '@editor/core/extensions'
+import { Editor } from '@singapor/core/editor'
+import type { EditorPlugin } from '@singapor/core/extensions'
 import {
   createDocumentSession,
   createEditorTextBuffer,
   createEditorViewSession,
-} from '@editor/core/document'
-import type { EditorResolvedSelection } from '@editor/core/extensions'
+} from '@singapor/core/document'
+import type { EditorResolvedSelection } from '@singapor/core/extensions'
 import { act, createElement, useLayoutEffect, type ReactElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

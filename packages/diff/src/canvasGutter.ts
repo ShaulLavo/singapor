@@ -1,7 +1,7 @@
 import type {
   EditorSecondaryTextView,
   EditorSecondaryTextViewState,
-} from '@editor/core/secondary-views'
+} from '@singapor/core/secondary-views'
 import {
   diffGutterColor,
   diffGutterIndicatorColor,

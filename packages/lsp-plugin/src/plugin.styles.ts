@@ -1,4 +1,4 @@
-import type { VirtualizedTextHighlightStyle } from '@editor/core/rendering'
+import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
 
 import type { LanguageServerDiagnosticSeverity } from './diagnostics'
 

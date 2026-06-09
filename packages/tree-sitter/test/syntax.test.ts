@@ -4,9 +4,9 @@ import {
   applyBatchToPieceTable,
   createDocumentSession,
   createPieceTableSnapshot,
-} from '@editor/core/document'
-import { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from '@editor/core/syntax'
-import { EditorPluginHost } from '@editor/core/testing'
+} from '@singapor/core/document'
+import { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
+import { EditorPluginHost } from '@singapor/core/testing'
 import {
   createTreeSitterLanguagePlugin,
   resolveTreeSitterLanguageAlias,

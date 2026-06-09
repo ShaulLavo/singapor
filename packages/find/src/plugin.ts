@@ -1,4 +1,4 @@
-import type { DocumentSessionChange } from '@editor/core/document'
+import type { DocumentSessionChange } from '@singapor/core/document'
 import type {
   EditorCapabilityContribution,
   EditorCapabilityContributionContext,
@@ -18,8 +18,8 @@ import type {
   EditorViewContributionProvider,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
-import { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '@editor/core/extensions'
+} from '@singapor/core/extensions'
+import { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '@singapor/core/extensions'
 import {
   EditorFindController,
   type EditorFindHost,

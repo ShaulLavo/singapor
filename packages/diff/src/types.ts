@@ -1,6 +1,10 @@
-import type { EditorSyntaxLanguageId, EditorSyntaxProvider, EditorToken } from '@editor/core/syntax'
-import type { EditorTheme } from '@editor/core/rendering'
-import type { ResizablePaneHandleContext } from '@editor/panes'
+import type {
+  EditorSyntaxLanguageId,
+  EditorSyntaxProvider,
+  EditorToken,
+} from '@singapor/core/syntax'
+import type { EditorTheme } from '@singapor/core/rendering'
+import type { ResizablePaneHandleContext } from '@singapor/panes'
 
 export type DiffViewMode = 'split' | 'stacked'
 

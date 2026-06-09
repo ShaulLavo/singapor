@@ -1,11 +1,20 @@
 {
-  "name": "@editor/tree-sitter",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@singapor/tree-sitter",
+  "version": "0.1.1",
+  "files": [
+    "README.md",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "bench:syntax": "bun bench/treeSitter-syntax.ts",
@@ -17,7 +26,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@editor/core": "workspace:*",
+    "@singapor/core": "workspace:*",
     "web-tree-sitter": "^0.26.8"
   },
   "devDependencies": {
@@ -31,6 +40,6 @@
     "vitest": "^3.1.1"
   },
   "peerDependencies": {
-    "@editor/core": "workspace:*"
+    "@singapor/core": "workspace:*"
   }
 }

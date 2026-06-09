@@ -1,8 +1,11 @@
-import type { DocumentSessionChange } from '@editor/core/document'
-import type { EditorViewContributionUpdateKind, EditorViewSnapshot } from '@editor/core/extensions'
-import { createStringTextSnapshot } from '@editor/core/document'
-import { defineLazyFullTextProperty } from '@editor/core/internal'
-import type { LspWorkspace } from '@editor/lsp'
+import type { DocumentSessionChange } from '@singapor/core/document'
+import type {
+  EditorViewContributionUpdateKind,
+  EditorViewSnapshot,
+} from '@singapor/core/extensions'
+import { createStringTextSnapshot } from '@singapor/core/document'
+import { defineLazyFullTextProperty } from '@singapor/core/internal'
+import type { LspWorkspace } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { editsForChange, projectDiagnosticsInSnapshot } from './diagnosticProjection'

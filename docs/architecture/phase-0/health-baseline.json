@@ -50,46 +50,46 @@
     "references"
   ],
   "missingPackageScripts": {
-    "@editor/core": [
+    "@singapor/core": [
       "build"
     ],
-    "@editor/diff": [
+    "@singapor/diff": [
       "build"
     ],
-    "@editor/find": [
+    "@singapor/find": [
       "build"
     ],
-    "@editor/gutters": [
+    "@singapor/gutters": [
       "build"
     ],
-    "@editor/lsp": [
+    "@singapor/lsp": [
       "build"
     ],
-    "@editor/lsp-plugin": [
+    "@singapor/lsp-plugin": [
       "build"
     ],
-    "@editor/minimap": [
+    "@singapor/minimap": [
       "build"
     ],
-    "@editor/panes": [
+    "@singapor/panes": [
       "build"
     ],
-    "@editor/react": [
+    "@singapor/react": [
       "build"
     ],
-    "@editor/scope-lines": [
+    "@singapor/scope-lines": [
       "build"
     ],
-    "@editor/solid": [
+    "@singapor/solid": [
       "build"
     ],
-    "@editor/tree-sitter": [
+    "@singapor/tree-sitter": [
       "build"
     ],
-    "@editor/tree-sitter-languages": [
+    "@singapor/tree-sitter-languages": [
       "build"
     ],
-    "@editor/typescript-lsp": [
+    "@singapor/typescript-lsp": [
       "build"
     ]
   },

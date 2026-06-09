@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { EditorState } from '@editor/core/editor'
+import type { EditorState } from '@singapor/core/editor'
 import { createStatusBar } from '../../src/components/statusBar.ts'
 
 describe('createStatusBar', () => {

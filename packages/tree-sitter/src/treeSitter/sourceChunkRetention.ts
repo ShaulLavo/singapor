@@ -1,4 +1,4 @@
-import type { PieceTableSnapshot } from '@editor/core/document'
+import type { PieceTableSnapshot } from '@singapor/core/document'
 import { createTreeSitterSourceDescriptor, type TreeSitterSourceDescriptor } from './source'
 
 export type TreeSitterSourceChunkRetentionSnapshot = {

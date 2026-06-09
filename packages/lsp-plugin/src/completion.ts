@@ -1,7 +1,7 @@
-import type { DocumentSessionChange, TextEdit } from '@editor/core/document'
-import type { EditorEditContributionContext, EditorSelectionRange } from '@editor/core/extensions'
-import { createEditorCapabilityToken } from '@editor/core/extensions'
-import { lspPositionToOffset } from '@editor/lsp'
+import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import type { EditorEditContributionContext, EditorSelectionRange } from '@singapor/core/extensions'
+import { createEditorCapabilityToken } from '@singapor/core/extensions'
+import { lspPositionToOffset } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 export const LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE_ID = 'editor.lsp-plugin.completion-edit'

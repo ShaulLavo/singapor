@@ -2,7 +2,7 @@
 
 ## Decision
 
-Tree-sitter is the first-party structural syntax engine, delivered through the optional `@editor/tree-sitter` runtime plugin. Core editing remains plain when no syntax provider is registered. Shiki remains available as an optional highlighter package for hosts that prefer it.
+Tree-sitter is the first-party structural syntax engine, delivered through the optional `@singapor/tree-sitter` runtime plugin. Core editing remains plain when no syntax provider is registered. Shiki remains available as an optional highlighter package for hosts that prefer it.
 
 Tree-sitter provides a single structural model for:
 

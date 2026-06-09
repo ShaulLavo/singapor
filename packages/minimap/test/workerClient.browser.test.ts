@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { EditorViewSnapshot } from '@editor/core/extensions'
+import type { EditorViewSnapshot } from '@singapor/core/extensions'
 import { resolveMinimapOptions } from '../src/options'
 import { canUseMinimapWorker, MinimapWorkerClient, type MinimapHost } from '../src/workerClient'
 

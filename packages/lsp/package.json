@@ -1,13 +1,22 @@
 {
-  "name": "@editor/lsp",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@singapor/lsp",
+  "version": "0.1.1",
+  "files": [
+    "README.md",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
     "./positions": "./src/positions.ts",
     "./types": "./src/types.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "test": "vitest run",

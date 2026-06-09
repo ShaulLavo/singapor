@@ -1,7 +1,12 @@
 {
-  "name": "@editor/minimap",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@singapor/minimap",
+  "version": "0.1.1",
+  "files": [
+    "README.md",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
   "sideEffects": [
     "./src/style.css"
@@ -9,6 +14,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./style.css": "./src/style.css"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "bench:update": "bun bench/update.ts",
@@ -20,7 +29,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@editor/core": "workspace:*"
+    "@singapor/core": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

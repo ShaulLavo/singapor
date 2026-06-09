@@ -1,7 +1,12 @@
 {
-  "name": "@editor/find",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@singapor/find",
+  "version": "0.1.1",
+  "files": [
+    "README.md",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
   "sideEffects": [
     "./src/style.css"
@@ -9,6 +14,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./style.css": "./src/style.css"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "test": "vitest run test/search.test.ts test/plugin.test.ts",
@@ -22,8 +31,8 @@
     "@phosphor-icons/web": "^2.1.2"
   },
   "devDependencies": {
-    "@editor/core": "workspace:*",
     "@playwright/test": "^1.57.0",
+    "@singapor/core": "workspace:*",
     "@typescript/native-preview": "7.0.0-dev.20260524.1",
     "@vitest/browser": "^3.2.4",
     "happy-dom": "^20.8.9",
@@ -33,6 +42,6 @@
     "vitest": "^3.1.1"
   },
   "peerDependencies": {
-    "@editor/core": "workspace:*"
+    "@singapor/core": "workspace:*"
   }
 }

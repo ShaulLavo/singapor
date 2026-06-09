@@ -1,4 +1,4 @@
-import type { FoldGutterIconContext } from '@editor/gutters'
+import type { FoldGutterIconContext } from '@singapor/gutters'
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 // Font Awesome Free v7.2.0 chevron-down path, https://fontawesome.com/license/free

@@ -1,4 +1,4 @@
-import { Editor } from '@editor/core/editor'
+import { Editor } from '@singapor/core/editor'
 import { act, createElement, useEffect, type ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {

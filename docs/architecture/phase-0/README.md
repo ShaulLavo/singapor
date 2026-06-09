@@ -30,26 +30,26 @@ pushes to `main`, and manual dispatch.
   `packages/lsp-plugin/src`, and `packages/typescript-lsp/src`.
 - Missing package scripts for the root Turborepo contract: `build`, `test`, `typecheck`, `lint`,
   `format`, and `format:check`.
-- Duplicate LSP module candidates between `@editor/lsp-plugin` and `@editor/typescript-lsp`.
-- The current `@editor/core` public export inventory.
+- Duplicate LSP module candidates between `@singapor/lsp-plugin` and `@singapor/typescript-lsp`.
+- The current `@singapor/core` public export inventory.
 - Production timer usage that must stay justified until Phase 3 scheduling work replaces it.
 
 ## Current Known Issues
 
 - Package cycles: none reported in the Phase 0 baseline.
-- Source cycles: editor/plugin/virtualization cycles remain in `@editor/core`, and one client/workspace
-  cycle remains in `@editor/lsp`.
+- Source cycles: editor/plugin/virtualization cycles remain in `@singapor/core`, and one client/workspace
+  cycle remains in `@singapor/lsp`.
 - Duplicate modules: the LSP plugin and TypeScript-LSP packages share 18 same-name modules.
 - Package scripts: 14 workspace packages are missing at least one expected script, mostly `build` and
   package-level `test`.
-- Public API leaks: `@editor/core` still exposes broad `export *` surfaces from document, piece-table,
+- Public API leaks: `@singapor/core` still exposes broad `export *` surfaces from document, piece-table,
   syntax, display, theme, plugin, and virtualization internals. Phase 1 owns containment.
 - Timers: 32 production timer or frame/idle/microtask usages are accepted only as a Phase 0 legacy
   baseline. New timer entries require a scheduler justification in `timer-usage.json`.
 
 ## Review Rules
 
-- New public `@editor/core` exports must update `core-public-api.json` in the same reviewed change.
+- New public `@singapor/core` exports must update `core-public-api.json` in the same reviewed change.
 - New production timers must update `timer-usage.json` with a specific justification. Leaving the
   generated `TODO` text makes `bun run health` fail.
 - Fixed cycles, removed exports, or deleted timers should update the baseline in the same change so
@@ -61,6 +61,6 @@ pushes to `main`, and manual dispatch.
 
 - `health-baseline.json` records package cycles, source cycles, duplicate modules, ignored roots, and
   missing package scripts.
-- `core-public-api.json` records `@editor/core` package entry points and exported names.
+- `core-public-api.json` records `@singapor/core` package entry points and exported names.
 - `timer-usage.json` records production timer usage and required justifications.
 - `performance-baseline.md` records the first reproducible performance numbers for Phase 0.

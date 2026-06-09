@@ -1,4 +1,4 @@
-import type { TextEdit } from '@editor/core/document'
+import type { TextEdit } from '@singapor/core/document'
 import { parseCssColor, relativeLuminance, rgbaToCss, transparent } from './color'
 import {
   computeFrameLayout,

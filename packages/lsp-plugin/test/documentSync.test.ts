@@ -1,5 +1,5 @@
-import type { EditorViewSnapshot } from '@editor/core/extensions'
-import { LspWorkspace, type LspDocumentChange, type LspWorkspaceSyncTarget } from '@editor/lsp'
+import type { EditorViewSnapshot } from '@singapor/core/extensions'
+import { LspWorkspace, type LspDocumentChange, type LspWorkspaceSyncTarget } from '@singapor/lsp'
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

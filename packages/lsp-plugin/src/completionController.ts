@@ -1,11 +1,11 @@
-import type { DocumentSessionChange } from '@editor/core/document'
+import type { DocumentSessionChange } from '@singapor/core/document'
 import type {
   EditorCapabilityToken,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
-import { offsetToLspPosition, type LspClient } from '@editor/lsp'
+} from '@singapor/core/extensions'
+import { offsetToLspPosition, type LspClient } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {

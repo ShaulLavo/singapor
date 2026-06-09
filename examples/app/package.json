@@ -1,5 +1,5 @@
 {
-  "name": "@editor/example-app",
+  "name": "@singapor/example-app",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -15,14 +15,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@editor/core": "workspace:*",
-    "@editor/diff": "workspace:*",
-    "@editor/find": "workspace:*",
-    "@editor/gutters": "workspace:*",
-    "@editor/minimap": "workspace:*",
-    "@editor/scope-lines": "workspace:*",
-    "@editor/tree-sitter-languages": "workspace:*",
-    "@editor/typescript-lsp": "workspace:*"
+    "@singapor/core": "workspace:*",
+    "@singapor/diff": "workspace:*",
+    "@singapor/find": "workspace:*",
+    "@singapor/gutters": "workspace:*",
+    "@singapor/minimap": "workspace:*",
+    "@singapor/scope-lines": "workspace:*",
+    "@singapor/tree-sitter-languages": "workspace:*",
+    "@singapor/typescript-lsp": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

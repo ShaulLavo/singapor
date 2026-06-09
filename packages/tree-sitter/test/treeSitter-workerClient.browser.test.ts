@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import documentSessionSource from '../../editor/src/documentSession.ts?raw'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index.ts'
 
-import { applyBatchToPieceTable, createPieceTableSnapshot } from '@editor/core/document'
-import { createAnchorSelection, createSelectionSet, resolveSelection } from '@editor/core/internal'
+import { applyBatchToPieceTable, createPieceTableSnapshot } from '@singapor/core/document'
+import {
+  createAnchorSelection,
+  createSelectionSet,
+  resolveSelection,
+} from '@singapor/core/internal'
 import {
   expandTreeSitterSelection,
   resolveTreeSitterLanguageContribution,

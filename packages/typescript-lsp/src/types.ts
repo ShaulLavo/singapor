@@ -1,5 +1,5 @@
-import type { EditorPlugin } from '@editor/core/extensions'
-import type { LspWebSocketTransportOptions, LspWorkerLike } from '@editor/lsp'
+import type { EditorPlugin } from '@singapor/core/extensions'
+import type { LspWebSocketTransportOptions, LspWorkerLike } from '@singapor/lsp'
 import type {
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticCounts,
@@ -9,7 +9,7 @@ import type {
   LanguageServerNavigationOptions,
   LanguageServerReferencesResult,
   LanguageServerStatus,
-} from '@editor/lsp-plugin'
+} from '@singapor/lsp-plugin'
 import type ts from 'typescript'
 import type * as lsp from 'vscode-languageserver-protocol'
 

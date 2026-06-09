@@ -1,5 +1,5 @@
-import type { PieceTableSnapshot } from '@editor/core/document'
-import { debugPieceTable, type PieceBufferId } from '@editor/core/debug'
+import type { PieceTableSnapshot } from '@singapor/core/document'
+import { debugPieceTable, type PieceBufferId } from '@singapor/core/debug'
 
 export type TreeSitterSourcePieceSpan = {
   readonly chunkId: string

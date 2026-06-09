@@ -115,7 +115,7 @@ underway.
 - Configure code-health scanning so ignored local references are not treated as repository source.
 - Add a dependency graph check for package-level cycles.
 - Add a source-level import-cycle check for the editor, virtualization, and LSP packages.
-- Add a public API inventory for `@editor/core`.
+- Add a public API inventory for `@singapor/core`.
 - Add a performance baseline for:
   - typing into a small file
   - typing into a large file
@@ -151,7 +151,7 @@ Purpose: stop downstream packages from depending on internals before internals a
   - test utilities
 - Move virtualization internals behind internal exports.
 - Move piece-table debug access behind an explicit internal/debug entry point.
-- Audit every import of `@editor/core/*` across packages.
+- Audit every import of `@singapor/core/*` across packages.
 - Add compatibility shims only where migration would otherwise block multiple phases.
 - Put deprecation comments on compatibility shims with removal phases.
 
@@ -457,7 +457,7 @@ first-party users are migrated.
 - Replace stringly feature IDs with typed capability tokens.
 - Make contribution disposal mandatory and idempotent.
 - Split public and internal surfaces:
-  - public: `@editor/core/extensions`, root `@editor/core`, and documented editor entry points
+  - public: `@singapor/core/extensions`, root `@singapor/core`, and documented editor entry points
   - internal/test-only: `EditorPluginHost`, host events, `EditorInternalPluginContext`, and
     `EditorFeatureContribution*`
 - Add extension isolation tests:
@@ -497,7 +497,7 @@ first-party users are migrated.
   `EditorFeatureContribution*` to domain registries or `EditorViewContribution`.
 - Delete the internal feature-contribution bridge once no first-party feature depends on the broad
   context.
-- Keep auditing public exports so `@editor/core/extensions` stays powerful but intentional.
+- Keep auditing public exports so `@singapor/core/extensions` stays powerful but intentional.
 
 ### Must Delete
 
@@ -523,12 +523,12 @@ Purpose: make secondary surfaces consume editor projections instead of cloning e
 
 ### Initial Slice
 
-- Added `@editor/core/secondary-views` as the explicit entry point for secondary surfaces.
+- Added `@singapor/core/secondary-views` as the explicit entry point for secondary surfaces.
 - Defined `EditorSecondaryViewProjection`, which carries snapshot identity, text snapshot access,
   visible line model, syntax tokens, selections, fold summaries, viewport, metrics, and optional
   secondary-view decorations.
 - Moved diff's standalone virtualized panes and minimap's worker scheduling off the deprecated
-  `@editor/core/internal` bridge and onto the secondary-view entry point.
+  `@singapor/core/internal` bridge and onto the secondary-view entry point.
 - Routed minimap worker document payload creation through the shared secondary-view projection, with
   full-text materialization occurring through the projection's explicit text boundary.
 - Added focused tests proving the projection does not read lazy `fullText` when a `TextSnapshot` is
@@ -589,17 +589,17 @@ Purpose: stop clone-and-modify language server architecture.
   - transport
   - feature adapters
   - editor integration
-- Keep `@editor/lsp` headless: it must not export `EditorPlugin` factories or
+- Keep `@singapor/lsp` headless: it must not export `EditorPlugin` factories or
   `createLspPlugin`.
 - Break the `client` <-> `workspace` import cycle by depending on interfaces.
 - Replace object-identity cancellation with request IDs or typed handles.
-- Create one generic `@editor/lsp-plugin` editor-integration package.
+- Create one generic `@singapor/lsp-plugin` editor-integration package.
 - Make TypeScript support an adapter package over the shared integration.
 - Name the shared specialization hook `createLanguageServerAdapterPlugin`; reserve
   `createLanguageServerPlugin` for custom servers.
-- Keep `@editor/typescript-lsp` as the public TypeScript product package. It
+- Keep `@singapor/typescript-lsp` as the public TypeScript product package. It
   owns the TS worker/server, TS diagnostics, TS path/source filters, and a thin
-  `createTypeScriptLspPlugin` wrapper that configures `@editor/lsp-plugin`.
+  `createTypeScriptLspPlugin` wrapper that configures `@singapor/lsp-plugin`.
 - Move shared completion, hover, diagnostics, and workspace behavior into one implementation.
 - Add conformance tests for LSP open/change/save/close ordering.
 - Add timeout and cancellation tests.
@@ -607,7 +607,7 @@ Purpose: stop clone-and-modify language server architecture.
 ### Must Delete
 
 - Duplicated `lsp-plugin` and `typescript-lsp` implementations.
-- Any `createLspPlugin` API or editor-plugin exports from `@editor/lsp`.
+- Any `createLspPlugin` API or editor-plugin exports from `@singapor/lsp`.
 - Client/workspace circular imports.
 - Cancellation APIs based on caller-retained params object identity.
 - Console logging as default error handling.

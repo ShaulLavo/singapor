@@ -1,5 +1,5 @@
-import { lspPositionToOffset, offsetToLspPosition } from '@editor/lsp'
-import type { PublishDiagnosticsNotificationParams } from '@editor/lsp/types'
+import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
+import type { PublishDiagnosticsNotificationParams } from '@singapor/lsp/types'
 import {
   createDefaultMapFromCDN,
   createSystem,

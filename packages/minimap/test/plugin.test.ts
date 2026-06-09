@@ -5,8 +5,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
-import { EDITOR_MINIMAP_FEATURE } from '@editor/core/extensions'
+} from '@singapor/core/extensions'
+import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
 import { createMinimapPlugin } from '../src/plugin'
 
 describe('createMinimapPlugin', () => {

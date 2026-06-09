@@ -1,5 +1,5 @@
-import type { TextSnapshot } from '@editor/core/document'
-import type { VirtualizedFoldMarker } from '@editor/core/rendering'
+import type { TextSnapshot } from '@singapor/core/document'
+import type { VirtualizedFoldMarker } from '@singapor/core/rendering'
 import type {
   EditorPlugin,
   EditorViewContribution,
@@ -7,9 +7,9 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
-} from '@editor/core/extensions'
-import { createStringTextSnapshot } from '@editor/core/document'
-import type { DocumentSessionChange } from '@editor/core/document'
+} from '@singapor/core/extensions'
+import { createStringTextSnapshot } from '@singapor/core/document'
+import type { DocumentSessionChange } from '@singapor/core/document'
 import './style.css'
 
 export type ScopeLinesPluginOptions = {

@@ -6,7 +6,7 @@ import {
   type LspManagedTransport,
   type LspWebSocketTransportOptions,
   type LspWorkerLike,
-} from '@editor/lsp'
+} from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { LanguageServerStatus } from './types'

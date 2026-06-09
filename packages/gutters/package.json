@@ -1,7 +1,12 @@
 {
-  "name": "@editor/gutters",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@singapor/gutters",
+  "version": "0.1.1",
+  "files": [
+    "README.md",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
   "sideEffects": [
     "./src/lineGutter.css",
@@ -16,6 +21,10 @@
     "./fold-gutter.css": "./src/foldGutter.css",
     "./style.css": "./src/style.css"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsgo --noEmit",
@@ -24,7 +33,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@editor/core": "workspace:*"
+    "@singapor/core": "workspace:*"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260524.1",

@@ -1,4 +1,4 @@
-import type { LspWorkerLike } from '@editor/lsp'
+import type { LspWorkerLike } from '@singapor/lsp'
 import { describe, expect, it, vi } from 'vitest'
 import { createTypeScriptLspServerSession } from '../src/server'
 

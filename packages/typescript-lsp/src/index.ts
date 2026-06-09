@@ -12,7 +12,7 @@ export {
   summarizeDiagnostics,
   type LanguageServerDiagnosticHighlightGroups as TypeScriptLspDiagnosticHighlightGroups,
   type LanguageServerDiagnosticSeverity as TypeScriptLspDiagnosticSeverity,
-} from '@editor/lsp-plugin/diagnostics'
+} from '@singapor/lsp-plugin/diagnostics'
 export {
   documentUriToFileName,
   fileNameToDocumentUri,

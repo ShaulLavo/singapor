@@ -1,9 +1,9 @@
-import type { TextEdit } from '@editor/core/document'
+import type { TextEdit } from '@singapor/core/document'
 import type {
   EditorMinimapDecoration as CoreEditorMinimapDecoration,
   EditorMinimapDecorationPosition as CoreEditorMinimapDecorationPosition,
   EditorMinimapSectionHeaderStyle as CoreEditorMinimapSectionHeaderStyle,
-} from '@editor/core/extensions'
+} from '@singapor/core/extensions'
 
 export const enum RenderMinimap {
   None = 0,

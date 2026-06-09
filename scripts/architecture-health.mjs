@@ -35,7 +35,7 @@ const config = {
     },
   ],
   productionSourceRoots: ['packages', 'examples'],
-  publicApiPackageName: '@editor/core',
+  publicApiPackageName: '@singapor/core',
   baselineDir: 'docs/architecture/phase-0',
 }
 

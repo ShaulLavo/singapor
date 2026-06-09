@@ -1,5 +1,5 @@
-import type { EditorCommandId } from '@editor/core/editor'
-import type { DocumentSessionChange } from '@editor/core/document'
+import type { EditorCommandId } from '@singapor/core/editor'
+import type { DocumentSessionChange } from '@singapor/core/document'
 import type {
   EditorCapabilityToken,
   EditorCommandContributionContext,
@@ -10,8 +10,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
-import type { LspClient, LspWorkspace } from '@editor/lsp'
+} from '@singapor/core/extensions'
+import type { LspClient, LspWorkspace } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {

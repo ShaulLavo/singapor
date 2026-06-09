@@ -1,10 +1,10 @@
-import type { EditorTheme } from '@editor/core/rendering'
+import type { EditorTheme } from '@singapor/core/rendering'
 import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
-import { lspPositionToOffset, offsetToLspPosition, type LspClient } from '@editor/lsp'
+} from '@singapor/core/extensions'
+import { lspPositionToOffset, offsetToLspPosition, type LspClient } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {

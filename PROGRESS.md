@@ -70,7 +70,7 @@ Validation after Phase 3:
 - Maintained line-break aggregates through node creation, cloning, splitting, merging, and updates.
 - Added `offsetToPoint`.
 - Added `pointToOffset`.
-- Added public exports for the piece-table API from `@editor/core`.
+- Added public exports for the piece-table API from `@singapor/core`.
 - Added tests for:
   - basic insert/delete
   - snapshot isolation

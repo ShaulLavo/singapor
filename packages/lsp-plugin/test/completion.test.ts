@@ -1,4 +1,4 @@
-import type { EditorEditContributionContext } from '@editor/core/extensions'
+import type { EditorEditContributionContext } from '@singapor/core/extensions'
 import { describe, expect, it, vi } from 'vitest'
 
 import {

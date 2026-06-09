@@ -1,11 +1,11 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { EditorTheme } from '@editor/core/rendering'
+import type { EditorTheme } from '@singapor/core/rendering'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxSessionOptions,
   type EditorToken,
-} from '@editor/core/syntax'
-import { EditorSecondaryTextView } from '@editor/core/secondary-views'
+} from '@singapor/core/syntax'
+import { EditorSecondaryTextView } from '@singapor/core/secondary-views'
 import { createTextDiff, DiffView } from '../src'
 import { diffSyntaxBackend, projectDiffSyntaxTokens } from '../src/DiffView'
 import type {
@@ -25,7 +25,7 @@ const shikiMock = vi.hoisted(() => ({
   refreshTexts: [] as string[],
 }))
 
-vi.mock('@editor/core/shiki', () => ({
+vi.mock('@singapor/core/shiki', () => ({
   canUseShikiWorker: shikiMock.canUseShikiWorker,
   createShikiWorkerOwner: shikiMock.createShikiWorkerOwner,
 }))

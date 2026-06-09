@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { EditorTheme } from '@editor/core/rendering'
+import type { EditorTheme } from '@singapor/core/rendering'
 import {
   normalizeTooltipMarkdown,
   renderTooltipMarkdown as renderLanguageServerTooltipMarkdown,
   type TooltipMarkdownRenderOptions,
-} from '@editor/lsp-plugin/markdown-tooltip'
+} from '@singapor/lsp-plugin/markdown-tooltip'
 
 describe('tooltip Markdown rendering', () => {
   it('renders TypeScript fenced code blocks as pre/code', () => {

@@ -1,7 +1,12 @@
 {
-  "name": "@editor/core",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@singapor/core",
+  "version": "0.1.1",
+  "files": [
+    "README.md",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
   "sideEffects": [
     "./src/style.css"
@@ -21,6 +26,10 @@
     "./syntax": "./src/public/syntax.ts",
     "./testing": "./src/public/testing.ts",
     "./style.css": "./src/style.css"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "bench:anchors": "bun bench/pieceTable-anchors.ts",

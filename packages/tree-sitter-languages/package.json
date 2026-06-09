@@ -1,11 +1,20 @@
 {
-  "name": "@editor/tree-sitter-languages",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@singapor/tree-sitter-languages",
+  "version": "0.1.1",
+  "files": [
+    "README.md",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build:markdown-wasm": "node scripts/build-markdown-wasm.mjs",
@@ -16,7 +25,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@editor/tree-sitter": "workspace:*",
+    "@singapor/tree-sitter": "workspace:*",
     "@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
     "tree-sitter-css": "^0.25.0",
     "tree-sitter-html": "^0.23.2",
@@ -25,7 +34,7 @@
     "tree-sitter-typescript": "^0.23.2"
   },
   "devDependencies": {
-    "@editor/core": "workspace:*",
+    "@singapor/core": "workspace:*",
     "@typescript/native-preview": "7.0.0-dev.20260524.1",
     "oxfmt": "0.51.0",
     "oxlint": "1.66.0",
@@ -34,7 +43,7 @@
     "vitest": "^3.1.1"
   },
   "peerDependencies": {
-    "@editor/core": "workspace:*",
-    "@editor/tree-sitter": "workspace:*"
+    "@singapor/core": "workspace:*",
+    "@singapor/tree-sitter": "workspace:*"
   }
 }

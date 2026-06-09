@@ -167,7 +167,7 @@ CSS Highlight API renderer implemented. See `packages/editor/src/editor.ts`.
 ### 5.12 Extension System (In Progress)
 
 Extensions run through a host lifecycle with explicit `install`, `activate`, `update`,
-`deactivate`, and `dispose` hooks. The public surface is `@editor/core/extensions`; consumers get
+`deactivate`, and `dispose` hooks. The public surface is `@singapor/core/extensions`; consumers get
 power through typed domain registries instead of a broad editor service locator.
 
 **Public contribution APIs:**

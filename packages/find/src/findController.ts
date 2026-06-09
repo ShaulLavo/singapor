@@ -1,6 +1,10 @@
-import { wordRangeAtOffset, type DocumentSessionChange, type TextEdit } from '@editor/core/document'
-import type { EditorDisposable, EditorViewContributionUpdateKind } from '@editor/core/extensions'
-import type { VirtualizedTextHighlightStyle } from '@editor/core/rendering'
+import {
+  wordRangeAtOffset,
+  type DocumentSessionChange,
+  type TextEdit,
+} from '@singapor/core/document'
+import type { EditorDisposable, EditorViewContributionUpdateKind } from '@singapor/core/extensions'
+import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
 import {
   FIND_MATCHES_LIMIT,
   findMatchIndex,

@@ -3,7 +3,7 @@ import {
   isWholeWordRange,
   normalizeTextOffsetRanges,
   type TextOffsetRange,
-} from '@editor/core/document'
+} from '@singapor/core/document'
 
 export const FIND_MATCHES_LIMIT = 19_999
 

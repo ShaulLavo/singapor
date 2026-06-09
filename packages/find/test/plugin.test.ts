@@ -7,7 +7,7 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
+} from '@singapor/core/extensions'
 import {
   createEditorFindContributionProviders,
   createEditorFindPlugin,

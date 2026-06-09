@@ -1,5 +1,5 @@
-import type { EditorCommandId } from '@editor/core/editor'
-import type { DocumentSessionChange, TextEdit, TextSnapshot } from '@editor/core/document'
+import type { EditorCommandId } from '@singapor/core/editor'
+import type { DocumentSessionChange, TextEdit, TextSnapshot } from '@singapor/core/document'
 import type {
   EditorCommandContributionContext,
   EditorCommandHandler,
@@ -9,9 +9,9 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
-import { EDITOR_MINIMAP_FEATURE } from '@editor/core/extensions'
-import type { LspWebSocketLike, LspWorkerLike } from '@editor/lsp'
+} from '@singapor/core/extensions'
+import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
+import type { LspWebSocketLike, LspWorkerLike } from '@singapor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'
 

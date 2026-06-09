@@ -1,15 +1,15 @@
-import type { DocumentSessionChange, TextEdit } from '@editor/core/document'
-import type { EditorToken } from '@editor/core/syntax'
+import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import type { EditorToken } from '@singapor/core/syntax'
 import type {
   EditorMinimapDecoration,
   EditorResolvedSelection,
   EditorViewSnapshot,
-} from '@editor/core/extensions'
+} from '@singapor/core/extensions'
 import {
   createEditorSecondaryViewProjection,
   EditorSecondaryViewScheduler,
   type EditorSecondaryViewTextProjection,
-} from '@editor/core/secondary-views'
+} from '@singapor/core/secondary-views'
 import { parseCssColor, RGBA_BLACK, RGBA_WHITE, transparent } from './color'
 import type {
   MinimapBaseStyles,

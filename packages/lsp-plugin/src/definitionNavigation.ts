@@ -1,4 +1,4 @@
-import { lspPositionToOffset, offsetToLspPosition, type LspClient } from '@editor/lsp'
+import { lspPositionToOffset, offsetToLspPosition, type LspClient } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { documentUriToFileName } from './paths'
@@ -47,7 +47,7 @@ export type DefinitionResult = {
  * Minimum editor surface required by {@link navigateToDefinition}. Matches
  * the corresponding subset of `EditorViewContributionContext` so the
  * contribution can pass its `context` through directly while keeping this
- * module decoupled from `@editor/core`'s full contribution surface.
+ * module decoupled from `@singapor/core`'s full contribution surface.
  */
 export type NavigationEditor = {
   readonly text: string

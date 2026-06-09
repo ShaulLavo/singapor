@@ -7,8 +7,8 @@ import type {
   EditorBlockProvider,
   EditorBlockProviderContext,
   EditorBlockVerticalSurface,
-} from '@editor/core/rendering'
-import type { EditorDisposable, EditorPlugin } from '@editor/core/extensions'
+} from '@singapor/core/rendering'
+import type { EditorDisposable, EditorPlugin } from '@singapor/core/extensions'
 import type { ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 

@@ -44,10 +44,10 @@ describe('public API facade', () => {
     }
     const text = sourceText()
 
-    expect(packageJson.dependencies ?? {}).not.toHaveProperty('@editor/core')
-    expect(packageJson.peerDependencies ?? {}).not.toHaveProperty('@editor/core')
-    expect(packageJson.devDependencies ?? {}).not.toHaveProperty('@editor/core')
-    expect(text).not.toContain('@editor/core')
+    expect(packageJson.dependencies ?? {}).not.toHaveProperty('@singapor/core')
+    expect(packageJson.peerDependencies ?? {}).not.toHaveProperty('@singapor/core')
+    expect(packageJson.devDependencies ?? {}).not.toHaveProperty('@singapor/core')
+    expect(text).not.toContain('@singapor/core')
     expect(text).not.toContain('EditorPlugin')
   })
 })

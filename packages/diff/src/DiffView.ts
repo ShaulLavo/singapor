@@ -1,4 +1,4 @@
-import { createDocumentTextSnapshot, createPieceTableSnapshot } from '@editor/core/document'
+import { createDocumentTextSnapshot, createPieceTableSnapshot } from '@singapor/core/document'
 import {
   createEmptySyntaxResult,
   createSyntaxLanguageConfiguration,
@@ -8,17 +8,17 @@ import {
   type EditorSyntaxServiceRequest,
   type EditorSyntaxSessionOptions,
   type EditorToken,
-} from '@editor/core/syntax'
+} from '@singapor/core/syntax'
 import type {
   VirtualizedTextHighlightRange,
   VirtualizedTextRowDecoration,
-} from '@editor/core/rendering'
+} from '@singapor/core/rendering'
 import {
   EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
   type EditorSecondaryWorkContext,
-} from '@editor/core/secondary-views'
-import { ResizablePaneGroup, type ResizablePaneLayout } from '@editor/panes'
+} from '@singapor/core/secondary-views'
+import { ResizablePaneGroup, type ResizablePaneLayout } from '@singapor/panes'
 import { createDiffCanvasGutterRenderer, type DiffCanvasGutterRenderer } from './canvasGutter'
 import { diffGutterWidth } from './gutters'
 import { joinRenderLines, languageIdForPath } from './lines'
@@ -83,7 +83,7 @@ const DEFAULT_DIFF_OVERSCAN = 8
 const WHEEL_LINE_DELTA = 40
 let nextDiffViewId = 0
 let nextMountedPaneId = 0
-let shikiModulePromise: Promise<typeof import('@editor/core/shiki')> | null = null
+let shikiModulePromise: Promise<typeof import('@singapor/core/shiki')> | null = null
 
 export class DiffView {
   private readonly root: HTMLDivElement
@@ -933,8 +933,8 @@ async function shikiDiffSyntaxService(
   }
 }
 
-function loadShikiModule(): Promise<typeof import('@editor/core/shiki')> {
-  shikiModulePromise ??= import('@editor/core/shiki')
+function loadShikiModule(): Promise<typeof import('@singapor/core/shiki')> {
+  shikiModulePromise ??= import('@singapor/core/shiki')
   return shikiModulePromise
 }
 

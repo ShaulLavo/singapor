@@ -1,4 +1,4 @@
-import type { EditorTheme } from '@editor/core/rendering'
+import type { EditorTheme } from '@singapor/core/rendering'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { renderTooltipMarkdown } from './markdownTooltip'

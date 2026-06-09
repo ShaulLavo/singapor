@@ -1,4 +1,4 @@
-import { lspPositionToOffset } from '@editor/lsp'
+import { lspPositionToOffset } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 export type LanguageServerDiagnosticSeverity = 'error' | 'warning' | 'information' | 'hint'

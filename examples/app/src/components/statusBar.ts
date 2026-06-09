@@ -1,5 +1,5 @@
-import type { EditorState } from '@editor/core/editor'
-import type { TypeScriptLspDiagnosticSummary, TypeScriptLspStatus } from '@editor/typescript-lsp'
+import type { EditorState } from '@singapor/core/editor'
+import type { TypeScriptLspDiagnosticSummary, TypeScriptLspStatus } from '@singapor/typescript-lsp'
 import { el } from './dom.ts'
 
 export type StatusBar = {

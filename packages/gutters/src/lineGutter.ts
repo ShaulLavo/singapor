@@ -2,7 +2,7 @@ import type {
   EditorGutterContribution,
   EditorGutterRowContext,
   EditorPlugin,
-} from '@editor/core/extensions'
+} from '@singapor/core/extensions'
 import { normalizeNonNegativeNumber, normalizePositiveInteger, setElementHidden } from './utils'
 import './lineGutter.css'
 

@@ -20,7 +20,7 @@ import type {
   TreeSitterWorkerResponse,
   TreeSitterWorkerResult,
 } from './types'
-import type { PieceTableSnapshot } from '@editor/core/document'
+import type { PieceTableSnapshot } from '@singapor/core/document'
 
 type PendingRequest = {
   readonly documentId: string | null

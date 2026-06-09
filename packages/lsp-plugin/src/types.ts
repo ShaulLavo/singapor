@@ -1,5 +1,5 @@
-import type { EditorPlugin } from '@editor/core/extensions'
-import type { LspWebSocketTransportOptions } from '@editor/lsp'
+import type { EditorPlugin } from '@singapor/core/extensions'
+import type { LspWebSocketTransportOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 export type LanguageServerStatus = 'idle' | 'loading' | 'ready' | 'error'

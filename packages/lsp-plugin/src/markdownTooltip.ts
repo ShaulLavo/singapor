@@ -1,4 +1,4 @@
-import { applyEditorTheme, type EditorTheme } from '@editor/core/rendering'
+import { applyEditorTheme, type EditorTheme } from '@singapor/core/rendering'
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'

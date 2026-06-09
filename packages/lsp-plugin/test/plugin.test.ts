@@ -1,5 +1,5 @@
-import type { EditorCommandId } from '@editor/core/editor'
-import type { TextSnapshot } from '@editor/core/document'
+import type { EditorCommandId } from '@singapor/core/editor'
+import type { TextSnapshot } from '@singapor/core/document'
 import {
   createEditorCapabilityToken,
   type EditorCommandContributionContext,
@@ -9,8 +9,8 @@ import {
   type EditorViewContributionContext,
   type EditorViewContributionProvider,
   type EditorViewSnapshot,
-} from '@editor/core/extensions'
-import type { LspManagedTransport, LspTransportHandler, LspWebSocketLike } from '@editor/lsp'
+} from '@singapor/core/extensions'
+import type { LspManagedTransport, LspTransportHandler, LspWebSocketLike } from '@singapor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { type LanguageServerCompletionEditFeature } from '../src/completion'

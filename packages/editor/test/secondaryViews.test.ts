@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { createStringTextSnapshot } from '@editor/core/document'
-import type { EditorViewSnapshot } from '@editor/core/extensions'
+import { createStringTextSnapshot } from '@singapor/core/document'
+import type { EditorViewSnapshot } from '@singapor/core/extensions'
 import {
   createEditorSecondaryViewProjection,
   EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
-} from '@editor/core/secondary-views'
+} from '@singapor/core/secondary-views'
 
 describe('secondary view projections', () => {
   it('projects snapshot-owned view data without reading lazy fullText when a text snapshot exists', () => {

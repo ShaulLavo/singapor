@@ -3,8 +3,8 @@ import {
   type EditorMinimapDecoration,
   type EditorMinimapFeature,
   type EditorViewContributionContext,
-} from '@editor/core/extensions'
-import { lspPositionToOffset } from '@editor/lsp'
+} from '@singapor/core/extensions'
+import { lspPositionToOffset } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {

@@ -3,7 +3,7 @@ export {
   fileNameToDocumentUri,
   pathOrUriToDocumentUri,
   sourcePathToFileName,
-} from '@editor/lsp-plugin/paths'
+} from '@singapor/lsp-plugin/paths'
 
 const TYPE_SCRIPT_EXTENSIONS = new Set(['.cts', '.mts', '.ts', '.tsx'])
 const TYPE_SCRIPT_LSP_SOURCE_EXTENSIONS = new Set([

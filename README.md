@@ -41,16 +41,16 @@ architecture questions, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 | Package | Purpose |
 | --- | --- |
-| `@editor/core` | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, Shiki highlighter, and plugin contracts. |
-| `@editor/gutters` | Line-number and fold-gutter plugins for the core editor. |
-| `@editor/find` | Find and replace plugin for the core editor. |
-| `@editor/minimap` | Minimap plugin with worker-backed document rendering. |
-| `@editor/scope-lines` | Scope-line view contribution plugin. |
-| `@editor/tree-sitter` | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers. |
-| `@editor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON. |
-| `@editor/typescript-lsp` | TypeScript language-service plugin built on the generic LSP layer. |
-| `@editor/lsp` | Generic LSP transport and plugin primitives. |
-| `@editor/example-app` | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing. |
+| `@singapor/core` | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, Shiki highlighter, and plugin contracts. |
+| `@singapor/gutters` | Line-number and fold-gutter plugins for the core editor. |
+| `@singapor/find` | Find and replace plugin for the core editor. |
+| `@singapor/minimap` | Minimap plugin with worker-backed document rendering. |
+| `@singapor/scope-lines` | Scope-line view contribution plugin. |
+| `@singapor/tree-sitter` | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers. |
+| `@singapor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON. |
+| `@singapor/typescript-lsp` | TypeScript language-service plugin built on the generic LSP layer. |
+| `@singapor/lsp` | Generic LSP transport and plugin primitives. |
+| `@singapor/example-app` | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing. |
 
 ## Requirements
 
@@ -78,8 +78,8 @@ Vite.
 Minimal editor embedding looks like this:
 
 ```ts
-import { Editor } from "@editor/core/editor";
-import "@editor/core/style.css";
+import { Editor } from "@singapor/core/editor";
+import "@singapor/core/style.css";
 
 const editor = new Editor(document.querySelector("#editor")!);
 editor.openDocument({

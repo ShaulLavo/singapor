@@ -1,10 +1,19 @@
 {
-  "name": "@editor/react",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@singapor/react",
+  "version": "0.1.1",
+  "files": [
+    "README.md",
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx"
+  ],
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "test": "vitest run",
@@ -14,7 +23,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@editor/core": "workspace:*"
+    "@singapor/core": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "19.2.10",
@@ -29,7 +38,7 @@
     "vitest": "^3.1.1"
   },
   "peerDependencies": {
-    "@editor/core": "workspace:*",
+    "@singapor/core": "workspace:*",
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0"
   }

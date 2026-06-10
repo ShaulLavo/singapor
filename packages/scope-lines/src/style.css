@@ -49,6 +49,9 @@
   pointer-events: none;
   position: absolute;
   top: 0;
+  /* Own compositor layer: WebKit re-resolves all CSS Highlight ranges when
+     children of an in-flow layer churn; see .editor-virtualized-row. */
+  will-change: transform;
   z-index: 1;
 }
 

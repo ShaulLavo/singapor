@@ -121,6 +121,8 @@
   left: 0;
   position: absolute;
   right: 0;
+  /* Same WebKit highlight-invalidation workaround as .editor-virtualized-row. */
+  will-change: transform;
   top: 0;
   user-select: none;
 }
@@ -158,6 +160,10 @@
   right: 0;
   top: 0;
   white-space: pre;
+  /* Own compositor layer per row: WebKit re-resolves every registered CSS
+     Highlight range when a painted row's transform changes, stalling scroll
+     remounts 100-300ms. Compositor-only moves skip that invalidation. */
+  will-change: transform;
 }
 
 .editor-virtualized-horizontal-block-layer {

@@ -3,33 +3,88 @@
   "version": "0.1.1",
   "files": [
     "README.md",
-    "src",
-    "!src/**/*.test.ts",
-    "!src/**/*.test.tsx"
+    "dist"
   ],
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts",
-    "./completion": "./src/completion.ts",
-    "./completion-controller": "./src/completionController.ts",
-    "./definition-navigation": "./src/definitionNavigation.ts",
-    "./diagnostics": "./src/diagnostics.ts",
-    "./diagnostics-presenter": "./src/diagnosticsPresenter.ts",
-    "./document-sync": "./src/documentSync.ts",
-    "./hover-definition-controller": "./src/hoverDefinitionController.ts",
-    "./markdown-tooltip": "./src/markdownTooltip.ts",
-    "./paths": "./src/paths.ts",
-    "./plugin-types": "./src/pluginTypes.ts",
-    "./plugin-styles": "./src/plugin.styles.ts",
-    "./tooltip": "./src/tooltip.ts",
-    "./websocket": "./src/websocket.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./completion": {
+      "types": "./dist/completion.d.ts",
+      "import": "./dist/completion.js",
+      "default": "./dist/completion.js"
+    },
+    "./completion-controller": {
+      "types": "./dist/completionController.d.ts",
+      "import": "./dist/completionController.js",
+      "default": "./dist/completionController.js"
+    },
+    "./definition-navigation": {
+      "types": "./dist/definitionNavigation.d.ts",
+      "import": "./dist/definitionNavigation.js",
+      "default": "./dist/definitionNavigation.js"
+    },
+    "./diagnostics": {
+      "types": "./dist/diagnostics.d.ts",
+      "import": "./dist/diagnostics.js",
+      "default": "./dist/diagnostics.js"
+    },
+    "./diagnostics-presenter": {
+      "types": "./dist/diagnosticsPresenter.d.ts",
+      "import": "./dist/diagnosticsPresenter.js",
+      "default": "./dist/diagnosticsPresenter.js"
+    },
+    "./document-sync": {
+      "types": "./dist/documentSync.d.ts",
+      "import": "./dist/documentSync.js",
+      "default": "./dist/documentSync.js"
+    },
+    "./hover-definition-controller": {
+      "types": "./dist/hoverDefinitionController.d.ts",
+      "import": "./dist/hoverDefinitionController.js",
+      "default": "./dist/hoverDefinitionController.js"
+    },
+    "./markdown-tooltip": {
+      "types": "./dist/markdownTooltip.d.ts",
+      "import": "./dist/markdownTooltip.js",
+      "default": "./dist/markdownTooltip.js"
+    },
+    "./paths": {
+      "types": "./dist/paths.d.ts",
+      "import": "./dist/paths.js",
+      "default": "./dist/paths.js"
+    },
+    "./plugin-types": {
+      "types": "./dist/pluginTypes.d.ts",
+      "import": "./dist/pluginTypes.js",
+      "default": "./dist/pluginTypes.js"
+    },
+    "./plugin-styles": {
+      "types": "./dist/plugin.styles.d.ts",
+      "import": "./dist/plugin.styles.js",
+      "default": "./dist/plugin.styles.js"
+    },
+    "./tooltip": {
+      "types": "./dist/tooltip.d.ts",
+      "import": "./dist/tooltip.js",
+      "default": "./dist/tooltip.js"
+    },
+    "./websocket": {
+      "types": "./dist/websocket.d.ts",
+      "import": "./dist/websocket.js",
+      "default": "./dist/websocket.js"
+    }
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
+    "build": "bun ../../scripts/build-package.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",

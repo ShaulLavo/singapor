@@ -3,23 +3,26 @@
   "version": "0.1.1",
   "files": [
     "README.md",
-    "src",
-    "!src/**/*.test.ts",
-    "!src/**/*.test.tsx"
+    "dist"
   ],
   "type": "module",
   "sideEffects": [
-    "./src/style.css"
+    "./dist/style.css"
   ],
   "exports": {
-    ".": "./src/index.ts",
-    "./style.css": "./src/style.css"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css"
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
+    "build": "bun ../../scripts/build-package.ts",
     "test": "vitest run test/search.test.ts test/plugin.test.ts",
     "test:browser": "vitest run --browser.enabled --browser.headless test/style.browser.test.ts",
     "typecheck": "tsgo --noEmit",

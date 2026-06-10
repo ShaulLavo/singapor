@@ -3,20 +3,23 @@
   "version": "0.1.1",
   "files": [
     "README.md",
-    "src",
-    "!src/**/*.test.ts",
-    "!src/**/*.test.tsx"
+    "dist"
   ],
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
+    "build": "bun ../../scripts/build-package.ts",
     "build:markdown-wasm": "node scripts/build-markdown-wasm.mjs",
     "test": "vitest run",
     "typecheck": "tsgo --noEmit",

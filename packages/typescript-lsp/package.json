@@ -3,22 +3,33 @@
   "version": "0.1.1",
   "files": [
     "README.md",
-    "src",
-    "!src/**/*.test.ts",
-    "!src/**/*.test.tsx"
+    "dist"
   ],
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts",
-    "./server": "./src/server.ts",
-    "./ts-diagnostics": "./src/tsDiagnostics.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    },
+    "./ts-diagnostics": {
+      "types": "./dist/tsDiagnostics.d.ts",
+      "import": "./dist/tsDiagnostics.js",
+      "default": "./dist/tsDiagnostics.js"
+    }
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
+    "build": "bun ../../scripts/build-package.ts",
     "test": "vitest run",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",

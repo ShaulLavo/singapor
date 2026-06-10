@@ -3,35 +3,86 @@
   "version": "0.1.1",
   "files": [
     "README.md",
-    "src",
-    "!src/**/*.test.ts",
-    "!src/**/*.test.tsx"
+    "dist"
   ],
   "type": "module",
   "sideEffects": [
-    "./src/style.css"
+    "./dist/style.css"
   ],
   "exports": {
-    ".": "./src/index.ts",
-    "./debug": "./src/debug.ts",
-    "./document": "./src/public/document.ts",
-    "./editor": "./src/editor.ts",
-    "./extensions": "./src/public/extensions.ts",
-    "./internal": "./src/internal.ts",
-    "./logging": "./src/logging/index.ts",
-    "./logging/evlog": "./src/logging/evlog.ts",
-    "./rendering": "./src/public/rendering.ts",
-    "./secondary-views": "./src/public/secondaryViews.ts",
-    "./shiki": "./src/shiki/index.ts",
-    "./syntax": "./src/public/syntax.ts",
-    "./testing": "./src/public/testing.ts",
-    "./style.css": "./src/style.css"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./debug": {
+      "types": "./dist/debug.d.ts",
+      "import": "./dist/debug.js",
+      "default": "./dist/debug.js"
+    },
+    "./document": {
+      "types": "./dist/public/document.d.ts",
+      "import": "./dist/public/document.js",
+      "default": "./dist/public/document.js"
+    },
+    "./editor": {
+      "types": "./dist/editor.d.ts",
+      "import": "./dist/editor.js",
+      "default": "./dist/editor.js"
+    },
+    "./extensions": {
+      "types": "./dist/public/extensions.d.ts",
+      "import": "./dist/public/extensions.js",
+      "default": "./dist/public/extensions.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.js",
+      "default": "./dist/internal.js"
+    },
+    "./logging": {
+      "types": "./dist/logging/index.d.ts",
+      "import": "./dist/logging/index.js",
+      "default": "./dist/logging/index.js"
+    },
+    "./logging/evlog": {
+      "types": "./dist/logging/evlog.d.ts",
+      "import": "./dist/logging/evlog.js",
+      "default": "./dist/logging/evlog.js"
+    },
+    "./rendering": {
+      "types": "./dist/public/rendering.d.ts",
+      "import": "./dist/public/rendering.js",
+      "default": "./dist/public/rendering.js"
+    },
+    "./secondary-views": {
+      "types": "./dist/public/secondaryViews.d.ts",
+      "import": "./dist/public/secondaryViews.js",
+      "default": "./dist/public/secondaryViews.js"
+    },
+    "./shiki": {
+      "types": "./dist/shiki/index.d.ts",
+      "import": "./dist/shiki/index.js",
+      "default": "./dist/shiki/index.js"
+    },
+    "./syntax": {
+      "types": "./dist/public/syntax.d.ts",
+      "import": "./dist/public/syntax.js",
+      "default": "./dist/public/syntax.js"
+    },
+    "./testing": {
+      "types": "./dist/public/testing.d.ts",
+      "import": "./dist/public/testing.js",
+      "default": "./dist/public/testing.js"
+    },
+    "./style.css": "./dist/style.css"
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
+    "build": "bun ../../scripts/build-package.ts",
     "bench:anchors": "bun bench/pieceTable-anchors.ts",
     "bench:transforms": "bun bench/displayTransforms.ts",
     "bench:fold-map": "bun bench/foldMap.ts",

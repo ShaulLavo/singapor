@@ -3,29 +3,40 @@
   "version": "0.1.1",
   "files": [
     "README.md",
-    "src",
-    "!src/**/*.test.ts",
-    "!src/**/*.test.tsx"
+    "dist"
   ],
   "type": "module",
   "sideEffects": [
-    "./src/lineGutter.css",
-    "./src/foldGutter.css",
-    "./src/style.css"
+    "./dist/lineGutter.css",
+    "./dist/foldGutter.css",
+    "./dist/style.css"
   ],
   "exports": {
-    ".": "./src/index.ts",
-    "./line-gutter": "./src/lineGutter.ts",
-    "./fold-gutter": "./src/foldGutter.ts",
-    "./line-gutter.css": "./src/lineGutter.css",
-    "./fold-gutter.css": "./src/foldGutter.css",
-    "./style.css": "./src/style.css"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./line-gutter": {
+      "types": "./dist/lineGutter.d.ts",
+      "import": "./dist/lineGutter.js",
+      "default": "./dist/lineGutter.js"
+    },
+    "./fold-gutter": {
+      "types": "./dist/foldGutter.d.ts",
+      "import": "./dist/foldGutter.js",
+      "default": "./dist/foldGutter.js"
+    },
+    "./line-gutter.css": "./dist/lineGutter.css",
+    "./fold-gutter.css": "./dist/foldGutter.css",
+    "./style.css": "./dist/style.css"
   },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
+    "build": "bun ../../scripts/build-package.ts",
     "test": "vitest run",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",

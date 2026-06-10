@@ -37,6 +37,8 @@ if (!dryRun) {
   await assertPublishPrerequisites()
 }
 
+await buildPackages()
+
 let foundFromPackage = fromPackage === null
 for (const packageDir of PACKAGE_DIRS) {
   const manifest = await readManifest(packageDir)
@@ -48,6 +50,10 @@ for (const packageDir of PACKAGE_DIRS) {
   await publishPackage(packageDir, manifest)
 }
 if (!foundFromPackage) throw new Error(`No package matched --from ${fromPackage}`)
+
+async function buildPackages(): Promise<void> {
+  await run(['bun', 'run', 'build'])
+}
 
 function argValue(name: string): string | null {
   const index = Bun.argv.indexOf(name)
@@ -222,6 +228,7 @@ async function runCaptured(
 
 async function run(command: readonly string[]): Promise<void> {
   const process = Bun.spawn(command, {
+    cwd: repositoryRoot,
     stdin: 'inherit',
     stderr: 'inherit',
     stdout: 'inherit',

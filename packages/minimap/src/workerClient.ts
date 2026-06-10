@@ -1,5 +1,6 @@
 import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
 import type { EditorToken } from '@singapor/core/syntax'
+import { createError } from '@singapor/core/logging/evlog'
 import type {
   EditorMinimapDecoration,
   EditorResolvedSelection,
@@ -162,7 +163,7 @@ export class MinimapWorkerOwner {
     }
 
     if (response.type === 'error') {
-      this.recordError(new Error(response.message))
+      this.recordError(createWorkerResponseError(response))
       return
     }
 
@@ -170,7 +171,7 @@ export class MinimapWorkerOwner {
   }
 
   private readonly handleWorkerError = (event: ErrorEvent): void => {
-    this.fail(new Error(event.message || 'Minimap worker failed'))
+    this.fail(createNativeWorkerError(event))
   }
 
   private recordError(error: Error): void {
@@ -758,7 +759,7 @@ export class MinimapWorkerClient {
   }
 
   private handleWorkerError = (error: Error): void => {
-    console.warn(error.message)
+    console.warn(error.toString(), error)
   }
 
   private post(request: MinimapWorkerRequest, transfer?: Transferable[]): void {
@@ -823,6 +824,82 @@ export function canUseMinimapWorker(): boolean {
 function workerRequestError(error: unknown): Error {
   if (error instanceof Error) return error
   return new Error(String(error))
+}
+
+function createWorkerResponseError(
+  response: Extract<MinimapWorkerResponse, { readonly type: 'error' }>,
+): Error {
+  const workerMessage = nonEmptyString(response.message)
+  return createError({
+    code: 'minimap.WORKER_REQUEST_FAILED',
+    message: messageWithDetail('Minimap worker request failed', workerMessage),
+    why: workerMessage ?? 'The minimap worker reported an error without details.',
+    fix: 'The editor keeps running; inspect the minimap worker request and renderer state if the minimap stops updating.',
+    internal: {
+      responseType: response.type,
+      sequence: response.sequence ?? null,
+      workerMessage: response.message,
+    },
+  })
+}
+
+function createNativeWorkerError(event: ErrorEvent): Error {
+  const browserMessage = nonEmptyString(event.message)
+  return createError({
+    code: 'minimap.WORKER_CRASHED',
+    message: messageWithDetail('Minimap worker crashed', browserMessage),
+    why: nativeWorkerFailureReason(browserMessage),
+    fix: 'The editor keeps running without the minimap for this worker generation. Check the worker script request, CSP, MIME type, and browser worker support.',
+    cause: event.error instanceof Error ? event.error : undefined,
+    internal: workerErrorEventInternal(event),
+  })
+}
+
+function nativeWorkerFailureReason(browserMessage: string | null): string {
+  if (browserMessage) return `The browser reported: ${browserMessage}`
+  return 'The browser reported a native worker failure without an error message. This usually means the worker script failed to load or crashed before its own error handler ran.'
+}
+
+function workerErrorEventInternal(event: ErrorEvent): Record<string, unknown> {
+  const error = event.error
+  return {
+    browserMessage: nonEmptyString(event.message),
+    filename: nonEmptyString(event.filename),
+    lineNumber: positiveNumberOrNull(event.lineno),
+    columnNumber: positiveNumberOrNull(event.colno),
+    errorName: error instanceof Error ? error.name : null,
+    errorMessage: errorMessage(error),
+    errorStack: error instanceof Error ? error.stack : null,
+    rawErrorType: rawErrorType(error),
+  }
+}
+
+function errorMessage(error: unknown): string | null {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  return null
+}
+
+function rawErrorType(error: unknown): string | null {
+  if (error === null || error === undefined) return null
+  if (error instanceof Error) return error.name
+  return Object.prototype.toString.call(error)
+}
+
+function messageWithDetail(summary: string, detail: string | null): string {
+  if (!detail) return summary
+  return `${summary}: ${detail}`
+}
+
+function nonEmptyString(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? ''
+  if (trimmed.length === 0) return null
+  return trimmed
+}
+
+function positiveNumberOrNull(value: number): number | null {
+  if (value > 0) return value
+  return null
 }
 
 function workerDisposedError(): Error {

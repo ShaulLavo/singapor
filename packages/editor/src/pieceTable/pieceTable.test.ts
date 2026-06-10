@@ -19,6 +19,7 @@ import {
   resolveAnchor,
   resolveAnchorLinear,
 } from './index'
+import { BUFFER_CHUNK_SIZE } from './buffers'
 
 type PieceTableSnapshot = ReturnType<typeof createPieceTableSnapshot>
 type Random = () => number
@@ -49,6 +50,9 @@ const randomText = (random: Random): string => {
   return text
 }
 
+const randomChar = (random: Random): string =>
+  FUZZ_ALPHABET[randomInt(random, FUZZ_ALPHABET.length)]!
+
 const expectSnapshotText = (snapshot: PieceTableSnapshot, text: string) => {
   expect(materializePieceTableFullText(snapshot)).toBe(text)
   expect(snapshot.length).toBe(text.length)
@@ -71,12 +75,8 @@ const applyRandomEdit = (
   const shouldInsert = text.length === 0 || random() < 0.62
 
   if (shouldInsert) {
-    const offset = randomInt(random, text.length + 1)
-    const inserted = randomText(random)
-    return {
-      snapshot: insertIntoPieceTable(snapshot, offset, inserted),
-      text: text.slice(0, offset) + inserted + text.slice(offset),
-    }
+    if (random() < 0.25) return applyRandomInsertRun(snapshot, text, random)
+    return applyRandomInsertion(snapshot, text, random)
   }
 
   const start = randomInt(random, text.length)
@@ -84,6 +84,42 @@ const applyRandomEdit = (
   return {
     snapshot: deleteFromPieceTable(snapshot, start, length),
     text: text.slice(0, start) + text.slice(start + length),
+  }
+}
+
+const applyRandomInsertion = (
+  snapshot: PieceTableSnapshot,
+  text: string,
+  random: Random,
+): { snapshot: PieceTableSnapshot; text: string } => {
+  const offset = randomInt(random, text.length + 1)
+  const inserted = randomText(random)
+
+  return {
+    snapshot: insertIntoPieceTable(snapshot, offset, inserted),
+    text: text.slice(0, offset) + inserted + text.slice(offset),
+  }
+}
+
+const applyRandomInsertRun = (
+  snapshot: PieceTableSnapshot,
+  text: string,
+  random: Random,
+): { snapshot: PieceTableSnapshot; text: string } => {
+  const offset = randomInt(random, text.length + 1)
+  const length = 2 + randomInt(random, 8)
+  let nextSnapshot = snapshot
+  let inserted = ''
+
+  for (let index = 0; index < length; index++) {
+    const char = randomChar(random)
+    nextSnapshot = insertIntoPieceTable(nextSnapshot, offset + index, char)
+    inserted += char
+  }
+
+  return {
+    snapshot: nextSnapshot,
+    text: text.slice(0, offset) + inserted + text.slice(offset),
   }
 }
 
@@ -197,7 +233,7 @@ describe('piece table', () => {
     expect(pointToOffset(snapshot, { row: 0, column: 200_000 })).toBe(120_000)
   })
 
-  test('allocates a distinct opaque buffer chunk for each small insertion', () => {
+  test('coalesces sequential inserts at the moving end into one piece', () => {
     let snapshot = createPieceTableSnapshot('')
 
     for (let index = 0; index < 1000; index++) {
@@ -206,9 +242,65 @@ describe('piece table', () => {
 
     const pieces = debugPieceTable(snapshot)
     const buffers = new Set(pieces.map((piece) => piece.buffer))
-    expect(pieces).toHaveLength(1000)
-    expect(buffers.size).toBe(1000)
+    expect(pieces).toHaveLength(1)
+    expect(buffers.size).toBe(1)
     expectSnapshotText(snapshot, 'x'.repeat(1000))
+  })
+
+  test('refuses coalescing after an insert at a different document location', () => {
+    let snapshot = createPieceTableSnapshot('abc')
+    snapshot = insertIntoPieceTable(snapshot, 1, 'x')
+    snapshot = insertIntoPieceTable(snapshot, snapshot.length, 'y')
+
+    const insertedBuffers = new Set(
+      debugPieceTable(snapshot)
+        .filter((piece) => piece.buffer !== snapshot.buffers.original)
+        .map((piece) => piece.buffer),
+    )
+
+    expect(insertedBuffers.size).toBe(2)
+    expectSnapshotText(snapshot, 'axbcy')
+  })
+
+  test('refuses coalescing when a trailing tombstone owns the chunk tail', () => {
+    let snapshot = insertIntoPieceTable(createPieceTableSnapshot(''), 0, 'ab')
+    snapshot = deleteFromPieceTable(snapshot, 1, 1)
+    snapshot = insertIntoPieceTable(snapshot, 1, 'c')
+
+    const visiblePieces = debugPieceTable(snapshot).filter((piece) => piece.visible)
+    expect(visiblePieces).toHaveLength(2)
+    expectSnapshotText(snapshot, 'ac')
+  })
+
+  test('refuses coalescing when the newest chunk is full', () => {
+    let snapshot = insertIntoPieceTable(
+      createPieceTableSnapshot(''),
+      0,
+      'x'.repeat(BUFFER_CHUNK_SIZE),
+    )
+    snapshot = insertIntoPieceTable(snapshot, snapshot.length, 'y')
+
+    const visiblePieces = debugPieceTable(snapshot).filter((piece) => piece.visible)
+    expect(visiblePieces).toHaveLength(2)
+    expectSnapshotText(snapshot, 'x'.repeat(BUFFER_CHUNK_SIZE) + 'y')
+  })
+
+  test('keeps old snapshots readable after extending a newer buffer chunk', () => {
+    const first = insertIntoPieceTable(createPieceTableSnapshot(''), 0, 'a')
+    const second = insertIntoPieceTable(first, 1, 'b')
+
+    expectSnapshotText(first, 'a')
+    expectSnapshotText(second, 'ab')
+  })
+
+  test('keeps coalesced anchor resolution aligned with the linear oracle', () => {
+    const initial = insertIntoPieceTable(createPieceTableSnapshot(''), 0, 'ab')
+    const inside = anchorAt(initial, 1, 'left')
+    const rightEnd = anchorAfter(initial, initial.length)
+    const extended = insertIntoPieceTable(initial, initial.length, 'c')
+
+    expect(resolveAnchor(extended, inside)).toEqual(resolveAnchorLinear(extended, inside))
+    expect(resolveAnchor(extended, rightEnd)).toEqual(resolveAnchorLinear(extended, rightEnd))
   })
 
   test('splits large inserts across bounded chunks', () => {

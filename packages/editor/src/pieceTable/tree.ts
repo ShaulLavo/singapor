@@ -318,6 +318,42 @@ export const findVisiblePieceEndingAt = (
   return findVisiblePieceEndingAt(node.right, offset, nodeEnd)
 }
 
+export const replacePieceEndingAt = (
+  node: PieceTreeNode | null,
+  offset: number,
+  newPiece: Piece,
+  baseOffset = 0,
+): PieceTreeNode | null => {
+  if (!node) return null
+
+  const leftLen = getSubtreeVisibleLength(node.left)
+  const nodeLen = getPieceVisibleLength(node.piece)
+  const nodeStart = baseOffset + leftLen
+  const nodeEnd = nodeStart + nodeLen
+
+  if (offset <= nodeStart) {
+    const left = replacePieceEndingAt(node.left, offset, newPiece, baseOffset)
+    if (left === node.left) return node
+
+    const next = cloneNode(node)
+    next.left = left
+    return updateNode(next)
+  }
+
+  if (nodeLen > 0 && offset === nodeEnd) {
+    const next = cloneNode(node)
+    next.piece = newPiece
+    return updateNode(next)
+  }
+
+  const right = replacePieceEndingAt(node.right, offset, newPiece, nodeEnd)
+  if (right === node.right) return node
+
+  const next = cloneNode(node)
+  next.right = right
+  return updateNode(next)
+}
+
 export const findVisiblePieceStartingAt = (
   node: PieceTreeNode | null,
   offset: number,

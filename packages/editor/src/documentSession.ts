@@ -17,6 +17,7 @@ import {
   outdentSelections,
 } from './documentSelectionEdits'
 import {
+  amendEditorHistory,
   commitEditorHistory,
   createEditorHistory,
   redoEditorHistory,
@@ -85,6 +86,7 @@ export type DocumentSession = {
   canRedo(): boolean
   isDirty(): boolean
   markClean(): void
+  breakTypingRun(): void
 }
 
 export type EditorViewScrollPosition = {
@@ -147,6 +149,7 @@ export type EditorTextBuffer = {
   canRedo(): boolean
   isDirty(): boolean
   markClean(): void
+  breakTypingRun(): void
   subscribe(listener: EditorTextBufferChangeListener): () => void
 }
 
@@ -237,6 +240,11 @@ type DocumentHistory = EditorHistory<
   DocumentTransaction
 >
 
+type TypingRun = {
+  readonly endOffset: number
+  readonly lastChar: string
+}
+
 class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private readonly listeners = new Set<EditorTextBufferChangeListener>()
   private history: DocumentHistory
@@ -244,6 +252,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private dirtyCacheSnapshot: PieceTableSnapshot
   private dirtyCacheValue = false
   private revision = 0
+  private typingRun: TypingRun | null = null
   private textSnapshot: DocumentTextSnapshot
 
   public constructor(text: string) {
@@ -396,6 +405,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const start = nowMs()
     const transaction = this.history.undo?.entry.transaction ?? null
     const next = undoEditorHistory(this.history)
+    this.typingRun = null
     if (next === this.history) {
       return appendTiming(this.createChange('none', []), 'session.undo', start)
     }
@@ -416,6 +426,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     const start = nowMs()
     const transaction = this.history.redo?.entry.transaction ?? null
     const next = redoEditorHistory(this.history)
+    this.typingRun = null
     if (next === this.history) {
       return appendTiming(this.createChange('none', []), 'session.redo', start)
     }
@@ -472,6 +483,10 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     this.dirtyCacheValue = false
   }
 
+  public breakTypingRun(): void {
+    this.typingRun = null
+  }
+
   public subscribe(listener: EditorTextBufferChangeListener): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -493,21 +508,79 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       options.metadata,
     )
     if (options.history === 'record') {
-      this.history = commitEditorHistory(
-        { ...this.history, selections: options.selectionBefore },
-        snapshot,
-        selections,
-        transaction,
-      )
+      this.commitRecordedEdit(snapshot, selections, edits, options, transaction)
     } else {
       this.history = { ...this.history, current: snapshot, selections }
     }
 
+    this.updateTypingRun(edits, options)
     this.textSnapshot = createDocumentTextSnapshot(snapshot)
     this.revision += 1
     const change = this.createChange('edit', edits, transaction)
     this.emitChange(change, options.sourceViewId)
     return change
+  }
+
+  private commitRecordedEdit(
+    snapshot: PieceTableSnapshot,
+    selections: SelectionSet<PieceTableAnchor>,
+    edits: readonly TextEdit[],
+    options: CommitEditOptions,
+    transaction: DocumentTransaction,
+  ): void {
+    const edit = edits[0]
+    const previous = this.history.undo?.entry.transaction
+
+    if (edit && previous && this.shouldAmendTypingRun(edits, options, previous)) {
+      this.history = amendEditorHistory(
+        this.history,
+        snapshot,
+        selections,
+        createAmendedTypingTransaction(previous, snapshot, selections, edit),
+      )
+      return
+    }
+
+    this.history = commitEditorHistory(
+      { ...this.history, selections: options.selectionBefore },
+      snapshot,
+      selections,
+      transaction,
+    )
+  }
+
+  private shouldAmendTypingRun(
+    edits: readonly TextEdit[],
+    options: CommitEditOptions,
+    previous: DocumentTransaction,
+  ): boolean {
+    const edit = singleTypingInsertEdit(edits)
+    if (!edit) return false
+    if (options.metadata.intent !== 'insert-text') return false
+    if (!this.typingRun) return false
+    if (edit.from !== this.typingRun.endOffset) return false
+    if (edit.text.includes('\n')) return false
+    if (startsNewWordAfterWhitespace(this.typingRun.lastChar, edit.text)) return false
+    return canAmendTypingTransaction(previous)
+  }
+
+  private updateTypingRun(edits: readonly TextEdit[], options: CommitEditOptions): void {
+    const edit = singleTypingInsertEdit(edits)
+
+    if (options.history !== 'record') {
+      this.typingRun = null
+      return
+    }
+
+    if (options.metadata.intent !== 'insert-text' || !edit || edit.text.includes('\n')) {
+      this.typingRun = null
+      return
+    }
+
+    this.typingRun = {
+      endOffset: edit.from + edit.text.length,
+      lastChar: edit.text.at(-1)!,
+    }
   }
 
   private selectionsAfterProgrammaticEdit(
@@ -605,6 +678,7 @@ class PieceTableEditorViewSession implements EditorViewSession {
     options: DocumentSessionSelectionOptions = {},
   ): DocumentSessionChange {
     const start = nowMs()
+    this.buffer.breakTypingRun()
     this.selections = this.createNormalizedSelectionSet(selections, options)
     return appendTiming(this.createChange('selection', []), 'session.selection', start)
   }
@@ -615,6 +689,7 @@ class PieceTableEditorViewSession implements EditorViewSession {
     options: DocumentSessionSelectionOptions = {},
   ): DocumentSessionChange {
     const start = nowMs()
+    this.buffer.breakTypingRun()
     const nextSelection = this.createSelection(anchorOffset, headOffset, options)
     this.selections = normalizeSelectionSet(
       this.buffer.getSnapshot(),
@@ -633,6 +708,7 @@ class PieceTableEditorViewSession implements EditorViewSession {
     }
 
     this.selections = createSelectionSet([primary], true, snapshot)
+    this.buffer.breakTypingRun()
     return appendTiming(
       this.createChange('selection', []),
       'session.clearSecondarySelections',
@@ -819,6 +895,10 @@ class EditorBufferDocumentSession implements EditorBufferSession {
     this.buffer.markClean()
   }
 
+  public breakTypingRun(): void {
+    this.buffer.breakTypingRun()
+  }
+
   private acceptBufferChange(change: DocumentSessionChange): DocumentSessionChange {
     if (change.kind !== 'none') this.view.acceptBufferSelections(change.selections)
 
@@ -975,6 +1055,10 @@ class StaticDocumentSession implements DocumentSession {
     return
   }
 
+  public breakTypingRun(): void {
+    return
+  }
+
   private createNormalizedSelectionSet(
     selections: readonly DocumentSessionSelectionRange[],
     options: DocumentSessionSelectionOptions,
@@ -1077,6 +1161,50 @@ type DocumentSessionChangeFields = DocumentSessionChange
 
 function createDocumentSessionChange(fields: DocumentSessionChangeFields): DocumentSessionChange {
   return { ...fields } // TODO why do we need this func??
+}
+
+function singleTypingInsertEdit(edits: readonly TextEdit[]): TextEdit | null {
+  const edit = edits[0]
+  if (edits.length !== 1 || !edit) return null
+  if (edit.from !== edit.to) return null
+  if (edit.text.length === 0) return null
+  return edit
+}
+
+function isWhitespace(text: string): boolean {
+  return /\s/u.test(text)
+}
+
+function startsNewWordAfterWhitespace(previous: string, text: string): boolean {
+  const first = text[0]
+  if (!first) return false
+  return isWhitespace(previous) && !isWhitespace(first)
+}
+
+function canAmendTypingTransaction(transaction: DocumentTransaction): boolean {
+  const edit = singleTypingInsertEdit(transaction.edits)
+  if (!edit) return false
+  if (transaction.metadata.intent !== 'insert-text') return false
+  return !edit.text.includes('\n')
+}
+
+function createAmendedTypingTransaction(
+  previous: DocumentTransaction,
+  snapshot: PieceTableSnapshot,
+  selections: SelectionSet<PieceTableAnchor>,
+  edit: TextEdit,
+): DocumentTransaction {
+  const previousEdit = previous.edits[0]!
+  const runStart = previousEdit.from
+  const text = previousEdit.text + edit.text
+
+  return {
+    ...previous,
+    edits: [{ from: runStart, to: runStart, text }],
+    inverseEdits: [{ from: runStart, to: runStart + text.length, text: '' }],
+    snapshotAfter: snapshot,
+    selectionAfter: selections,
+  }
 }
 
 export function documentSessionChangeTextSnapshot(

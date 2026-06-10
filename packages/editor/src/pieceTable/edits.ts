@@ -1,6 +1,13 @@
 import type { PieceTableEdit, PieceTableTreeSnapshot } from './pieceTableTypes'
 import type { SplitContext } from './internalTypes'
-import { appendChunksToBuffers } from './buffers'
+import {
+  appendChunksToBuffers,
+  BUFFER_CHUNK_SIZE,
+  countLineBreaks,
+  extendTailChunk,
+  getBufferText,
+  isNewestChunk,
+} from './buffers'
 import { assignPieceOrders } from './orders'
 import { applyReverseIndexChanges } from './reverseIndex'
 import { ensureValidRange } from './reads'
@@ -9,8 +16,10 @@ import {
   createTreeFromPieces,
   getSubtreeMaxOrder,
   getSubtreeMinOrder,
+  findVisiblePieceEndingAt,
   markTreeInvisible,
   merge,
+  replacePieceEndingAt,
   splitByVisibleOffset,
 } from './tree'
 
@@ -43,6 +52,9 @@ export const insertIntoPieceTable = (
     throw new RangeError('invalid offset')
   }
 
+  const coalesced = tryCoalesceInsert(snapshot, offset, text)
+  if (coalesced) return coalesced
+
   const context: SplitContext = { changes: [], normalizeOrders: false }
   const { left, right } = splitByVisibleOffset(snapshot.root, offset, snapshot.buffers, context)
   const leftOrder = left ? getSubtreeMaxOrder(left) : null
@@ -64,6 +76,37 @@ export const insertIntoPieceTable = (
     reverseIndexRoot,
     context.normalizeOrders || ordered.normalizeOrders,
   )
+}
+
+const tryCoalesceInsert = (
+  snapshot: PieceTableTreeSnapshot,
+  offset: number,
+  text: string,
+): PieceTableTreeSnapshot | null => {
+  const location = findVisiblePieceEndingAt(snapshot.root, offset)
+  if (!location) return null
+
+  const piece = location.piece
+  const chunkText = getBufferText(snapshot.buffers, piece.buffer)
+  if (piece.buffer === snapshot.buffers.original) return null
+  if (!isNewestChunk(snapshot.buffers, piece.buffer)) return null
+  if (piece.start + piece.length !== chunkText.length) return null
+  if (chunkText.length + text.length > BUFFER_CHUNK_SIZE) return null
+
+  const buffers = extendTailChunk(snapshot.buffers, text)
+  const pieceWithTail = {
+    ...piece,
+    length: piece.length + text.length,
+    lineBreaks: piece.lineBreaks + countLineBreaks(text),
+  }
+  const root = replacePieceEndingAt(snapshot.root, offset, pieceWithTail)
+  const reverseIndexRoot = applyReverseIndexChanges(
+    snapshot.reverseIndexRoot,
+    [{ add: pieceWithTail }],
+    buffers.prioritySeed,
+  )
+
+  return createSnapshotWithIndex(buffers, root, reverseIndexRoot, false)
 }
 
 export const deleteFromPieceTable = (

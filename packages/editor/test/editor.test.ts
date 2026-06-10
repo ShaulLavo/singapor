@@ -2933,6 +2933,27 @@ describe('Editor', () => {
       ])
     })
 
+    it('keeps paste as its own undo unit between typing runs', () => {
+      editor.setText('')
+      editor.focus()
+
+      editorInput().dispatchEvent(createInsertEvent('a'))
+      editorInput().dispatchEvent(createInsertEvent('b'))
+      editorInput().dispatchEvent(createPasteEvent('XY'))
+      editorInput().dispatchEvent(createInsertEvent('c'))
+
+      expect(editor.materializeFullText()).toBe('abXYc')
+
+      editor.dispatchCommand('undo')
+      expect(editor.materializeFullText()).toBe('abXY')
+
+      editor.dispatchCommand('undo')
+      expect(editor.materializeFullText()).toBe('ab')
+
+      editor.dispatchCommand('undo')
+      expect(editor.materializeFullText()).toBe('')
+    })
+
     it('inserts dropped plain text at the hit-tested offset', () => {
       const session = createDocumentSession('abcd')
       session.setSelection(0)

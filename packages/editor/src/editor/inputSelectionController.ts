@@ -919,7 +919,7 @@ export class InputSelectionController {
     const start = eventStartMs(event)
     const selectionChange = this.selectionChangeBeforeEdit()
     event.preventDefault()
-    const change = mergeChangeTimings(session.applyText(text), selectionChange)
+    const change = mergeChangeTimings(applyPasteText(session, text), selectionChange)
     this.transitionInputState({ type: 'transaction-committed' })
     this.options.applySessionChange(change, 'input.paste', start, {
       revealBlock: pasteRevealBlock(text),
@@ -1321,6 +1321,13 @@ export class InputSelectionController {
 function pasteRevealBlock(text: string): SessionChangeOptions['revealBlock'] {
   if (text.includes('\n') || text.includes('\r')) return 'end'
   return 'nearest'
+}
+
+function applyPasteText(session: DocumentSession, text: string): DocumentSessionChange {
+  session.breakTypingRun()
+  const change = session.applyText(text)
+  session.breakTypingRun()
+  return change
 }
 
 function dropPlainText(event: DragEvent): string {

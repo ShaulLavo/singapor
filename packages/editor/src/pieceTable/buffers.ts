@@ -2,7 +2,7 @@ import type { Piece, PieceBufferChunks, PieceBufferId, PieceTableBuffers } from 
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_PIECE_TABLE_PRIORITY_SEED } from './priority'
 
-const BUFFER_CHUNK_SIZE = 16 * 1024
+export const BUFFER_CHUNK_SIZE = 16 * 1024
 const BUFFER_ID_PREFIX = 'buffer:'
 const BUFFER_STORE_PAGE_SIZE = 1024
 
@@ -80,6 +80,21 @@ class PieceBufferChunkStore implements PieceBufferChunks {
     if (tail.length > 0) nextPages.push(tail)
     return new PieceBufferChunkStore(nextPages, this.size + chunks.length)
   }
+
+  public extendTail(text: string): PieceBufferChunkStore {
+    if (text.length === 0) return this
+    if (this.size === 0) throw new Error('piece buffer tail not found')
+
+    const nextPages = [...this.pages]
+    const pageIndex = nextPages.length - 1
+    const tail = nextPages[pageIndex]?.slice()
+    if (!tail || tail.length === 0) throw new Error('piece buffer tail not found')
+
+    const chunkIndex = tail.length - 1
+    tail[chunkIndex] = `${tail[chunkIndex] ?? ''}${text}`
+    nextPages[pageIndex] = tail
+    return new PieceBufferChunkStore(nextPages, this.size)
+  }
 }
 
 export type PieceTableBufferOptions = {
@@ -94,12 +109,17 @@ export type AppendChunksToBuffersResult = {
 export const createBufferId = (sequence: number): PieceBufferId =>
   `${BUFFER_ID_PREFIX}${sequence}` as PieceBufferId
 
-const bufferSequence = (buffer: PieceBufferId): number | null => {
+export const bufferSequence = (buffer: PieceBufferId): number | null => {
   if (!buffer.startsWith(BUFFER_ID_PREFIX)) return null
 
   const sequence = Number(buffer.slice(BUFFER_ID_PREFIX.length))
   if (!Number.isSafeInteger(sequence) || sequence < 0) return null
   return sequence
+}
+
+export const isNewestChunk = (buffers: PieceTableBuffers, buffer: PieceBufferId): boolean => {
+  const sequence = bufferSequence(buffer)
+  return sequence !== null && sequence === buffers.nextBufferSequence - 1
 }
 
 export const countLineBreaks = (text: string, start = 0, end = text.length): number => {
@@ -177,6 +197,18 @@ export const appendChunksToBuffers = (
   }
 }
 
+export const extendTailChunk = (buffers: PieceTableBuffers, text: string): PieceTableBuffers => {
+  if (text.length === 0) return buffers
+
+  const tailBuffer = createBufferId(buffers.nextBufferSequence - 1)
+  if (buffers.chunks.get(tailBuffer) === undefined) throw new Error('piece buffer tail not found')
+
+  return {
+    ...buffers,
+    chunks: extendTailChunkText(buffers.chunks, tailBuffer, text),
+  }
+}
+
 const appendChunkTexts = (
   chunks: PieceBufferChunks,
   chunkTexts: readonly string[],
@@ -189,6 +221,20 @@ const appendChunkTexts = (
     next.set(createBufferId(sequence), chunkText)
     sequence += 1
   }
+  return next
+}
+
+const extendTailChunkText = (
+  chunks: PieceBufferChunks,
+  tailBuffer: PieceBufferId,
+  text: string,
+): PieceBufferChunks => {
+  if (chunks instanceof PieceBufferChunkStore) return chunks.extendTail(text)
+
+  const next = new Map(chunks)
+  const previous = next.get(tailBuffer)
+  if (previous === undefined) throw new Error('piece buffer tail not found')
+  next.set(tailBuffer, previous + text)
   return next
 }
 

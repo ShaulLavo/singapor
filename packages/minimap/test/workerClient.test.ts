@@ -70,10 +70,16 @@ describe('MinimapWorkerClient', () => {
       worker.send({ type: 'error', message: 'render failed' })
 
       expect(client.inspectWorker()).toMatchObject({
-        lastError: 'render failed',
+        lastError: 'Minimap worker request failed: render failed',
         lifecycle: 'ready',
       })
-      expect(warn).toHaveBeenCalledWith('render failed')
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Code: minimap.WORKER_REQUEST_FAILED'),
+        expect.objectContaining({
+          code: 'minimap.WORKER_REQUEST_FAILED',
+          why: 'render failed',
+        }),
+      )
 
       client.dispose()
       host.root.remove()
@@ -102,10 +108,58 @@ describe('MinimapWorkerClient', () => {
 
       expect(worker.terminate).toHaveBeenCalledTimes(1)
       expect(client.inspectWorker()).toMatchObject({
-        lastError: 'worker crashed',
+        lastError: 'Minimap worker crashed: worker crashed',
         lifecycle: 'crashed',
       })
-      expect(warn).toHaveBeenCalledWith('worker crashed')
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Code: minimap.WORKER_CRASHED'),
+        expect.objectContaining({
+          code: 'minimap.WORKER_CRASHED',
+          why: 'The browser reported: worker crashed',
+        }),
+      )
+
+      client.dispose()
+      host.root.remove()
+      host.colorScope.remove()
+    } finally {
+      warn.mockRestore()
+      runtime.restore()
+    }
+  })
+
+  it('creates actionable native worker errors when the browser omits details', () => {
+    const runtime = installMinimapRuntime()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const host = createHost()
+      const client = new MinimapWorkerClient({
+        host,
+        options: resolveMinimapOptions(),
+        snapshot: snapshot(),
+        decorations: [],
+        onLayoutWidth: vi.fn(),
+      })
+      const worker = runtime.workers[0]!
+
+      worker.fail('', { filename: 'http://localhost/minimap.worker.js', lineno: 12, colno: 8 })
+
+      expect(worker.terminate).toHaveBeenCalledTimes(1)
+      expect(client.inspectWorker()).toMatchObject({
+        lastError: 'Minimap worker crashed',
+        lifecycle: 'crashed',
+      })
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Fix: The editor keeps running without the minimap'),
+        expect.objectContaining({
+          code: 'minimap.WORKER_CRASHED',
+          internal: expect.objectContaining({
+            filename: 'http://localhost/minimap.worker.js',
+            lineNumber: 12,
+            columnNumber: 8,
+          }),
+        }),
+      )
 
       client.dispose()
       host.root.remove()
@@ -1233,8 +1287,14 @@ class MockWorker {
     this.onmessage?.({ data: response } as MessageEvent<MinimapWorkerResponse>)
   }
 
-  public fail(message: string): void {
-    this.onerror?.({ message } as ErrorEvent)
+  public fail(message: string, init: Partial<ErrorEvent> = {}): void {
+    this.onerror?.({
+      colno: init.colno ?? 0,
+      error: init.error,
+      filename: init.filename ?? '',
+      lineno: init.lineno ?? 0,
+      message,
+    } as ErrorEvent)
   }
 }
 

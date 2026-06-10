@@ -21,6 +21,10 @@ function resolvedSelectionOffsets(
   })
 }
 
+function typeText(session: DocumentSession, text: string): void {
+  for (const char of text) session.applyText(char)
+}
+
 describe('DocumentSession', () => {
   it('creates a piece-table snapshot with a collapsed selection at the end', () => {
     const session = createDocumentSession('abc')
@@ -166,6 +170,64 @@ describe('DocumentSession', () => {
     expect(redone.textSnapshot.materializeFullText()).toBe('abc!')
     expect(session.materializeFullText()).toBe('abc!')
     expect(resolvedOffsets(session)).toEqual({ start: 4, end: 4 })
+  })
+
+  it('coalesces contiguous typing into one undo entry', () => {
+    const session = createDocumentSession('')
+    typeText(session, 'hell')
+    const lastChange = session.applyText('o')
+
+    expect(lastChange.edits).toEqual([{ from: 4, to: 4, text: 'o' }])
+    expect(lastChange.transaction?.edits).toEqual([{ from: 4, to: 4, text: 'o' }])
+    expect(session.materializeFullText()).toBe('hello')
+
+    const undone = session.undo()
+    expect(undone.textSnapshot.materializeFullText()).toBe('')
+    expect(resolvedOffsets(session)).toEqual({ start: 0, end: 0 })
+    expect(session.canUndo()).toBe(false)
+  })
+
+  it('breaks typing undo runs at word boundaries and newlines', () => {
+    const session = createDocumentSession('')
+    typeText(session, 'hello world')
+
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('hello ')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('')
+
+    typeText(session, 'a\nb')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('a\n')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('a')
+    expect(session.undo().textSnapshot.materializeFullText()).toBe('')
+  })
+
+  it('breaks typing undo runs on cursor moves and backspace', () => {
+    const moved = createDocumentSession('')
+    typeText(moved, 'ab')
+    moved.setSelection(2)
+    moved.applyText('c')
+
+    expect(moved.undo().textSnapshot.materializeFullText()).toBe('ab')
+    expect(moved.undo().textSnapshot.materializeFullText()).toBe('')
+
+    const deleted = createDocumentSession('')
+    typeText(deleted, 'ab')
+    deleted.backspace()
+
+    expect(deleted.undo().textSnapshot.materializeFullText()).toBe('ab')
+    expect(deleted.undo().textSnapshot.materializeFullText()).toBe('')
+  })
+
+  it('emits merged incremental edits when undoing and redoing a typing run', () => {
+    const session = createDocumentSession('')
+    typeText(session, 'hello')
+
+    const undone = session.undo()
+    const redone = session.redo()
+
+    expect(undone.edits).toEqual([{ from: 0, to: 5, text: '' }])
+    expect(undone.transaction?.inverseEdits).toEqual([{ from: 0, to: 5, text: '' }])
+    expect(redone.edits).toEqual([{ from: 0, to: 0, text: 'hello' }])
+    expect(redone.transaction?.edits).toEqual([{ from: 0, to: 0, text: 'hello' }])
   })
 
   it('reports incremental edits for undo and redo', () => {

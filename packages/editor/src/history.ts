@@ -60,6 +60,30 @@ export const commitEditorHistory = <TSnapshot, TSelectionState, TTransaction = n
   redo: null,
 })
 
+export const amendEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
+  history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
+  current: TSnapshot,
+  selections: TSelectionState,
+  transaction: TTransaction,
+): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {
+  const undo = history.undo
+  if (!undo) return { ...history, current, selections, redo: null }
+
+  return {
+    current,
+    selections,
+    undo: {
+      entry: {
+        ...undo.entry,
+        transaction,
+      },
+      previous: undo.previous,
+      size: undo.size,
+    },
+    redo: null,
+  }
+}
+
 export const undoEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
   history: EditorHistory<TSnapshot, TSelectionState, TTransaction>,
 ): EditorHistory<TSnapshot, TSelectionState, TTransaction> => {

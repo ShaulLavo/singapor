@@ -10,6 +10,7 @@ type Sample = {
   label: string
   insertionCount: number
   textLength: number
+  pieceCount: number
   averageMs: number
   minBatchMs: number
   maxBatchMs: number
@@ -62,6 +63,7 @@ const measureAppendInsertions = (): Sample => {
     label: 'append 2,000 x 1 KiB insertions',
     insertionCount: INSERTION_COUNT,
     textLength: text.length,
+    pieceCount: snapshot.pieceCount,
     averageMs: (performance.now() - benchmarkStart) / INSERTION_COUNT,
     minBatchMs: Math.min(...measuredBatches),
     maxBatchMs: Math.max(...measuredBatches),
@@ -75,6 +77,7 @@ const printSample = (sample: Sample): void => {
   console.log(`piece-table insertion benchmark: ${sample.label}`)
   console.log(`insertions: ${sample.insertionCount}`)
   console.log(`final text length: ${sample.textLength}`)
+  console.log(`final piece count: ${sample.pieceCount}`)
   console.log(`average per insertion: ${formatMs(sample.averageMs)}`)
   console.log(`min measured batch: ${formatMs(sample.minBatchMs)}`)
   console.log(`max measured batch: ${formatMs(sample.maxBatchMs)}`)

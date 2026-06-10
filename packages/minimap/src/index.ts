@@ -1,3 +1,5 @@
+import './style.css'
+
 export { createMinimapPlugin } from './plugin'
 export type {
   EditorMinimapDecoration,

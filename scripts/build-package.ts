@@ -104,7 +104,7 @@ async function buildJavaScript(): Promise<void> {
     },
     configFile: false,
     logLevel: 'warn',
-    plugins: [inlineModuleWorkers()],
+    plugins: [externalizeCssImports(), inlineModuleWorkers()],
     publicDir: false,
     root: packageDir,
     worker: {
@@ -148,6 +148,22 @@ function packageNameFromSpecifier(specifier: string): string {
 
   const [scope, name] = specifier.split('/')
   return `${scope}/${name}`
+}
+
+function externalizeCssImports(): Plugin {
+  return {
+    name: 'singapor-externalize-css-imports',
+    enforce: 'pre',
+    async resolveId(id, importer) {
+      if (!id.endsWith('.css')) return null
+      if (!importer) return null
+
+      const resolved = await this.resolve(id, importer)
+      if (!resolved) return null
+
+      return { id: resolved.id, external: true }
+    },
+  }
 }
 
 function inlineModuleWorkers(): Plugin {

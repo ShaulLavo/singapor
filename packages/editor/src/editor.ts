@@ -1,3 +1,5 @@
+import './style.css'
+
 export {
   createMergeConflictPlugin,
   EDITOR_MERGE_CONFLICT_FEATURE,

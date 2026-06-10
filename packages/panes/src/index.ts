@@ -1,3 +1,5 @@
+import './style.css'
+
 export type ResizablePaneOrientation = 'horizontal' | 'vertical'
 
 export type ResizablePaneLayout = Readonly<Record<string, number>>

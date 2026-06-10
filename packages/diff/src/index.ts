@@ -1,3 +1,5 @@
+import './style.css'
+
 export { DiffView } from './DiffView'
 export { createEditorDiffPlugin } from './editorDiffPlugin'
 export { annotateInlineChanges } from './inline'

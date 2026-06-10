@@ -1,6 +1,7 @@
 import {
   applyBatchToPieceTable,
   createDocumentTextSnapshot,
+  diffPieceTableSnapshots,
   type DocumentSessionChange,
   type DocumentTextSnapshot,
   offsetToPoint,
@@ -463,9 +464,9 @@ const createSyntaxTextEdits = (
 ): readonly TextEdit[] => {
   if (changeEditsApplyToSnapshot(previousSnapshot, change)) return change.edits
 
-  const edit = createTextDiffEdit(
-    previousTextSnapshot.materializeFullText(),
-    documentSessionChangeTextSnapshot(change).materializeFullText(),
+  const edit = diffPieceTableSnapshots(
+    previousTextSnapshot.snapshot,
+    documentSessionChangeTextSnapshot(change).snapshot,
   )
   return edit ? [edit] : []
 }

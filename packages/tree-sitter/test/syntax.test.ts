@@ -4,6 +4,7 @@ import {
   applyBatchToPieceTable,
   createDocumentSession,
   createPieceTableSnapshot,
+  diffPieceTableSnapshots,
 } from '@singapor/core/document'
 import { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
 import { EditorPluginHost } from '@singapor/core/testing'
@@ -288,6 +289,24 @@ describe('Tree-sitter syntax capture conversion', () => {
         newEndPosition: { row: 0, column: 1 },
       },
     ])
+  })
+
+  it('diffs snapshots in the fallback path identically to the text diff', () => {
+    const vectors: [string, string][] = [
+      ['const a = 1;', 'const a = 1;!?'],
+      ['const a = 1;', 'let a = 1;'],
+      ['aaaa', 'aaa'],
+      ['same', 'same'],
+      ['', 'fresh'],
+    ]
+
+    for (const [previousText, nextText] of vectors) {
+      const snapshotEdit = diffPieceTableSnapshots(
+        createPieceTableSnapshot(previousText),
+        createPieceTableSnapshot(nextText),
+      )
+      expect(snapshotEdit).toEqual(createTextDiffEdit(previousText, nextText))
+    }
   })
 
   it('diffs skipped typing edits against the cached syntax text', () => {

@@ -5,7 +5,9 @@ export {
   anchorBefore,
   applyBatchToPieceTable,
   createPieceTableSnapshot,
+  createPieceTableWalker,
   deleteFromPieceTable,
+  diffPieceTableSnapshots,
   forEachPieceTableTextChunk,
   getPieceTableLength,
   insertIntoPieceTable,
@@ -50,6 +52,8 @@ export type {
   PieceTableAnchor,
   PieceTableEdit,
   PieceTableSnapshot,
+  PieceTableWalker,
+  PieceTableWalkerChunk,
   Point,
   ResolvedAnchor,
 } from '../pieceTable'

@@ -88,6 +88,7 @@
     "bench:fold-map": "bun bench/foldMap.ts",
     "bench:piece-table": "bun bench/pieceTable-insertions.ts",
     "bench:virtualization": "bun bench/virtualization.ts",
+    "bench:walker": "bun bench/pieceTable-walker.ts",
     "test": "vitest run",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",

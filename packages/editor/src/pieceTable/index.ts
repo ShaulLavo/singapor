@@ -11,6 +11,8 @@ export type {
   ResolvedAnchor,
 } from './pieceTableTypes'
 
+export type { PieceTableWalker, PieceTableWalkerChunk } from './pieceTable'
+
 export {
   Anchor,
   anchorAfter,
@@ -19,8 +21,10 @@ export {
   applyBatchToPieceTable,
   compareAnchors,
   createPieceTableSnapshot,
+  createPieceTableWalker,
   deleteFromPieceTable,
   debugPieceTable,
+  diffPieceTableSnapshots,
   forEachPieceTableTextChunk,
   getPieceTableLength,
   getPieceTableOriginalText,

@@ -7,7 +7,9 @@ import {
   applyBatchToPieceTable,
   compareAnchors,
   createPieceTableSnapshot,
+  createPieceTableWalker,
   deleteFromPieceTable,
+  diffPieceTableSnapshots,
   forEachPieceTableTextChunk,
   readPieceTableTextRange,
   insertIntoPieceTable,
@@ -134,6 +136,71 @@ const runRandomEditScenario = (seed: number): void => {
     text = result.text
     expectSnapshotText(snapshot, text)
     expectRandomRanges(snapshot, text, random)
+  }
+}
+
+const expectWalkerMatchesText = (
+  snapshot: PieceTableSnapshot,
+  text: string,
+  random: Random,
+): void => {
+  const walker = createPieceTableWalker(snapshot)
+  let walked = ''
+  while (!walker.exhausted()) walked += String.fromCharCode(walker.next())
+  expect(walked).toBe(text)
+
+  for (let index = 0; index < 10; index++) {
+    const offset = randomInt(random, text.length + 1)
+    walker.seek(offset)
+    expect(walker.offset()).toBe(offset)
+    if (offset < text.length) {
+      expect(walker.charCode()).toBe(text.charCodeAt(offset))
+      expect(walker.codePoint()).toBe(text.codePointAt(offset))
+    } else {
+      expect(walker.charCode()).toBe(-1)
+    }
+    const skipLength = randomInt(random, text.length - offset + 1)
+    walker.skip(skipLength)
+    expect(walker.offset()).toBe(offset + skipLength)
+  }
+}
+
+const runRandomWalkerScenario = (seed: number): void => {
+  const random = createRandom(seed)
+  let snapshot = createPieceTableSnapshot(randomText(random))
+  let text = materializePieceTableFullText(snapshot)
+
+  for (let operation = 0; operation < 120; operation++) {
+    const result = applyRandomEdit(snapshot, text, random)
+    snapshot = result.snapshot
+    text = result.text
+    expectWalkerMatchesText(snapshot, text, random)
+  }
+}
+
+const runRandomDiffScenario = (seed: number): void => {
+  const random = createRandom(seed)
+  let snapshot = createPieceTableSnapshot(randomText(random))
+  let text = materializePieceTableFullText(snapshot)
+
+  for (let operation = 0; operation < 40; operation++) {
+    const base = snapshot
+    const baseText = text
+    const editCount = 1 + randomInt(random, 5)
+    for (let editIndex = 0; editIndex < editCount; editIndex++) {
+      const result = applyRandomEdit(snapshot, text, random)
+      snapshot = result.snapshot
+      text = result.text
+    }
+
+    expect(pieceTableSnapshotsHaveSameText(base, snapshot)).toBe(baseText === text)
+
+    const edit = diffPieceTableSnapshots(base, snapshot)
+    if (edit === null) {
+      expect(text).toBe(baseText)
+    } else {
+      expect(baseText.slice(0, edit.from) + edit.text + baseText.slice(edit.to)).toBe(text)
+    }
   }
 }
 
@@ -363,6 +430,18 @@ describe('piece table', () => {
   test('matches string-model readback across randomized insert/delete sequences', () => {
     for (let seed = 1; seed <= 25; seed++) {
       runRandomEditScenario(seed)
+    }
+  }, 30_000)
+
+  test('walker matches string-model reads across randomized edit sequences', () => {
+    for (let seed = 1; seed <= 25; seed++) {
+      runRandomWalkerScenario(seed)
+    }
+  }, 30_000)
+
+  test('diff and equality match the string model across randomized histories', () => {
+    for (let seed = 1; seed <= 25; seed++) {
+      runRandomDiffScenario(seed)
     }
   }, 30_000)
 

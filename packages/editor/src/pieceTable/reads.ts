@@ -1,6 +1,7 @@
 import type { Piece, PieceTableTreeSnapshot } from './pieceTableTypes'
 import { getBufferText } from './buffers'
 import { collectTextInRange, forEachTextInRange } from './tree'
+import { createPieceTableWalker } from './walker'
 
 export const getPieceTableLength = (snapshot: PieceTableTreeSnapshot): number => snapshot.length
 
@@ -75,10 +76,27 @@ export const pieceTableSnapshotsHaveSameText = (
   if (left === right) return true
   if (left.length !== right.length) return false
   if (left.length === 0) return true
-  return pieceTableTextChunksEqual(
-    collectPieceTableTextChunks(left),
-    collectPieceTableTextChunks(right),
-  )
+  // Same tree implies same text: buffers only ever grow by appending, so the
+  // windows existing pieces read from are stable across snapshots.
+  if (left.root === right.root) return true
+
+  const leftWalker = createPieceTableWalker(left)
+  const rightWalker = createPieceTableWalker(right)
+
+  for (;;) {
+    const leftChunk = leftWalker.chunk()
+    const rightChunk = rightWalker.chunk()
+    if (!leftChunk || !rightChunk) return !leftChunk && !rightChunk
+
+    const length = Math.min(leftChunk.end - leftChunk.start, rightChunk.end - rightChunk.start)
+    const leftText = leftChunk.text.length === length ? leftChunk.text : leftChunk.text.slice(0, length)
+    const rightText =
+      rightChunk.text.length === length ? rightChunk.text : rightChunk.text.slice(0, length)
+    if (leftText !== rightText) return false
+
+    leftWalker.skip(length)
+    rightWalker.skip(length)
+  }
 }
 
 const streamPieces = (
@@ -125,67 +143,3 @@ const streamCurrentPiece = (
   })
 }
 
-type PieceTableTextChunk = {
-  readonly text: string
-  readonly start: number
-  readonly end: number
-}
-
-const collectPieceTableTextChunks = (
-  snapshot: PieceTableTreeSnapshot,
-): readonly PieceTableTextChunk[] => {
-  const chunks: PieceTableTextChunk[] = []
-  forEachTextInRange(snapshot.root, snapshot.buffers, 0, snapshot.length, (text, start, end) => {
-    chunks.push({ text, start, end })
-  })
-  return chunks
-}
-
-const pieceTableTextChunksEqual = (
-  left: readonly PieceTableTextChunk[],
-  right: readonly PieceTableTextChunk[],
-): boolean => {
-  let leftIndex = 0
-  let rightIndex = 0
-  let leftOffset = left[0]?.start ?? 0
-  let rightOffset = right[0]?.start ?? 0
-
-  while (leftIndex < left.length && rightIndex < right.length) {
-    const leftChunk = left[leftIndex]
-    const rightChunk = right[rightIndex]
-    if (!leftChunk || !rightChunk) return false
-
-    const length = Math.min(leftChunk.end - leftOffset, rightChunk.end - rightOffset)
-    if (!pieceTableTextRangesEqual(leftChunk, leftOffset, rightChunk, rightOffset, length)) {
-      return false
-    }
-
-    leftOffset += length
-    rightOffset += length
-    if (leftOffset === leftChunk.end) {
-      leftIndex += 1
-      leftOffset = left[leftIndex]?.start ?? 0
-    }
-    if (rightOffset === rightChunk.end) {
-      rightIndex += 1
-      rightOffset = right[rightIndex]?.start ?? 0
-    }
-  }
-
-  return leftIndex === left.length && rightIndex === right.length
-}
-
-const pieceTableTextRangesEqual = (
-  left: PieceTableTextChunk,
-  leftOffset: number,
-  right: PieceTableTextChunk,
-  rightOffset: number,
-  length: number,
-): boolean => {
-  for (let index = 0; index < length; index += 1) {
-    const leftCode = left.text.charCodeAt(leftOffset + index)
-    const rightCode = right.text.charCodeAt(rightOffset + index)
-    if (leftCode !== rightCode) return false
-  }
-  return true
-}

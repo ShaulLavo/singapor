@@ -19,6 +19,7 @@ export {
   resolveAnchor,
   resolveAnchorLinear,
 } from './anchors'
+export { diffPieceTableSnapshots } from './diff'
 export { applyBatchToPieceTable, deleteFromPieceTable, insertIntoPieceTable } from './edits'
 export { offsetToPoint, pointToOffset } from './positions'
 export {
@@ -32,6 +33,11 @@ export {
   streamPieceTableTextChunks,
 } from './reads'
 export { createPieceTableSnapshot } from './snapshot'
+export {
+  createPieceTableWalker,
+  type PieceTableWalker,
+  type PieceTableWalkerChunk,
+} from './walker'
 
 export const debugPieceTable = (snapshot: PieceTableTreeSnapshot): Piece[] =>
   flattenPieces(snapshot.root, [])

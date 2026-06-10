@@ -17,15 +17,15 @@ npm install @singapor/core @singapor/lsp @singapor/lsp-plugin
 import {
   createLanguageServerAdapterPlugin,
   createWebSocketLspTransportFactory,
-} from "@singapor/lsp-plugin";
+} from '@singapor/lsp-plugin'
 
 const plugin = createLanguageServerAdapterPlugin({
-  name: "typescript-lsp",
-  createTransport: createWebSocketLspTransportFactory("ws://localhost:3000/lsp"),
+  name: 'typescript-lsp',
+  createTransport: createWebSocketLspTransportFactory('ws://localhost:3000/lsp'),
   documentSync: {
-    shouldSyncLanguageId: (languageId) => languageId === "typescript",
+    shouldSyncLanguageId: (languageId) => languageId === 'typescript',
   },
-});
+})
 ```
 
 ## Exports

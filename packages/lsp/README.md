@@ -14,7 +14,7 @@ npm install @singapor/lsp
 ## Usage
 
 ```ts
-import { LspClient, createWebSocketLspTransport } from "@singapor/lsp";
+import { LspClient, createWebSocketLspTransport } from '@singapor/lsp'
 ```
 
 ## Exports

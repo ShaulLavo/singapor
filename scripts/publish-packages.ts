@@ -31,14 +31,23 @@ const dryRun = args.has('--dry-run')
 const tag = argValue('--tag') ?? 'latest'
 const access = argValue('--access') ?? 'public'
 const registry = argValue('--registry') ?? 'https://registry.npmjs.org/'
+const fromPackage = argValue('--from')
 
 if (!dryRun) {
   await assertPublishPrerequisites()
 }
 
+let foundFromPackage = fromPackage === null
 for (const packageDir of PACKAGE_DIRS) {
-  await publishPackage(packageDir)
+  const manifest = await readManifest(packageDir)
+  if (!foundFromPackage) {
+    if (!isFromPackage(packageDir, manifest)) continue
+    foundFromPackage = true
+  }
+
+  await publishPackage(packageDir, manifest)
 }
+if (!foundFromPackage) throw new Error(`No package matched --from ${fromPackage}`)
 
 function argValue(name: string): string | null {
   const index = Bun.argv.indexOf(name)
@@ -47,8 +56,7 @@ function argValue(name: string): string | null {
   return Bun.argv[index + 1] ?? null
 }
 
-async function publishPackage(packageDir: string): Promise<void> {
-  const manifest = await readManifest(packageDir)
+async function publishPackage(packageDir: string, manifest: PackageManifest): Promise<void> {
   const packageSpec = specFor(manifest)
   if (await isPackagePublished(manifest)) {
     console.log(`${packageSpec} is already published, skipping`)
@@ -70,6 +78,11 @@ async function readManifest(packageDir: string): Promise<PackageManifest> {
   const packagePath = path.join(repositoryRoot, packageDir, 'package.json')
   const content = await readFile(packagePath, 'utf8')
   return JSON.parse(content) as PackageManifest
+}
+
+function isFromPackage(packageDir: string, manifest: PackageManifest): boolean {
+  if (fromPackage === manifest.name) return true
+  return fromPackage === packageDir
 }
 
 async function packPackage(packageDir: string, destination: string): Promise<string> {
@@ -136,14 +149,14 @@ async function waitForPublishedPackage(manifest: PackageManifest): Promise<void>
   if (dryRun) return
 
   const packageSpec = specFor(manifest)
-  for (let attempt = 1; attempt <= 30; attempt += 1) {
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
     if (await isPackageVisible(packageSpec)) return
-    await Bun.sleep(2000)
-  }
+    if (await isPackageListedByAccess(manifest.name)) {
+      console.warn(`${packageSpec} is published, but npm view has not exposed it yet; continuing`)
+      return
+    }
 
-  if (await isPackageListedByAccess(manifest.name)) {
-    console.warn(`${packageSpec} is published, but npm view has not exposed it yet; continuing`)
-    return
+    await Bun.sleep(2000)
   }
 
   console.warn(
@@ -165,9 +178,7 @@ async function isPackageVisible(packageSpec: string): Promise<boolean> {
 }
 
 async function isPackagePublished(manifest: PackageManifest): Promise<boolean> {
-  if (await isPackageVisible(specFor(manifest))) return true
-
-  return isPackageListedByAccess(manifest.name)
+  return isPackageVisible(specFor(manifest))
 }
 
 async function isPackageListedByAccess(packageName: string): Promise<boolean> {

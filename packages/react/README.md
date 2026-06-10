@@ -11,19 +11,19 @@ npm install @singapor/core @singapor/react react react-dom
 ## Usage
 
 ```tsx
-import { EditorHost, useEditor } from "@singapor/react";
-import "@singapor/core/style.css";
+import { EditorHost, useEditor } from '@singapor/react'
+import '@singapor/core/style.css'
 
 export function EditorPanel() {
   const controller = useEditor({
     document: {
-      documentId: "example.ts",
-      text: "const value = 1;\n",
-      languageId: "typescript",
+      documentId: 'example.ts',
+      text: 'const value = 1;\n',
+      languageId: 'typescript',
     },
-  });
+  })
 
-  return <EditorHost controller={controller} />;
+  return <EditorHost controller={controller} />
 }
 ```
 

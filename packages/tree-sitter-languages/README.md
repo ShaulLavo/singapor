@@ -14,12 +14,12 @@ npm install @singapor/core @singapor/tree-sitter @singapor/tree-sitter-languages
 ## Usage
 
 ```ts
-import { Editor } from "@singapor/core/editor";
-import { javaScript, typeScript } from "@singapor/tree-sitter-languages";
+import { Editor } from '@singapor/core/editor'
+import { javaScript, typeScript } from '@singapor/tree-sitter-languages'
 
-const editor = new Editor(document.querySelector("#editor")!, {
+const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [javaScript({ jsx: true }), typeScript({ tsx: true })],
-});
+})
 ```
 
 ## Exports

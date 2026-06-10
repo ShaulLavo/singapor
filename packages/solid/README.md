@@ -11,23 +11,23 @@ npm install @singapor/core @singapor/solid solid-js
 ## Usage
 
 ```tsx
-import { createEditor } from "@singapor/solid";
-import { onMount } from "solid-js";
-import "@singapor/core/style.css";
+import { createEditor } from '@singapor/solid'
+import { onMount } from 'solid-js'
+import '@singapor/core/style.css'
 
 export function EditorPanel() {
-  let host!: HTMLDivElement;
+  let host!: HTMLDivElement
   const controller = createEditor({
     document: {
-      documentId: "example.ts",
-      text: "const value = 1;\n",
-      languageId: "typescript",
+      documentId: 'example.ts',
+      text: 'const value = 1;\n',
+      languageId: 'typescript',
     },
-  });
+  })
 
-  onMount(() => controller.mount(host));
+  onMount(() => controller.mount(host))
 
-  return <div ref={host} />;
+  return <div ref={host} />
 }
 ```
 

@@ -11,14 +11,14 @@ npm install @singapor/core @singapor/scope-lines
 ## Usage
 
 ```ts
-import { Editor } from "@singapor/core/editor";
-import { createScopeLinesPlugin } from "@singapor/scope-lines";
-import "@singapor/core/style.css";
-import "@singapor/scope-lines/style.css";
+import { Editor } from '@singapor/core/editor'
+import { createScopeLinesPlugin } from '@singapor/scope-lines'
+import '@singapor/core/style.css'
+import '@singapor/scope-lines/style.css'
 
-const editor = new Editor(document.querySelector("#editor")!, {
+const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [createScopeLinesPlugin()],
-});
+})
 ```
 
 ## Exports

@@ -11,14 +11,14 @@ npm install @singapor/core @singapor/gutters
 ## Usage
 
 ```ts
-import { Editor } from "@singapor/core/editor";
-import { createFoldGutterPlugin, createLineGutterPlugin } from "@singapor/gutters";
-import "@singapor/core/style.css";
-import "@singapor/gutters/style.css";
+import { Editor } from '@singapor/core/editor'
+import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapor/gutters'
+import '@singapor/core/style.css'
+import '@singapor/gutters/style.css'
 
-const editor = new Editor(document.querySelector("#editor")!, {
+const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [createLineGutterPlugin(), createFoldGutterPlugin()],
-});
+})
 ```
 
 ## Exports

@@ -14,12 +14,12 @@ npm install @singapor/core @singapor/typescript-lsp
 ## Usage
 
 ```ts
-import { Editor } from "@singapor/core/editor";
-import { createTypeScriptLspPlugin } from "@singapor/typescript-lsp";
+import { Editor } from '@singapor/core/editor'
+import { createTypeScriptLspPlugin } from '@singapor/typescript-lsp'
 
-const editor = new Editor(document.querySelector("#editor")!, {
+const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [createTypeScriptLspPlugin()],
-});
+})
 ```
 
 ## Exports

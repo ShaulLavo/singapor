@@ -11,14 +11,14 @@ npm install @singapor/core @singapor/minimap
 ## Usage
 
 ```ts
-import { Editor } from "@singapor/core/editor";
-import { createMinimapPlugin } from "@singapor/minimap";
-import "@singapor/core/style.css";
-import "@singapor/minimap/style.css";
+import { Editor } from '@singapor/core/editor'
+import { createMinimapPlugin } from '@singapor/minimap'
+import '@singapor/core/style.css'
+import '@singapor/minimap/style.css'
 
-const editor = new Editor(document.querySelector("#editor")!, {
+const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [createMinimapPlugin()],
-});
+})
 ```
 
 ## Exports

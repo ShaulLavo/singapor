@@ -11,12 +11,12 @@ npm install @singapor/core @singapor/panes @singapor/diff
 ## Usage
 
 ```ts
-import { DiffView, parseGitPatch } from "@singapor/diff";
-import "@singapor/core/style.css";
-import "@singapor/diff/style.css";
+import { DiffView, parseGitPatch } from '@singapor/diff'
+import '@singapor/core/style.css'
+import '@singapor/diff/style.css'
 
-const files = parseGitPatch(patchText);
-const diffView = new DiffView(document.querySelector("#diff")!, { files });
+const files = parseGitPatch(patchText)
+const diffView = new DiffView(document.querySelector('#diff')!, { files })
 ```
 
 ## Exports

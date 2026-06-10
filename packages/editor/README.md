@@ -17,16 +17,16 @@ can transpile TypeScript from dependencies.
 ## Basic Usage
 
 ```ts
-import { Editor } from "@singapor/core/editor";
-import "@singapor/core/style.css";
+import { Editor } from '@singapor/core/editor'
+import '@singapor/core/style.css'
 
-const editor = new Editor(document.querySelector("#editor")!);
+const editor = new Editor(document.querySelector('#editor')!)
 
 editor.openDocument({
-  documentId: "example.ts",
-  text: "const value = 1;\n",
-  languageId: "typescript",
-});
+  documentId: 'example.ts',
+  text: 'const value = 1;\n',
+  languageId: 'typescript',
+})
 ```
 
 ## Main Entry Points

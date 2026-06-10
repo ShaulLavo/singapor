@@ -15,9 +15,9 @@ npm install @singapor/core @singapor/tree-sitter
 ## Usage
 
 ```ts
-import { createTreeSitterSyntaxProvider } from "@singapor/tree-sitter";
+import { createTreeSitterSyntaxProvider } from '@singapor/tree-sitter'
 
-const syntaxProvider = createTreeSitterSyntaxProvider();
+const syntaxProvider = createTreeSitterSyntaxProvider()
 ```
 
 Register the provider with an editor plugin context, or use `createTreeSitterLanguagePlugin` when

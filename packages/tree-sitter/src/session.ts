@@ -12,10 +12,12 @@ import {
 import {
   createEmptySyntaxResult,
   type EditorSyntaxDegradedState,
+  type EditorToken,
   type EditorSyntaxRange,
   type EditorSyntaxResult,
   type EditorSyntaxSession,
   treeSitterCapturesToEditorTokens,
+  unpackEditorTokens,
 } from '@singapor/core/syntax'
 import { documentSessionChangeTextSnapshot } from '@singapor/core/internal'
 import type {
@@ -493,7 +495,15 @@ type TreeSitterSyntaxResultContext = {
   readonly snapshotLength: number
 }
 
-const treeSitterParseResultToEditorSyntaxResult = (
+const treeSitterParseResultToEditorSyntaxResult: typeof treeSitterParseResultToEditorSyntaxResultInner = (
+  result,
+  context,
+) => {
+  recordParseResultPayload(result)
+  return treeSitterParseResultToEditorSyntaxResultInner(result, context)
+}
+
+const treeSitterParseResultToEditorSyntaxResultInner = (
   result: TreeSitterParseResult,
   context: TreeSitterSyntaxResultContext,
 ): EditorSyntaxResult => ({
@@ -517,8 +527,39 @@ const treeSitterParseResultToEditorSyntaxResult = (
       version: result.snapshotVersion,
     },
   },
-  tokens: result.tokens ?? treeSitterCapturesToEditorTokens(result.captures),
+  tokens: resultTokens(result),
 })
+
+function resultTokens(result: TreeSitterParseResult): readonly EditorToken[] {
+  if (result.tokens) return result.tokens
+  if (result.tokensPacked) return unpackEditorTokens(result.tokensPacked)
+
+  return treeSitterCapturesToEditorTokens(result.captures)
+}
+
+function recordParseResultPayload(result: TreeSitterParseResult): void {
+  const sink = (
+    globalThis as {
+      __EDITOR_PERFORMANCE_DIAGNOSTICS__?: {
+        enabled: boolean
+        record(diagnostic: { name: string; detail?: Record<string, unknown> }): void
+      } | null
+    }
+  ).__EDITOR_PERFORMANCE_DIAGNOSTICS__
+  if (!sink?.enabled) return
+
+  sink.record({
+    name: 'treeSitter.parseResult.payload',
+    detail: {
+      captures: result.captures.length,
+      tokens: result.tokens?.length ?? result.tokensPacked?.starts.length ?? -1,
+      folds: result.folds.length,
+      brackets: result.brackets.length,
+      errors: result.errors.length,
+      injections: result.injections.length,
+    },
+  })
+}
 
 const treeSitterDegradedStateToEditorSyntaxState = (
   degraded: readonly TreeSitterDegradedState[] | undefined,

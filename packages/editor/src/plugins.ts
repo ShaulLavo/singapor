@@ -163,6 +163,16 @@ export type EditorVisibleRowSnapshot = {
   readonly height: number
 }
 
+// Read-only line-start access without materializing the full array; see
+// LineStartsView in virtualization/lineStartIndex.ts.
+export type EditorLineStartsView = {
+  readonly length: number
+  at(index: number): number | undefined
+  indexForOffset(offset: number): number
+  firstIndexAtOrAfter(offset: number): number
+  toArray(): readonly number[]
+}
+
 export type EditorViewSnapshot = {
   readonly documentId: string | null
   readonly languageId: EditorSyntaxLanguageId | null
@@ -174,7 +184,10 @@ export type EditorViewSnapshot = {
   // snapshot, or null when unknown; lets deferred consumers sync
   // incrementally instead of re-shipping the document. See DocumentEditChain.
   readonly editsSinceTextVersion?: (textVersion: number) => readonly TextEdit[] | null
+  // Materializes the full array on first read; prefer lineStartsView on
+  // per-keystroke paths.
   readonly lineStarts: readonly number[]
+  readonly lineStartsView?: EditorLineStartsView
   readonly tokens: readonly EditorToken[]
   readonly selections: readonly EditorResolvedSelection[]
   readonly metrics: BrowserTextMetrics

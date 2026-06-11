@@ -1,5 +1,6 @@
 import type { TextSnapshot } from '@singapor/core/document'
-import type { LspWebSocketTransportOptions } from '@singapor/lsp'
+import type {
+  LspLineStarts, LspWebSocketTransportOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type {
@@ -42,7 +43,7 @@ export type ActiveDocument = {
   readonly uri: lsp.DocumentUri
   readonly languageId: string
   readonly textSnapshot: TextSnapshot
-  readonly lineStarts: readonly number[]
+  readonly lineStarts: LspLineStarts
   readonly fullText: string
   readonly textVersion: number
   readonly lspVersion: number
@@ -52,7 +53,7 @@ export type DocumentDescriptor = {
   readonly uri: lsp.DocumentUri
   readonly languageId: string
   readonly textSnapshot: TextSnapshot
-  readonly lineStarts: readonly number[]
+  readonly lineStarts: LspLineStarts
   readonly fullText: string
   readonly textVersion: number
 }

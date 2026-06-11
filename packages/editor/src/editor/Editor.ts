@@ -16,6 +16,7 @@ import { EditorBlockSurfaceController } from './blockSurfaceController'
 import { InputSelectionController } from './inputSelectionController'
 import { EditorSyntaxController } from './syntaxController'
 import { DocumentEditChain } from './editChain'
+import type { LineStartsView } from '../virtualization/lineStartIndex'
 import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
 import { appendTiming, nowMs } from './timing'
 import { copyTokenProjectionMetadata, projectTokensThroughEdit } from './tokenProjection'
@@ -244,6 +245,7 @@ export class Editor {
   private readonly viewContributions: EditorViewContributionController
   private readonly secondaryWork = new EditorSecondaryWorkScheduler()
   private readonly editChain = new DocumentEditChain()
+  private lineStartsViewCache: { textVersion: number; view: LineStartsView } | null = null
   private readonly displayProjections = new EditorDisplayProjectionRegistry()
   private readonly highlightPrefix: string
   private sessionChangeVersion = 0
@@ -1839,7 +1841,7 @@ export class Editor {
   private projectRowDecorationsThroughLineEdit(
     edit: TextEdit,
     previousText: TextSnapshot,
-    lineStarts: readonly number[],
+    lineStarts: LineStartsView,
   ): boolean {
     const rowDelta = editLineDelta(edit, previousText)
     if (rowDelta === 0) return false
@@ -1847,8 +1849,8 @@ export class Editor {
     const projections = this.displayProjections.values('rowDecorations')
     if (projections.length === 0) return false
 
-    const startRow = rowForOffset(lineStarts, edit.from)
-    const endRow = rowForOffset(lineStarts, edit.to)
+    const startRow = lineStarts.indexForOffset(edit.from)
+    const endRow = lineStarts.indexForOffset(edit.to)
     const source = this.currentDisplayProjectionSource()
     const invalidationRange = { kind: 'rows' as const, startRow, endRow }
     for (const projection of projections) {
@@ -2046,6 +2048,14 @@ export class Editor {
       visibleRange: viewState.visibleRange,
     }
 
+    // One view per text version: repeat snapshots share the same lazily
+    // materialized array instead of rebuilding it.
+    const cachedView = this.lineStartsViewCache
+    const lineStartsView =
+      cachedView && cachedView.textVersion === this.textVersion
+        ? cachedView.view
+        : this.view.getLineStartsView()
+    this.lineStartsViewCache = { textVersion: this.textVersion, view: lineStartsView }
     return defineLazyFullTextProperty({
       documentId: this.documentId,
       languageId: this.languageId,
@@ -2053,7 +2063,12 @@ export class Editor {
       textSnapshot,
       textVersion: this.textVersion,
       editsSinceTextVersion: (textVersion: number) => this.editChain.editsSince(textVersion),
-      lineStarts: this.view.getLineStarts(),
+      // Materializing per snapshot costs O(lines) on every keystroke for
+      // large documents; consumers that need the array pay lazily instead.
+      get lineStarts() {
+        return lineStartsView.toArray()
+      },
+      lineStartsView,
       tokens: this.tokens,
       selections: this.inputSelection.resolveViewSelections(),
       metrics: viewState.metrics,
@@ -2332,7 +2347,7 @@ export class Editor {
       const rowDecorationsProjected = this.projectRowDecorationsThroughLineEdit(
         edit,
         previousTextSnapshot,
-        this.view.getLineStarts(),
+        this.view.getLineStartsView(),
       )
       this.applyEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
       this.applySyntaxFoldProjection(foldProjection)
@@ -2639,21 +2654,6 @@ function countLineBreaks(text: string): number {
   return count
 }
 
-function rowForOffset(lineStarts: readonly number[], offset: number): number {
-  let low = 0
-  let high = lineStarts.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if ((lineStarts[middle] ?? 0) <= offset) {
-      low = middle + 1
-      continue
-    }
-
-    high = middle
-  }
-
-  return Math.max(0, low - 1)
-}
 
 function syntaxScrollDirection(delta: number): SyntaxScrollDirection {
   if (delta > 0) return 1

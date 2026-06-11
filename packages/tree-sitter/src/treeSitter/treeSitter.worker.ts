@@ -8,7 +8,10 @@ import {
   type Tree,
   type TreeCursor,
 } from 'web-tree-sitter'
-import { treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
+import { packEditorTokens,
+  packedEditorTokenTransfers,
+  treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
+import type { PackedEditorTokens } from '@singapor/core/syntax'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
 import type { TreeSitterLanguageDescriptor } from './registry'
 import {
@@ -91,7 +94,7 @@ type CancellationContext = {
 
 type FlattenedDocument = Pick<
   TreeSitterParseResult,
-  'captures' | 'folds' | 'brackets' | 'errors' | 'injections' | 'tokens'
+  'captures' | 'folds' | 'brackets' | 'errors' | 'injections' | 'tokens' | 'tokensPacked'
 > & {
   readonly degraded: readonly TreeSitterDegradedState[]
 }
@@ -303,6 +306,7 @@ const parseDocument = async (
       injections: result.injections,
       degraded: result.degraded,
       tokens: result.tokens,
+      tokensPacked: result.tokensPacked,
       timings: [
         { name: 'treeSitter.parse', durationMs: parseMs },
         { name: 'treeSitter.query', durationMs: queryMs },
@@ -393,6 +397,7 @@ const editDocument = async (
       injections: result.injections,
       degraded: result.degraded,
       tokens: result.tokens,
+      tokensPacked: result.tokensPacked,
       timings: [
         { name: 'treeSitter.edit', durationMs: editMs },
         { name: 'treeSitter.parse', durationMs: parseMs },
@@ -447,6 +452,7 @@ const queryDocumentRangeWithContext = async (
     injections: result.injections,
     degraded: result.degraded,
     tokens: result.tokens,
+      tokensPacked: result.tokensPacked,
     timings: [{ name: 'treeSitter.queryRange', durationMs: nowMs() - queryStart }],
   }
 }
@@ -1092,7 +1098,7 @@ const flattenDocument = async (
     errors: sortErrors(result.errors),
     injections: sortInjections(result.injections),
     degraded: result.degraded,
-    tokens: treeSitterCapturesToEditorTokens(captures),
+    tokensPacked: packEditorTokens(treeSitterCapturesToEditorTokens(captures)),
   }
 }
 
@@ -1118,7 +1124,7 @@ const flattenDocumentRange = async (
     errors: sortErrors(result.errors),
     injections: sortInjections(result.injections),
     degraded: result.degraded,
-    tokens: treeSitterCapturesToEditorTokens(captures),
+    tokensPacked: packEditorTokens(treeSitterCapturesToEditorTokens(captures)),
   }
 }
 
@@ -1892,7 +1898,7 @@ const handleRequest = async (request: TreeSitterWorkerRequest): Promise<TreeSitt
 const workerScope = globalThis as typeof globalThis & {
   readonly importScripts?: unknown
   onmessage?: (event: MessageEvent<TreeSitterWorkerRequest>) => void
-  postMessage?: (response: TreeSitterWorkerResponse) => void
+  postMessage?: (response: TreeSitterWorkerResponse, transfer?: Transferable[]) => void
 }
 
 const shouldInstallWorkerHandler = (): boolean => {
@@ -1925,5 +1931,14 @@ export const __treeSitterWorkerInternalsForTests = {
 }
 
 const postResponse = (response: TreeSitterWorkerResponse): void => {
-  workerScope.postMessage?.(response)
+  workerScope.postMessage?.(response, responseTransfers(response))
+}
+
+function responseTransfers(response: TreeSitterWorkerResponse): Transferable[] {
+  if (!response.ok) return []
+
+  const result = response.result as { tokensPacked?: PackedEditorTokens } | undefined
+  if (!result?.tokensPacked) return []
+
+  return packedEditorTokenTransfers(result.tokensPacked)
 }

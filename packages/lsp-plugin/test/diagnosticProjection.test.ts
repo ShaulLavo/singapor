@@ -1,3 +1,4 @@
+import { arrayLspLineStarts } from '@singapor/lsp'
 import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
 import type { LspTextDocumentSnapshot, LspTextSnapshot } from '@singapor/lsp'
 import { describe, expect, it } from 'vitest'
@@ -66,7 +67,7 @@ function documentChange(edits: readonly TextEdit[]): DocumentSessionChange {
 function snapshotDocument(text: string): LspTextDocumentSnapshot {
   return {
     textSnapshot: throwingFullTextSnapshot(text),
-    lineStarts: lineStarts(text),
+    lineStarts: arrayLspLineStarts(lineStarts(text)),
   }
 }
 

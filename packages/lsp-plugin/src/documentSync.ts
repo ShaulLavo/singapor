@@ -5,7 +5,7 @@ import type {
 } from '@singapor/core/extensions'
 import { createStringTextSnapshot } from '@singapor/core/document'
 import { defineLazyFullTextProperty } from '@singapor/core/internal'
-import { recordLspPerformanceDiagnostic, type LspWorkspace } from '@singapor/lsp'
+import { arrayLspLineStarts, recordLspPerformanceDiagnostic, type LspWorkspace } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { editsForChange, projectDiagnosticsInSnapshot } from './diagnosticProjection'
@@ -177,7 +177,9 @@ function documentDescriptor(
     uri,
     languageId: snapshot.languageId,
     textSnapshot: snapshot.textSnapshot ?? createStringTextSnapshot(snapshot.fullText),
-    lineStarts: snapshot.lineStarts,
+    // The view avoids materializing the full line-start array per sync on
+    // large documents; plain-array snapshots (tests) adapt lazily.
+    lineStarts: snapshot.lineStartsView ?? arrayLspLineStarts(snapshot.lineStarts),
     textVersion: snapshot.textVersion,
   })
 }

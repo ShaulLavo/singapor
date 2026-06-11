@@ -1,6 +1,7 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 import { recordLspPerformanceDiagnostic } from './performanceDiagnostics'
-import type { LspTextDocumentSnapshot, LspTextEdit } from './types'
+import type {
+  LspLineStarts, LspTextDocumentSnapshot, LspTextEdit } from './types'
 
 export type LspContentChangeOptions = {
   readonly incremental?: boolean
@@ -240,14 +241,14 @@ function lineBreakEnd(text: string, index: number, code: number): number {
   return index + 1
 }
 
-function rowForOffset(lineStarts: readonly number[], offset: number): number {
+function rowForOffset(lineStarts: LspLineStarts, offset: number): number {
   let low = 0
   let high = lineStarts.length - 1
   let row = 0
 
   while (low <= high) {
     const middle = Math.floor((low + high) / 2)
-    const start = lineStarts[middle] ?? 0
+    const start = lineStarts.at(middle) ?? 0
     if (start <= offset) {
       row = middle
       low = middle + 1
@@ -266,11 +267,11 @@ function snapshotLineForLspLine(document: LspTextDocumentSnapshot, line: number)
 }
 
 function lineStartForSnapshotLine(document: LspTextDocumentSnapshot, line: number): number {
-  return document.lineStarts[line] ?? document.textSnapshot.length
+  return document.lineStarts.at(line) ?? document.textSnapshot.length
 }
 
 function lineEndOffsetInSnapshot(document: LspTextDocumentSnapshot, line: number): number {
-  const nextStart = document.lineStarts[line + 1]
+  const nextStart = document.lineStarts.at(line + 1)
   if (nextStart === undefined) return document.textSnapshot.length
   if (lineBreakProbe(document, line, nextStart).endsWith('\r\n')) return nextStart - 2
   return Math.max(lineStartForSnapshotLine(document, line), nextStart - 1)

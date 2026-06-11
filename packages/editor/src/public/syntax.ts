@@ -6,9 +6,13 @@ export {
   createSyntaxProjectionTag,
   createSyntaxSnapshotTag,
   isEditorSyntaxLanguage,
+  packEditorTokens,
+  packedEditorTokenTransfers,
   styleForTreeSitterCapture,
   treeSitterCapturesToEditorTokens,
+  unpackEditorTokens,
 } from '../syntax'
+export type { PackedEditorTokens } from '../syntax'
 export type {
   BracketInfo,
   EditorSyntaxCapture,

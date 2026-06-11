@@ -1,3 +1,4 @@
+import { arrayLspLineStarts } from '../src/workspace'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -208,7 +209,7 @@ describe('LSP content change helpers', () => {
 function snapshotDocument(text: string): LspTextDocumentSnapshot {
   return {
     textSnapshot: throwingFullTextSnapshot(text),
-    lineStarts: lineStarts(text),
+    lineStarts: arrayLspLineStarts(lineStarts(text)),
   }
 }
 
@@ -219,7 +220,7 @@ function materializingSnapshotDocument(text: string): LspTextDocumentSnapshot {
       materializeFullText: () => text,
       readRange: (start, end) => text.slice(start, end),
     },
-    lineStarts: lineStarts(text),
+    lineStarts: arrayLspLineStarts(lineStarts(text)),
   }
 }
 

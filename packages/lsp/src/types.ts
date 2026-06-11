@@ -21,9 +21,18 @@ export type LspTextSnapshot = {
   readRange(start: number, end?: number): string
 }
 
+// Read-only line-start access; backed by an array adapter or the editor's
+// suffix-delta view so large documents never materialize per keystroke.
+export type LspLineStarts = {
+  readonly length: number
+  at(index: number): number | undefined
+  indexForOffset(offset: number): number
+  toArray(): readonly number[]
+}
+
 export type LspTextDocumentSnapshot = {
   readonly textSnapshot: LspTextSnapshot
-  readonly lineStarts: readonly number[]
+  readonly lineStarts: LspLineStarts
 }
 
 export type LspDocumentSyncMode = 'none' | 'full' | 'incremental'
@@ -48,7 +57,7 @@ export type LspDocumentOpenOptions = {
 export type LspDocument = LspDocumentOpenOptions & {
   readonly version: number
   readonly textSnapshot: LspTextSnapshot
-  readonly lineStarts: readonly number[]
+  readonly lineStarts: LspLineStarts
 }
 
 export type LspWorkspaceEditOptions = {

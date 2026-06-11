@@ -1,5 +1,6 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 import type {
+  LspLineStarts,
   LspDocument,
   LspDocumentOpenOptions,
   LspTextDocumentSnapshot,
@@ -17,7 +18,7 @@ type MutableLspDocument = {
   version: number
   textCache?: string
   textSnapshot: LspTextSnapshot
-  lineStarts: readonly number[]
+  lineStarts: LspLineStarts
 }
 
 export class LspWorkspace {
@@ -43,7 +44,7 @@ export class LspWorkspace {
       languageId: options.languageId,
       textCache: options.text,
       textSnapshot: createStringTextSnapshot(options.text),
-      lineStarts: computeLineStarts(options.text),
+      lineStarts: arrayLspLineStarts(computeLineStarts(options.text)),
       version: this.nextVersion(options.uri),
     }
     this.documentsByUri.set(options.uri, document)
@@ -63,7 +64,7 @@ export class LspWorkspace {
     const previousSnapshot = documentSnapshot(document)
     document.textCache = text
     document.textSnapshot = createStringTextSnapshot(text)
-    document.lineStarts = computeLineStarts(text)
+    document.lineStarts = arrayLspLineStarts(computeLineStarts(text))
     document.version = this.nextVersion(uri)
     this.client?.didChangeDocument(cloneDocument(document), {
       edits: options.edits ?? [],
@@ -175,6 +176,31 @@ function createStringTextSnapshot(text: string): LspTextSnapshot {
     materializeFullText: () => text,
     readRange: (start, end) => text.slice(start, end),
   }
+}
+
+export function arrayLspLineStarts(lineStarts: readonly number[]): LspLineStarts {
+  return {
+    length: lineStarts.length,
+    at: (index) => lineStarts[index],
+    indexForOffset: (offset) => arrayRowForOffset(lineStarts, offset),
+    toArray: () => lineStarts,
+  }
+}
+
+function arrayRowForOffset(lineStarts: readonly number[], offset: number): number {
+  let low = 0
+  let high = lineStarts.length - 1
+  let row = 0
+  while (low <= high) {
+    const middle = (low + high) >> 1
+    if ((lineStarts[middle] ?? 0) <= offset) {
+      row = middle
+      low = middle + 1
+      continue
+    }
+    high = middle - 1
+  }
+  return row
 }
 
 function computeLineStarts(text: string): number[] {

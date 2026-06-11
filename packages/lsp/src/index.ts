@@ -36,6 +36,7 @@ export {
   type LspWorkerTransportOptions,
 } from './transports'
 export type {
+  LspLineStarts,
   LspDocument,
   LspDocumentChange,
   LspDocumentSaveSync,
@@ -59,6 +60,6 @@ export type {
   LspWorkspaceFactory,
   LspWorkspaceSnapshotEditOptions,
 } from './types'
-export { LspWorkspace } from './workspace'
+export { LspWorkspace, arrayLspLineStarts } from './workspace'
 export type * as lsp from 'vscode-languageserver-protocol'
 export { recordLspPerformanceDiagnostic } from './performanceDiagnostics'

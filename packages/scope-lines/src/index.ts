@@ -413,11 +413,13 @@ function lineText(context: ScopeLinesRenderContext, row: number): string {
 
 function uncachedLineText(context: ScopeLinesRenderContext, row: number): string {
   const snapshot = context.snapshot
-  const start = snapshot.lineStarts[row]
+  const lineStarts = snapshot.lineStartsView
+  const start = lineStarts ? lineStarts.at(row) : snapshot.lineStarts[row]
   if (start === undefined) return ''
 
   const textSnapshot = context.textSnapshot
-  const nextStart = snapshot.lineStarts[row + 1] ?? textSnapshot.length + 1
+  const nextStart =
+    (lineStarts ? lineStarts.at(row + 1) : snapshot.lineStarts[row + 1]) ?? textSnapshot.length + 1
   const end = Math.max(start, Math.min(textSnapshot.length, nextStart - 1))
   return textSnapshot.readRange(start, end)
 }

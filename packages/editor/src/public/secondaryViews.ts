@@ -1,5 +1,5 @@
 import type { TextSnapshot } from '../documentTextSnapshot'
-import type {
+import type { EditorLineStartsView,
   EditorResolvedSelection,
   EditorViewSnapshot,
   EditorViewportSnapshot,
@@ -32,6 +32,7 @@ export type EditorSecondaryViewTextProjection = {
   readonly snapshot: TextSnapshot | null
   readonly length: number | null
   readonly lineStarts: readonly number[]
+  readonly lineStartsView?: EditorLineStartsView
   readonly lineCount: number
   materializeFullText(): string
 }
@@ -114,7 +115,10 @@ function createTextProjection(snapshot: EditorViewSnapshot): EditorSecondaryView
   return {
     snapshot: textSnapshot,
     length: textProjectionLength(textSnapshot),
-    lineStarts: snapshot.lineStarts,
+    get lineStarts() {
+      return snapshot.lineStarts
+    },
+    lineStartsView: snapshot.lineStartsView,
     lineCount: snapshot.lineCount,
     materializeFullText: () => materializeProjectionText(snapshot, textSnapshot),
   }

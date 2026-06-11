@@ -1,5 +1,5 @@
 import type { TextEdit } from '@singapor/core/document'
-import type { EditorToken } from '@singapor/core/syntax'
+import type { EditorToken, PackedEditorTokens } from '@singapor/core/syntax'
 import type { TreeSitterLanguageDescriptor, TreeSitterLanguageId } from './registry'
 import type { TreeSitterSourceDescriptor } from './source'
 
@@ -77,6 +77,7 @@ export type TreeSitterParseResult = {
   readonly injections: readonly TreeSitterInjectionInfo[]
   readonly degraded?: readonly TreeSitterDegradedState[]
   readonly tokens?: readonly EditorToken[]
+  readonly tokensPacked?: PackedEditorTokens
   readonly timings: readonly TreeSitterTimingMeasurement[]
 }
 

@@ -1,3 +1,4 @@
+import { arrayLspLineStarts } from '../src/workspace'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -301,7 +302,7 @@ describe('LspClient', () => {
     })
     client.workspace.updateDocumentSnapshot('file:///repo/a.ts', {
       textSnapshot: throwingFullTextSnapshot('aXb\ncd'),
-      lineStarts: [0, 4],
+      lineStarts: arrayLspLineStarts([0, 4]),
       edits: [{ from: 1, to: 1, text: 'X' }],
     })
 
@@ -328,7 +329,7 @@ describe('LspClient', () => {
     })
     client.workspace.updateDocumentSnapshot('file:///repo/a.ts', {
       textSnapshot: stringTextSnapshot('abcX'),
-      lineStarts: [0],
+      lineStarts: arrayLspLineStarts([0]),
       edits: [{ from: 3, to: 3, text: 'X' }],
     })
 

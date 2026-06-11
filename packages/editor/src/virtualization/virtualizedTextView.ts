@@ -79,6 +79,7 @@ import {
   visibleLineCount,
   visualColumnForOffset,
 } from './virtualizedTextViewLayout'
+import { LineStartsView } from './lineStartIndex'
 import { clearRowGeometryCaches, xToOffset } from './virtualizedTextViewGeometry'
 import {
   disposeAllMountedBlockLanes,
@@ -626,6 +627,25 @@ export class VirtualizedTextView {
 
   public getLineStarts(): readonly number[] {
     return materializeLineStarts(this.view)
+  }
+
+  // Snapshot view over the current line starts without forcing the pending
+  // suffix deltas to materialize into a fresh array.
+  public getLineStartsView(): LineStartsView {
+    const offsetIndex = this.view.lineStartOffsetIndex
+    if (!offsetIndex?.dirty) return new LineStartsView(this.view.lineStarts, [])
+
+    const revision = offsetIndex.revision
+    return new LineStartsView(this.view.lineStarts, offsetIndex.snapshotDeltas(), (materialized) => {
+      // Adopt the materialized array as the new base while no further edits
+      // have landed, so internal consumers skip their own materialization.
+      if (this.view.lineStartOffsetIndex !== offsetIndex) return
+      if (offsetIndex.revision !== revision) return
+
+      // Freshly built by toArray when deltas exist; never the shared base.
+      this.view.lineStarts = materialized as number[]
+      this.view.lineStartOffsetIndex = null
+    })
   }
 
   public getLineCount(): number {

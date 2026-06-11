@@ -225,6 +225,9 @@ export class MinimapWorkerClient {
   private latestThemeSignature = ''
   private latestSnapshot: EditorViewSnapshot
   private latestFullDocumentSnapshot: EditorViewSnapshot | null = null
+  // Mirror of the worker's current document summary; the authoritative
+  // pre-edit baseline for incremental patch accounting.
+  private workerDocumentState: WorkerDocumentState | null = null
   private latestTokenSource: readonly EditorToken[] | null
   private disposed = false
 
@@ -311,7 +314,7 @@ export class MinimapWorkerClient {
     }
 
     this.post(request, [mainCanvas, decorationsCanvas])
-    this.post({ type: 'openDocument', document: this.documentPayload(snapshot) })
+    this.post({ type: 'openDocument', document: this.trackedDocumentPayload(snapshot) })
     this.latestFullDocumentSnapshot = snapshot
     this.post({
       type: 'updateLayout',
@@ -428,7 +431,7 @@ export class MinimapWorkerClient {
     }
 
     if (update.replaceDocument) {
-      this.post({ type: 'replaceDocument', document: this.documentPayload(snapshot) })
+      this.post({ type: 'replaceDocument', document: this.trackedDocumentPayload(snapshot) })
       this.latestFullDocumentSnapshot = snapshot
       this.latestTokenSource = snapshot.tokens
       return
@@ -454,13 +457,29 @@ export class MinimapWorkerClient {
   }
 
   private postEditUpdate(update: PendingMinimapUpdate): void {
-    const document = this.documentEditPayload(update)
+    const document = this.documentEditPayload(update, this.workerDocumentState)
+    const patch = document.summaryPatch
+    if (this.workerDocumentState) {
+      this.workerDocumentState = {
+        textLength: patch.textLength,
+        lineCount: this.workerDocumentState.lineCount - patch.deleteCount + patch.lines.length,
+      }
+    }
     if (update.edits.length === 1) {
       this.post({ type: 'applyEdit', edit: update.edits[0]!, document })
       return
     }
 
     this.post({ type: 'applyEdits', edits: update.edits, document })
+  }
+
+  private trackedDocumentPayload(snapshot: EditorViewSnapshot): MinimapDocumentPayload {
+    const document = this.documentPayload(snapshot)
+    this.workerDocumentState = {
+      textLength: document.textLength,
+      lineCount: document.lines.length,
+    }
+    return document
   }
 
   private postTokenUpdate(snapshot: EditorViewSnapshot, forceFullUpdate: boolean): void {
@@ -595,7 +614,10 @@ export class MinimapWorkerClient {
     )
   }
 
-  private documentEditPayload(update: PendingMinimapUpdate): MinimapDocumentEditPayload {
+  private documentEditPayload(
+    update: PendingMinimapUpdate,
+    workerDocument: WorkerDocumentState | null,
+  ): MinimapDocumentEditPayload {
     const snapshot = update.snapshot
     const projection = createEditorSecondaryViewProjection(snapshot)
     let payload: MinimapDocumentEditPayload | null = null
@@ -609,6 +631,7 @@ export class MinimapWorkerClient {
             previousDocumentSummary(update),
             update.edits,
             this.options.maxColumn,
+            workerDocument,
           ),
         }
         return payload
@@ -809,7 +832,7 @@ type PendingMinimapUpdate = {
 
 type MinimapDocumentSummaryBaseline = {
   readonly textLength: number
-  readonly lineStarts: readonly number[]
+  readonly lineStarts: MinimapLineStarts
 }
 
 export function canUseMinimapWorker(): boolean {
@@ -917,6 +940,34 @@ function minimapSelection(selection: EditorResolvedSelection): MinimapSelection 
   }
 }
 
+// Structural match for EditorLineStartsView so plain arrays (tests, string
+// fallback paths) and snapshot views share one access surface.
+type MinimapLineStarts = {
+  readonly length: number
+  at(index: number): number | undefined
+  indexForOffset(offset: number): number
+  firstIndexAtOrAfter(offset: number): number
+  toArray(): readonly number[]
+}
+
+function lineStartsOf(text: EditorSecondaryViewTextProjection): MinimapLineStarts {
+  return text.lineStartsView ?? arrayLineStarts(text.lineStarts)
+}
+
+function snapshotLineStarts(snapshot: EditorViewSnapshot): MinimapLineStarts {
+  return snapshot.lineStartsView ?? arrayLineStarts(snapshot.lineStarts)
+}
+
+function arrayLineStarts(lineStarts: readonly number[]): MinimapLineStarts {
+  return {
+    length: lineStarts.length,
+    at: (index) => lineStarts[index],
+    indexForOffset: (offset) => arrayLineIndexForOffset(lineStarts, offset),
+    firstIndexAtOrAfter: (target) => arrayFirstLineStartAtOrAfter(lineStarts, target),
+    toArray: () => lineStarts,
+  }
+}
+
 function documentSummaryPayload(
   text: EditorSecondaryViewTextProjection,
   maxColumn: number,
@@ -940,14 +991,15 @@ function documentSummaryFromSnapshot(
     )
   }
 
+  const lineStarts = lineStartsOf(text).toArray()
   return {
     textLength,
-    lineStarts: text.lineStarts,
-    lines: text.lineStarts.map((startOffset, index) =>
+    lineStarts,
+    lines: lineStarts.map((startOffset, index) =>
       lineSummaryFromSnapshot(
         text,
         startOffset,
-        lineEndOffset(text.lineStarts, index, textLength),
+        lineEndOffset(arrayLineStarts(lineStarts), index, textLength),
         maxColumn,
       ),
     ),
@@ -966,7 +1018,7 @@ function documentSummaryFromMaterializedText(
       lineSummaryFromMaterializedText(
         text,
         startOffset,
-        lineEndOffset(lineStarts, index, text.length),
+        lineEndOffset(arrayLineStarts(lineStarts), index, text.length),
         maxColumn,
       ),
     ),
@@ -978,10 +1030,11 @@ function documentSummaryPatchPayload(
   previous: MinimapDocumentSummaryBaseline,
   edits: readonly TextEdit[],
   maxColumn: number,
+  workerDocument: WorkerDocumentState | null,
 ): MinimapDocumentSummaryPatch {
   const textLength = text.length
   if (textLength !== null) {
-    return documentSummaryPatchFromSnapshot(text, textLength, previous, edits, maxColumn)
+    return documentSummaryPatchFromSnapshot(text, textLength, previous, edits, maxColumn, workerDocument)
   }
 
   return documentSummaryPatchFromMaterializedText(
@@ -993,12 +1046,15 @@ function documentSummaryPatchPayload(
   )
 }
 
+type WorkerDocumentState = { readonly textLength: number; readonly lineCount: number }
+
 function documentSummaryPatchFromSnapshot(
   text: EditorSecondaryViewTextProjection,
   textLength: number,
   previous: MinimapDocumentSummaryBaseline,
   edits: readonly TextEdit[],
   maxColumn: number,
+  workerDocument: WorkerDocumentState | null,
 ): MinimapDocumentSummaryPatch {
   if (!text.snapshot) {
     return documentSummaryPatchFromMaterializedText(
@@ -1010,20 +1066,25 @@ function documentSummaryPatchFromSnapshot(
     )
   }
 
-  const range = documentSummaryPatchRange(previous, text.lineStarts, textLength, edits)
+  const lineStarts = lineStartsOf(text)
+  const range = documentSummaryPatchRange(previous, lineStarts, textLength, edits, workerDocument)
+  const lines = []
+  for (let lineIndex = range.startLine; lineIndex < range.insertEndLine; lineIndex += 1) {
+    lines.push(
+      lineSummaryFromSnapshot(
+        text,
+        lineStarts.at(lineIndex) ?? textLength,
+        lineEndOffset(lineStarts, lineIndex, textLength),
+        maxColumn,
+      ),
+    )
+  }
+
   return {
     textLength,
     startLine: range.startLine,
     deleteCount: range.deleteCount,
-    lines: text.lineStarts.slice(range.startLine, range.insertEndLine).map((startOffset, index) => {
-      const lineIndex = range.startLine + index
-      return lineSummaryFromSnapshot(
-        text,
-        startOffset,
-        lineEndOffset(text.lineStarts, lineIndex, textLength),
-        maxColumn,
-      )
-    }),
+    lines,
   }
 }
 
@@ -1034,7 +1095,7 @@ function documentSummaryPatchFromMaterializedText(
   edits: readonly TextEdit[],
   maxColumn: number,
 ): MinimapDocumentSummaryPatch {
-  const range = documentSummaryPatchRange(previous, lineStarts, text.length, edits)
+  const range = documentSummaryPatchRange(previous, arrayLineStarts(lineStarts), text.length, edits, null)
   return {
     textLength: text.length,
     startLine: range.startLine,
@@ -1044,7 +1105,7 @@ function documentSummaryPatchFromMaterializedText(
       return lineSummaryFromMaterializedText(
         text,
         startOffset,
-        lineEndOffset(lineStarts, lineIndex, text.length),
+        lineEndOffset(arrayLineStarts(lineStarts), lineIndex, text.length),
         maxColumn,
       )
     }),
@@ -1078,9 +1139,9 @@ function lineSummaryFromMaterializedText(
   }
 }
 
-function lineEndOffset(lineStarts: readonly number[], index: number, textLength: number): number {
-  const startOffset = lineStarts[index] ?? textLength
-  const nextStart = lineStarts[index + 1]
+function lineEndOffset(lineStarts: MinimapLineStarts, index: number, textLength: number): number {
+  const startOffset = lineStarts.at(index) ?? textLength
+  const nextStart = lineStarts.at(index + 1)
   if (nextStart === undefined) return textLength
   return Math.max(startOffset, nextStart - 1)
 }
@@ -1099,16 +1160,18 @@ type DocumentSummaryPatchRange = {
 
 function documentSummaryPatchRange(
   previous: MinimapDocumentSummaryBaseline,
-  nextLineStarts: readonly number[],
+  nextLineStarts: MinimapLineStarts,
   nextTextLength: number,
   edits: readonly TextEdit[],
+  workerDocument: WorkerDocumentState | null,
 ): DocumentSummaryPatchRange {
   const edited = editSummaryPatchRange(previous.lineStarts, nextLineStarts, edits)
-  // When the edits fully account for the length and line-count transition,
-  // every boundary change lies inside the edited range and the O(lines)
-  // structural verification can be skipped. Projection changes (e.g. fold
-  // toggles) break the accounting and fall through to the full scan.
-  if (edited && editsExplainTransition(previous, nextLineStarts, nextTextLength, edits)) {
+  // When line-break-free edits fully account for the worker document's
+  // length transition and the line count is unchanged, every boundary change
+  // lies inside the edited range and the O(lines) structural verification
+  // can be skipped. Newline edits and projection changes (e.g. fold toggles)
+  // fall through to the full scan.
+  if (edited && workerDocument && editsExplainTransition(workerDocument, nextLineStarts, nextTextLength, edits)) {
     return normalizeSummaryPatchRange(edited, previous.lineStarts.length, nextLineStarts.length)
   }
 
@@ -1125,41 +1188,25 @@ function documentSummaryPatchRange(
 }
 
 function editsExplainTransition(
-  previous: MinimapDocumentSummaryBaseline,
-  nextLineStarts: readonly number[],
+  workerDocument: WorkerDocumentState,
+  nextLineStarts: MinimapLineStarts,
   nextTextLength: number,
   edits: readonly TextEdit[],
 ): boolean {
+  if (nextLineStarts.length !== workerDocument.lineCount) return false
+
   let textDelta = 0
-  let lineDelta = 0
   for (const edit of edits) {
-    const from = Math.min(edit.from, edit.to)
-    const to = Math.max(edit.from, edit.to)
-    textDelta += edit.text.length - (to - from)
-    lineDelta += countLineBreaksInText(edit.text) - removedLineBreaks(previous.lineStarts, from, to)
+    // With no inserted breaks and an unchanged line count, no breaks were
+    // removed either; the math below is exact, not heuristic.
+    if (edit.text.includes('\n')) return false
+    textDelta += edit.text.length - (Math.max(edit.from, edit.to) - Math.min(edit.from, edit.to))
   }
 
-  if (nextTextLength - previous.textLength !== textDelta) return false
-  return nextLineStarts.length - previous.lineStarts.length === lineDelta
+  return workerDocument.textLength + textDelta === nextTextLength
 }
 
-function countLineBreaksInText(text: string): number {
-  let count = 0
-  let index = text.indexOf('\n')
-  while (index !== -1) {
-    count += 1
-    index = text.indexOf('\n', index + 1)
-  }
-  return count
-}
-
-// A '\n' at offset b creates the line start b + 1, so breaks inside
-// [from, to) correspond to line starts inside [from + 1, to].
-function removedLineBreaks(lineStarts: readonly number[], from: number, to: number): number {
-  return firstLineStartAtOrAfter(lineStarts, to + 1) - firstLineStartAtOrAfter(lineStarts, from + 1)
-}
-
-function firstLineStartAtOrAfter(lineStarts: readonly number[], target: number): number {
+function arrayFirstLineStartAtOrAfter(lineStarts: readonly number[], target: number): number {
   let low = 0
   let high = lineStarts.length
   while (low < high) {
@@ -1171,9 +1218,9 @@ function firstLineStartAtOrAfter(lineStarts: readonly number[], target: number):
 }
 
 function lineStartSummaryPatchRange(
-  previousLineStarts: readonly number[],
+  previousLineStarts: MinimapLineStarts,
   previousTextLength: number,
-  nextLineStarts: readonly number[],
+  nextLineStarts: MinimapLineStarts,
   nextTextLength: number,
 ): SummaryLineChangeRange | null {
   const prefix = commonLineSummaryPrefix(
@@ -1201,9 +1248,9 @@ function lineStartSummaryPatchRange(
 }
 
 function commonLineSummaryPrefix(
-  previousLineStarts: readonly number[],
+  previousLineStarts: MinimapLineStarts,
   previousTextLength: number,
-  nextLineStarts: readonly number[],
+  nextLineStarts: MinimapLineStarts,
   nextTextLength: number,
 ): number {
   let count = 0
@@ -1227,9 +1274,9 @@ function commonLineSummaryPrefix(
 }
 
 function commonLineSummarySuffix(
-  previousLineStarts: readonly number[],
+  previousLineStarts: MinimapLineStarts,
   previousTextLength: number,
-  nextLineStarts: readonly number[],
+  nextLineStarts: MinimapLineStarts,
   nextTextLength: number,
   prefix: number,
 ): number {
@@ -1261,16 +1308,16 @@ function commonLineSummarySuffix(
 }
 
 function lineSummaryBoundariesMatch(
-  previousLineStarts: readonly number[],
+  previousLineStarts: MinimapLineStarts,
   previousTextLength: number,
   previousIndex: number,
-  nextLineStarts: readonly number[],
+  nextLineStarts: MinimapLineStarts,
   nextTextLength: number,
   nextIndex: number,
   offsetDelta: number,
 ): boolean {
-  const previousStart = previousLineStarts[previousIndex] ?? previousTextLength
-  const nextStart = nextLineStarts[nextIndex] ?? nextTextLength
+  const previousStart = previousLineStarts.at(previousIndex) ?? previousTextLength
+  const nextStart = nextLineStarts.at(nextIndex) ?? nextTextLength
   if (previousStart + offsetDelta !== nextStart) return false
 
   return (
@@ -1280,8 +1327,8 @@ function lineSummaryBoundariesMatch(
 }
 
 function editSummaryPatchRange(
-  previousLineStarts: readonly number[],
-  nextLineStarts: readonly number[],
+  previousLineStarts: MinimapLineStarts,
+  nextLineStarts: MinimapLineStarts,
   edits: readonly TextEdit[],
 ): SummaryLineChangeRange | null {
   let startLine = Number.POSITIVE_INFINITY
@@ -1306,27 +1353,27 @@ function editIsEmpty(edit: TextEdit): boolean {
 }
 
 function previousLineRangeForEdit(
-  previousLineStarts: readonly number[],
-  nextLineStarts: readonly number[],
+  previousLineStarts: MinimapLineStarts,
+  nextLineStarts: MinimapLineStarts,
   edit: TextEdit,
 ): { readonly startLine: number; readonly endLine: number } {
   if (edit.from !== edit.to || edit.text.includes('\n')) {
     return lineRangeForEdit(previousLineStarts, edit.from, edit.to)
   }
 
-  const line = lineIndexForOffset(nextLineStarts, edit.from)
+  const line = nextLineStarts.indexForOffset(edit.from)
   return { startLine: line, endLine: line + 1 }
 }
 
 function lineRangeForEdit(
-  lineStarts: readonly number[],
+  lineStarts: MinimapLineStarts,
   from: number,
   to: number,
 ): { readonly startLine: number; readonly endLine: number } {
   const startOffset = Math.min(from, to)
   const endOffset = Math.max(from, to)
-  const startLine = lineIndexForOffset(lineStarts, startOffset)
-  const endLine = lineIndexForOffset(lineStarts, endOffset) + 1
+  const startLine = lineStarts.indexForOffset(startOffset)
+  const endLine = lineStarts.indexForOffset(endOffset) + 1
   return { startLine, endLine }
 }
 
@@ -1541,7 +1588,7 @@ function previousDocumentSummary(update: PendingMinimapUpdate): MinimapDocumentS
 function snapshotSummaryBaseline(snapshot: EditorViewSnapshot): MinimapDocumentSummaryBaseline {
   return {
     textLength: snapshotTextLength(snapshot),
-    lineStarts: snapshot.lineStarts,
+    lineStarts: snapshotLineStarts(snapshot),
   }
 }
 
@@ -1585,13 +1632,13 @@ function tokenSourceAfterEdits(
   nextSnapshot: EditorViewSnapshot,
 ): readonly EditorToken[] | null {
   if (!change) return null
-  if (!editsPreserveLineStructure(change.edits, previousSnapshot.lineStarts)) return null
+  if (!editsPreserveLineStructure(change.edits, snapshotLineStarts(previousSnapshot))) return null
   return nextSnapshot.tokens
 }
 
 function editsPreserveLineStructure(
   edits: readonly TextEdit[],
-  lineStarts: readonly number[],
+  lineStarts: MinimapLineStarts,
 ): boolean {
   for (const edit of edits) {
     if (edit.text.includes('\n')) return false
@@ -1601,11 +1648,11 @@ function editsPreserveLineStructure(
   return true
 }
 
-function editRangeIsSingleLine(lineStarts: readonly number[], edit: TextEdit): boolean {
-  return lineIndexForOffset(lineStarts, edit.from) === lineIndexForOffset(lineStarts, edit.to)
+function editRangeIsSingleLine(lineStarts: MinimapLineStarts, edit: TextEdit): boolean {
+  return lineStarts.indexForOffset(edit.from) === lineStarts.indexForOffset(edit.to)
 }
 
-function lineIndexForOffset(lineStarts: readonly number[], offset: number): number {
+function arrayLineIndexForOffset(lineStarts: readonly number[], offset: number): number {
   let low = 0
   let high = lineStarts.length - 1
   const clamped = Math.max(0, offset)

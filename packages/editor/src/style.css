@@ -130,7 +130,13 @@
 .editor-virtualized-gutter-cell {
   align-items: center;
   box-sizing: border-box;
-  contain: layout paint style;
+  /* No `style` containment here, unlike the other virtualized elements: gutter
+     contributions set `counter-set` inline on this element (line numbers), and
+     WebKit resolves counter() in the element's own ::before to 0 when the same
+     element has style containment. Safari then renders every line number as
+     "0". Chromium/Firefox scope the counter to the subtree as css-contain
+     specifies. See docs/display/browser-quirks.md. */
+  contain: layout paint;
   display: inline-flex;
   flex: 0 0 auto;
   height: var(--editor-row-height);

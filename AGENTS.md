@@ -28,6 +28,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the high-level system design: main th
 ### Display
 
 - [Transforms](docs/display/transforms.md) — Layered transform hypothesis, layer interface, invalidation protocol, FoldMap validation, decoration constraints
+- [Browser Quirks](docs/display/browser-quirks.md) — Browser-specific workarounds: symptom, root cause, fix rationale, repro, upstream bug for each (e.g. WebKit style-containment counter bug behind Safari line numbers rendering "0")
 
 ### Syntax
 

@@ -7,8 +7,10 @@ Inspired by [Text Editor Data Structures](https://cdacamar.github.io/data%20stru
 where our persistent treap already differs from its immutable RB tree.
 
 Many items below were mined from a long-form interview with the fredbuf author about Fred, his
-closed-source editor built on fredbuf (local clone: `/Users/shaul/Desktop/D/Editors/fredbuf`).
-Each item carries enough context to be picked up without having seen that interview.
+closed-source editor built on fredbuf (local clone: `/Users/shaul/Desktop/D/Editors/fredbuf`),
+and a second interview with Allen Webster about 4coder and its customization layer (local clone:
+`/Users/shaul/Desktop/D/Editors/4coder`). Each item carries enough context to be picked up
+without having seen those interviews.
 
 ## Visual piece-tree debug tool
 
@@ -42,9 +44,13 @@ Two related fronts:
   `materializeFullText()`, and `createDocumentTextSnapshot` retains full-text caches — so in
   practice we often hold the entire document as a flat string next to the piece table, doubling
   memory. The piece-walker work (in progress) is the enabler for removing most of these.
-- **Look into LSP incremental sync.** `packages/lsp/src/positions.ts` (~line 301) falls back to
-  `createFullContentChange(materializeFullText())` — every degraded sync sends the whole document;
-  look into incremental `TextDocumentContentChangeEvent`s.
+- **Look into LSP incremental sync.** Mostly done (June 2026): the dominant fallback was
+  deferred syncs batching behind rapid input and losing their edits ('missing-edits' →
+  full 48MB sync per typing burst); `DocumentEditChain` (`core/src/editor/editChain.ts`)
+  now hands deferred consumers composed base-coordinate edits since any text version, and
+  syncs log `snapshot-incremental`. The `fullSnapshotContentChange` fallbacks in
+  `packages/lsp/src/positions.ts` remain as the safety net (reasons are recorded via the
+  `lsp.contentChanges.path` diagnostic) — fine unless that diagnostic shows them firing.
 
 ## Research: SAB-backed SoA piece tree (LMDB-style shared snapshots)
 
@@ -101,15 +107,50 @@ Constraints learned up front:
   decode-once-and-cache. Per-message SAB transport and tier-2 storage-layer sharing are separate
   decisions; killing the first does not touch the second.
 
+Evidence from the June 2026 typing-latency hunt (1M-line / 48MB fixture, Chromium):
+
+- The tree itself is not the main-thread cost: full treap edit (`editor.view.applyEdit`)
+  held at ~0.6ms/keystroke through every profile and never appeared as a hot leaf. Every
+  real win was O(document) work *around* the tree (line-break scans, snapshot lineStarts
+  rebuilds, full-text materialization, message payloads). Step 1 below is therefore
+  justified as the tier-2 prerequisite, not as a standalone perf win.
+- Message-passing priced: one ±250k-char tree-sitter refresh ships ~193k tokens + 34k
+  brackets (`treeSitter.parseResult.payload` diagnostic). As object arrays that cost
+  ~97ms/20-keystrokes of main-thread deserialize + ~305ms GC; packed SoA + transferables
+  (`core/src/syntax/packedTokens.ts`) cut that to 12ms + 40ms. The residual is the
+  client-side unpack into 193k `EditorToken` objects + merge — exactly the part tier-2
+  shared results (or an SoA in-memory token model with lazy views) would delete.
+- New primitives that slot into the plan: `DocumentEditChain` (tier-1 chunk-mirror sync is
+  now built, not hypothetical), per-buffer `\n` offset indexes
+  (`pieceTable/buffers.ts` `lineIndexes` — an SoA sidecar the arena design must carry or
+  workers rebuild), and `LineStartsView` (snapshots expose base + suffix-delta line
+  starts instead of materialized arrays; minimap/LSP/scope-lines consume the view).
+- Worker-copy staleness is the recurring bug factory: the LSP full-sync regression, the
+  minimap baseline drift (its structural-scan skip silently never fired because the
+  baseline was post-edit state), and the edit chain itself all exist only because workers
+  synchronize copies via messages. Tier 2 deletes the bug class, not just the copy cost.
+
 Stepping stones (each independently justified):
 
-1. SoA-ify the tree behind the existing API — main-thread perf + GC win, prerequisite.
+0. **SAB hash map (the toolkit proving ground).** Open-addressing map over typed-array
+   views: `Uint32Array` key/value cells, insert via `Atomics.compareExchange` slot claim,
+   resize by publishing a new table root, string keys as `{offset, len}` into a bump/
+   freelist allocator with byte-compare on probe. It is the arena project minus tree
+   invariants and minus persistence — the cheapest way to build and battle-test the whole
+   SAB toolkit (allocator, atomics discipline, epoch reclamation, growable-SAB handling,
+   cross-worker test harness) before the piece tree depends on it. First consumer already
+   named in the tier model: the content-addressed chunk dedup table
+   (`hash(chunk) → { sabOffset, length, refcount }`); second: cross-worker style/string
+   interning. Guardrail: main-thread-only tables stay plain `Map` — the SAB map only pays
+   when one table is read from multiple threads.
+1. SoA-ify the tree behind the existing API — prerequisite for the arena; do not expect a
+   measurable main-thread win on its own (the treap held ~0.6ms/keystroke at 1M lines).
 2. Epoch-based reclamation — already wanted for tombstone compaction; becomes the arena GC
    (workers advertise oldest held root; recycle nodes unreachable from anything older).
 3. SAB arena + atomic root publish — tier-2-only storage backend swap at the end.
 4. **Worker-parallel find-all (the payoff consumer).** Fred-style: chunk the document by line
    ranges, fan the *same immutable snapshot* out to N workers (tier 1: chunk mirrors kept in
-   sync via the edit chain; tier 2: read the SAB root directly), each worker searches its
+   sync via the now-existing `DocumentEditChain`; tier 2: read the SAB root directly), each worker searches its
    chunks and streams matches back through a results queue so the UI renders matches + a
    progress bar incrementally; cancellation via a shared flag/epoch workers poll between
    chunks. Persistence makes this lock-free by construction — a worker can never observe a
@@ -352,3 +393,101 @@ critical path. Our translation: first paint needs only plain text + layout.
   spawn, shiki/theme load — none may gate first paint; each upgrades the view when ready.
 - Watch for dynamic-import waterfalls at mount.
 - Measure cold start in the benchmark harness (see "Standing stress fixtures").
+
+## Command metadata: single source of truth
+
+4coder lesson. Its commands are declared at the definition site as `CUSTOM_COMMAND_SIG(name)` +
+`CUSTOM_DOC("...")`, and a metadata generator parses the source into a table of
+`{ fn, name, doc, source file, line }` (`custom/generated/command_metadata.h` in the local
+clone) that powers the in-editor command lister and the docs site. The author calls redundant
+metadata systems the thing that wore him down — he built two or three of them — and the
+committed generated file still contains `C:\4ed\...` absolute paths from his machine, a fossil
+of exactly that maintenance pain. The rule worth keeping: a command's name, documentation, and
+default bindings live in *one* declaration next to its code; everything else is derived.
+
+Our gap: `packages/editor/src/editor/commands.ts` is a bare string-union `EditorCommandId` — no
+titles, descriptions, or categories anywhere; handlers are wired separately (command router),
+keybindings separately (`packages/editor/src/editor/keymap.ts`). Adding a command touches
+several files, and a future command palette would need yet another parallel list.
+
+Change: one declaration per command — `{ id, title, doc, category?, defaultBindings, handler }`
+— in a single registry; derive the `EditorCommandId` type from it (`as const` + `keyof`) so
+type strictness is kept, and derive palette entries, docs, and keybinding-conflict UI from the
+same table. No codegen needed: 4coder's generator pass exists only because C cannot iterate its
+own globals — in TS the "metaprogram" is an object in a Map. Plugins contribute commands
+through the same declaration shape (see the "Plugin system" TODO).
+
+## Editor hook taxonomy: inventory and completeness check
+
+4coder lesson. Its entire default editor behavior hangs off ~15 named hooks (grep
+`set_custom_hook` in the local clone's `custom/` layer): layout, per-view render, whole-screen
+render, the per-view input handler itself, tick, scroll-animation delta rule, begin/end buffer,
+save, edit-range, new-file, buffer-name resolver, view-change. Two standouts:
+`HookID_ViewEventHandler` — the *entire per-view input loop* is replaceable customization code,
+which is what makes deep emulation (vim) possible at all — and `HookID_DeltaRule` — the
+scroll/cursor animation curve is a tiny pluggable strategy function (`fixed_time_cubic_delta`).
+A small, explicitly named, complete hook set is the backbone of a customization layer.
+
+The TODO (feeds the "Plugin system" design doc): inventory our actual extension points — plugin
+surface (`packages/editor/src/plugins.ts`, `pluginLifecycle`), command router, display
+projection registry, block providers, syntax provider sessions, save/load paths — name each
+one, and run a completeness check against the 4coder list: layout/display projection, render
+decoration, input/keymap pipeline, tick/frame, scroll animation curve, buffer lifecycle
+(open/close/save/edit-range), view lifecycle. Decide per hook: public plugin API vs
+internal-only. The input pipeline deserves special attention — make it wrappable (a default
+handler a plugin can decorate or replace) rather than hardcoded.
+
+## Stress-test the input/command substrate with a modal (vim) layer
+
+4coder lesson. Substrate assumptions bake in silently: its customization layer was shaped by
+emacs-style habits, and vim-style emulation turned out much harder to build on it than
+emacs-style behavior. Fred avoided this by making vim motions + multicursor first-class from
+day one. Cheapest insurance: build a modal layer *early*, while assumptions are still cheap to
+fix. The point is not shipping vim — a modal layer exercises everything a non-modal one never
+touches:
+
+- Mode state in the input pipeline (`packages/editor/src/editor/input.ts`, `inputState.ts`,
+  `keymap.ts`) — can a binding set switch keymaps per mode?
+- Key *sequences* and operator-pending states (`d` → `i` → `w`), counts, and commands
+  parameterized by them — does our command shape allow arguments beyond "function over editor
+  context", and can commands compose?
+- Per-mode cursor rendering (block vs bar) and selection semantics.
+
+Deliverable: a minimal modal binding set (normal/insert modes, a handful of motions and
+operators composed from existing commands) written as if by a third party against the
+plugin/keybinding API, plus a list of every place the substrate fought back. Run this before
+the plugin API is declared stable.
+
+## Compact blank lines (display-time)
+
+4coder ships layout as pluggable variants, one of which — `layout_unwrapped_small_blank_lines`
+— renders blank lines at roughly half height: more code on screen, file untouched.
+Display-only, cheap, surprisingly pleasant.
+
+Ours would be an opt-in display option rendering empty (or whitespace-only) lines at a fraction
+of the line height. Reality check first: text rows go through `fixedRowVirtualizer`
+(`packages/editor/src/virtualization/`), which implies uniform text-row heights — block rows
+are the existing variable-height path. So step 1 is feasibility: can the virtualizer take a
+per-row height exception cheaply, or is the compact look better faked (same logical row height,
+squashed visual line-box)? Then: point mapping through the display-transform stack (wrap/blocks
+already shift vertical mapping), cursor rendering on a compact line, and whether the minimap
+mirrors the compaction. Doubles as a proof that the display pipeline can handle per-row height
+variation — the same muscle future layout variants will need.
+
+## Hot/cold data structure vocabulary
+
+Adopt Allen Webster's framing as project terminology (an ARCHITECTURE.md section; mostly
+writing, no code). **Cold** = serialized, position-independent encodings where the byte
+sequence alone carries the meaning — safe to copy, store, and hand across process boundaries.
+**Hot** = pointer-rich runtime encodings of the *same information*, tuned for fast
+mutation/query, meaningless outside their process. Programs constantly translate between the
+two; being explicit about which side a structure lives on (and where the translations happen)
+sharpens design discussions — e.g. it cleanly explains why history persistence should serialize
+*transactions* (cold) and replay them into snapshots (hot) rather than dumping the tree.
+
+The write-up: define the terms and inventory ours — cold: file text on disk, serialized
+session/workspace state, the planned history-persistence format (transactions + parent links),
+LSP wire messages, structured-clone worker payloads; hot: piece-tree snapshots and the reverse
+index, buffer line indexes, anchors, tree-sitter trees, worker-side chunk mirrors. Note the
+translation points (open/save, edit-chain worker sync, future history replay) and use the
+vocabulary in future TODOs and docs.

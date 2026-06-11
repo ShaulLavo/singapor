@@ -5,7 +5,7 @@ import type {
   PieceTreeNode,
   Point,
 } from './pieceTableTypes'
-import { bufferForPiece, countLineBreaks } from './buffers'
+import { countBufferLineBreaks, findBufferLineBreakOffset } from './buffers'
 import {
   getPieceVisibleLength,
   getPieceVisibleLineBreaks,
@@ -21,8 +21,7 @@ const countPiecePrefixLineBreaks = (
   if (!piece.visible || prefixLength <= 0) return 0
   if (prefixLength >= piece.length) return piece.lineBreaks
 
-  const text = bufferForPiece(buffers, piece)
-  return countLineBreaks(text, piece.start, piece.start + prefixLength)
+  return countBufferLineBreaks(buffers, piece.buffer, piece.start, piece.start + prefixLength)
 }
 
 const findOffsetAfterPieceLineBreak = (
@@ -30,16 +29,12 @@ const findOffsetAfterPieceLineBreak = (
   piece: Piece,
   lineBreakOrdinal: number,
 ): number => {
-  const text = bufferForPiece(buffers, piece)
-  let remaining = lineBreakOrdinal
-
-  for (let index = piece.start; index < piece.start + piece.length; index++) {
-    if (text[index] !== '\n') continue
-    remaining--
-    if (remaining === 0) return index - piece.start + 1
+  const offset = findBufferLineBreakOffset(buffers, piece.buffer, piece.start, lineBreakOrdinal)
+  if (offset === null || offset >= piece.start + piece.length) {
+    throw new Error('line break not found in piece')
   }
 
-  throw new Error('line break not found in piece')
+  return offset - piece.start + 1
 }
 
 const countLineBreaksBeforeOffset = (

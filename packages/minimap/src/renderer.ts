@@ -761,7 +761,7 @@ function applyTextEditsToMinimapDocument(
 }
 
 function applyMinimapDocumentSummaryPatch(
-  document: Pick<MinimapDocumentPayload, 'lines'>,
+  document: Pick<MinimapDocumentPayload, 'lines' | 'lineStarts' | 'textLength'>,
   patch: MinimapDocumentSummaryPatch,
 ): MinimapDocumentSummaryPayload {
   const startLine = Math.min(Math.max(0, patch.startLine), document.lines.length)
@@ -769,13 +769,53 @@ function applyMinimapDocumentSummaryPatch(
 
   return {
     textLength: patch.textLength,
-    lineStarts: patch.lineStarts,
+    lineStarts: patch.lineStarts ?? splicedLineStarts(document, patch, startLine, deleteCount),
     lines: [
       ...document.lines.slice(0, startLine),
       ...patch.lines,
       ...document.lines.slice(startLine + deleteCount),
     ],
   }
+}
+
+// Rebuilds line starts from the patch instead of receiving them over
+// postMessage: lines before the patch keep their starts, inserted lines chain
+// from the previous line's full length, and lines after the patch shift by
+// the document length delta.
+function splicedLineStarts(
+  document: Pick<MinimapDocumentPayload, 'lines' | 'lineStarts' | 'textLength'>,
+  patch: MinimapDocumentSummaryPatch,
+  startLine: number,
+  deleteCount: number,
+): readonly number[] {
+  const previous = document.lineStarts
+  const next: number[] = previous.slice(0, startLine) as number[]
+  let cursor = lineStartAt(previous, document.lines, startLine)
+  for (const line of patch.lines) {
+    next.push(cursor)
+    cursor += line.length + 1
+  }
+
+  const delta = patch.textLength - document.textLength
+  for (let index = startLine + deleteCount; index < previous.length; index += 1) {
+    next.push(previous[index]! + delta)
+  }
+
+  return next
+}
+
+function lineStartAt(
+  lineStarts: readonly number[],
+  lines: MinimapDocumentSummaryPayload['lines'],
+  line: number,
+): number {
+  const existing = lineStarts[line]
+  if (existing !== undefined) return existing
+  if (line === 0) return 0
+
+  const previousStart = lineStarts[line - 1] ?? 0
+  const previousLength = lines[line - 1]?.length ?? 0
+  return previousStart + previousLength + 1
 }
 
 function lineIndexForOffset(lineStarts: readonly number[], offset: number): number {

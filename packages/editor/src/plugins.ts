@@ -170,6 +170,10 @@ export type EditorViewSnapshot = {
   readonly textSnapshot?: TextSnapshot
   readonly fullText: string
   readonly textVersion: number
+  // Composed edits transforming the given older text version into this
+  // snapshot, or null when unknown; lets deferred consumers sync
+  // incrementally instead of re-shipping the document. See DocumentEditChain.
+  readonly editsSinceTextVersion?: (textVersion: number) => readonly TextEdit[] | null
   readonly lineStarts: readonly number[]
   readonly tokens: readonly EditorToken[]
   readonly selections: readonly EditorResolvedSelection[]

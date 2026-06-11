@@ -43,6 +43,15 @@ export type PieceTableBuffers = {
   readonly chunks: PieceBufferChunks
   readonly nextBufferSequence: number
   readonly prioritySeed: number
+  // Lazily built '\n' offset index per buffer, shared across snapshots via
+  // spread copies. Buffers are append-only, so cached prefixes stay valid
+  // for every historical snapshot; see bufferLineIndex in buffers.ts.
+  readonly lineIndexes?: Map<PieceBufferId, PieceBufferLineIndex>
+}
+
+export type PieceBufferLineIndex = {
+  offsets: number[]
+  scannedLength: number
 }
 
 export type PieceBufferChunks = {

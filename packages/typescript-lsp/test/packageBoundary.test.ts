@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 type PackageJson = {
-  readonly exports: Record<string, string>
+  readonly exports: Record<string, Record<string, string>>
   readonly dependencies?: Record<string, string>
 }
 
@@ -49,10 +49,15 @@ describe('@singapor/typescript-lsp package boundary', () => {
   it('exports only TypeScript specialization entrypoints', () => {
     const packageJson = readPackageJson()
 
+    const distEntry = (name: string) => ({
+      types: `./dist/${name}.d.ts`,
+      import: `./dist/${name}.js`,
+      default: `./dist/${name}.js`,
+    })
     expect(packageJson.exports).toEqual({
-      '.': './src/index.ts',
-      './server': './src/server.ts',
-      './ts-diagnostics': './src/tsDiagnostics.ts',
+      '.': distEntry('index'),
+      './server': distEntry('server'),
+      './ts-diagnostics': distEntry('tsDiagnostics'),
     })
     expect(packageJson.dependencies).toMatchObject({
       '@singapor/lsp-plugin': 'workspace:*',

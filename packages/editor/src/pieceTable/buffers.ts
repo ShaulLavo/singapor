@@ -1,4 +1,10 @@
-import type { Piece, PieceBufferChunks, PieceBufferId, PieceTableBuffers } from './pieceTableTypes'
+import type {
+  Piece,
+  PieceBufferChunks,
+  PieceBufferId,
+  PieceBufferLineIndex,
+  PieceTableBuffers,
+} from './pieceTableTypes'
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_PIECE_TABLE_PRIORITY_SEED } from './priority'
 
@@ -134,6 +140,80 @@ export const countLineBreaks = (text: string, start = 0, end = text.length): num
   return count
 }
 
+// Buffers are append-only: existing text never changes, the tail chunk only
+// grows. One lazily extended '\n' offset index per buffer therefore serves
+// every snapshot that references the buffer, including undo history, and
+// turns per-piece line-break scans from O(piece bytes) into O(log breaks).
+const bufferLineIndex = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+  text: string,
+): PieceBufferLineIndex => {
+  const holder = buffers as PieceTableBuffers & {
+    lineIndexes?: Map<PieceBufferId, PieceBufferLineIndex>
+  }
+  holder.lineIndexes ??= new Map()
+
+  let index = holder.lineIndexes.get(buffer)
+  if (!index) {
+    index = { offsets: [], scannedLength: 0 }
+    holder.lineIndexes.set(buffer, index)
+  }
+  if (index.scannedLength < text.length) extendBufferLineIndex(index, text)
+
+  return index
+}
+
+const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void => {
+  let at = text.indexOf('\n', index.scannedLength)
+  while (at !== -1) {
+    index.offsets.push(at)
+    at = text.indexOf('\n', at + 1)
+  }
+
+  index.scannedLength = text.length
+}
+
+const firstLineBreakAtOrAfter = (offsets: readonly number[], target: number): number => {
+  let low = 0
+  let high = offsets.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (offsets[middle]! < target) low = middle + 1
+    else high = middle
+  }
+
+  return low
+}
+
+export const countBufferLineBreaks = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+  start: number,
+  end: number,
+): number => {
+  if (end <= start) return 0
+
+  const text = getBufferText(buffers, buffer)
+  const offsets = bufferLineIndex(buffers, buffer, text).offsets
+  return firstLineBreakAtOrAfter(offsets, end) - firstLineBreakAtOrAfter(offsets, start)
+}
+
+// Absolute buffer offset of the ordinal-th (1-based) '\n' at or after start.
+export const findBufferLineBreakOffset = (
+  buffers: PieceTableBuffers,
+  buffer: PieceBufferId,
+  start: number,
+  ordinal: number,
+): number | null => {
+  const text = getBufferText(buffers, buffer)
+  const offsets = bufferLineIndex(buffers, buffer, text).offsets
+  const at = firstLineBreakAtOrAfter(offsets, start) + ordinal - 1
+  if (at >= offsets.length) return null
+
+  return offsets[at]!
+}
+
 export const getBufferText = (buffers: PieceTableBuffers, buffer: PieceBufferId): string => {
   const text = buffers.chunks.get(buffer)
   if (text !== undefined) return text
@@ -148,13 +228,12 @@ export const createPiece = (
   order: number,
   visible = true,
 ): Piece => {
-  const text = getBufferText(buffers, buffer)
   return {
     buffer,
     start,
     length,
     order,
-    lineBreaks: countLineBreaks(text, start, start + length),
+    lineBreaks: countBufferLineBreaks(buffers, buffer, start, start + length),
     visible,
   }
 }

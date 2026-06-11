@@ -61,3 +61,4 @@ export type {
 } from './types'
 export { LspWorkspace } from './workspace'
 export type * as lsp from 'vscode-languageserver-protocol'
+export { recordLspPerformanceDiagnostic } from './performanceDiagnostics'

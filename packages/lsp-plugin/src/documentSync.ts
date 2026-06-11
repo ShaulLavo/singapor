@@ -5,7 +5,7 @@ import type {
 } from '@singapor/core/extensions'
 import { createStringTextSnapshot } from '@singapor/core/document'
 import { defineLazyFullTextProperty } from '@singapor/core/internal'
-import type { LspWorkspace } from '@singapor/lsp'
+import { recordLspPerformanceDiagnostic, type LspWorkspace } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { editsForChange, projectDiagnosticsInSnapshot } from './diagnosticProjection'
@@ -59,7 +59,7 @@ export class DocumentSync {
       return
     }
 
-    this.openOrUpdateDocument(descriptor, change)
+    this.openOrUpdateDocument(descriptor, change, snapshot)
   }
 
   public close(): void {
@@ -91,6 +91,7 @@ export class DocumentSync {
   private openOrUpdateDocument(
     descriptor: DocumentDescriptor,
     change: DocumentSessionChange | null,
+    snapshot: EditorViewSnapshot,
   ): void {
     const active = this.document
     if (!active || active.uri !== descriptor.uri || active.languageId !== descriptor.languageId) {
@@ -99,7 +100,7 @@ export class DocumentSync {
     }
 
     if (active.textVersion === descriptor.textVersion) return
-    this.updateDocument(descriptor, change)
+    this.updateDocument(descriptor, change, snapshot)
   }
 
   private openDocument(descriptor: DocumentDescriptor): void {
@@ -109,12 +110,13 @@ export class DocumentSync {
       languageId: descriptor.languageId,
       text: descriptor.fullText,
     })
-    this.document = { ...descriptor, lspVersion: document.version }
+    this.document = activeDocument(descriptor, document.version)
   }
 
   private updateDocument(
     descriptor: DocumentDescriptor,
     change: DocumentSessionChange | null,
+    snapshot: EditorViewSnapshot,
   ): void {
     const active = this.document
     const diagnostics = projectDiagnosticsInSnapshot(this.diagnosticItems, {
@@ -122,17 +124,42 @@ export class DocumentSync {
       nextDocument: descriptor,
       change,
     })
+    // Deferred syncs may batch several keystrokes behind one notification;
+    // the edit chain returns the composed edits since the version the LSP
+    // workspace last saw, keeping sync incremental on large documents.
+    const chainedEdits = snapshot.editsSinceTextVersion?.(active?.textVersion ?? -1) ?? null
+    recordLspPerformanceDiagnostic('lsp.documentSync.editChain', {
+      chained: chainedEdits === null ? 'null' : chainedEdits.length,
+      hasAccessor: Boolean(snapshot.editsSinceTextVersion),
+      activeTextVersion: active?.textVersion ?? -1,
+      snapshotTextVersion: snapshot.textVersion,
+      changeEditCount: change?.edits.length ?? -1,
+    })
     const document = this.workspace.updateDocumentSnapshot(descriptor.uri, {
       textSnapshot: descriptor.textSnapshot,
       lineStarts: descriptor.lineStarts,
-      edits: editsForChange(change),
+      edits: chainedEdits ?? editsForChange(change),
     })
-    this.document = { ...descriptor, lspVersion: document.version }
+    this.document = activeDocument(descriptor, document.version)
     if (diagnostics === this.diagnosticItems) return
 
     this.diagnosticItems = diagnostics
     this.presenter.render(descriptor.fullText, diagnostics)
   }
+}
+
+// Spreading a descriptor would evaluate its enumerable lazy fullText getter
+// and materialize the whole document on every keystroke. Rebuild the active
+// document with a fresh lazy property over the same text snapshot instead.
+function activeDocument(descriptor: DocumentDescriptor, lspVersion: number): ActiveDocument {
+  return defineLazyFullTextProperty({
+    uri: descriptor.uri,
+    languageId: descriptor.languageId,
+    textSnapshot: descriptor.textSnapshot,
+    lineStarts: descriptor.lineStarts,
+    textVersion: descriptor.textVersion,
+    lspVersion,
+  })
 }
 
 function documentDescriptor(

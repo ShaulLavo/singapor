@@ -1013,7 +1013,6 @@ function documentSummaryPatchFromSnapshot(
   const range = documentSummaryPatchRange(previous, text.lineStarts, textLength, edits)
   return {
     textLength,
-    lineStarts: text.lineStarts,
     startLine: range.startLine,
     deleteCount: range.deleteCount,
     lines: text.lineStarts.slice(range.startLine, range.insertEndLine).map((startOffset, index) => {
@@ -1038,7 +1037,6 @@ function documentSummaryPatchFromMaterializedText(
   const range = documentSummaryPatchRange(previous, lineStarts, text.length, edits)
   return {
     textLength: text.length,
-    lineStarts,
     startLine: range.startLine,
     deleteCount: range.deleteCount,
     lines: lineStarts.slice(range.startLine, range.insertEndLine).map((startOffset, index) => {
@@ -1105,17 +1103,71 @@ function documentSummaryPatchRange(
   nextTextLength: number,
   edits: readonly TextEdit[],
 ): DocumentSummaryPatchRange {
+  const edited = editSummaryPatchRange(previous.lineStarts, nextLineStarts, edits)
+  // When the edits fully account for the length and line-count transition,
+  // every boundary change lies inside the edited range and the O(lines)
+  // structural verification can be skipped. Projection changes (e.g. fold
+  // toggles) break the accounting and fall through to the full scan.
+  if (edited && editsExplainTransition(previous, nextLineStarts, nextTextLength, edits)) {
+    return normalizeSummaryPatchRange(edited, previous.lineStarts.length, nextLineStarts.length)
+  }
+
   const structural = lineStartSummaryPatchRange(
     previous.lineStarts,
     previous.textLength,
     nextLineStarts,
     nextTextLength,
   )
-  const edited = editSummaryPatchRange(previous.lineStarts, nextLineStarts, edits)
   const changed = mergeSummaryPatchRanges(structural, edited)
   if (!changed) return { startLine: 0, deleteCount: 0, insertEndLine: 0 }
 
   return normalizeSummaryPatchRange(changed, previous.lineStarts.length, nextLineStarts.length)
+}
+
+function editsExplainTransition(
+  previous: MinimapDocumentSummaryBaseline,
+  nextLineStarts: readonly number[],
+  nextTextLength: number,
+  edits: readonly TextEdit[],
+): boolean {
+  let textDelta = 0
+  let lineDelta = 0
+  for (const edit of edits) {
+    const from = Math.min(edit.from, edit.to)
+    const to = Math.max(edit.from, edit.to)
+    textDelta += edit.text.length - (to - from)
+    lineDelta += countLineBreaksInText(edit.text) - removedLineBreaks(previous.lineStarts, from, to)
+  }
+
+  if (nextTextLength - previous.textLength !== textDelta) return false
+  return nextLineStarts.length - previous.lineStarts.length === lineDelta
+}
+
+function countLineBreaksInText(text: string): number {
+  let count = 0
+  let index = text.indexOf('\n')
+  while (index !== -1) {
+    count += 1
+    index = text.indexOf('\n', index + 1)
+  }
+  return count
+}
+
+// A '\n' at offset b creates the line start b + 1, so breaks inside
+// [from, to) correspond to line starts inside [from + 1, to].
+function removedLineBreaks(lineStarts: readonly number[], from: number, to: number): number {
+  return firstLineStartAtOrAfter(lineStarts, to + 1) - firstLineStartAtOrAfter(lineStarts, from + 1)
+}
+
+function firstLineStartAtOrAfter(lineStarts: readonly number[], target: number): number {
+  let low = 0
+  let high = lineStarts.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (lineStarts[middle]! < target) low = middle + 1
+    else high = middle
+  }
+  return low
 }
 
 function lineStartSummaryPatchRange(
@@ -1797,7 +1849,7 @@ function documentEditPayloadDiagnostics(
   return {
     deleteCount: patch?.deleteCount ?? 0,
     lineSummaryTextLength: lineSummaryTextLength(patch?.lines ?? []),
-    lineStarts: patch?.lineStarts.length ?? 0,
+    lineStarts: patch?.lineStarts?.length ?? 0,
     lines: patch?.lines.length ?? 0,
     selections: payload?.selections.length ?? 0,
     startLine: patch?.startLine ?? 0,

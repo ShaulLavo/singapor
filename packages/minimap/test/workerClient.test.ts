@@ -502,8 +502,8 @@ describe('MinimapWorkerClient', () => {
 
       expect(applyEdit.type).toBe('applyEdit')
       expect('tokens' in applyEdit.document).toBe(false)
+      expect(applyEdit.document.summaryPatch.lineStarts).toBeUndefined()
       expect(applyEdit.document.summaryPatch).toMatchObject({
-        lineStarts: [0, 8, 15],
         startLine: 0,
         deleteCount: 1,
         lines: [{ text: 'line 1x', length: 7 }],

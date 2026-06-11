@@ -15,6 +15,7 @@ import { EditorKeymapController } from './keymap'
 import { EditorBlockSurfaceController } from './blockSurfaceController'
 import { InputSelectionController } from './inputSelectionController'
 import { EditorSyntaxController } from './syntaxController'
+import { DocumentEditChain } from './editChain'
 import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
 import { appendTiming, nowMs } from './timing'
 import { copyTokenProjectionMetadata, projectTokensThroughEdit } from './tokenProjection'
@@ -242,6 +243,7 @@ export class Editor {
   private readonly keymap: EditorKeymapController
   private readonly viewContributions: EditorViewContributionController
   private readonly secondaryWork = new EditorSecondaryWorkScheduler()
+  private readonly editChain = new DocumentEditChain()
   private readonly displayProjections = new EditorDisplayProjectionRegistry()
   private readonly highlightPrefix: string
   private sessionChangeVersion = 0
@@ -259,7 +261,9 @@ export class Editor {
   }
 
   private set text(text: string) {
+    const textVersionBeforeReplace = this.textVersion
     this.document.setRenderedText(text)
+    this.editChain.record(textVersionBeforeReplace, this.textVersion, null)
   }
 
   private get textSnapshot(): TextSnapshot {
@@ -496,7 +500,9 @@ export class Editor {
 
   applyEdit(edit: TextEdit, tokens: readonly EditorToken[], textSnapshot?: TextSnapshot): void {
     const nextTextSnapshot = textSnapshot ?? this.legacyEditTextSnapshot(edit)
+    const textVersionBeforeEdit = this.textVersion
     this.document.setRenderedTextSnapshot(nextTextSnapshot)
+    this.editChain.record(textVersionBeforeEdit, this.textVersion, [edit])
     this.retagDisplayProjectionSources()
     measureEditorPerformance('editor.view.applyEdit', () =>
       this.view.applyEdit(edit, nextTextSnapshot),
@@ -627,6 +633,7 @@ export class Editor {
   }
 
   openDocument(document: EditorOpenDocumentOptions): void {
+    this.editChain.clear()
     const documentVersion = this.resetOwnedDocument(document, {
       documentId: document.documentId ?? null,
       persistentIdentity: true,
@@ -2045,6 +2052,7 @@ export class Editor {
       theme: this.resolvedTheme(),
       textSnapshot,
       textVersion: this.textVersion,
+      editsSinceTextVersion: (textVersion: number) => this.editChain.editsSince(textVersion),
       lineStarts: this.view.getLineStarts(),
       tokens: this.tokens,
       selections: this.inputSelection.resolveViewSelections(),

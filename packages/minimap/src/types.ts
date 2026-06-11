@@ -107,7 +107,10 @@ export type MinimapDocumentSummaryPayload = {
 
 export type MinimapDocumentSummaryPatch = {
   readonly textLength: number
-  readonly lineStarts: readonly number[]
+  // Omitted for incremental edits: cloning a full line-start array per
+  // keystroke dominates main-thread cost on large documents. The worker
+  // splices its own copy from startLine/deleteCount/lines instead.
+  readonly lineStarts?: readonly number[]
   readonly startLine: number
   readonly deleteCount: number
   readonly lines: readonly MinimapDocumentLineSummary[]

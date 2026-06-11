@@ -37,20 +37,21 @@ export class LineStartOffsetIndex {
   }
 
   public materialize(lineStarts: readonly number[]): number[] {
-    if (!this.dirtyValue) return [...lineStarts]
+    const materialized = lineStarts.slice() as number[]
+    if (!this.dirtyValue) return materialized
 
-    const materialized: number[] = []
-    materialized.length = lineStarts.length
+    // Segment-wise: memcpy the base array once, then add the accumulated
+    // delta to each suffix segment. Avoids a per-row delta scan on documents
+    // with millions of lines.
     const deltas = this.sortedDeltas()
-    let deltaIndex = 0
     let offset = 0
-
-    for (let row = 0; row < lineStarts.length; row += 1) {
-      while (deltaIndex < deltas.length && deltas[deltaIndex]![0] <= row) {
-        offset += deltas[deltaIndex]![1]
-        deltaIndex += 1
+    for (let deltaIndex = 0; deltaIndex < deltas.length; deltaIndex += 1) {
+      offset += deltas[deltaIndex]![1]
+      const from = deltas[deltaIndex]![0]
+      const to = deltaIndex + 1 < deltas.length ? deltas[deltaIndex + 1]![0] : materialized.length
+      for (let row = from; row < to; row += 1) {
+        materialized[row] = materialized[row]! + offset
       }
-      materialized[row] = (lineStarts[row] ?? 0) + offset
     }
 
     return materialized

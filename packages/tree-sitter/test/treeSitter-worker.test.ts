@@ -69,9 +69,8 @@ describe('tree-sitter worker internals', () => {
   it('builds full descriptors with only unsent chunk payloads', () => {
     const snapshot = createPieceTableSnapshot('const answer = 1;\n')
     const first = createTreeSitterSourceDescriptor(snapshot, { useSharedBuffers: false })
-    const sent = new Set(first.chunks.map((chunk) => chunk.chunkId))
     const second = createTreeSitterSourceDescriptor(snapshot, {
-      sentChunkIds: sent,
+      sentChunkLengths: sentChunkLengthsOf(first),
       useSharedBuffers: false,
     })
 
@@ -87,10 +86,9 @@ describe('tree-sitter worker internals', () => {
   it('sends only new chunks after edits while preserving current ordered spans', () => {
     const previous = createPieceTableSnapshot('ab\ncd')
     const first = createTreeSitterSourceDescriptor(previous, { useSharedBuffers: false })
-    const sent = new Set(first.chunks.map((chunk) => chunk.chunkId))
     const next = applyBatchToPieceTable(previous, [{ from: 3, to: 5, text: 'xyz' }])
     const edited = createTreeSitterSourceDescriptor(next, {
-      sentChunkIds: sent,
+      sentChunkLengths: sentChunkLengthsOf(first),
       useSharedBuffers: false,
     })
     const input = resolveTreeSitterSourceDescriptor(cacheWith('doc', first), 'doc', edited)
@@ -100,6 +98,29 @@ describe('tree-sitter worker internals', () => {
     expect(readTreeSitterInputRange(input, 0, next.length)).toBe(
       materializePieceTableFullText(next),
     )
+  })
+
+  it('re-sends the tail chunk grown in place by coalesced typing inserts', () => {
+    const base = insertIntoPieceTable(createPieceTableSnapshot('const answer = 1;\n'), 18, 'q')
+    const first = createTreeSitterSourceDescriptor(base, { useSharedBuffers: false })
+    const cache = cacheWith('doc', first)
+
+    // The second keystroke coalesces into the newest piece buffer: the chunk
+    // id stays the same while its text grows, so it must be sent again.
+    const next = insertIntoPieceTable(base, 19, 'w')
+    const edited = createTreeSitterSourceDescriptor(next, {
+      sentChunkLengths: sentChunkLengthsOf(first),
+      useSharedBuffers: false,
+    })
+    const input = resolveTreeSitterSourceDescriptor(cache, 'doc', edited)
+
+    expect(edited.chunks).toHaveLength(1)
+    expect(readTreeSitterInputRange(input, 0, next.length)).toBe(
+      materializePieceTableFullText(next),
+    )
+    // A stale worker cache reads '' past the old chunk end, which tree-sitter
+    // treats as EOF and silently truncates the parse at the edit point.
+    expect(readTreeSitterPieceTableInput(input, next.length - 1)).toBe('w')
   })
 
   it('reads string and shared UTF-16 source chunks across piece boundaries', () => {
@@ -243,6 +264,16 @@ function cacheWith(
   const cache: TreeSitterSourceCache = new Map()
   resolveTreeSitterSourceDescriptor(cache, documentId, descriptor)
   return cache
+}
+
+function sentChunkLengthsOf(
+  descriptor: ReturnType<typeof createTreeSitterSourceDescriptor>,
+): Map<string, number> {
+  const sent = new Map<string, number>()
+  for (const chunk of descriptor.chunks) {
+    sent.set(chunk.chunkId, chunk.kind === 'string' ? chunk.text.length : chunk.length)
+  }
+  return sent
 }
 
 type TestNode = Node & {

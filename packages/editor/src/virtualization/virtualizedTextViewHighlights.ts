@@ -11,6 +11,7 @@ import {
 import { getEditorTokenIndex, type EditorTokenIndex } from '../editor/tokenIndex'
 import { clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
 import { getSharedTokenHighlights } from './sharedTokenHighlights'
+import { scheduleHighlightRepaintNudge } from './geckoHighlightRepaint'
 import {
   addTokenRangeToChunk,
   appendTokenRange,
@@ -265,6 +266,9 @@ export function renderRangeHighlight(view: VirtualizedTextViewInternal, name: st
   group.signature = signature
   group.highlight.clear()
   addMountedRangeHighlightRanges(view, group)
+  // Find/diagnostic range highlights swap StaticRanges over recycled rows the
+  // same way token highlights do, so they need the same Gecko repaint nudge.
+  scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
   if (group.highlight.size === 0) {
     unregisterRangeHighlight(view, group)
     return
@@ -281,6 +285,7 @@ export function clearRangeHighlight(view: VirtualizedTextViewInternal, name: str
   unregisterRangeHighlight(view, group)
   view.rangeHighlightGroups.delete(name)
   rebuildStyleRules(view)
+  scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
 }
 
 function renderCaret(view: VirtualizedTextViewInternal): void {
@@ -389,6 +394,7 @@ function reconcileTokenHighlightsForRow(
     stats.staticRangeCount += result.staticRangeCount
   }
   view.rowTokenSignatures.set(row.tokenHighlightSlotId, signature)
+  scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
   return result.styleRulesDirty
 }
 
@@ -521,6 +527,7 @@ export function clearTokenHighlightsFromRow(
     deleteTokenRangesForRow(view, row.tokenHighlightSlotId)
     view.rowTokenSignatures.delete(row.tokenHighlightSlotId)
   }
+  scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
 }
 
 function ensureTokenRenderIndex(view: VirtualizedTextViewInternal): void {
@@ -1101,6 +1108,11 @@ export function deleteTokenRangesForRow(
   }
 
   view.rowTokenRanges.delete(rowSlotId)
+  // Covers release-only paths (fold collapse, viewport shrink) where rows are
+  // dropped without any row rebuild scheduling the nudge.
+  if (deletedRangeCount > 0) {
+    scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
+  }
   return deletedRangeCount
 }
 

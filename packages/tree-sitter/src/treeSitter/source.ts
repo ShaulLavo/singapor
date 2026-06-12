@@ -27,7 +27,7 @@ export type TreeSitterSourceDescriptor = {
 }
 
 export type TreeSitterSourceDescriptorOptions = {
-  readonly sentChunkIds?: ReadonlySet<string>
+  readonly sentChunkLengths?: ReadonlyMap<string, number>
   readonly useSharedBuffers?: boolean
 }
 
@@ -78,7 +78,7 @@ export const createTreeSitterSourceDescriptor = (
       pieces,
       chunks,
       emittedChunkIds,
-      sentChunkIds: options.sentChunkIds,
+      sentChunkLengths: options.sentChunkLengths,
       useSharedBuffers,
     })
   }
@@ -159,7 +159,7 @@ type PieceSpanBuilder = {
   readonly pieces: TreeSitterSourcePieceSpan[]
   readonly chunks: TreeSitterSourceChunkPayload[]
   readonly emittedChunkIds: Set<string>
-  readonly sentChunkIds?: ReadonlySet<string>
+  readonly sentChunkLengths?: ReadonlyMap<string, number>
   readonly useSharedBuffers: boolean
 }
 
@@ -195,7 +195,9 @@ const appendChunkPayload = (
   chunkLength: number,
   builder: PieceSpanBuilder,
 ): void => {
-  if (builder.sentChunkIds?.has(chunkId)) return
+  // Piece buffers are append-only but their tail chunk grows in place, so a
+  // previously sent chunk id only stays valid while its length is unchanged.
+  if (builder.sentChunkLengths?.get(chunkId) === chunkLength) return
   if (builder.emittedChunkIds.has(chunkId)) return
 
   const chunkText = text.slice(chunkStart, chunkStart + chunkLength)

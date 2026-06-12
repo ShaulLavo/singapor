@@ -102,3 +102,74 @@ Anything returned from a gutter contribution's `createCell` gets the cell class
 merged onto it. Do not re-add `contain: style` (or `contain: strict`/
 `content-visibility`, which imply it) to gutter cell elements that rely on CSS
 counters.
+
+## Firefox paints syntax highlights from a stale snapshot
+
+**Verified 2026-06 against:** Firefox 148 — broken (intermittent, user-confirmed
+persistent in long-lived sessions); Chromium 147, WebKit 26.4 — correct.
+**Upstream:** no matching report existed when this was added (closest resolved
+cousins: [Bug 2035083](https://bugzilla.mozilla.org/show_bug.cgi?id=2035083)
+"CSS highlights not rendering on inserted text nodes",
+[Bug 1984991](https://bugzilla.mozilla.org/show_bug.cgi?id=1984991) highlight
+invalidation on style changes). File a new report once a standalone repro
+exists; see "Reproduction status" below.
+
+### Symptom
+
+After scrolling (confirmed) and likely edits, Firefox renders token colors that
+do not match the text: identifiers in the wrong color, later-registered
+override buckets (function/builtin colors) losing to the base identifier
+bucket, and single tokens split across two colors mid-word.
+
+### Evidence chain
+
+The decisive observation, captured live from a broken session:
+
+- Dumping every range over the broken rows (`CSS.highlights` registry) showed
+  **fully correct state** — clean token boundaries, correct style buckets,
+  correct `::highlight()` rules, correct registration order.
+- The screen disagreed with that registry — including a token covered by
+  exactly one registered range that painted in **two different colors**, which
+  no combination of the live ranges and rules can express.
+- Re-registering every registry entry (order-preserving delete + set) from the
+  console **instantly fixed the paint** without touching any range.
+
+Conclusion: the registered ranges are right; Gecko paints `::highlight()` from
+a stale internal snapshot after a burst of Highlight mutations over recycled
+text nodes (virtualization rewrites `textNode.data` in place, then swaps that
+row's `StaticRange`s — see `virtualizedTextViewRows.ts`).
+
+### Workaround
+
+`packages/editor/src/virtualization/geckoHighlightRepaint.ts`:
+`scheduleHighlightRepaintNudge()` re-registers every registry entry,
+order-preserving, coalesced per registry through a microtask so a mutation
+burst costs one re-register and the rebuild lands before the next paint (no
+broken frame, unlike rAF scheduling). Gecko is detected by feature
+(`'MozAppearance' in documentElement.style`), and the nudge is a no-op
+elsewhere. It is scheduled from every highlight mutation primitive: token row
+rebuilds, token range deletion on row release, token clears, and find/
+diagnostic range highlight updates — so every trigger (scroll recycling,
+typing, folds, tab switches) is covered by construction rather than by
+enumerating triggers.
+
+Order preservation matters: overlap winners between equal-priority highlights
+follow registry order (base identifier bucket vs. function/builtin override
+buckets), so the nudge must not reorder entries.
+
+### Reproduction status
+
+Not yet reproducible on demand: 23 scripted scroll-storm sessions against the
+real app reproduced it at most once, and isolated repros (in-place `data`
+mutation + StaticRange swap, hidden-during-recycle, transform moves,
+containment wrappers) all paint correctly in Firefox. The trigger appears to
+involve shared-bucket churn (token buckets being released and re-minted as
+documents open/close) interleaved with row recycling. A standalone repro for
+the upstream report should simulate two editors sharing highlights, one
+churning acquire/release while the other recycles rows.
+
+### Related
+
+Eagerly mounted background tabs tokenize and register highlight ranges without
+ever being activated. That multiplies shared-bucket churn (and wastes work);
+reducing it shrinks this bug's trigger surface.

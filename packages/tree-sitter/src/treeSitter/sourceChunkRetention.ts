@@ -14,7 +14,10 @@ export type TreeSitterSourceChunkRequest = {
 }
 
 export class TreeSitterSourceChunkRetention {
-  private readonly sentSourceChunkIds = new Map<string, Set<string>>()
+  // chunkId → sent length. Buffers are append-only, so a chunk id with an
+  // unchanged length is byte-identical to what the worker already caches; a
+  // longer length means the tail chunk grew and must be re-sent.
+  private readonly sentSourceChunkLengths = new Map<string, Map<string, number>>()
   private readonly sourceDocumentEpochs = new Map<string, number>()
 
   public createDescriptor(
@@ -22,7 +25,7 @@ export class TreeSitterSourceChunkRetention {
     snapshot: PieceTableSnapshot,
   ): TreeSitterSourceDescriptor {
     return createTreeSitterSourceDescriptor(snapshot, {
-      sentChunkIds: this.sourceChunkIdsForDocument(documentId),
+      sentChunkLengths: this.sourceChunkLengthsForDocument(documentId),
     })
   }
 
@@ -41,19 +44,21 @@ export class TreeSitterSourceChunkRetention {
     if (!request) return
     if (!this.canMarkRequestSent(request)) return
 
-    const sent = this.sourceChunkIdsForDocument(request.documentId)
-    for (const chunk of request.source.chunks) sent.add(chunk.chunkId)
+    const sent = this.sourceChunkLengthsForDocument(request.documentId)
+    for (const chunk of request.source.chunks) {
+      sent.set(chunk.chunkId, chunk.kind === 'string' ? chunk.text.length : chunk.length)
+    }
   }
 
   public invalidateDocument(documentId: string): void {
     if (!this.hasDocumentState(documentId)) return
 
-    this.sentSourceChunkIds.delete(documentId)
+    this.sentSourceChunkLengths.delete(documentId)
     this.sourceDocumentEpochs.set(documentId, this.currentSourceEpoch(documentId) + 1)
   }
 
   public clear(): void {
-    this.sentSourceChunkIds.clear()
+    this.sentSourceChunkLengths.clear()
     this.sourceDocumentEpochs.clear()
   }
 
@@ -65,12 +70,12 @@ export class TreeSitterSourceChunkRetention {
     }
   }
 
-  private sourceChunkIdsForDocument(documentId: string): Set<string> {
-    const existing = this.sentSourceChunkIds.get(documentId)
+  private sourceChunkLengthsForDocument(documentId: string): Map<string, number> {
+    const existing = this.sentSourceChunkLengths.get(documentId)
     if (existing) return existing
 
-    const sent = new Set<string>()
-    this.sentSourceChunkIds.set(documentId, sent)
+    const sent = new Map<string, number>()
+    this.sentSourceChunkLengths.set(documentId, sent)
     return sent
   }
 
@@ -83,17 +88,18 @@ export class TreeSitterSourceChunkRetention {
   }
 
   private hasDocumentState(documentId: string): boolean {
-    if (this.sentSourceChunkIds.has(documentId)) return true
+    if (this.sentSourceChunkLengths.has(documentId)) return true
     return this.sourceDocumentEpochs.has(documentId)
   }
 
   private documentCount(): number {
-    return new Set([...this.sentSourceChunkIds.keys(), ...this.sourceDocumentEpochs.keys()]).size
+    return new Set([...this.sentSourceChunkLengths.keys(), ...this.sourceDocumentEpochs.keys()])
+      .size
   }
 
   private sentChunkCount(): number {
     let count = 0
-    for (const chunks of this.sentSourceChunkIds.values()) count += chunks.size
+    for (const chunks of this.sentSourceChunkLengths.values()) count += chunks.size
     return count
   }
 }

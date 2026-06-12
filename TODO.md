@@ -255,6 +255,25 @@ late-bound. We believe this too — make it enforced rather than aspirational:
   need.
 - Regression guard: a typing-burst-on-large-file scenario in the standing benchmark harness.
 
+## Look into: render nothing at zero-height viewports
+
+Possible optimization, needs investigation. A virtualized view whose scroll element measures
+`viewportHeight === 0` still mounts rows and registers token highlight ranges:
+`computeFixedRowVisibleRange` clamps the visible range to at least one row
+(`packages/editor/src/virtualization/fixedRowVirtualizer.ts`, the `Math.max(start + 1, rawEnd)`
+clamp) and `DEFAULT_OVERSCAN = 12` extends it, so a 0-sized editor mounts 13 rows of real text
+and pushes their ranges into the shared `editor-shared-token-*` highlight registry. Observed
+2026-06-11 in the platform app, where keep-alive `display:none` tabs each held 13 rows / 32–47
+ranges (host-side lifecycle tracked in the platform repo:
+`docs/editor-tab-lifecycle-performance.md`).
+
+The optimization: at zero height, mount no rows, register no highlight ranges, skip token
+reconcile; cold-mount normally on the first nonzero measure.
+
+Before changing anything, find out why the ≥1-row clamp exists — likely some consumer needs one
+mounted row (font-metrics bootstrapping?). If so, satisfy that need explicitly rather than via
+the clamp.
+
 ## Cursor position navigation history (alt+left / alt+right)
 
 Not covered by edit history: `history.ts` stores selections per *edit*, so undo restores

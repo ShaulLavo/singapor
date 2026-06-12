@@ -198,6 +198,7 @@ export type NativeGeometryValidation = {
 export interface HighlightRegistry {
   set(name: string, highlight: Highlight): void
   delete(name: string): boolean
+  entries?(): IterableIterator<[string, Highlight]>
 }
 
 export type TokenGroup = {

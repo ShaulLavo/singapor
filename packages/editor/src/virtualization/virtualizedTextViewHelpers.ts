@@ -790,8 +790,10 @@ export function asFoldPoint(point: { readonly row: number; readonly column: numb
 }
 
 export function getDefaultHighlightRegistry(): HighlightRegistry | null {
-  // TODO: Track Firefox CSS Custom Highlight API quirks. Firefox can expose
-  // CSS.highlights while intermittently failing to paint registered ranges.
+  // Firefox can expose CSS.highlights while intermittently painting registered
+  // ranges from a stale snapshot; geckoHighlightRepaint.ts re-registers the
+  // registry after token range mutations to force a rebuild. See
+  // docs/display/browser-quirks.md.
   const css = globalThis.CSS as { highlights?: HighlightRegistry } | undefined
   return css?.highlights ?? null
 }

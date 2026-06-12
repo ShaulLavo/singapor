@@ -12,12 +12,9 @@ import type { HighlightRegistry } from './virtualizedTextViewTypes'
 const pendingRegistries = new WeakSet<HighlightRegistry>()
 let nudgeEnabled: boolean | null = null
 
-export function scheduleHighlightRepaintNudge(
-  document: Document,
-  registry: HighlightRegistry | null,
-): void {
+export function scheduleHighlightRepaintNudge(registry: HighlightRegistry | null): void {
   if (!registry?.entries) return
-  if (!highlightRepaintNudgeEnabled(document)) return
+  if (!highlightRepaintNudgeEnabled()) return
   if (pendingRegistries.has(registry)) return
 
   pendingRegistries.add(registry)
@@ -40,9 +37,23 @@ export function setHighlightRepaintNudgeEnabled(enabled: boolean | null): void {
   nudgeEnabled = enabled
 }
 
-function highlightRepaintNudgeEnabled(document: Document): boolean {
+function highlightRepaintNudgeEnabled(): boolean {
   if (nudgeEnabled !== null) return nudgeEnabled
 
-  nudgeEnabled = 'MozAppearance' in document.documentElement.style
+  nudgeEnabled = isGecko()
   return nudgeEnabled
+}
+
+function isGecko(): boolean {
+  // Do not detect via `'MozAppearance' in style` — Firefox 148 no longer
+  // exposes the camelCase IDL attribute on CSSStyleDeclaration, so that check
+  // is false in current Firefox and silently disables the nudge. The CSS
+  // parser still accepts the -moz-appearance alias, and only Firefox UAs
+  // carry a "Gecko/<version>" token (Blink and WebKit advertise "like Gecko"
+  // without the slash form).
+  const css = globalThis.CSS as
+    | { supports?: (property: string, value: string) => boolean }
+    | undefined
+  if (css?.supports?.('-moz-appearance', 'none')) return true
+  return /\bGecko\/\d/.test(globalThis.navigator?.userAgent ?? '')
 }

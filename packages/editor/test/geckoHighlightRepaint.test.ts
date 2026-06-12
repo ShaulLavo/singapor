@@ -63,15 +63,15 @@ describe('scheduleHighlightRepaintNudge', () => {
     setHighlightRepaintNudgeEnabled(true)
     const { registry, ops } = createFakeRegistry(['token-0', 'token-1'])
 
-    scheduleHighlightRepaintNudge(document, registry)
-    scheduleHighlightRepaintNudge(document, registry)
-    scheduleHighlightRepaintNudge(document, registry)
+    scheduleHighlightRepaintNudge(registry)
+    scheduleHighlightRepaintNudge(registry)
+    scheduleHighlightRepaintNudge(registry)
     expect(ops).toEqual([])
 
     await flushMicrotasks()
     expect(ops).toHaveLength(4)
 
-    scheduleHighlightRepaintNudge(document, registry)
+    scheduleHighlightRepaintNudge(registry)
     await flushMicrotasks()
     expect(ops).toHaveLength(8)
   })
@@ -80,21 +80,21 @@ describe('scheduleHighlightRepaintNudge', () => {
     setHighlightRepaintNudgeEnabled(false)
     const { registry, ops } = createFakeRegistry(['token-0'])
 
-    scheduleHighlightRepaintNudge(document, registry)
+    scheduleHighlightRepaintNudge(registry)
     await flushMicrotasks()
     expect(ops).toEqual([])
   })
 
   it('does nothing for null or non-enumerable registries', async () => {
     setHighlightRepaintNudgeEnabled(true)
-    scheduleHighlightRepaintNudge(document, null)
+    scheduleHighlightRepaintNudge(null)
 
     const ops: RegistryOp[] = []
     const bare: HighlightRegistry = {
       set: (name) => { ops.push(['set', name]) },
       delete: (name) => { ops.push(['delete', name]); return true },
     }
-    scheduleHighlightRepaintNudge(document, bare)
+    scheduleHighlightRepaintNudge(bare)
     await flushMicrotasks()
     expect(ops).toEqual([])
   })

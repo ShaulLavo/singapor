@@ -145,9 +145,11 @@ row's `StaticRange`s — see `virtualizedTextViewRows.ts`).
 `scheduleHighlightRepaintNudge()` re-registers every registry entry,
 order-preserving, coalesced per registry through a microtask so a mutation
 burst costs one re-register and the rebuild lands before the next paint (no
-broken frame, unlike rAF scheduling). Gecko is detected by feature
-(`'MozAppearance' in documentElement.style`), and the nudge is a no-op
-elsewhere. It is scheduled from every highlight mutation primitive: token row
+broken frame, unlike rAF scheduling). Gecko is detected via
+`CSS.supports('-moz-appearance', 'none')` with a `Gecko/<version>` UA-token
+fallback — not via `'MozAppearance' in style`, which Firefox 148 no longer
+exposes (that check shipped first, silently disabled the nudge, and cost a
+debugging round). The nudge is a no-op elsewhere. It is scheduled from every highlight mutation primitive: token row
 rebuilds, token range deletion on row release, token clears, and find/
 diagnostic range highlight updates — so every trigger (scroll recycling,
 typing, folds, tab switches) is covered by construction rather than by

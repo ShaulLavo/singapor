@@ -268,7 +268,7 @@ export function renderRangeHighlight(view: VirtualizedTextViewInternal, name: st
   addMountedRangeHighlightRanges(view, group)
   // Find/diagnostic range highlights swap StaticRanges over recycled rows the
   // same way token highlights do, so they need the same Gecko repaint nudge.
-  scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
+  scheduleHighlightRepaintNudge(view.highlightRegistry)
   if (group.highlight.size === 0) {
     unregisterRangeHighlight(view, group)
     return
@@ -285,7 +285,7 @@ export function clearRangeHighlight(view: VirtualizedTextViewInternal, name: str
   unregisterRangeHighlight(view, group)
   view.rangeHighlightGroups.delete(name)
   rebuildStyleRules(view)
-  scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
+  scheduleHighlightRepaintNudge(view.highlightRegistry)
 }
 
 function renderCaret(view: VirtualizedTextViewInternal): void {
@@ -394,7 +394,7 @@ function reconcileTokenHighlightsForRow(
     stats.staticRangeCount += result.staticRangeCount
   }
   view.rowTokenSignatures.set(row.tokenHighlightSlotId, signature)
-  scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
+  scheduleHighlightRepaintNudge(view.highlightRegistry)
   return result.styleRulesDirty
 }
 
@@ -527,7 +527,7 @@ export function clearTokenHighlightsFromRow(
     deleteTokenRangesForRow(view, row.tokenHighlightSlotId)
     view.rowTokenSignatures.delete(row.tokenHighlightSlotId)
   }
-  scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
+  scheduleHighlightRepaintNudge(view.highlightRegistry)
 }
 
 function ensureTokenRenderIndex(view: VirtualizedTextViewInternal): void {
@@ -1111,7 +1111,7 @@ export function deleteTokenRangesForRow(
   // Covers release-only paths (fold collapse, viewport shrink) where rows are
   // dropped without any row rebuild scheduling the nudge.
   if (deletedRangeCount > 0) {
-    scheduleHighlightRepaintNudge(view.scrollElement.ownerDocument, view.highlightRegistry)
+    scheduleHighlightRepaintNudge(view.highlightRegistry)
   }
   return deletedRangeCount
 }

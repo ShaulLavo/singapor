@@ -254,32 +254,16 @@ const parseDocument = async (
       resolveTreeSitterSourceDescriptor(sourceCache, request.documentId, request.source),
     )
     const parseStart = nowMs()
-    const rootLayer = runWorkerPhase('parse root', () =>
-      parseRootLayer(runtime, source, null, context),
-    )
-    const degraded: TreeSitterDegradedState[] = []
-    const parsedDocument = await runAsyncWorkerPhase('parse injections', () =>
-      parseParsedDocument({
-        documentId: request.documentId,
-        snapshotVersion: request.snapshotVersion,
-        languageId: request.languageId,
-        source,
-        rootLayer,
-        context,
-        oldDocument: null,
-        inputEdits: [],
-        degraded,
-      }),
-    )
-    assertNotCancelled(context)
+    const parsedDocument =
+      reusableParsedDocument(request, source) ??
+      (await parseFullDocument(request, runtime, source, context))
     const parseMs = nowMs() - parseStart
-    replaceCachedDocument(request.documentId, parsedDocument)
     if (request.resultMode === 'parseOnly') {
       return parseAckResult(
         request,
         [],
         [{ name: 'treeSitter.parse', durationMs: parseMs }],
-        degraded,
+        parsedDocument.degraded,
       )
     }
 
@@ -313,6 +297,68 @@ const parseDocument = async (
       ],
     }
   })
+
+// One document state exists per documentId, so a cached snapshot with the
+// same language and snapshotVersion is the same content (the source length
+// check guards against upstream bugs). Reparsing it would briefly hold two
+// full trees for one document — the dev StrictMode double-mount OOM'd the
+// worker WASM on a 48MB file exactly that way.
+const reusableParsedDocument = (
+  request: TreeSitterParseRequest,
+  source: TreeSitterPieceTableInput,
+): ParsedDocument | null => {
+  const cached = cachedDocumentForVersion(
+    request.documentId,
+    request.languageId,
+    request.snapshotVersion,
+  )
+  if (!cached) return null
+  if (cached.size === source.length) return cached
+
+  // Same version with different content is stale state; free the old tree
+  // before reparsing so peak memory stays at one tree per document.
+  dropCachedDocument(request.documentId, cached)
+  return null
+}
+
+const dropCachedDocument = (documentId: string, snapshot: ParsedDocument): void => {
+  const cache = documentCaches.get(documentId)
+  if (!cache) return
+
+  const index = cache.snapshots.indexOf(snapshot)
+  if (index === -1) return
+
+  cache.snapshots.splice(index, 1)
+  disposeCachedSnapshot(snapshot)
+}
+
+const parseFullDocument = async (
+  request: TreeSitterParseRequest,
+  runtime: Runtime,
+  source: TreeSitterPieceTableInput,
+  context: CancellationContext,
+): Promise<ParsedDocument> => {
+  const rootLayer = runWorkerPhase('parse root', () =>
+    parseRootLayer(runtime, source, null, context),
+  )
+  const degraded: TreeSitterDegradedState[] = []
+  const parsedDocument = await runAsyncWorkerPhase('parse injections', () =>
+    parseParsedDocument({
+      documentId: request.documentId,
+      snapshotVersion: request.snapshotVersion,
+      languageId: request.languageId,
+      source,
+      rootLayer,
+      context,
+      oldDocument: null,
+      inputEdits: [],
+      degraded,
+    }),
+  )
+  assertNotCancelled(context)
+  replaceCachedDocument(request.documentId, parsedDocument)
+  return parsedDocument
+}
 
 const editDocument = async (
   request: TreeSitterEditRequest,
@@ -1928,6 +1974,9 @@ export const __treeSitterWorkerInternalsForTests = {
   rangeSpan,
   resolveTreeSitterSourceDescriptor,
   readTreeSitterPieceTableInput,
+  replaceCachedDocument,
+  reusableParsedDocument,
+  disposeDocument,
 }
 
 const postResponse = (response: TreeSitterWorkerResponse): void => {

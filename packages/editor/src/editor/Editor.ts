@@ -257,6 +257,7 @@ export class Editor {
   private appliedInjectedTextRows: readonly InjectedTextRow[] = []
   private readonly lifecycleSummary = createEditorLifecycleSummary()
   private readonly tabSize: number
+  private disposed = false
 
   private get text(): string {
     return this.document.text
@@ -635,6 +636,11 @@ export class Editor {
   }
 
   openDocument(document: EditorOpenDocumentOptions): void {
+    // Content loads can resolve after teardown (e.g. a StrictMode-unmounted
+    // editor whose file fetch lands later). Opening then would start a syntax
+    // session nothing ever disposes, leaking a parse tree in the worker.
+    if (this.disposed) return
+
     this.editChain.clear()
     const documentVersion = this.resetOwnedDocument(document, {
       documentId: document.documentId ?? null,
@@ -972,6 +978,9 @@ export class Editor {
   }
 
   dispose(): void {
+    if (this.disposed) return
+
+    this.disposed = true
     this.lifecycleSummary.disposingAt = new Date().toISOString()
     this.secondaryWork.dispose()
     this.displayProjections.clear()

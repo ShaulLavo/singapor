@@ -726,6 +726,49 @@ describe('Editor', () => {
     })
   })
 
+  describe('dispose', () => {
+    it('does not recreate syntax sessions after dispose', async () => {
+      // Plugin activation resolves async: tree-sitter registers ~seconds after
+      // a StrictMode editor was already torn down, and the provider-changed
+      // callback then resurrected a session nothing ever disposed.
+      const { EditorSyntaxController } = await import('../src/editor/syntaxController')
+      const getSession = vi.fn()
+      const controller = new EditorSyntaxController({
+        getSession,
+      } as unknown as ConstructorParameters<typeof EditorSyntaxController>[0])
+
+      controller.dispose()
+      controller.reloadSyntaxSession()
+      controller.startDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+      } as never)
+
+      expect(getSession).not.toHaveBeenCalled()
+      expect(controller.status).toBe('plain')
+    })
+
+    it('ignores openDocument after dispose', () => {
+      // A document load can resolve after teardown (StrictMode unmounts the
+      // editor while its file fetch is in flight). Opening then would start a
+      // syntax session nothing ever disposes.
+      let sessions = 0
+      setEditorSyntaxSessionFactory(() => {
+        sessions += 1
+        return createMockSyntaxSession()
+      })
+      editor.dispose()
+
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text: 'const a = 1;',
+      })
+
+      expect(sessions).toBe(0)
+    })
+  })
+
   describe('setTheme', () => {
     it('updates and clears configured editor theme variables', () => {
       editor.setTheme({ backgroundColor: '#ffffff', foregroundColor: '#24292e' })

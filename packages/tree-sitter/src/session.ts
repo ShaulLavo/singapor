@@ -92,6 +92,12 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
       return this.updateFromUnavailableLanguage(textSnapshot, snapshot)
     }
 
+    // Language registration takes seconds on cold start, and the session can
+    // be disposed while it is awaited. Parsing then would register a worker
+    // document nothing ever frees: dispose already ran, and its
+    // disposeDocument silently no-ops while the worker does not exist yet.
+    if (this.disposed) return this.result
+
     const parsePayload = {
       documentId: this.documentId,
       snapshotVersion,
@@ -126,6 +132,8 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
         change.snapshot,
       )
     }
+
+    if (this.disposed) return this.result
 
     const edits = createSyntaxTextEdits(this.textSnapshot, this.snapshot, change)
     if (edits.length === 0) {

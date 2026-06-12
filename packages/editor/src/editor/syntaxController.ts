@@ -97,6 +97,7 @@ const syntaxWorkTags = (
 })
 
 export class EditorSyntaxController {
+  private disposed = false
   private syntaxStatus: EditorSyntaxStatus = 'plain'
   private syntaxSession: EditorSyntaxSession | null = null
   private highlighterSession: EditorHighlighterSession | null = null
@@ -162,6 +163,8 @@ export class EditorSyntaxController {
   }
 
   startDocument(document: EditorSyntaxDocumentStartOptions): void {
+    if (this.disposed) return
+
     this.disposeSyntaxSession()
     this.disposeHighlighterSession()
     this.clearSyntaxRangeCache()
@@ -187,6 +190,7 @@ export class EditorSyntaxController {
   }
 
   dispose(): void {
+    this.disposed = true
     this.highlighterThemeRequests.dispose()
     this.disposeSyntaxSession()
     this.disposeHighlighterSession()
@@ -198,6 +202,11 @@ export class EditorSyntaxController {
   }
 
   reloadSyntaxSession(): void {
+    // Plugin activation resolves async; a provider-changed callback can land
+    // after dispose (StrictMode tears the editor down before tree-sitter
+    // registers). Recreating a session then leaks an undisposed worker parse.
+    if (this.disposed) return
+
     this.disposeSyntaxSession()
     this.clearSyntaxRangeCache()
     this.options.clearSyntaxFolds()
@@ -323,6 +332,8 @@ export class EditorSyntaxController {
   }
 
   private reloadHighlighterSession(): void {
+    if (this.disposed) return
+
     this.disposeHighlighterSession()
 
     const session = this.options.getSession()

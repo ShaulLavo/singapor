@@ -255,6 +255,24 @@ late-bound. We believe this too — make it enforced rather than aspirational:
   need.
 - Regression guard: a typing-burst-on-large-file scenario in the standing benchmark harness.
 
+## Look into: windowed/streamed loading for massive files
+
+Maybe-future. A 48MB document currently flows whole through every layer: one `fs.read`
+returns the full text, the piece table holds it, and the tree-sitter structural parse
+covers the entire document — which sits right at the WASM memory ceiling (a single
+duplicated parse request was enough to tip `parse root` into `Aborted()` during the
+June 2026 StrictMode-leak hunt; the worker parse dedupe made it survivable, not
+comfortable). Two candidate directions, possibly combined:
+
+- Sliding-window document view: the frontend never materializes massive files whole.
+  Stream the file in ranges and keep a window (plus margins) resident; the piece table,
+  syntax, LSP sync, and minimap all operate on the window. Big design lift: offsets
+  become window-relative, cross-window edits and search need a spill path.
+- Capped structural parse: keep whole-file text but bound the tree-sitter parse to a
+  window around the viewport (the token query machinery is already windowed via
+  `VISIBLE_SYNTAX_*_CHARS`); reparse on window moves like the prefetch path does.
+  Much cheaper to ship, doesn't fix memory for the text itself.
+
 ## Look into: render nothing at zero-height viewports
 
 Possible optimization, needs investigation. A virtualized view whose scroll element measures

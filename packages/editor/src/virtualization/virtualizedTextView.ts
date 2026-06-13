@@ -135,19 +135,10 @@ import type {
 } from './virtualizedTextViewTypes'
 
 export type {
-  EditorCursorLineHighlightOptions,
   HiddenCharactersMode,
-  HighlightRegistry,
   NativeGeometryValidation,
-  VirtualizedBlockRowDisposable,
-  VirtualizedBlockLaneMount,
-  VirtualizedBlockLaneMountContext,
-  VirtualizedBlockRowMount,
-  VirtualizedBlockRowMountContext,
   VirtualizedFoldMarker,
-  VirtualizedTextChunk,
   VirtualizedTextRowDecoration,
-  VirtualizedTextRow,
   VirtualizedTextViewOptions,
   VirtualizedTextViewScrollMode,
   VirtualizedTextViewState,
@@ -636,16 +627,20 @@ export class VirtualizedTextView {
     if (!offsetIndex?.dirty) return new LineStartsView(this.view.lineStarts, [])
 
     const revision = offsetIndex.revision
-    return new LineStartsView(this.view.lineStarts, offsetIndex.snapshotDeltas(), (materialized) => {
-      // Adopt the materialized array as the new base while no further edits
-      // have landed, so internal consumers skip their own materialization.
-      if (this.view.lineStartOffsetIndex !== offsetIndex) return
-      if (offsetIndex.revision !== revision) return
+    return new LineStartsView(
+      this.view.lineStarts,
+      offsetIndex.snapshotDeltas(),
+      (materialized) => {
+        // Adopt the materialized array as the new base while no further edits
+        // have landed, so internal consumers skip their own materialization.
+        if (this.view.lineStartOffsetIndex !== offsetIndex) return
+        if (offsetIndex.revision !== revision) return
 
-      // Freshly built by toArray when deltas exist; never the shared base.
-      this.view.lineStarts = materialized as number[]
-      this.view.lineStartOffsetIndex = null
-    })
+        // Freshly built by toArray when deltas exist; never the shared base.
+        this.view.lineStarts = materialized as number[]
+        this.view.lineStartOffsetIndex = null
+      },
+    )
   }
 
   public getLineCount(): number {

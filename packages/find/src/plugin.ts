@@ -24,7 +24,6 @@ import {
   EditorFindController,
   type EditorFindHost,
   type EditorFindResolvedSelection,
-  type EditorFindSelectionRange,
   type EditorFindUiEvent,
 } from './findController'
 import { EditorFindWidget, type EditorFindWidgetOptions } from './findWidget'
@@ -266,4 +265,4 @@ function disposeAll(disposables: readonly EditorDisposable[]): void {
   for (const disposable of disposables.toReversed()) disposable.dispose()
 }
 
-export type { EditorFindFeature, EditorFindOptions, EditorFindSelectionRange }
+export type { EditorFindFeature, EditorFindOptions }

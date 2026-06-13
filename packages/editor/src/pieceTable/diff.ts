@@ -21,7 +21,13 @@ export const diffPieceTableSnapshots = (
   const prefix = commonPrefixLength(previousWalker, nextWalker)
   if (prefix === previous.length && prefix === next.length) return null
 
-  const suffix = commonSuffixLength(previousWalker, nextWalker, previous.length, next.length, prefix)
+  const suffix = commonSuffixLength(
+    previousWalker,
+    nextWalker,
+    previous.length,
+    next.length,
+    prefix,
+  )
   return {
     from: prefix,
     to: previous.length - suffix,
@@ -36,7 +42,8 @@ const commonPrefixLength = (left: PieceTableWalker, right: PieceTableWalker): nu
     if (!leftChunk || !rightChunk) return left.offset()
 
     const length = Math.min(leftChunk.end - leftChunk.start, rightChunk.end - rightChunk.start)
-    const leftText = leftChunk.text.length === length ? leftChunk.text : leftChunk.text.slice(0, length)
+    const leftText =
+      leftChunk.text.length === length ? leftChunk.text : leftChunk.text.slice(0, length)
     const rightText =
       rightChunk.text.length === length ? rightChunk.text : rightChunk.text.slice(0, length)
     if (leftText !== rightText) {

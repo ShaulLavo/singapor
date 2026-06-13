@@ -20,12 +20,12 @@ export type ShikiWorkerEditRequest = ShikiWorkerDocumentOptions & {
   readonly edit?: TextEdit
 }
 
-export type ShikiWorkerDisposeDocumentRequest = {
+type ShikiWorkerDisposeDocumentRequest = {
   readonly type: 'disposeDocument'
   readonly documentId: string
 }
 
-export type ShikiWorkerDisposeRequest = {
+type ShikiWorkerDisposeRequest = {
   readonly type: 'dispose'
 }
 

@@ -12,7 +12,7 @@ export type Sidebar = {
   ): Promise<void>
 }
 
-export type SidebarRenderOptions = {
+type SidebarRenderOptions = {
   readonly selectedPath?: string
   readonly preserveExpandedPaths?: boolean
 }

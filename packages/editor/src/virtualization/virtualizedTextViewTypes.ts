@@ -11,7 +11,7 @@ import type {
 import type { BrowserTextMetrics } from './browserMetrics'
 import type { FixedRowVisibleRange } from './fixedRowVirtualizer'
 
-export type CaretPositionResult = {
+type CaretPositionResult = {
   readonly offsetNode: Node
   readonly offset: number
 }
@@ -59,11 +59,11 @@ export type VirtualizedBlockRowMount = (
   context: VirtualizedBlockRowMountContext,
 ) => void | VirtualizedBlockRowDisposable
 
-export type VirtualizedBlockRowDisposable = {
+type VirtualizedBlockRowDisposable = {
   dispose(): void
 }
 
-export type VirtualizedBlockRowMountContext = {
+type VirtualizedBlockRowMountContext = {
   readonly id: string
   readonly anchorBufferRow: number
   readonly placement: BlockRowPlacement
@@ -76,7 +76,7 @@ export type VirtualizedBlockLaneMount = (
   context: VirtualizedBlockLaneMountContext,
 ) => void | VirtualizedBlockRowDisposable
 
-export type VirtualizedBlockLaneMountContext = {
+type VirtualizedBlockLaneMountContext = {
   readonly id: string
   readonly startBufferRow: number
   readonly endBufferRow: number
@@ -131,7 +131,7 @@ export type VirtualizedTextChunkTextPart = {
   readonly node: Text
 }
 
-export type VirtualizedTextChunkControlPart = {
+type VirtualizedTextChunkControlPart = {
   readonly kind: 'control'
   readonly localStart: number
   readonly localEnd: number

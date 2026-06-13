@@ -43,7 +43,7 @@ export type FixedRowVirtualizerOptions = {
   readonly scrollMode?: FixedRowScrollMode
 }
 
-export type FixedRowScrollMode = 'virtualized' | 'static'
+type FixedRowScrollMode = 'virtualized' | 'static'
 
 export type FixedRowScrollMetrics = {
   readonly scrollTop: number

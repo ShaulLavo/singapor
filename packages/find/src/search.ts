@@ -78,7 +78,7 @@ export function findMatchIndex(matches: readonly FindMatch[], range: FindRange):
   return matches.findIndex((match) => match.start === range.start && match.end === range.end)
 }
 
-export function escapeRegExpCharacters(value: string): string {
+function escapeRegExpCharacters(value: string): string {
   return value.replace(/[\\{}*+?|^$.[\]()]/g, '\\$&')
 }
 

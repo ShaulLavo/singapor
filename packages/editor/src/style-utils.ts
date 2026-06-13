@@ -1,6 +1,6 @@
 import type { EditorTokenStyle } from './tokens'
 
-export const STYLE_PROPERTIES: ReadonlyArray<{
+const STYLE_PROPERTIES: ReadonlyArray<{
   key: keyof EditorTokenStyle
   cssProperty: string
 }> = [

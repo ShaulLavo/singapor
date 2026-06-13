@@ -339,7 +339,7 @@ function isGrammarState(value: unknown): value is GrammarState {
   return value instanceof Object && 'lang' in value
 }
 
-export function createShikiLineFn(
+function createShikiLineFn(
   highlighter: HighlighterGeneric<string, string>,
   lang: string,
   theme: string,
@@ -360,7 +360,7 @@ export function createShikiLineFn(
   }
 }
 
-export function createShikiStatesEqualFn(theme: string): StatesEqualFn {
+function createShikiStatesEqualFn(theme: string): StatesEqualFn {
   return (left, right) => {
     const leftState = isGrammarState(left) ? left : undefined
     const rightState = isGrammarState(right) ? right : undefined

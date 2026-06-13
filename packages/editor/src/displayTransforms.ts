@@ -1,4 +1,4 @@
-import type { PieceTableEdit, Point } from './pieceTable/pieceTableTypes'
+import type { Point } from './pieceTable/pieceTableTypes'
 
 declare const tabPointBrand: unique symbol
 declare const wrapPointBrand: unique symbol
@@ -10,15 +10,6 @@ export type InvalidatedRange<TPoint extends Point> = {
   readonly start: TPoint
   readonly end: TPoint
   readonly lineCountDelta: number
-}
-
-export type InvalidationSet<TPoint extends Point> = readonly InvalidatedRange<TPoint>[]
-
-export type TransformLayer<TInput extends Point, TOutput extends Point, TSnapshot> = {
-  toOutput(point: TInput, bias?: TransformBias): TOutput
-  toInput(point: TOutput, bias?: TransformBias): TInput
-  update(edit: PieceTableEdit): InvalidationSet<TOutput>
-  snapshot(): TSnapshot
 }
 
 export type TabPoint = Point & {
@@ -91,7 +82,7 @@ export type DisplayRow = DisplayTextRow | DisplayBlockRow
 
 export type BlockRowPlacement = 'before' | 'after'
 
-export type InjectedTextRowPlacement = 'before' | 'after'
+type InjectedTextRowPlacement = 'before' | 'after'
 
 export type InjectedTextRow = {
   readonly id: string
@@ -149,7 +140,7 @@ type MutableInjectedTextRowsAtBufferRow = {
 
 type InjectedTextRowIndex = ReadonlyMap<number, InjectedTextRowsAtBufferRow>
 
-export type WrapSegment = {
+type WrapSegment = {
   readonly inputRow: number
   readonly outputRow: number
   readonly segmentIndex: number
@@ -164,7 +155,7 @@ export type WrapMap = {
   readonly segments: readonly WrapSegment[]
 }
 
-export const DEFAULT_TAB_SIZE = 4
+const DEFAULT_TAB_SIZE = 4
 
 export function normalizeTabSize(tabSize: number | undefined): number {
   if (tabSize === undefined) return DEFAULT_TAB_SIZE
@@ -336,9 +327,8 @@ export function createDisplayRowsFromLines(options: DisplayRowLineInput): Displa
   return rows
 }
 
-export const asTabPoint = (point: Point): TabPoint => point as TabPoint
-export const asWrapPoint = (point: Point): WrapPoint => point as WrapPoint
-export const asBlockPoint = (point: Point): BlockPoint => point as BlockPoint
+const asTabPoint = (point: Point): TabPoint => point as TabPoint
+const asWrapPoint = (point: Point): WrapPoint => point as WrapPoint
 
 export function normalizeBlockLanes(lanes: readonly BlockLane[]): readonly BlockLane[] {
   return lanes

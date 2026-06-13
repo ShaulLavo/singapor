@@ -27,9 +27,5 @@ export {
   type FoldRange,
 } from './session'
 export { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from './captures'
-export {
-  packEditorTokens,
-  packedEditorTokenTransfers,
-  unpackEditorTokens,
-} from './packedTokens'
+export { packEditorTokens, packedEditorTokenTransfers, unpackEditorTokens } from './packedTokens'
 export type { PackedEditorTokens } from './packedTokens'

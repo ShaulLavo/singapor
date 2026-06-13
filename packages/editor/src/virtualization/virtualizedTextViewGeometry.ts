@@ -152,11 +152,6 @@ export function clearRowGeometryCaches(view: VirtualizedTextViewInternal): void 
   for (const row of view.rowPool) clearRowGeometryCache(row)
 }
 
-export function rowHasComplexGeometry(row: MountedVirtualizedTextRow): boolean {
-  if (row.kind !== 'text') return false
-  return !isSimpleRowText(row.text)
-}
-
 export function offsetToX(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
@@ -200,14 +195,7 @@ export function rangeSegments(
   return segments
 }
 
-export function rowWidth(
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-): number {
-  return ensureRowGeometry(view, row).width
-}
-
-export function estimatedDisplayCells(text: string, tabSize: number): number {
+function estimatedDisplayCells(text: string, tabSize: number): number {
   const simpleCells = simpleDisplayCellsOrNull(text, 0, text.length, 0, tabSize)
   if (simpleCells !== null) return simpleCells
   return estimatedDisplayCellsFrom(text, 0, text.length, 0, tabSize).cells
@@ -254,7 +242,7 @@ export function estimatedColumnToBufferColumn(
   return text.length
 }
 
-export function estimatedRowWidth(text: string, tabSize: number, cellWidth: number): number {
+function estimatedRowWidth(text: string, tabSize: number, cellWidth: number): number {
   return estimatedDisplayCells(text, tabSize) * cellWidth
 }
 
@@ -330,13 +318,6 @@ export function offsetFromDomBoundary(
   if (controlOffset !== null) return controlOffset
 
   return offsetFromElementBoundary(row, node, offset)
-}
-
-export function chunkContainsDomBoundary(chunk: VirtualizedTextChunk, node: Node): boolean {
-  if (node === chunk.textNode || node === chunk.element) return true
-  if (chunk.element?.contains(node)) return true
-
-  return chunk.parts.some((part) => partContainsNode(part, node))
 }
 
 function ensureRowGeometry(

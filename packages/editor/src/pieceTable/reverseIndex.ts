@@ -55,7 +55,7 @@ const rotateReverseLeft = (node: PieceTableReverseIndexNode): PieceTableReverseI
   return pivot
 }
 
-export const insertReverseIndexNode = (
+const insertReverseIndexNode = (
   root: PieceTableReverseIndexNode | null,
   piece: Piece,
   prioritySeed = 0,

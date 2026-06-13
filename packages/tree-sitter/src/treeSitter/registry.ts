@@ -7,18 +7,18 @@ export type TreeSitterLanguageAssets = {
   readonly injectionQuerySource?: string
 }
 
-export type TreeSitterLanguageContributionMetadata = {
+type TreeSitterLanguageContributionMetadata = {
   readonly id: TreeSitterLanguageId
   readonly extensions?: readonly string[]
   readonly aliases?: readonly string[]
 }
 
-export type TreeSitterInlineLanguageContribution = TreeSitterLanguageContributionMetadata &
+type TreeSitterInlineLanguageContribution = TreeSitterLanguageContributionMetadata &
   TreeSitterLanguageAssets & {
     readonly load?: never
   }
 
-export type TreeSitterLazyLanguageContribution = TreeSitterLanguageContributionMetadata & {
+type TreeSitterLazyLanguageContribution = TreeSitterLanguageContributionMetadata & {
   readonly load: () => Promise<TreeSitterLanguageAssets>
 }
 

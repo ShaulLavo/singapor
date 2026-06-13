@@ -2,23 +2,10 @@ import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
 import {
   lspPositionToOffset,
   lspPositionToOffsetInSnapshot,
-  offsetToLspPosition,
   offsetToLspPositionInSnapshot,
   type LspTextDocumentSnapshot,
 } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
-
-/**
- * Snapshot of a document transition used to project previously-computed
- * diagnostics onto the new text. Carries the pre- and post-edit text so
- * LSP ranges (which are computed against the previous text) can be
- * translated into offsets valid for the new text.
- */
-export type DocumentSession = {
-  readonly previousText: string
-  readonly nextText: string
-  readonly change: DocumentSessionChange | null
-}
 
 export type SnapshotDocumentSession = {
   readonly previousDocument: LspTextDocumentSnapshot
@@ -36,29 +23,6 @@ export type ProjectedDiagnostic = lsp.Diagnostic
 type OffsetRange = {
   readonly start: number
   readonly end: number
-}
-
-/**
- * Project a set of diagnostics through a document edit.
- *
- * When `diagnostics` is empty, returns the same array reference so callers
- * can cheaply detect no-op transitions by reference equality. When the
- * change carries no edits, returns a fresh empty array (any existing
- * diagnostic is implicitly dropped because no mapping is known).
- * Otherwise each diagnostic's range is mapped through the edit list; any
- * diagnostic that becomes a zero-width range when it was non-empty in the
- * previous text is dropped.
- */
-export function projectDiagnostics(
-  diagnostics: readonly lsp.Diagnostic[],
-  documentSession: DocumentSession,
-): readonly ProjectedDiagnostic[] {
-  return projectDiagnosticsThroughChange(
-    documentSession.previousText,
-    documentSession.nextText,
-    diagnostics,
-    documentSession.change,
-  )
 }
 
 export function projectDiagnosticsInSnapshot(
@@ -96,26 +60,6 @@ export function diagnosticsAtOffset(
   return diagnostics.filter((diagnostic) => diagnosticContainsOffset(text, diagnostic, offset))
 }
 
-function projectDiagnosticsThroughChange(
-  previousText: string,
-  nextText: string,
-  diagnostics: readonly lsp.Diagnostic[],
-  change: DocumentSessionChange | null,
-): readonly lsp.Diagnostic[] {
-  if (diagnostics.length === 0) return diagnostics
-
-  const edits = editsForChange(change)
-  if (edits.length === 0) return []
-
-  const projected: lsp.Diagnostic[] = []
-  for (const diagnostic of diagnostics) {
-    const next = projectDiagnosticThroughEdits(previousText, nextText, diagnostic, edits)
-    if (next) projected.push(next)
-  }
-
-  return projected
-}
-
 function projectDiagnosticsThroughSnapshotChange(
   previousDocument: LspTextDocumentSnapshot,
   nextDocument: LspTextDocumentSnapshot,
@@ -139,27 +83,6 @@ function projectDiagnosticsThroughSnapshotChange(
   }
 
   return projected
-}
-
-function projectDiagnosticThroughEdits(
-  previousText: string,
-  nextText: string,
-  diagnostic: lsp.Diagnostic,
-  edits: readonly TextEdit[],
-): lsp.Diagnostic | null {
-  const start = lspPositionToOffset(previousText, diagnostic.range.start)
-  const end = lspPositionToOffset(previousText, diagnostic.range.end)
-  const range = projectOffsetRangeThroughEdits({ start, end }, edits)
-  if (!range) return null
-  if (range.start === range.end && start !== end) return null
-
-  return {
-    ...diagnostic,
-    range: {
-      start: offsetToLspPosition(nextText, range.start),
-      end: offsetToLspPosition(nextText, range.end),
-    },
-  }
 }
 
 function projectDiagnosticThroughSnapshotEdits(

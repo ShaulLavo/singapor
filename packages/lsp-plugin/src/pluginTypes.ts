@@ -1,6 +1,5 @@
 import type { TextSnapshot } from '@singapor/core/document'
-import type {
-  LspLineStarts, LspWebSocketTransportOptions } from '@singapor/lsp'
+import type { LspLineStarts, LspWebSocketTransportOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type {

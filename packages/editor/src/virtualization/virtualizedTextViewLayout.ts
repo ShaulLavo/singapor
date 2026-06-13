@@ -231,14 +231,6 @@ export function rowHeight(view: VirtualizedTextViewInternal, row: number): numbe
   return variableRowHeightIndex(view)?.rowSizes[row] ?? getRowHeight(view)
 }
 
-export function scrollPastEndPadding(
-  view: VirtualizedTextViewInternal,
-  viewportHeight: number,
-): number {
-  const lastRow = visibleLineCount(view) - 1
-  return Math.max(0, viewportHeight - rowHeight(view, lastRow))
-}
-
 export function scrollableHeight(
   _view: VirtualizedTextViewInternal,
   snapshot: FixedRowVirtualizerSnapshot,
@@ -548,10 +540,6 @@ export function visibleLineCount(view: VirtualizedTextViewInternal): number {
   return Math.max(1, view.model.visibleLineCount)
 }
 
-export function foldVisibleLineCount(view: VirtualizedTextViewInternal): number {
-  return visibleLineCount(view)
-}
-
 export function bufferRowForVirtualRow(view: VirtualizedTextViewInternal, row: number): number {
   const displayRow = view.model.rows[row]
   if (displayRow?.kind === 'text') return displayRow.bufferRow
@@ -559,7 +547,7 @@ export function bufferRowForVirtualRow(view: VirtualizedTextViewInternal, row: n
   return foldBufferRowForVisibleRow(view, row)
 }
 
-export function foldBufferRowForVisibleRow(view: VirtualizedTextViewInternal, row: number): number {
+function foldBufferRowForVisibleRow(view: VirtualizedTextViewInternal, row: number): number {
   if (!view.model.foldMap) return clamp(row, 0, view.lineStarts.length - 1)
   const point = foldPointToBufferPoint(view.model.foldMap, asFoldPoint({ row, column: 0 }))
   return clamp(point.row, 0, view.lineStarts.length - 1)
@@ -574,7 +562,7 @@ export function virtualRowForBufferRow(view: VirtualizedTextViewInternal, row: n
   return transformedRowForProjectedBufferRow(view, row)
 }
 
-export function foldVirtualRowForBufferRow(view: VirtualizedTextViewInternal, row: number): number {
+function foldVirtualRowForBufferRow(view: VirtualizedTextViewInternal, row: number): number {
   if (!view.model.foldMap) return clamp(row, 0, visibleLineCount(view) - 1)
 
   const point = bufferPointToFoldPoint(view.model.foldMap, { row, column: 0 })
@@ -583,18 +571,6 @@ export function foldVirtualRowForBufferRow(view: VirtualizedTextViewInternal, ro
 
 export function getRowHeight(view: VirtualizedTextViewInternal): number {
   return normalizeRowHeight(view.metrics.rowHeight)
-}
-
-export function rowForSnapshotOffset(
-  view: VirtualizedTextViewInternal,
-  snapshot: FixedRowVirtualizerSnapshot,
-  y: number,
-): number {
-  const offset = snapshot.scrollTop + y
-  const index = variableRowHeightIndex(view)
-  if (!index) return fixedRowForOffset(view, offset)
-
-  return rowHeightIndexRowAtOffset(index, offset)
 }
 
 function rowStride(view: VirtualizedTextViewInternal): number {

@@ -2663,7 +2663,6 @@ function countLineBreaks(text: string): number {
   return count
 }
 
-
 function syntaxScrollDirection(delta: number): SyntaxScrollDirection {
   if (delta > 0) return 1
   if (delta < 0) return -1

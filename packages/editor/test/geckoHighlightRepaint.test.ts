@@ -91,8 +91,13 @@ describe('scheduleHighlightRepaintNudge', () => {
 
     const ops: RegistryOp[] = []
     const bare: HighlightRegistry = {
-      set: (name) => { ops.push(['set', name]) },
-      delete: (name) => { ops.push(['delete', name]); return true },
+      set: (name) => {
+        ops.push(['set', name])
+      },
+      delete: (name) => {
+        ops.push(['delete', name])
+        return true
+      },
     }
     scheduleHighlightRepaintNudge(bare)
     await flushMicrotasks()

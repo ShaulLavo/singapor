@@ -1034,7 +1034,14 @@ function documentSummaryPatchPayload(
 ): MinimapDocumentSummaryPatch {
   const textLength = text.length
   if (textLength !== null) {
-    return documentSummaryPatchFromSnapshot(text, textLength, previous, edits, maxColumn, workerDocument)
+    return documentSummaryPatchFromSnapshot(
+      text,
+      textLength,
+      previous,
+      edits,
+      maxColumn,
+      workerDocument,
+    )
   }
 
   return documentSummaryPatchFromMaterializedText(
@@ -1095,7 +1102,13 @@ function documentSummaryPatchFromMaterializedText(
   edits: readonly TextEdit[],
   maxColumn: number,
 ): MinimapDocumentSummaryPatch {
-  const range = documentSummaryPatchRange(previous, arrayLineStarts(lineStarts), text.length, edits, null)
+  const range = documentSummaryPatchRange(
+    previous,
+    arrayLineStarts(lineStarts),
+    text.length,
+    edits,
+    null,
+  )
   return {
     textLength: text.length,
     startLine: range.startLine,
@@ -1171,7 +1184,11 @@ function documentSummaryPatchRange(
   // lies inside the edited range and the O(lines) structural verification
   // can be skipped. Newline edits and projection changes (e.g. fold toggles)
   // fall through to the full scan.
-  if (edited && workerDocument && editsExplainTransition(workerDocument, nextLineStarts, nextTextLength, edits)) {
+  if (
+    edited &&
+    workerDocument &&
+    editsExplainTransition(workerDocument, nextLineStarts, nextTextLength, edits)
+  ) {
     return normalizeSummaryPatchRange(edited, previous.lineStarts.length, nextLineStarts.length)
   }
 

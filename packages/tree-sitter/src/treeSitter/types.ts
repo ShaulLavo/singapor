@@ -55,7 +55,7 @@ export type TreeSitterInjectionInfo = {
   readonly endIndex: number
 }
 
-export type TreeSitterTimingMeasurement = {
+type TreeSitterTimingMeasurement = {
   readonly name: string
   readonly durationMs: number
 }
@@ -100,11 +100,11 @@ export type TreeSitterRangeResult = TreeSitterParseResult & {
   readonly range: TreeSitterSyntaxRange
 }
 
-export type TreeSitterInitRequest = {
+type TreeSitterInitRequest = {
   readonly type: 'init'
 }
 
-export type TreeSitterRegisterLanguagesRequest = {
+type TreeSitterRegisterLanguagesRequest = {
   readonly type: 'registerLanguages'
   readonly languages: readonly TreeSitterLanguageDescriptor[]
 }
@@ -155,7 +155,7 @@ export type TreeSitterSelectionRange = {
   readonly endIndex: number
 }
 
-export type TreeSitterSelectionAction = 'selectToken' | 'expand'
+type TreeSitterSelectionAction = 'selectToken' | 'expand'
 
 export type TreeSitterSelectionRequest = {
   readonly type: 'selection'
@@ -174,12 +174,12 @@ export type TreeSitterSelectionResult = {
   readonly ranges: readonly TreeSitterSelectionRange[]
 }
 
-export type TreeSitterDisposeDocumentRequest = {
+type TreeSitterDisposeDocumentRequest = {
   readonly type: 'disposeDocument'
   readonly documentId: string
 }
 
-export type TreeSitterDisposeRequest = {
+type TreeSitterDisposeRequest = {
   readonly type: 'dispose'
 }
 

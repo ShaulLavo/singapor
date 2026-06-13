@@ -112,10 +112,10 @@ export type AppendChunksToBuffersResult = {
   readonly pieces: readonly Piece[]
 }
 
-export const createBufferId = (sequence: number): PieceBufferId =>
+const createBufferId = (sequence: number): PieceBufferId =>
   `${BUFFER_ID_PREFIX}${sequence}` as PieceBufferId
 
-export const bufferSequence = (buffer: PieceBufferId): number | null => {
+const bufferSequence = (buffer: PieceBufferId): number | null => {
   if (!buffer.startsWith(BUFFER_ID_PREFIX)) return null
 
   const sequence = Number(buffer.slice(BUFFER_ID_PREFIX.length))

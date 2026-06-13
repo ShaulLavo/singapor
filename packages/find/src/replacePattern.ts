@@ -45,7 +45,7 @@ export function parseReplaceString(replaceString: string): ReplacePattern {
   return builder.finalize()
 }
 
-export function buildReplaceStringWithCasePreserved(
+function buildReplaceStringWithCasePreserved(
   matches: readonly string[] | null,
   pattern: string,
 ): string {

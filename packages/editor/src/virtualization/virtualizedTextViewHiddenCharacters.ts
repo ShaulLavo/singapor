@@ -19,7 +19,7 @@ type HiddenCharacterMarker = {
   readonly width: number
 }
 
-export const DEFAULT_HIDDEN_CHARACTERS: HiddenCharactersMode = 'show-on-selection'
+const DEFAULT_HIDDEN_CHARACTERS: HiddenCharactersMode = 'show-on-selection'
 
 export function normalizeHiddenCharactersMode(
   mode: HiddenCharactersMode | undefined,

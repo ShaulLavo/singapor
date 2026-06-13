@@ -4,8 +4,7 @@ import { bufferForPiece, createPiece } from './buffers'
 import { allocateOrdersBetween, PIECE_ORDER_MIN_GAP, PIECE_ORDER_STEP } from './orders'
 import { priorityForPiece } from './priority'
 
-export const getSubtreeLength = (node: PieceTreeNode | null): number =>
-  node ? node.subtreeLength : 0
+const getSubtreeLength = (node: PieceTreeNode | null): number => (node ? node.subtreeLength : 0)
 
 export const getSubtreeVisibleLength = (node: PieceTreeNode | null): number =>
   node ? node.subtreeVisibleLength : 0
@@ -27,7 +26,7 @@ export const getPieceVisibleLength = (piece: Piece): number => (piece.visible ? 
 export const getPieceVisibleLineBreaks = (piece: Piece): number =>
   piece.visible ? piece.lineBreaks : 0
 
-export const cloneNode = (node: PieceTreeNode): PieceTreeNode => ({
+const cloneNode = (node: PieceTreeNode): PieceTreeNode => ({
   piece: node.piece,
   left: node.left,
   right: node.right,
@@ -93,7 +92,7 @@ export const createNode = (
   subtreeMaxOrder: computeSubtreeMaxOrder(piece, left, right),
 })
 
-export const updateNode = (node: PieceTreeNode | null): PieceTreeNode | null => {
+const updateNode = (node: PieceTreeNode | null): PieceTreeNode | null => {
   if (!node) return node
   node.subtreeLength = computeSubtreeLength(node.piece, node.left, node.right)
   node.subtreeVisibleLength = computeSubtreeVisibleLength(node.piece, node.left, node.right)

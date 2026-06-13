@@ -1,14 +1,5 @@
-import type {
-  AnchorBias,
-  Piece,
-  PieceTableEdit,
-  PieceTableTreeSnapshot,
-  RealAnchor,
-  ResolvedAnchor,
-} from './pieceTableTypes'
+import type { Piece, PieceTableTreeSnapshot } from './pieceTableTypes'
 import { flattenPieces } from './tree'
-
-export type { AnchorBias, RealAnchor, ResolvedAnchor, PieceTableEdit }
 
 export {
   Anchor,
@@ -24,7 +15,6 @@ export { applyBatchToPieceTable, deleteFromPieceTable, insertIntoPieceTable } fr
 export { offsetToPoint, pointToOffset } from './positions'
 export {
   getPieceTableLength,
-  getPieceTableOriginalText,
   readPieceTableTextRange,
   materializePieceTableFullText,
   forEachPieceTableTextChunk,
@@ -33,11 +23,7 @@ export {
   streamPieceTableTextChunks,
 } from './reads'
 export { createPieceTableSnapshot } from './snapshot'
-export {
-  createPieceTableWalker,
-  type PieceTableWalker,
-  type PieceTableWalkerChunk,
-} from './walker'
+export { createPieceTableWalker, type PieceTableWalker, type PieceTableWalkerChunk } from './walker'
 
 export const debugPieceTable = (snapshot: PieceTableTreeSnapshot): Piece[] =>
   flattenPieces(snapshot.root, [])

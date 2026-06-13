@@ -249,7 +249,7 @@ const mergeResolvedSelections = (
   }
 }
 
-export const normalizeSelections = (
+const normalizeSelections = (
   snapshot: PieceTableSnapshot,
   selections: readonly AnchorSelection[],
 ): AnchorSelection[] => {

@@ -20,7 +20,6 @@ export type FoldRangeIngestionResult = {
   readonly rejected: readonly FoldRangeRejection[]
 }
 
-export const EMPTY_SYNTAX_FOLDS: readonly FoldRange[] = []
 export const EMPTY_FOLD_MARKERS: readonly VirtualizedFoldMarker[] = []
 
 export function foldMarkerFromRange(

@@ -1,13 +1,13 @@
 import type { PieceTableSnapshot } from '@singapor/core/document'
 import { debugPieceTable, type PieceBufferId } from '@singapor/core/debug'
 
-export type TreeSitterSourcePieceSpan = {
+type TreeSitterSourcePieceSpan = {
   readonly chunkId: string
   readonly start: number
   readonly length: number
 }
 
-export type TreeSitterSourceChunkPayload =
+type TreeSitterSourceChunkPayload =
   | {
       readonly kind: 'shared-utf16'
       readonly chunkId: string
@@ -45,7 +45,7 @@ type ResolvedTreeSitterSourceChunk =
 
 export type TreeSitterSourceCache = Map<string, Map<string, ResolvedTreeSitterSourceChunk>>
 
-export type TreeSitterInputChunk = {
+type TreeSitterInputChunk = {
   readonly start: number
   readonly end: number
   readonly chunkStart: number

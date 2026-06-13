@@ -5,7 +5,11 @@ import type {
 } from '@singapor/core/extensions'
 import { createStringTextSnapshot } from '@singapor/core/document'
 import { defineLazyFullTextProperty } from '@singapor/core/internal'
-import { arrayLspLineStarts, recordLspPerformanceDiagnostic, type LspWorkspace } from '@singapor/lsp'
+import {
+  arrayLspLineStarts,
+  recordLspPerformanceDiagnostic,
+  type LspWorkspace,
+} from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { editsForChange, projectDiagnosticsInSnapshot } from './diagnosticProjection'

@@ -1,4 +1,4 @@
-export type EditorPerformanceDiagnostic = {
+type EditorPerformanceDiagnostic = {
   readonly name: string
   readonly durationMs?: number
   readonly detail?: Readonly<Record<string, unknown>>

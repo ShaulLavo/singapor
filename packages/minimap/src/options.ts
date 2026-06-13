@@ -2,7 +2,7 @@ import type { EditorMinimapOptions, ResolvedMinimapOptions } from './types'
 
 const DEFAULT_MARK_SECTION_HEADER_REGEX = '\\bMARK:\\s*(?<separator>-?)\\s*(?<label>.*)$'
 
-export const DEFAULT_MINIMAP_OPTIONS: ResolvedMinimapOptions = {
+const DEFAULT_MINIMAP_OPTIONS: ResolvedMinimapOptions = {
   enabled: true,
   autohide: 'none',
   side: 'right',

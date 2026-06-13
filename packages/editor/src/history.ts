@@ -1,6 +1,3 @@
-import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from './pieceTable/pieceTableTypes'
-import type { SelectionSet } from './selections'
-
 export type EditorHistoryEntry<TSnapshot, TSelectionState, TTransaction = never> = {
   readonly snapshot: TSnapshot
   readonly selections: TSelectionState
@@ -19,11 +16,6 @@ export type EditorHistory<TSnapshot, TSelectionState, TTransaction = never> = {
   readonly undo: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>
   readonly redo: EditorHistoryStack<TSnapshot, TSelectionState, TTransaction>
 }
-
-export type PieceTableEditorHistory = EditorHistory<
-  PieceTableSnapshot,
-  SelectionSet<PieceTableAnchor>
->
 
 export const createEditorHistory = <TSnapshot, TSelectionState, TTransaction = never>(
   current: TSnapshot,

@@ -32,9 +32,9 @@ export type FoldMap = {
   readonly ranges: readonly AnchorFoldRange[]
 }
 
-export type FoldMapInvalidationReason = 'external-edit' | 'fold-placeholder' | 'fold-expanded'
+type FoldMapInvalidationReason = 'external-edit' | 'fold-placeholder' | 'fold-expanded'
 
-export type FoldMapInvalidatedRange = InvalidatedRange<FoldPoint> & {
+type FoldMapInvalidatedRange = InvalidatedRange<FoldPoint> & {
   readonly reason: FoldMapInvalidationReason
 }
 
@@ -43,7 +43,7 @@ export type FoldMapUpdate = {
   readonly invalidations: readonly FoldMapInvalidatedRange[]
 }
 
-export const createAnchorFoldRanges = (
+const createAnchorFoldRanges = (
   snapshot: PieceTableSnapshot,
   folds: readonly FoldRange[],
 ): AnchorFoldRange[] => {
@@ -59,7 +59,7 @@ export const createFoldMap = (
   ranges: createAnchorFoldRanges(snapshot, folds),
 })
 
-export const refreshFoldMap = (map: FoldMap, snapshot: PieceTableSnapshot): FoldMap => ({
+const refreshFoldMap = (map: FoldMap, snapshot: PieceTableSnapshot): FoldMap => ({
   snapshot,
   ranges: normalizeAnchorFoldRanges(snapshot, map.ranges),
 })
@@ -93,7 +93,7 @@ export const foldPointToBufferPoint = (map: FoldMap, point: FoldPoint): Point =>
   return { row: point.row + rowDelta, column: point.column }
 }
 
-export const invalidateFoldMapEdit = (
+const invalidateFoldMapEdit = (
   map: FoldMap,
   edit: PieceTableEdit,
   nextMap: FoldMap,

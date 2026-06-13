@@ -113,7 +113,7 @@ export function renderRows(
   renderHiddenCharacters(view)
 }
 
-export function reconcileRows(
+function reconcileRows(
   view: VirtualizedTextViewInternal,
   items: readonly FixedRowVirtualItem[],
   snapshot: FixedRowVirtualizerSnapshot,
@@ -1010,7 +1010,7 @@ function createRowChunk(
   }
 }
 
-export function shouldChunkLine(view: VirtualizedTextViewInternal, text: string): boolean {
+function shouldChunkLine(view: VirtualizedTextViewInternal, text: string): boolean {
   if (view.wrapEnabled) return false
   return text.length > view.longLineChunkThreshold
 }
@@ -1026,7 +1026,7 @@ function rowChunkKey(
   return `${window.start}:${window.end}:${snapshot.viewportWidth}:${snapshot.scrollLeft}`
 }
 
-export function horizontalChunkWindow(
+function horizontalChunkWindow(
   view: VirtualizedTextViewInternal,
   text: string,
   snapshot = view.virtualizer.getSnapshot(),
@@ -1069,7 +1069,7 @@ export function horizontalViewportColumns(
   return Math.max(1, Math.ceil(width / characterWidth(view)))
 }
 
-export function horizontalTextScrollLeft(
+function horizontalTextScrollLeft(
   view: VirtualizedTextViewInternal,
   scrollLeft = view.virtualizer.getSnapshot().scrollLeft,
 ): number {
@@ -1286,7 +1286,7 @@ function cursorLineGutterBackgroundEnabled(
   return setting.includes(contributionId)
 }
 
-export function foldMarkerForVirtualRow(
+function foldMarkerForVirtualRow(
   view: VirtualizedTextViewInternal,
   row: number,
 ): VirtualizedFoldMarker | null {
@@ -1816,7 +1816,7 @@ export function restoreScrollPosition(
   syncVirtualizerMetricsFromScrollElement(view)
 }
 
-export function syncVirtualizerMetricsFromScrollElement(view: VirtualizedTextViewInternal): void {
+function syncVirtualizerMetricsFromScrollElement(view: VirtualizedTextViewInternal): void {
   const snapshot = view.virtualizer.getSnapshot()
   view.virtualizer.setScrollMetrics({
     scrollTop: view.scrollElement.scrollTop,
@@ -1963,7 +1963,7 @@ export function scrollToRow(view: VirtualizedTextViewInternal, row: number): voi
   syncVirtualizerMetricsFromScrollElement(view)
 }
 
-export function characterWidth(view: VirtualizedTextViewInternal): number {
+function characterWidth(view: VirtualizedTextViewInternal): number {
   return Math.max(1, view.metrics.characterWidth)
 }
 

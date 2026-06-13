@@ -22,7 +22,7 @@ const FIND_MATCH_STYLE = { backgroundColor: 'rgba(234, 179, 8, 0.34)' }
 const FIND_CURRENT_STYLE = { backgroundColor: 'rgba(245, 158, 11, 0.72)', color: '#111827' }
 const FIND_SCOPE_STYLE = { backgroundColor: 'rgba(59, 130, 246, 0.22)' }
 
-export type EditorFindSelectionRange = {
+type EditorFindSelectionRange = {
   readonly anchor: number
   readonly head: number
 }

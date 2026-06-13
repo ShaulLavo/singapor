@@ -89,7 +89,8 @@ export const pieceTableSnapshotsHaveSameText = (
     if (!leftChunk || !rightChunk) return !leftChunk && !rightChunk
 
     const length = Math.min(leftChunk.end - leftChunk.start, rightChunk.end - rightChunk.start)
-    const leftText = leftChunk.text.length === length ? leftChunk.text : leftChunk.text.slice(0, length)
+    const leftText =
+      leftChunk.text.length === length ? leftChunk.text : leftChunk.text.slice(0, length)
     const rightText =
       rightChunk.text.length === length ? rightChunk.text : rightChunk.text.slice(0, length)
     if (leftText !== rightText) return false
@@ -142,4 +143,3 @@ const streamCurrentPiece = (
     end: pieceStart + localEnd,
   })
 }
-

@@ -1,4 +1,4 @@
-export type EditorInputPhase =
+type EditorInputPhase =
   | 'idle'
   | 'composing'
   | 'beforeinput-pending'
@@ -7,10 +7,10 @@ export type EditorInputPhase =
   | 'transaction-committed'
   | 'selection-reconciled'
 
-export type EditorInputSelectionOwner = 'dom' | 'hidden-input' | 'session'
-export type EditorHiddenInputValueOwner = 'browser' | 'editor'
-export type EditorPendingTextSource = 'beforeinput' | 'composition' | 'paste' | 'drop' | 'fallback'
-export type NativeTextInputState = 'unknown' | 'observed' | 'missing'
+type EditorInputSelectionOwner = 'dom' | 'hidden-input' | 'session'
+type EditorHiddenInputValueOwner = 'browser' | 'editor'
+type EditorPendingTextSource = 'beforeinput' | 'composition' | 'paste' | 'drop' | 'fallback'
+type NativeTextInputState = 'unknown' | 'observed' | 'missing'
 
 export type EditorInputState = {
   readonly phase: EditorInputPhase

@@ -1,6 +1,6 @@
 import type { EditorSyntaxSessionFactory, HighlightRegistry } from './types'
 
-export type EditorMountTimingObserver = (durationMs: number) => void
+type EditorMountTimingObserver = (durationMs: number) => void
 
 let editorInstanceCount = 0
 let editorSyntaxSessionFactory: EditorSyntaxSessionFactory | undefined

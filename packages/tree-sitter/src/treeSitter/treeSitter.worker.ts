@@ -8,9 +8,11 @@ import {
   type Tree,
   type TreeCursor,
 } from 'web-tree-sitter'
-import { packEditorTokens,
+import {
+  packEditorTokens,
   packedEditorTokenTransfers,
-  treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
+  treeSitterCapturesToEditorTokens,
+} from '@singapor/core/syntax'
 import type { PackedEditorTokens } from '@singapor/core/syntax'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
 import type { TreeSitterLanguageDescriptor } from './registry'
@@ -498,7 +500,7 @@ const queryDocumentRangeWithContext = async (
     injections: result.injections,
     degraded: result.degraded,
     tokens: result.tokens,
-      tokensPacked: result.tokensPacked,
+    tokensPacked: result.tokensPacked,
     timings: [{ name: 'treeSitter.queryRange', durationMs: nowMs() - queryStart }],
   }
 }

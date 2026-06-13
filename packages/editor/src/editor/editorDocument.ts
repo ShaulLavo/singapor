@@ -7,9 +7,9 @@ import type {
   EditorSelectionSyncMode,
 } from './types'
 
-export const DEFAULT_EDITABILITY: EditorEditability = 'editable'
-export const DEFAULT_DOCUMENT_MODE: EditorDocumentMode = 'session'
-export const DEFAULT_SELECTION_SYNC_MODE: EditorSelectionSyncMode = 'sync'
+const DEFAULT_EDITABILITY: EditorEditability = 'editable'
+const DEFAULT_DOCUMENT_MODE: EditorDocumentMode = 'session'
+const DEFAULT_SELECTION_SYNC_MODE: EditorSelectionSyncMode = 'sync'
 
 export type ResetOwnedDocumentOptions = {
   readonly documentId: string | null

@@ -24,11 +24,7 @@ const MAX_ENTRIES = 128
 export class DocumentEditChain {
   #entries: EditChainEntry[] = []
 
-  public record(
-    fromVersion: number,
-    toVersion: number,
-    edits: readonly TextEdit[] | null,
-  ): void {
+  public record(fromVersion: number, toVersion: number, edits: readonly TextEdit[] | null): void {
     if (fromVersion === toVersion) return
 
     this.#entries.push({ fromVersion, toVersion, edits })

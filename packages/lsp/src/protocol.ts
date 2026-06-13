@@ -1,6 +1,6 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 
-export const JSON_RPC_VERSION = '2.0'
+const JSON_RPC_VERSION = '2.0'
 export const METHOD_NOT_FOUND = -32601
 export const REQUEST_CANCELLED = -32800
 

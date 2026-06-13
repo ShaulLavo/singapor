@@ -14,7 +14,7 @@ export type SourceTreeEntry =
       readonly children: readonly SourceTreeEntry[]
     }
 
-export type FileSelectReason = 'auto' | 'user'
+type FileSelectReason = 'auto' | 'user'
 export type FileSelectHandler = (file: SourceFile, reason: FileSelectReason) => Promise<void> | void
 type DirectoryToggleHandler = (directoryPath: string, open: boolean) => void
 

@@ -5,7 +5,7 @@ export type DiffGutterSide = 'old' | 'new' | 'stacked'
 export type DiffGutterNumberSide = Exclude<DiffGutterSide, 'stacked'>
 export type DiffGutterLaneKind = DiffGutterNumberSide | 'indicator'
 
-export type DiffGutterLaneLayout = {
+type DiffGutterLaneLayout = {
   readonly kind: DiffGutterLaneKind
   readonly left: number
   readonly width: number
@@ -77,7 +77,7 @@ export function diffGutterLayout(
   }
 }
 
-export function diffGutterWidthCharacters(
+function diffGutterWidthCharacters(
   side: DiffGutterSide,
   rows: readonly DiffRenderRow[],
   lineCount: number,
@@ -104,7 +104,7 @@ function createDiffGutterCell(document: Document): HTMLElement {
   return element
 }
 
-export function diffGutterText(row: DiffRenderRow, side: DiffGutterSide): string {
+function diffGutterText(row: DiffRenderRow, side: DiffGutterSide): string {
   if (side === 'stacked') {
     const oldNumber = diffGutterNumberText(row, 'old')
     const newNumber = diffGutterNumberText(row, 'new')

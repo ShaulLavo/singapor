@@ -14,25 +14,17 @@ import type {
   VirtualizedTextViewScrollMode,
 } from './virtualizedTextViewTypes'
 import {
-  chunkContainsDomBoundary,
   clearRowGeometryCache,
   createDomRangeForChunkRange,
   createStaticRangeForChunkRange,
 } from './virtualizedTextViewGeometry'
 
-export const DEFAULT_ROW_HEIGHT = 24
+const DEFAULT_ROW_HEIGHT = 24
 export const DEFAULT_OVERSCAN = 12
-export const DEFAULT_GUTTER_WIDTH = 36
 export const DEFAULT_SELECTION_HIGHLIGHT = 'editor-virtualized-selection'
-export const DEFAULT_LONG_LINE_CHUNK_SIZE = 2048
-export const DEFAULT_LONG_LINE_CHUNK_THRESHOLD = 4096
-export const DEFAULT_HORIZONTAL_OVERSCAN_COLUMNS = 256
-
-export function normalizeGutterWidth(width: number | undefined): number {
-  if (width === undefined) return DEFAULT_GUTTER_WIDTH
-  if (!Number.isFinite(width) || width < 0) return DEFAULT_GUTTER_WIDTH
-  return width
-}
+const DEFAULT_LONG_LINE_CHUNK_SIZE = 2048
+const DEFAULT_LONG_LINE_CHUNK_THRESHOLD = 4096
+const DEFAULT_HORIZONTAL_OVERSCAN_COLUMNS = 256
 
 export function normalizeRowHeight(rowHeight: number): number {
   if (!Number.isFinite(rowHeight) || rowHeight <= 0) return DEFAULT_ROW_HEIGHT
@@ -113,34 +105,6 @@ export function indexFoldMarkersByKey(
   }
 
   return index
-}
-
-export function preventFoldButtonMouseDown(event: MouseEvent): void {
-  event.preventDefault()
-  event.stopPropagation()
-}
-
-export function hideFoldButton(button: HTMLButtonElement): void {
-  setElementHidden(button, true)
-  if (!button.disabled) button.disabled = true
-  if (button.tabIndex !== -1) button.tabIndex = -1
-  deleteDatasetValue(button, 'editorFoldKey')
-  deleteDatasetValue(button, 'editorFoldState')
-  removeAttributeValue(button, 'aria-label')
-}
-
-export function showFoldButton(
-  button: HTMLButtonElement,
-  key: string,
-  state: 'collapsed' | 'expanded',
-): void {
-  const label = state === 'collapsed' ? 'Expand folded region' : 'Collapse foldable region'
-  setElementHidden(button, false)
-  if (button.disabled) button.disabled = false
-  if (button.tabIndex !== 0) button.tabIndex = 0
-  setDatasetValue(button, 'editorFoldKey', key)
-  setDatasetValue(button, 'editorFoldState', state)
-  setAttributeValue(button, 'aria-label', label)
 }
 
 export function hideFoldPlaceholder(element: HTMLSpanElement): void {
@@ -284,68 +248,6 @@ export function rowElementFromNode(node: Node, boundary: HTMLElement): HTMLDivEl
   return element
 }
 
-export function rowChunkFromDomBoundary(
-  row: VirtualizedTextRow,
-  node: Node,
-): VirtualizedTextChunk | null {
-  for (const chunk of row.chunks) {
-    if (chunkContainsDomBoundary(chunk, node)) return chunk
-  }
-
-  return null
-}
-
-export function mountedChunkForOffset(
-  row: VirtualizedTextRow,
-  offset: number,
-): VirtualizedTextChunk | null {
-  for (const chunk of row.chunks) {
-    if (offset < chunk.startOffset || offset > chunk.endOffset) continue
-    return chunk
-  }
-
-  return null
-}
-
-export function mountedOffsetRange(rows: readonly VirtualizedTextRow[]): OffsetRange | null {
-  const first = rows[0]
-  const last = rows.at(-1)
-  if (!first || !last) return null
-
-  return {
-    start: first.startOffset,
-    end: last.endOffset,
-  }
-}
-
-export function firstIntersectingMountedRow(
-  rows: readonly VirtualizedTextRow[],
-  start: number,
-  end: number,
-): number {
-  if (end <= start) return -1
-
-  let low = 0
-  let high = rows.length - 1
-  let result = rows.length
-
-  while (low <= high) {
-    const middle = Math.floor((low + high) / 2)
-    const row = rows[middle]!
-    if (row.endOffset > start) {
-      result = middle
-      high = middle - 1
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  const row = rows[result]
-  if (!row || row.startOffset >= end) return -1
-  return result
-}
-
 export function getOrCreateTokenSegments(
   segmentsByRow: Map<number, TokenRowSegment[]>,
   rowSlotId: number,
@@ -486,7 +388,7 @@ export function appendTokenRange(
   rangesByStyle.set(styleKey, [range])
 }
 
-export function firstRangeRect(range: Range): DOMRect | null {
+function firstRangeRect(range: Range): DOMRect | null {
   const rects = range.getClientRects()
   const first = rects.item(0)
   if (first) return first
@@ -733,11 +635,6 @@ export function setStyleValue(element: HTMLElement, property: string, value: str
   element.style.setProperty(property, value)
 }
 
-export function setCounterSet(element: HTMLElement, value: string): void {
-  if (element.style.counterSet === value) return
-  element.style.counterSet = value
-}
-
 function setDatasetValue(element: HTMLElement, key: string, value: string): void {
   if (element.dataset[key] === value) return
   element.dataset[key] = value
@@ -748,28 +645,12 @@ function deleteDatasetValue(element: HTMLElement, key: string): void {
   delete element.dataset[key]
 }
 
-function setAttributeValue(element: HTMLElement, name: string, value: string): void {
-  if (element.getAttribute(name) === value) return
-  element.setAttribute(name, value)
-}
-
-function removeAttributeValue(element: HTMLElement, name: string): void {
-  if (!element.hasAttribute(name)) return
-  element.removeAttribute(name)
-}
-
-export function parseCssPixels(value: string | undefined): number | null {
+function parseCssPixels(value: string | undefined): number | null {
   if (!value) return null
 
   const pixels = Number.parseFloat(value)
   if (!Number.isFinite(pixels)) return null
   return pixels
-}
-
-export function pointVerticalDirection(clientY: number, top: number, bottom: number): number {
-  if (clientY < top) return -1
-  if (clientY >= bottom) return 1
-  return 0
 }
 
 export function alignChunkStart(value: number, chunkSize: number): number {
@@ -798,12 +679,7 @@ export function getDefaultHighlightRegistry(): HighlightRegistry | null {
   return css?.highlights ?? null
 }
 
-export function rangesIntersect(
-  startA: number,
-  endA: number,
-  startB: number,
-  endB: number,
-): boolean {
+function rangesIntersect(startA: number, endA: number, startB: number, endB: number): boolean {
   return endA > startB && startA < endB
 }
 
@@ -814,18 +690,4 @@ export function rangesIntersectInclusive(
   endB: number,
 ): boolean {
   return endA >= startB && startA <= endB
-}
-
-export function visualColumn(text: string): number {
-  let column = 0
-  for (const char of text) {
-    if (char === '\t') {
-      column += 4 - (column % 4)
-      continue
-    }
-
-    column += 1
-  }
-
-  return column
 }

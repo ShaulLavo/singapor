@@ -1,5 +1,6 @@
 import type { TextSnapshot } from '../documentTextSnapshot'
-import type { EditorLineStartsView,
+import type {
+  EditorLineStartsView,
   EditorResolvedSelection,
   EditorViewSnapshot,
   EditorViewportSnapshot,

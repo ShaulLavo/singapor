@@ -1,9 +1,9 @@
 import { el } from './dom.ts'
 
-export type AppViewMode = 'edit' | 'diff'
-export type AppDiffMode = 'split' | 'stacked'
+type AppViewMode = 'edit' | 'diff'
+type AppDiffMode = 'split' | 'stacked'
 
-export type TopBarHandlers = {
+type TopBarHandlers = {
   readonly onEditMode: () => void
   readonly onDiffMode: () => void
   readonly onSplitDiff: () => void

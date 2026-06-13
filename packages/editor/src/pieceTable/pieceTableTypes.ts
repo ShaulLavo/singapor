@@ -20,7 +20,7 @@ export type RealAnchor = {
   readonly bias: AnchorBias
 }
 
-export type SentinelAnchor = { kind: 'min' } | { kind: 'max' }
+type SentinelAnchor = { kind: 'min' } | { kind: 'max' }
 
 export type Anchor = RealAnchor | SentinelAnchor
 

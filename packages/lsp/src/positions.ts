@@ -1,7 +1,6 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 import { recordLspPerformanceDiagnostic } from './performanceDiagnostics'
-import type {
-  LspLineStarts, LspTextDocumentSnapshot, LspTextEdit } from './types'
+import type { LspLineStarts, LspTextDocumentSnapshot, LspTextEdit } from './types'
 
 export type LspContentChangeOptions = {
   readonly incremental?: boolean

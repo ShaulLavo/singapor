@@ -84,6 +84,14 @@ Monorepo managed by Turborepo with Bun.
 
 Run tests through package scripts with `bun run test`. Do not use `bun test`; it bypasses the configured Vitest environments for this repo.
 
+### Formatting
+
+Run `bun run format` (oxfmt via Turborepo). It formats the **entire repo**, so when there is pre-existing format drift it will touch files unrelated to your change. This is expected and fine — **do not revert those incidental reformats**. `bun run format:check` must pass before committing.
+
+### Dead-code checks
+
+`bun run knip` (config in `knip.jsonc`) finds unused files, exports, and dependencies across the workspace. Public API entry points are registered per-package from each package's `exports` map, so only genuinely-internal dead code is reported. A few real deps are referenced in ways knip can't see statically (CSS `@import`, wasm build tooling, the vitest playwright provider) and are listed under `ignoreDependencies` with the reason inline.
+
 <!-- opensrc:start -->
 
 ## Source Code Reference

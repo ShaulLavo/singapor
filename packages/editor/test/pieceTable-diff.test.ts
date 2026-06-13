@@ -36,10 +36,7 @@ const referenceDiff = (
   return { from: start, to: previousEnd, text: nextText.slice(start, nextEnd) }
 }
 
-const expectDiffParity = (
-  previous: PieceTableTreeSnapshot,
-  next: PieceTableTreeSnapshot,
-): void => {
+const expectDiffParity = (previous: PieceTableTreeSnapshot, next: PieceTableTreeSnapshot): void => {
   const previousText = materializePieceTableFullText(previous)
   const nextText = materializePieceTableFullText(next)
   const edit = diffPieceTableSnapshots(previous, next)

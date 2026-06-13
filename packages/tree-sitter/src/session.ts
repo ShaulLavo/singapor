@@ -503,13 +503,11 @@ type TreeSitterSyntaxResultContext = {
   readonly snapshotLength: number
 }
 
-const treeSitterParseResultToEditorSyntaxResult: typeof treeSitterParseResultToEditorSyntaxResultInner = (
-  result,
-  context,
-) => {
-  recordParseResultPayload(result)
-  return treeSitterParseResultToEditorSyntaxResultInner(result, context)
-}
+const treeSitterParseResultToEditorSyntaxResult: typeof treeSitterParseResultToEditorSyntaxResultInner =
+  (result, context) => {
+    recordParseResultPayload(result)
+    return treeSitterParseResultToEditorSyntaxResultInner(result, context)
+  }
 
 const treeSitterParseResultToEditorSyntaxResultInner = (
   result: TreeSitterParseResult,

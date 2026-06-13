@@ -17,7 +17,6 @@ export type MinimapSliderVisibility = 'always' | 'mouseover'
 export type MinimapAutohide = 'none' | 'mouseover' | 'scroll'
 export type MinimapDecorationPosition = CoreEditorMinimapDecorationPosition
 export type MinimapSectionHeaderStyle = CoreEditorMinimapSectionHeaderStyle
-export type EditorMinimapSectionHeaderStyle = CoreEditorMinimapSectionHeaderStyle
 
 export type RGBA8 = {
   readonly r: number
@@ -94,7 +93,7 @@ export type MinimapMetrics = {
   readonly devicePixelRatio: number
 }
 
-export type MinimapDocumentLineSummary = {
+type MinimapDocumentLineSummary = {
   readonly text: string
   readonly length: number
 }
@@ -143,7 +142,7 @@ export type MinimapRenderLayout = {
   readonly renderMinimap: RenderMinimap
 }
 
-export type MinimapWorkerInitRequest = {
+type MinimapWorkerInitRequest = {
   readonly type: 'init'
   readonly options: ResolvedMinimapOptions
   readonly baseStyles: MinimapBaseStyles

@@ -126,7 +126,9 @@ describe('DocumentEditChain', () => {
               text: 'xyz'[Math.floor(random() * 3)]!,
             }
           : { from: Math.floor(random() * text.length), to: 0, text: '' }
-        edit.to = insert ? edit.from : Math.min(text.length, edit.from + 1 + Math.floor(random() * 2))
+        edit.to = insert
+          ? edit.from
+          : Math.min(text.length, edit.from + 1 + Math.floor(random() * 2))
 
         text = text.slice(0, edit.from) + edit.text + text.slice(edit.to)
         chain.record(version, version + 1, [edit])

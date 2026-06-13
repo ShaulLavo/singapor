@@ -32,7 +32,7 @@ export type EditorSelectionSyncMode = 'sync' | 'none'
 
 export type EditorScrollMode = VirtualizedTextViewScrollMode
 
-export type EditorRowPositioning = VirtualizedTextViewRowPositioning
+type EditorRowPositioning = VirtualizedTextViewRowPositioning
 
 export type EditorRangeDecoration = {
   readonly className?: string

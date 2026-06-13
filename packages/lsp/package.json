@@ -37,14 +37,15 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "vscode-languageserver-protocol": "^3.17.5"
+    "vscode-languageserver-protocol": "^3.18.0"
   },
   "devDependencies": {
-    "@typescript/native-preview": "7.0.0-dev.20260524.1",
+    "@types/node": "^25.9.3",
+    "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "happy-dom": "^20.10.3",
-    "oxfmt": "0.51.0",
-    "oxlint": "1.66.0",
-    "typescript": "~5.9.3",
+    "oxfmt": "0.54.0",
+    "oxlint": "1.69.0",
+    "typescript": "~6.0.3",
     "vitest": "^4.1.8"
   }
 }

@@ -97,15 +97,15 @@
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
     "unified": "^11.0.5",
-    "vscode-languageserver-protocol": "^3.17.5"
+    "vscode-languageserver-protocol": "^3.18.0"
   },
   "devDependencies": {
     "@singapor/core": "workspace:*",
-    "@typescript/native-preview": "7.0.0-dev.20260524.1",
+    "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "happy-dom": "^20.10.3",
-    "oxfmt": "0.51.0",
-    "oxlint": "1.66.0",
-    "typescript": "~5.9.3",
+    "oxfmt": "0.54.0",
+    "oxlint": "1.69.0",
+    "typescript": "~6.0.3",
     "vitest": "^4.1.8"
   },
   "peerDependencies": {

@@ -35,13 +35,13 @@
     "@singapor/core": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "^1.57.0",
-    "@typescript/native-preview": "7.0.0-dev.20260524.1",
+    "@playwright/test": "^1.60.0",
+    "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "@vitest/browser-playwright": "^4.1.8",
     "happy-dom": "^20.10.3",
-    "oxfmt": "0.51.0",
-    "oxlint": "1.66.0",
-    "typescript": "~5.9.3",
+    "oxfmt": "0.54.0",
+    "oxlint": "1.69.0",
+    "typescript": "~6.0.3",
     "vitest": "^4.1.8"
   }
 }

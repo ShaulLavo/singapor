@@ -3,8 +3,12 @@
     "target": "ES2023",
     "module": "ESNext",
     "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": ["node"],
     "skipLibCheck": true,
     "moduleResolution": "Bundler",
+    "paths": {
+      "@singapor/tree-sitter": ["./src/index.ts"]
+    },
     "allowImportingTsExtensions": true,
     "allowArbitraryExtensions": true,
     "verbatimModuleSyntax": true,

@@ -40,15 +40,16 @@
     "@singapor/lsp": "workspace:*",
     "@singapor/lsp-plugin": "workspace:*",
     "@typescript/vfs": "^1.6.4",
-    "typescript": "~5.9.3",
-    "vscode-languageserver-protocol": "^3.17.5"
+    "typescript": "~6.0.3",
+    "vscode-languageserver-protocol": "^3.18.0"
   },
   "devDependencies": {
     "@singapor/core": "workspace:*",
-    "@typescript/native-preview": "7.0.0-dev.20260524.1",
+    "@types/node": "^25.9.3",
+    "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "happy-dom": "^20.10.3",
-    "oxfmt": "0.51.0",
-    "oxlint": "1.66.0",
+    "oxfmt": "0.54.0",
+    "oxlint": "1.69.0",
     "vitest": "^4.1.8"
   },
   "peerDependencies": {

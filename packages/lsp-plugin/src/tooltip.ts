@@ -497,7 +497,12 @@ function plainHoverText(markdown: string | null): string {
 }
 
 function diagnosticCopyText(diagnostic: lsp.Diagnostic): string {
-  return `${severityForDiagnostic(diagnostic)}: ${diagnostic.message}`.trim()
+  return `${severityForDiagnostic(diagnostic)}: ${diagnosticMessageText(diagnostic.message)}`.trim()
+}
+
+function diagnosticMessageText(message: lsp.Diagnostic['message']): string {
+  if (typeof message === 'string') return message
+  return message.value
 }
 
 function diagnosticSection(
@@ -536,7 +541,7 @@ function diagnosticRow(document: Document, diagnostic: lsp.Diagnostic): HTMLElem
   label.style.color = diagnosticColor(diagnostic)
 
   const message = document.createElement('span')
-  message.textContent = diagnostic.message
+  message.textContent = diagnosticMessageText(diagnostic.message)
 
   row.append(label, message)
   return row

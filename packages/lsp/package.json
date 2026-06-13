@@ -41,10 +41,10 @@
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260524.1",
-    "happy-dom": "^20.8.9",
+    "happy-dom": "^20.10.3",
     "oxfmt": "0.51.0",
     "oxlint": "1.66.0",
     "typescript": "~5.9.3",
-    "vitest": "^3.1.1"
+    "vitest": "^4.1.8"
   }
 }

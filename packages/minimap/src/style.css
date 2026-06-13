@@ -29,9 +29,6 @@
   top: 0;
 }
 
-.editor-minimap-canvas {
-  opacity: 0.9;
-}
 
 .editor-minimap-decorations {
   pointer-events: none;

@@ -43,7 +43,7 @@
     "oxlint": "1.66.0",
     "tree-sitter-cli": "^0.23.0",
     "typescript": "~5.9.3",
-    "vitest": "^3.1.1"
+    "vitest": "^4.1.8"
   },
   "peerDependencies": {
     "@singapor/core": "workspace:*",

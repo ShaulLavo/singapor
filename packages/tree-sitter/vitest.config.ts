@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
 import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 
 const require = createRequire(import.meta.url)
@@ -29,10 +30,10 @@ export default defineConfig({
   test: {
     browser: {
       headless: true,
-      provider: 'playwright',
+      provider: playwright(),
       instances: [{ browser: 'chromium' }],
     },
-    environmentMatchGlobs: [['test/treeSitter-worker.test.ts', 'happy-dom']],
+    environment: 'happy-dom',
   },
 })
 

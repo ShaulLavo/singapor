@@ -31,6 +31,8 @@ export type {
   EditorInjectedTextRow,
   EditorInjectedTextRowProvider,
   EditorInjectedTextRowProviderContext,
+  EditorInlineReplacementContext,
+  EditorInlineReplacementProvider,
   EditorLogEditorContext,
   EditorLogError,
   EditorLogEvent,

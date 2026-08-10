@@ -12,6 +12,32 @@ Related inline workarounds already documented at their call sites:
   (WebKit re-resolves registered CSS Highlight ranges when a painted row's
   transform changes).
 
+## Native textarea caret leaks through transparent hidden input
+
+**Verified 2026-06 against:** desktop app WebView, user-visible in the Platform
+shell. Needs a standalone engine matrix before filing upstream.
+
+### Symptom
+
+When the editor is focused, a native insertion caret can blink at the top-left
+of the editor viewport instead of only the custom editor caret being visible.
+
+### Root cause
+
+The editor keeps a 1px hidden `textarea` (`.editor-virtualized-input`) focused
+to receive native text input, `beforeinput`, composition, paste, and keyboard
+fallback events. The element is transparent, but some browser/native text field
+paint paths can still expose the focused control's caret/chrome at its
+position.
+
+### Fix
+
+The hidden textarea remains focusable and in the viewport, but every native
+visual channel is explicitly neutralized in `packages/editor/src/style.css`:
+transparent `caret-color`, transparent text fill, no background, border,
+outline, shadow, native appearance, or padding. The visible caret continues to
+be rendered by `.editor-virtualized-caret`.
+
 ## Safari renders every line number as "0"
 
 **Verified 2026-06 against:** WebKit 26.4 (Playwright webkit-2272) — broken;

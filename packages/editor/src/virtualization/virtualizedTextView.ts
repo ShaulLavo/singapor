@@ -1,4 +1,5 @@
 import type { FoldMap } from '../foldMap'
+import { type InlineMap, revealInlineMap } from '../inlineMap'
 import {
   normalizeTabSize,
   isDocumentTextDisplayRow,
@@ -25,6 +26,7 @@ import {
   getDefaultHighlightRegistry,
   indexFoldMarkersByKey,
   indexFoldMarkersByStartRow,
+  inlineMapMatchesText,
   normalizeChunkSize,
   normalizeChunkThreshold,
   normalizeHorizontalOverscan,
@@ -46,6 +48,7 @@ import {
   renderRangeHighlight,
   renderSelectionHighlight,
   renderTokenHighlights,
+  restoreHighlightsAfterBrowserResume,
   setRangeHighlight,
   setSelection,
   setSelections,
@@ -159,6 +162,12 @@ function normalizeGutterWidthProvider(
   return () => gutterWidth
 }
 
+function selectionOffsetRanges(
+  view: VirtualizedTextViewInternal,
+): readonly { readonly start: number; readonly end: number }[] {
+  return view.selections.map((selection) => ({ start: selection.start, end: selection.end }))
+}
+
 function setScrollModeAttribute(
   element: HTMLElement,
   scrollMode: VirtualizedTextViewScrollMode,
@@ -170,6 +179,7 @@ export class VirtualizedTextView {
   public readonly scrollElement: HTMLDivElement
   public readonly inputElement: HTMLTextAreaElement
   private readonly view: VirtualizedTextViewInternal
+  private readonly disposeForegroundHighlightRestore: () => void
 
   public constructor(container: HTMLElement, options: VirtualizedTextViewOptions = {}) {
     const overscan = options.overscan ?? DEFAULT_OVERSCAN
@@ -207,6 +217,7 @@ export class VirtualizedTextView {
       textSnapshot: initialTextSnapshot,
       lineStarts: [0],
       foldMap: null,
+      inlineMap: null,
       blockRows: initialBlockRows,
       injectedTextRows: initialInjectedTextRows,
       wrapColumn: null,
@@ -277,6 +288,7 @@ export class VirtualizedTextView {
       selectionEnd: null,
       selectionHead: null,
       selections: [],
+      inlineMapBase: null,
       lastSelectionHighlightSignature: '',
       lastRenderedRowsKey: '',
       lastSpacerHeight: '',
@@ -323,11 +335,13 @@ export class VirtualizedTextView {
       },
       { readInitialScrollPosition: false },
     )
+    this.disposeForegroundHighlightRestore = subscribeToForegroundHighlightRestore(this.view)
     rebuildStyleRules(this.view)
   }
 
   public dispose(): void {
     const view = this.view
+    this.disposeForegroundHighlightRestore()
     clearSelectionHighlight(view)
     for (const name of view.rangeHighlightGroups.keys()) clearRangeHighlight(view, name)
     clearTokenHighlights(view)
@@ -358,6 +372,30 @@ export class VirtualizedTextView {
 
   public setFoldMap(foldMap: FoldMap | null): void {
     this.setFoldState(this.view.foldMarkers, foldMap)
+  }
+
+  public setInlineMap(inlineMap: InlineMap | null): void {
+    const view = this.view
+    view.inlineMapBase = inlineMapMatchesText(inlineMap, view.model.textLength) ? inlineMap : null
+    this.refreshInlineReveal()
+  }
+
+  /**
+   * Re-derives the rendered inline map from the supplied one by revealing whatever the selections
+   * touch, then rebuilds rows only if the result actually differs. Rendering and coordinate mapping
+   * both read `model.inlineMap`, so they always agree on what is currently hidden.
+   */
+  private refreshInlineReveal(): void {
+    const view = this.view
+    const base = view.inlineMapBase
+    const next = base ? revealInlineMap(base, selectionOffsetRanges(view)) : null
+    if (view.model.inlineMap === next) return
+
+    view.model.inlineMap = next
+    clearRowTokenState(view)
+    rebuildDisplayRows(view, horizontalViewportColumns(view))
+    view.lastRenderedRowsKey = ''
+    updateVirtualizerRows(view)
   }
 
   public setFoldMarkers(markers: readonly VirtualizedFoldMarker[]): void {
@@ -736,14 +774,17 @@ export class VirtualizedTextView {
 
   public setSelection(anchorOffset: number, headOffset: number): void {
     setSelection(this.view, anchorOffset, headOffset)
+    this.refreshInlineReveal()
   }
 
   public setSelections(selections: readonly VirtualizedTextSelection[]): void {
     setSelections(this.view, selections)
+    this.refreshInlineReveal()
   }
 
   public clearSelection(): void {
     clearSelection(this.view)
+    this.refreshInlineReveal()
   }
 
   public setRangeHighlight(
@@ -864,6 +905,29 @@ export class VirtualizedTextView {
     resetContentWidthScan(view)
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
+  }
+}
+
+function subscribeToForegroundHighlightRestore(view: VirtualizedTextViewInternal): () => void {
+  const doc = view.scrollElement.ownerDocument
+  const win = doc.defaultView
+  if (!win) return () => {}
+
+  const restore = () => restoreHighlightsAfterBrowserResume(view)
+  const restoreWhenVisible = () => {
+    if (doc.visibilityState === 'hidden') return
+
+    restore()
+  }
+
+  win.addEventListener('focus', restore)
+  win.addEventListener('pageshow', restore)
+  doc.addEventListener('visibilitychange', restoreWhenVisible)
+
+  return () => {
+    win.removeEventListener('focus', restore)
+    win.removeEventListener('pageshow', restore)
+    doc.removeEventListener('visibilitychange', restoreWhenVisible)
   }
 }
 

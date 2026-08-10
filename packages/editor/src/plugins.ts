@@ -7,11 +7,13 @@ import type { EditorToken, TextEdit } from './tokens'
 import type { EditorBlockProvider } from './editorBlocks'
 import type { DisplayTextRowSource, InjectedTextRow } from './displayTransforms'
 import {
+  type EditorSyntaxCapture,
   type EditorSyntaxLanguageId,
   type EditorSyntaxProvider,
   type EditorSyntaxSession,
   type EditorSyntaxSessionOptions,
 } from './syntax/session'
+import type { InlineReplacementSpec } from './inlineMap'
 import type { BrowserTextMetrics } from './virtualization/browserMetrics'
 import type { FixedRowVisibleRange } from './virtualization/fixedRowVirtualizer'
 import type {
@@ -415,6 +417,22 @@ export type EditorGutterContribution = {
   disposeCell?(element: HTMLElement): void
 }
 
+export type EditorInlineReplacementContext = {
+  readonly text: string
+  readonly languageId: EditorSyntaxLanguageId | null
+  readonly captures: readonly EditorSyntaxCapture[]
+}
+
+/**
+ * Derives the spans a document renders something else in place of — hidden markdown fences, a bullet
+ * standing in for `-`, and so on. Called with fresh syntax captures whenever the parse settles.
+ * Providers compose: every registered provider contributes, and overlapping spans are resolved by
+ * the inline map, outermost first.
+ */
+export type EditorInlineReplacementProvider = (
+  context: EditorInlineReplacementContext,
+) => readonly InlineReplacementSpec[]
+
 export type EditorPluginContext = {
   log?(event: EditorLogInput): void
   registerLogger?(logger: EditorLogger): EditorDisposable
@@ -428,6 +446,12 @@ export type EditorPluginContext = {
   registerGutterContribution(contribution: EditorGutterContribution): EditorDisposable
   registerBlockProvider(provider: EditorBlockProvider): EditorDisposable
   registerInjectedTextRowProvider(provider: EditorInjectedTextRowProvider): EditorDisposable
+  /**
+   * Optional so that adding it did not break every hand-written `EditorPluginContext` (test mocks,
+   * mostly). The plugin host always provides it; callers should treat a missing one as a host too old
+   * for the contribution and say so rather than silently skipping their own registration.
+   */
+  registerInlineReplacementProvider?(provider: EditorInlineReplacementProvider): EditorDisposable
 }
 
 export type EditorInternalPluginContext = EditorPluginContext & {
@@ -454,6 +478,7 @@ export type EditorPluginHostEvents = {
   onPluginInstallFailed?(name: string, error: unknown, durationMs: number): void
   onHighlighterProvidersChanged?(): void
   onSyntaxProvidersChanged?(): void
+  onInlineReplacementProvidersChanged?(): void
   onPluginActivated?(name: string, durationMs: number): void
   onPluginActivationFailed?(name: string, error: unknown, durationMs: number): void
   onPluginUpdated?(name: string, durationMs: number): void
@@ -507,6 +532,7 @@ export class EditorPluginHost implements EditorDisposable {
   private readonly gutterContributions: EditorGutterContribution[] = []
   private readonly blockProviders: EditorBlockProvider[] = []
   private readonly injectedTextRowProviders: EditorInjectedTextRowProvider[] = []
+  private readonly inlineReplacementProviders: EditorInlineReplacementProvider[] = []
   private readonly blockProviderInvalidationDisposables = new Map<
     EditorBlockProvider,
     EditorDisposable
@@ -682,6 +708,10 @@ export class EditorPluginHost implements EditorDisposable {
     return this.blockProviders
   }
 
+  public getInlineReplacementProviders(): readonly EditorInlineReplacementProvider[] {
+    return this.inlineReplacementProviders
+  }
+
   public getInjectedTextRowProviders(): readonly EditorInjectedTextRowProvider[] {
     return this.injectedTextRowProviders
   }
@@ -758,6 +788,7 @@ export class EditorPluginHost implements EditorDisposable {
     }
     this.injectedTextRowProviderInvalidationDisposables.clear()
     this.injectedTextRowProviders.length = 0
+    this.inlineReplacementProviders.length = 0
   }
 
   private ensurePluginActive(plugin: EditorPlugin): boolean {
@@ -926,6 +957,8 @@ export class EditorPluginHost implements EditorDisposable {
       registerGutterContribution: (contribution) => this.registerGutterContribution(contribution),
       registerBlockProvider: (provider) => this.registerBlockProvider(provider),
       registerInjectedTextRowProvider: (provider) => this.registerInjectedTextRowProvider(provider),
+      registerInlineReplacementProvider: (provider) =>
+        this.registerInlineReplacementProvider(provider),
     }
   }
 
@@ -1184,6 +1217,26 @@ export class EditorPluginHost implements EditorDisposable {
     this.blockProviderInvalidationDisposables.get(provider)?.dispose()
     this.blockProviderInvalidationDisposables.delete(provider)
     this.events.onBlockProvidersChanged?.()
+  }
+
+  private registerInlineReplacementProvider(
+    provider: EditorInlineReplacementProvider,
+  ): EditorDisposable {
+    this.inlineReplacementProviders.push(provider)
+    const disposable = this.trackLifecycleRegistration(
+      disposableOnce(() => this.unregisterInlineReplacementProvider(provider)),
+    )
+    notifyRegistrationAdded(disposable, () => this.events.onInlineReplacementProvidersChanged?.())
+
+    return disposable
+  }
+
+  private unregisterInlineReplacementProvider(provider: EditorInlineReplacementProvider): void {
+    const index = this.inlineReplacementProviders.indexOf(provider)
+    if (index === -1) return
+
+    this.inlineReplacementProviders.splice(index, 1)
+    this.events.onInlineReplacementProvidersChanged?.()
   }
 
   private registerInjectedTextRowProvider(

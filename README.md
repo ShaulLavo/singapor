@@ -44,6 +44,7 @@ architecture questions, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | `@singapor/core` | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, Shiki highlighter, and plugin contracts. |
 | `@singapor/gutters` | Line-number and fold-gutter plugins for the core editor. |
 | `@singapor/find` | Find and replace plugin for the core editor. |
+| `@singapor/markdown` | Markdown live preview: renders markdown as formatted text while the buffer keeps holding markdown source. |
 | `@singapor/minimap` | Minimap plugin with worker-backed document rendering. |
 | `@singapor/scope-lines` | Scope-line view contribution plugin. |
 | `@singapor/tree-sitter` | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers. |

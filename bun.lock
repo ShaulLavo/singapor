@@ -35,6 +35,21 @@
         "vitest": "^4.1.8",
       },
     },
+    "packages/decode": {
+      "name": "@singapor/decode",
+      "version": "0.1.0",
+      "dependencies": {
+        "@singapor/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@typescript/native-preview": "7.0.0-dev.20260613.1",
+        "happy-dom": "^20.10.3",
+        "oxfmt": "0.54.0",
+        "oxlint": "1.69.0",
+        "typescript": "~6.0.3",
+        "vitest": "^4.1.8",
+      },
+    },
     "packages/diff": {
       "name": "@singapor/diff",
       "version": "0.1.1",
@@ -146,6 +161,24 @@
       },
       "peerDependencies": {
         "@singapor/core": "workspace:*",
+      },
+    },
+    "packages/markdown": {
+      "name": "@singapor/markdown",
+      "version": "0.1.0",
+      "dependencies": {
+        "@singapor/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@singapor/tree-sitter-languages": "workspace:*",
+        "@types/node": "^25.9.3",
+        "@typescript/native-preview": "7.0.0-dev.20260613.1",
+        "happy-dom": "^20.10.3",
+        "oxfmt": "0.54.0",
+        "oxlint": "1.69.0",
+        "typescript": "~6.0.3",
+        "vitest": "^4.1.8",
+        "web-tree-sitter": "^0.26.9",
       },
     },
     "packages/minimap": {
@@ -533,6 +566,8 @@
 
     "@singapor/core": ["@singapor/core@workspace:packages/editor"],
 
+    "@singapor/decode": ["@singapor/decode@workspace:packages/decode"],
+
     "@singapor/diff": ["@singapor/diff@workspace:packages/diff"],
 
     "@singapor/example-app": ["@singapor/example-app@workspace:examples/app"],
@@ -544,6 +579,8 @@
     "@singapor/lsp": ["@singapor/lsp@workspace:packages/lsp"],
 
     "@singapor/lsp-plugin": ["@singapor/lsp-plugin@workspace:packages/lsp-plugin"],
+
+    "@singapor/markdown": ["@singapor/markdown@workspace:packages/markdown"],
 
     "@singapor/minimap": ["@singapor/minimap@workspace:packages/minimap"],
 

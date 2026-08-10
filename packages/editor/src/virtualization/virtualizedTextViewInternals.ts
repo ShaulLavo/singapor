@@ -1,3 +1,4 @@
+import type { InlineMap } from '../inlineMap'
 import type { BlockLane, DisplayRow } from '../displayTransforms'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
 import type { EditorToken, EditorTokenStyle } from '../tokens'
@@ -133,6 +134,8 @@ export interface VirtualizedTextViewInternal {
   selectionEnd: number | null
   selectionHead: number | null
   selections: readonly VirtualizedStoredSelection[]
+  /** The inline map as supplied; model.inlineMap is this with the selection's constructs revealed. */
+  inlineMapBase: InlineMap | null
   lastSelectionHighlightSignature: string
   lastRenderedRowsKey: string
   lastSpacerHeight: string

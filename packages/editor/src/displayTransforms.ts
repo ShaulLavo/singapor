@@ -37,7 +37,15 @@ export type DisplayDocumentTextRow = {
   readonly sourceText: string
   readonly sourceStartColumn: number
   readonly sourceEndColumn: number
+  readonly displayStartColumn: number
+  readonly displayEndColumn: number
   readonly wrapSegment: number
+  /**
+   * The whole buffer line projected into display space, present only when the line carries inline
+   * replacements. Shared by every wrap slice of the line; its segments are line-absolute, so
+   * subtract `displayStartColumn` to rebase them onto this row.
+   */
+  readonly inlineRow?: InlineRow
 }
 
 export type DisplayInjectedTextRow = {
@@ -55,6 +63,8 @@ export type DisplayInjectedTextRow = {
   readonly sourceText: string
   readonly sourceStartColumn: number
   readonly sourceEndColumn: number
+  readonly displayStartColumn: number
+  readonly displayEndColumn: number
   readonly wrapSegment: number
   readonly className?: string
   readonly gutterClassName?: string
@@ -153,6 +163,48 @@ type WrapSegment = {
 export type WrapMap = {
   readonly wrapColumn: number
   readonly segments: readonly WrapSegment[]
+}
+
+/**
+ * A single-line source span painted as `text` instead of its own characters. An empty `text` hides
+ * the span outright; a non-empty `text` stands in for it. Replacements are atomic: no display
+ * column ever resolves to a source column strictly inside one.
+ */
+export type InlineReplacement = {
+  readonly id: string
+  readonly startColumn: number
+  readonly endColumn: number
+  readonly text: string
+  readonly kind?: string
+  readonly metadata?: unknown
+}
+
+export type InlineRowSegmentKind = 'source' | 'replacement'
+
+export type InlineRowSegment = {
+  readonly kind: InlineRowSegmentKind
+  readonly sourceStartColumn: number
+  readonly sourceEndColumn: number
+  readonly displayStartColumn: number
+  readonly displayEndColumn: number
+  readonly id?: string
+  readonly replacementKind?: string
+  readonly metadata?: unknown
+}
+
+/**
+ * One buffer line projected into display space. Segments are contiguous and cover the whole line,
+ * so column conversion in either direction is total.
+ */
+export type InlineRow = {
+  readonly sourceText: string
+  readonly text: string
+  readonly segments: readonly InlineRowSegment[]
+}
+
+export type InlineColumnRange = {
+  readonly startColumn: number
+  readonly endColumn: number
 }
 
 const DEFAULT_TAB_SIZE = 4
@@ -261,6 +313,108 @@ export function wrapPointToTabPoint(
   return asTabPoint({ row: segment.inputRow, column })
 }
 
+export function createInlineRow(
+  sourceText: string,
+  replacements: readonly InlineReplacement[] = [],
+): InlineRow {
+  const normalized = normalizeInlineReplacements(sourceText, replacements)
+  if (normalized.length === 0) return identityInlineRow(sourceText)
+
+  const segments: InlineRowSegment[] = []
+  let sourceColumn = 0
+  let displayColumn = 0
+  let text = ''
+
+  for (const replacement of normalized) {
+    if (replacement.startColumn > sourceColumn) {
+      segments.push(inlineSourceSegment(sourceColumn, replacement.startColumn, displayColumn))
+      text += sourceText.slice(sourceColumn, replacement.startColumn)
+      displayColumn += replacement.startColumn - sourceColumn
+    }
+
+    segments.push(inlineReplacementSegment(replacement, displayColumn))
+    text += replacement.text
+    displayColumn += replacement.text.length
+    sourceColumn = replacement.endColumn
+  }
+
+  if (sourceColumn < sourceText.length) {
+    segments.push(inlineSourceSegment(sourceColumn, sourceText.length, displayColumn))
+    text += sourceText.slice(sourceColumn)
+  }
+
+  return { sourceText, text, segments }
+}
+
+export function sourceColumnToInlineColumn(
+  row: InlineRow,
+  column: number,
+  bias: TransformBias = 'nearest',
+): number {
+  const target = clampColumn(column, row.sourceText.length)
+
+  for (const segment of row.segments) {
+    if (target > segment.sourceEndColumn) continue
+    if (segment.kind === 'source') {
+      return segment.displayStartColumn + (target - segment.sourceStartColumn)
+    }
+
+    return inlineReplacementDisplayColumn(segment, target, bias)
+  }
+
+  return row.text.length
+}
+
+/**
+ * Hidden replacements are zero-width in display space, so several source columns share one display
+ * column and the inverse is genuinely ambiguous there. The rule is: `before` and `nearest` resolve to
+ * the earliest source column for that display column, `after` to the latest. Horizontal motion
+ * therefore passes the bias matching its direction. `display -> source -> display` is always the
+ * identity; `source -> display -> source` is not, at a hidden boundary.
+ */
+export function inlineColumnToSourceColumn(
+  row: InlineRow,
+  column: number,
+  bias: TransformBias = 'nearest',
+): number {
+  const target = clampColumn(column, row.text.length)
+  const segment = row.segments[inlineSegmentIndexForDisplayColumn(row, target, bias)]
+  if (!segment) return row.sourceText.length
+
+  if (segment.kind === 'source') {
+    return segment.sourceStartColumn + (target - segment.displayStartColumn)
+  }
+
+  return inlineReplacementSourceColumn(segment, target, bias)
+}
+
+/**
+ * Projects a source column range into display space. A range that overlaps a replacement covers the
+ * whole replacement, so selections, find matches, and syntax tokens paint replacements atomically.
+ * A range hidden in its entirety returns no display ranges.
+ */
+export function sourceRangeToInlineRanges(
+  row: InlineRow,
+  startColumn: number,
+  endColumn: number,
+): readonly InlineColumnRange[] {
+  const low = clampColumn(Math.min(startColumn, endColumn), row.sourceText.length)
+  const high = clampColumn(Math.max(startColumn, endColumn), row.sourceText.length)
+
+  if (low === high) {
+    const column = sourceColumnToInlineColumn(row, low)
+    return [{ startColumn: column, endColumn: column }]
+  }
+
+  const ranges: InlineColumnRange[] = []
+  for (const segment of row.segments) {
+    const range = inlineSegmentDisplayOverlap(segment, low, high)
+    if (range) appendInlineColumnRange(ranges, range)
+  }
+
+  return ranges
+}
+
 export function blockPointToBufferPoint(
   rows: readonly DisplayRow[],
   point: BlockPoint,
@@ -293,6 +447,7 @@ export type DisplayRowLineInput = {
   readonly wrapColumn?: number | null
   readonly blocks?: readonly BlockRow[]
   readonly injectedTextRows?: readonly InjectedTextRow[]
+  readonly inlineReplacements?: (bufferRow: number) => readonly InlineReplacement[]
   readonly tabSize?: number
 }
 
@@ -304,6 +459,7 @@ export function createDisplayRows(options: {
   readonly wrapColumn?: number | null
   readonly blocks?: readonly BlockRow[]
   readonly injectedTextRows?: readonly InjectedTextRow[]
+  readonly inlineReplacements?: (bufferRow: number) => readonly InlineReplacement[]
   readonly tabSize?: number
 }): DisplayRow[] {
   return createDisplayRowsFromLines({
@@ -329,6 +485,163 @@ export function createDisplayRowsFromLines(options: DisplayRowLineInput): Displa
 
 const asTabPoint = (point: Point): TabPoint => point as TabPoint
 const asWrapPoint = (point: Point): WrapPoint => point as WrapPoint
+
+const identityInlineRow = (sourceText: string): InlineRow => ({
+  sourceText,
+  text: sourceText,
+  segments: [inlineSourceSegment(0, sourceText.length, 0)],
+})
+
+const inlineSourceSegment = (
+  startColumn: number,
+  endColumn: number,
+  displayStartColumn: number,
+): InlineRowSegment => ({
+  kind: 'source',
+  sourceStartColumn: startColumn,
+  sourceEndColumn: endColumn,
+  displayStartColumn,
+  displayEndColumn: displayStartColumn + (endColumn - startColumn),
+})
+
+const inlineReplacementSegment = (
+  replacement: InlineReplacement,
+  displayStartColumn: number,
+): InlineRowSegment => ({
+  kind: 'replacement',
+  id: replacement.id,
+  sourceStartColumn: replacement.startColumn,
+  sourceEndColumn: replacement.endColumn,
+  displayStartColumn,
+  displayEndColumn: displayStartColumn + replacement.text.length,
+  ...(replacement.kind === undefined ? {} : { replacementKind: replacement.kind }),
+  ...(replacement.metadata === undefined ? {} : { metadata: replacement.metadata }),
+})
+
+const normalizeInlineReplacements = (
+  sourceText: string,
+  replacements: readonly InlineReplacement[],
+): readonly InlineReplacement[] => {
+  const candidates = replacements
+    .filter((replacement) => replacement.id.length > 0)
+    .filter((replacement) => !replacement.text.includes('\n'))
+    .map((replacement) => ({
+      ...replacement,
+      startColumn: clampColumn(replacement.startColumn, sourceText.length),
+      endColumn: clampColumn(replacement.endColumn, sourceText.length),
+    }))
+    .filter((replacement) => replacement.endColumn > replacement.startColumn)
+    .toSorted((left, right) => {
+      return (
+        left.startColumn - right.startColumn ||
+        right.endColumn - left.endColumn ||
+        left.id.localeCompare(right.id)
+      )
+    })
+
+  const kept: InlineReplacement[] = []
+  for (const replacement of candidates) {
+    const previous = kept.at(-1)
+    if (previous && replacement.startColumn < previous.endColumn) continue
+    kept.push(replacement)
+  }
+
+  return kept
+}
+
+const inlineSegmentIndexForDisplayColumn = (
+  row: InlineRow,
+  target: number,
+  bias: TransformBias,
+): number => {
+  const index = row.segments.findIndex((segment) => target <= segment.displayEndColumn)
+  if (index < 0) return row.segments.length - 1
+  if (bias !== 'after') return index
+
+  return skipZeroWidthInlineSegments(row, index, target)
+}
+
+/**
+ * Hidden replacements are zero-width in display space, so a caret sitting on one shares its display
+ * column with the segments around it. An `after` bias walks past them to the far source column,
+ * which is what horizontal motion out of a hidden marker needs.
+ */
+const skipZeroWidthInlineSegments = (row: InlineRow, index: number, target: number): number => {
+  let current = index
+
+  while (current + 1 < row.segments.length) {
+    const next = row.segments[current + 1]!
+    if (next.displayStartColumn !== target) break
+    if (next.displayEndColumn !== target) break
+    current += 1
+  }
+
+  return current
+}
+
+const inlineReplacementDisplayColumn = (
+  segment: InlineRowSegment,
+  column: number,
+  bias: TransformBias,
+): number => {
+  if (column <= segment.sourceStartColumn) return segment.displayStartColumn
+  if (column >= segment.sourceEndColumn) return segment.displayEndColumn
+  if (bias === 'before') return segment.displayStartColumn
+  if (bias === 'after') return segment.displayEndColumn
+
+  const fromStart = column - segment.sourceStartColumn
+  const fromEnd = segment.sourceEndColumn - column
+  return fromStart <= fromEnd ? segment.displayStartColumn : segment.displayEndColumn
+}
+
+const inlineReplacementSourceColumn = (
+  segment: InlineRowSegment,
+  column: number,
+  bias: TransformBias,
+): number => {
+  if (bias === 'before') return segment.sourceStartColumn
+  if (bias === 'after') return segment.sourceEndColumn
+
+  const width = segment.displayEndColumn - segment.displayStartColumn
+  if (width <= 0) return segment.sourceStartColumn
+
+  const fromStart = column - segment.displayStartColumn
+  return fromStart * 2 <= width ? segment.sourceStartColumn : segment.sourceEndColumn
+}
+
+const inlineSegmentDisplayOverlap = (
+  segment: InlineRowSegment,
+  low: number,
+  high: number,
+): InlineColumnRange | null => {
+  const start = Math.max(low, segment.sourceStartColumn)
+  const end = Math.min(high, segment.sourceEndColumn)
+  if (end <= start) return null
+
+  if (segment.kind === 'replacement') {
+    // A hidden span paints nothing, so it contributes no display range rather than a zero-width one.
+    if (segment.displayEndColumn === segment.displayStartColumn) return null
+    return { startColumn: segment.displayStartColumn, endColumn: segment.displayEndColumn }
+  }
+
+  return {
+    startColumn: segment.displayStartColumn + (start - segment.sourceStartColumn),
+    endColumn: segment.displayStartColumn + (end - segment.sourceStartColumn),
+  }
+}
+
+const appendInlineColumnRange = (ranges: InlineColumnRange[], range: InlineColumnRange): void => {
+  const previous = ranges.at(-1)
+  if (!previous || range.startColumn > previous.endColumn) {
+    ranges.push(range)
+    return
+  }
+
+  ranges[ranges.length - 1] = {
+    startColumn: previous.startColumn,
+    endColumn: Math.max(previous.endColumn, range.endColumn),
+  }
+}
 
 export function normalizeBlockLanes(lanes: readonly BlockLane[]): readonly BlockLane[] {
   return lanes
@@ -373,7 +686,14 @@ const appendDisplayRowsForVisibleRow = (
     tabSize,
   )
   appendBlockRows(rows, blocks, bufferRow, 'before', startOffset)
-  appendDocumentTextDisplayRows(rows, bufferRow, text, startOffset, options.wrapColumn, tabSize)
+  appendDocumentTextDisplayRows(
+    rows,
+    bufferRow,
+    createInlineRow(text, options.inlineReplacements?.(bufferRow)),
+    startOffset,
+    options.wrapColumn,
+    tabSize,
+  )
   appendBlockRows(rows, blocks, bufferRow, 'after', options.lineEndOffset(bufferRow))
   appendInjectedTextRows(
     rows,
@@ -389,25 +709,33 @@ const appendDisplayRowsForVisibleRow = (
 const appendDocumentTextDisplayRows = (
   rows: DisplayRow[],
   bufferRow: number,
-  text: string,
+  inlineRow: InlineRow,
   startOffset: number,
   wrapColumn: number | null | undefined,
   tabSize: number,
 ): void => {
-  const segments = textSegments(text, wrapColumn, tabSize)
+  const transformed = inlineRow.text !== inlineRow.sourceText
+  const segments = textSegments(inlineRow.text, wrapColumn, tabSize)
+
   for (const segment of segments) {
+    const sourceStartColumn = inlineColumnToSourceColumn(inlineRow, segment.startColumn, 'before')
+    const sourceEndColumn = inlineColumnToSourceColumn(inlineRow, segment.endColumn, 'after')
+
     rows.push({
       kind: 'text',
       source: 'document',
       index: rows.length,
       bufferRow,
-      startOffset: startOffset + segment.startColumn,
-      endOffset: startOffset + segment.endColumn,
-      text: text.slice(segment.startColumn, segment.endColumn),
-      sourceText: text,
-      sourceStartColumn: segment.startColumn,
-      sourceEndColumn: segment.endColumn,
+      startOffset: startOffset + sourceStartColumn,
+      endOffset: startOffset + sourceEndColumn,
+      text: inlineRow.text.slice(segment.startColumn, segment.endColumn),
+      sourceText: inlineRow.sourceText,
+      sourceStartColumn,
+      sourceEndColumn,
+      displayStartColumn: segment.startColumn,
+      displayEndColumn: segment.endColumn,
       wrapSegment: segment.segmentIndex,
+      ...(transformed ? { inlineRow } : {}),
     })
   }
 }
@@ -462,6 +790,8 @@ const injectedTextDisplayRow = (
   sourceText: injected.text,
   sourceStartColumn: segment.startColumn,
   sourceEndColumn: segment.endColumn,
+  displayStartColumn: segment.startColumn,
+  displayEndColumn: segment.endColumn,
   wrapSegment: segment.segmentIndex,
   ...(injected.className === undefined ? {} : { className: injected.className }),
   ...(injected.gutterClassName === undefined ? {} : { gutterClassName: injected.gutterClassName }),

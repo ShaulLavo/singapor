@@ -88,6 +88,10 @@ export class SharedTokenHighlights {
     this.#rebuild()
   }
 
+  public restore(): void {
+    this.#rebuild()
+  }
+
   #rebuild(): void {
     const rules: string[] = []
     for (const group of this.#groups.values())

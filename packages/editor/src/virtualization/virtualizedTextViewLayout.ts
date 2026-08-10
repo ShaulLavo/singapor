@@ -23,6 +23,7 @@ import {
   computeLineStarts,
   foldMapMatchesText,
   foldMarkersEqual,
+  inlineMapMatchesText,
   indexFoldMarkersByKey,
   indexFoldMarkersByStartRow,
   normalizeFoldMarkers,
@@ -36,6 +37,11 @@ import type {
   VirtualizedFoldMarker,
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
+import {
+  localIndexForOffset,
+  offsetForLocalIndex,
+  rowInlineMappingForDisplayRow,
+} from './virtualizedTextViewInlineMapping'
 
 export type FoldStateUpdate = {
   readonly foldMapChanged: boolean
@@ -59,6 +65,9 @@ export function setTextLayoutState(
   view.model.foldMap = foldMapMatchesText(view.model.foldMap, view.model.textLength)
     ? view.model.foldMap
     : null
+  view.model.inlineMap = inlineMapMatchesText(view.model.inlineMap, view.model.textLength)
+    ? view.model.inlineMap
+    : null
   return { lineCountChanged: previousLineCount !== view.lineStarts.length }
 }
 
@@ -77,6 +86,9 @@ export function setTextSnapshotLayoutState(
   view.model.foldMap = foldMapMatchesText(view.model.foldMap, view.model.textLength)
     ? view.model.foldMap
     : null
+  view.model.inlineMap = inlineMapMatchesText(view.model.inlineMap, view.model.textLength)
+    ? view.model.inlineMap
+    : null
   return { lineCountChanged: previousLineCount !== view.lineStarts.length }
 }
 
@@ -90,6 +102,7 @@ export function applySameLineTextLayout(
   view.model.textLength = textSnapshot.length
   view.textRevision += 1
   view.model.foldMap = null
+  view.model.inlineMap = null
   shiftLineStartsAfterRow(view, patch.rowIndex, delta)
   updateDisplayRowsAfterSameLineEdit(view, patch, delta)
   syncViewModelCounts(view)
@@ -105,6 +118,7 @@ export function applyMultiLineTextLayout(
   view.model.textLength = textSnapshot.length
   view.textRevision += 1
   view.model.foldMap = null
+  view.model.inlineMap = null
   view.lineStarts = lineStartsAfterMultiLineEdit(view.lineStarts, edit)
   view.lineStartOffsetIndex = null
   updateDisplayRowsAfterMultiLineEdit(view, patch)
@@ -147,6 +161,7 @@ export function rebuildDisplayRows(
     textSnapshot: view.model.textSnapshot,
     lineStarts: view.lineStarts,
     foldMap: view.model.foldMap,
+    inlineMap: view.model.inlineMap,
     blockRows: view.model.blockRows,
     injectedTextRows: view.model.injectedTextRows,
     wrapColumn: view.wrapEnabled ? viewportColumns : null,
@@ -247,7 +262,15 @@ export function visualColumnForOffset(view: VirtualizedTextViewInternal, offset:
   const displayRow = view.model.rows[row]
   if (!isDocumentTextDisplayRow(displayRow)) return 0
 
-  const localOffset = clamp(offset - displayRowStartOffset(view, row), 0, displayRow.text.length)
+  const localOffset = clamp(
+    localIndexForOffset(
+      rowInlineMappingForDisplayRow(displayRow),
+      displayRowStartOffset(view, row),
+      offset,
+    ),
+    0,
+    displayRow.text.length,
+  )
   return bufferColumnToVisualColumn(displayRow.text, localOffset, view.tabSize)
 }
 
@@ -267,7 +290,11 @@ export function offsetForViewportColumn(
     'nearest',
     view.tabSize,
   )
-  return startOffset + clamp(bufferColumn, 0, displayRow.text.length)
+  return offsetForLocalIndex(
+    rowInlineMappingForDisplayRow(displayRow),
+    startOffset,
+    clamp(bufferColumn, 0, displayRow.text.length),
+  )
 }
 
 export function lineStartOffset(view: VirtualizedTextViewInternal, row: number): number {
@@ -382,6 +409,8 @@ function createPlainDisplayRowsForRange(
       sourceText: text,
       sourceStartColumn: 0,
       sourceEndColumn: text.length,
+      displayStartColumn: 0,
+      displayEndColumn: text.length,
       wrapSegment: 0,
     })
   }
@@ -421,6 +450,7 @@ function updateTextDisplayRow(
     text,
     sourceText: text,
     sourceEndColumn: row.sourceEndColumn + delta,
+    displayEndColumn: row.displayEndColumn + delta,
   }
 }
 
@@ -754,5 +784,8 @@ function syncViewModelCounts(view: VirtualizedTextViewInternal): void {
 
 function hasModelRowProjections(view: VirtualizedTextViewInternal): boolean {
   if (view.model.blockRows.length > 0) return true
+  // An inline map makes row text diverge from buffer text, so the same-line and plain-row fast paths
+  // — which patch row text using buffer-space offsets — must fall back to a full rebuild.
+  if (view.model.inlineMap) return true
   return view.model.injectedTextRows.length > 0
 }

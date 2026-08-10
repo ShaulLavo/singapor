@@ -69,6 +69,9 @@ import type {
 } from './types'
 import { EditorViewContributionController } from './viewContributions'
 import type { FoldMap } from '../foldMap'
+import { createInlineMap, type InlineMap } from '../inlineMap'
+import type { EditorSyntaxCapture } from '../syntax/session'
+import type { EditorInlineReplacementProvider } from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
 import type { BlockLane, BlockRow, InjectedTextRow } from '../displayTransforms'
 import { offsetToPoint } from '../pieceTable/positions'
@@ -249,6 +252,8 @@ export class Editor {
   private readonly displayProjections = new EditorDisplayProjectionRegistry()
   private readonly highlightPrefix: string
   private sessionChangeVersion = 0
+  private inlineReplacementProvider: EditorInlineReplacementProvider | null = null
+  private syntaxCaptures: readonly EditorSyntaxCapture[] = []
   private blockSurfaces!: EditorBlockSurfaceController
   private readonly syntax: EditorSyntaxController
   private readonly inputSelection: InputSelectionController
@@ -371,6 +376,7 @@ export class Editor {
       },
       clearSyntaxFolds: () => this.clearSyntaxFolds(),
       setSyntaxFolds: (folds) => this.setSyntaxFolds(folds),
+      setSyntaxCaptures: (captures) => this.setSyntaxCaptures(captures),
       notifyChange: (change) => this.notifyChange(change),
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
@@ -473,6 +479,7 @@ export class Editor {
       onGutterContributionsChanged: () => this.syncGutterContributions(),
       onBlockProvidersChanged: () => this.handleBlockProvidersChanged(),
       onInjectedTextRowProvidersChanged: () => this.handleInjectedTextRowProvidersChanged(),
+      onInlineReplacementProvidersChanged: () => this.refreshInlineMap(),
     })
     this.inputSelection.install()
     this.initializeDefaultText()
@@ -532,6 +539,53 @@ export class Editor {
 
   setFoldMap(foldMap: FoldMap | null): void {
     this.view.setFoldMap(foldMap)
+  }
+
+  /**
+   * Installs the inline replacements this document renders instead of parts of its own text — the
+   * entry point a markdown live-preview view drives. Passing null restores raw buffer text.
+   */
+  setInlineMap(inlineMap: InlineMap | null): void {
+    this.view.setInlineMap(inlineMap)
+  }
+
+  /**
+   * Registers a provider that turns the document's syntax captures into inline replacements. The map
+   * is rebuilt whenever fresh captures land, so a markdown view stays in step with the parse without
+   * the host scheduling anything itself. Passing null removes the transform.
+   */
+  setInlineReplacementProvider(provider: EditorInlineReplacementProvider | null): void {
+    this.inlineReplacementProvider = provider
+    this.refreshInlineMap()
+  }
+
+  private setSyntaxCaptures(captures: readonly EditorSyntaxCapture[]): void {
+    this.syntaxCaptures = captures
+    this.refreshInlineMap()
+  }
+
+  private refreshInlineMap(): void {
+    const providers = this.inlineReplacementProviders()
+    const snapshot = this.session?.getSnapshot()
+    if (providers.length === 0 || !snapshot) {
+      this.view.setInlineMap(null)
+      return
+    }
+
+    const context = {
+      text: this.materializeFullText(),
+      languageId: this.languageId,
+      captures: this.syntaxCaptures,
+    }
+    const specs = providers.flatMap((provider) => provider(context))
+    this.view.setInlineMap(specs.length === 0 ? null : createInlineMap(snapshot, specs))
+  }
+
+  private inlineReplacementProviders(): readonly EditorInlineReplacementProvider[] {
+    const registered = this.pluginHost.getInlineReplacementProviders()
+    const direct = this.inlineReplacementProvider
+    if (!direct) return registered
+    return [direct, ...registered]
   }
 
   setSyntaxFolds(folds: readonly FoldRange[]): void {

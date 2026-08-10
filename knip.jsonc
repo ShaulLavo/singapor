@@ -41,6 +41,10 @@
       ],
       "project": "src/**/*.{ts,tsx}"
     },
+    "packages/markdown": {
+      "entry": ["src/index.ts"],
+      "project": "src/**/*.{ts,tsx}"
+    },
     "packages/gutters": {
       "entry": ["src/index.ts", "src/lineGutter.ts", "src/foldGutter.ts"],
       "project": "src/**/*.{ts,tsx}"

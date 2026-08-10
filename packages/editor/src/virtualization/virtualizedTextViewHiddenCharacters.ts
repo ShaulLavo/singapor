@@ -9,6 +9,7 @@ import type {
   MountedVirtualizedTextRow,
   VirtualizedTextChunk,
 } from './virtualizedTextViewTypes'
+import { rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 
 type HiddenCharacterKind = 'space' | 'tab'
 
@@ -95,7 +96,7 @@ function appendHiddenCharacterMarker(
   const kind = hiddenCharacterKind(char)
   if (!kind) return
 
-  const offset = row.startOffset + localIndex
+  const offset = rowOffsetForLocalIndex(row, localIndex)
   if (!shouldShowHiddenCharacterAtOffset(view, offset)) return
 
   const left = offsetToX(view, row, offset)

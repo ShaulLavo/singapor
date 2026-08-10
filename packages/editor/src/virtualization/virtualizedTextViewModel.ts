@@ -6,11 +6,13 @@ import {
 } from '../displayTransforms'
 import type { TextSnapshot } from '../documentTextSnapshot'
 import { foldPointToBufferPoint, type FoldMap, type FoldPoint } from '../foldMap'
+import { type InlineMap, inlineReplacementsForBufferRow } from '../inlineMap'
 
 export type VirtualizedTextProjectionInput = {
   readonly textSnapshot: TextSnapshot
   readonly lineStarts: readonly number[]
   readonly foldMap: FoldMap | null
+  readonly inlineMap: InlineMap | null
   readonly blockRows: readonly BlockRow[]
   readonly injectedTextRows: readonly InjectedTextRow[]
   readonly wrapColumn: number | null
@@ -23,6 +25,7 @@ export type VirtualizedTextViewModelState = {
   lineCount: number
   visibleLineCount: number
   foldMap: FoldMap | null
+  inlineMap: InlineMap | null
   wrapColumn: number | null
   blockRows: readonly BlockRow[]
   injectedTextRows: readonly InjectedTextRow[]
@@ -36,6 +39,7 @@ export function createVirtualizedTextViewModel(
   const textLength = input.textSnapshot.length
   const lineCount = Math.max(1, input.lineStarts.length)
   const foldMap = foldMapForText(input.foldMap, textLength)
+  const inlineMap = inlineMapForText(input.inlineMap, textLength)
   const foldedLineCount = foldedVisibleLineCount(lineCount, foldMap)
   const rows = createDisplayRowsFromLines({
     visibleLineCount: foldedLineCount,
@@ -46,6 +50,9 @@ export function createVirtualizedTextViewModel(
     wrapColumn: input.wrapColumn,
     blocks: input.blockRows,
     injectedTextRows: input.injectedTextRows,
+    ...(inlineMap
+      ? { inlineReplacements: (row: number) => inlineReplacementsForBufferRow(inlineMap, row) }
+      : {}),
     tabSize: input.tabSize,
   })
 
@@ -55,6 +62,7 @@ export function createVirtualizedTextViewModel(
     lineCount,
     visibleLineCount: Math.max(1, rows.length),
     foldMap,
+    inlineMap,
     wrapColumn: input.wrapColumn,
     blockRows: input.blockRows,
     injectedTextRows: input.injectedTextRows,
@@ -67,6 +75,12 @@ function foldMapForText(foldMap: FoldMap | null, textLength: number): FoldMap | 
   if (!foldMap) return null
   if (foldMap.snapshot.length !== textLength) return null
   return foldMap
+}
+
+function inlineMapForText(inlineMap: InlineMap | null, textLength: number): InlineMap | null {
+  if (!inlineMap) return null
+  if (inlineMap.snapshot.length !== textLength) return null
+  return inlineMap
 }
 
 function foldedVisibleLineCount(lineCount: number, foldMap: FoldMap | null): number {

@@ -14,6 +14,7 @@ describe('virtualized text view model', () => {
       textSnapshot: snapshot,
       lineStarts: computeLineStarts(text),
       foldMap: null,
+      inlineMap: null,
       blockRows: [
         {
           id: 'details',
@@ -63,6 +64,7 @@ describe('virtualized text view model', () => {
       textSnapshot,
       lineStarts,
       foldMap,
+      inlineMap: null,
       blockRows: [],
       injectedTextRows: [],
       wrapColumn: null,

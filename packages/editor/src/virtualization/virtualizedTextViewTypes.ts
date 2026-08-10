@@ -9,6 +9,7 @@ import type {
   InjectedTextRow,
 } from '../displayTransforms'
 import type { BrowserTextMetrics } from './browserMetrics'
+import type { RowInlineMapping } from './virtualizedTextViewInlineMapping'
 import type { FixedRowVisibleRange } from './fixedRowVirtualizer'
 
 type CaretPositionResult = {
@@ -161,6 +162,8 @@ export type VirtualizedTextRow = {
   readonly chunks: readonly VirtualizedTextChunk[]
   readonly element: HTMLDivElement
   readonly textNode: Text
+  /** Present only while this row renders inline replacements; see RowInlineMapping. */
+  readonly inlineMapping?: RowInlineMapping | null
 }
 
 export type VirtualizedTextViewState = {

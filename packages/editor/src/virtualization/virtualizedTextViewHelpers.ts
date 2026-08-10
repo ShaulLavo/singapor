@@ -1,4 +1,6 @@
 import type { FoldMap, FoldPoint } from '../foldMap'
+import type { InlineMap } from '../inlineMap'
+import type { RowInlineMapping } from './virtualizedTextViewInlineMapping'
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 import { clamp } from '../style-utils'
 import type { FixedRowVirtualizerOptions, FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
@@ -18,6 +20,7 @@ import {
   createDomRangeForChunkRange,
   createStaticRangeForChunkRange,
 } from './virtualizedTextViewGeometry'
+import { rowLocalIndexForOffset } from './virtualizedTextViewInlineMapping'
 
 const DEFAULT_ROW_HEIGHT = 24
 export const DEFAULT_OVERSCAN = 12
@@ -264,6 +267,7 @@ export type TokenSegmentAppendResult = 'added' | 'merged-adjacent' | 'merged-gap
 
 export function appendTokenSegmentForChunk(
   segments: TokenRowSegment[],
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   range: OffsetRange,
   style: EditorTokenStyle,
@@ -279,7 +283,7 @@ export function appendTokenSegmentForChunk(
 
   const last = segments.at(-1)
   if (last) {
-    const mergeResult = tokenSegmentMergeResult(last, chunk, start, style, styleKey)
+    const mergeResult = tokenSegmentMergeResult(row, last, chunk, start, style, styleKey)
     if (mergeResult) {
       segments[segments.length - 1] = {
         ...last,
@@ -300,6 +304,7 @@ export function appendTokenSegmentForChunk(
 }
 
 function tokenSegmentMergeResult(
+  row: MountedVirtualizedTextRow,
   segment: TokenRowSegment,
   chunk: VirtualizedTextChunk,
   start: number,
@@ -311,7 +316,7 @@ function tokenSegmentMergeResult(
   if (start <= segment.end) return 'merged-adjacent'
   if (!tokenStyleCanCoverWhitespaceGap(style)) return null
 
-  return chunkRangeIsPlainWhitespace(chunk, segment.end, start) ? 'merged-gap' : null
+  return chunkRangeIsPlainWhitespace(row, chunk, segment.end, start) ? 'merged-gap' : null
 }
 
 function tokenStyleCanCoverWhitespaceGap(style: EditorTokenStyle): boolean {
@@ -319,12 +324,13 @@ function tokenStyleCanCoverWhitespaceGap(style: EditorTokenStyle): boolean {
 }
 
 function chunkRangeIsPlainWhitespace(
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   startOffset: number,
   endOffset: number,
 ): boolean {
-  const localStart = startOffset - chunk.startOffset
-  const localEnd = endOffset - chunk.startOffset
+  const localStart = rowLocalIndexForOffset(row, startOffset, 'before') - chunk.localStart
+  const localEnd = rowLocalIndexForOffset(row, endOffset, 'after') - chunk.localStart
   if (localEnd <= localStart) return true
 
   for (let index = localStart; index < localEnd; index += 1) {
@@ -361,13 +367,14 @@ function tokenSegmentSignature(segment: TokenRowSegment): string {
 export function addTokenRangeToChunk(
   document: Document,
   highlight: Highlight,
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   start: number,
   end: number,
 ): AbstractRange | null {
   const range =
-    createStaticRangeForChunkRange(document, chunk, start, end) ??
-    createDomRangeForChunkRange(document, chunk, start, end)
+    createStaticRangeForChunkRange(document, row, chunk, start, end) ??
+    createDomRangeForChunkRange(document, row, chunk, start, end)
   if (!range) return null
 
   highlight.add(range)
@@ -502,6 +509,7 @@ export function updateMutableRow(
     readonly startOffset: number
     readonly endOffset: number
     readonly text: string
+    readonly inlineMapping: RowInlineMapping | null
     readonly kind: 'text' | 'block'
     readonly top: number
     readonly height: number
@@ -524,6 +532,7 @@ export function updateMutableRow(
     startOffset: number
     endOffset: number
     text: string
+    inlineMapping: RowInlineMapping | null
     kind: 'text' | 'block'
     top: number
     height: number
@@ -544,6 +553,7 @@ export function updateMutableRow(
   mutable.startOffset = values.startOffset
   mutable.endOffset = values.endOffset
   mutable.text = values.text
+  mutable.inlineMapping = values.inlineMapping
   mutable.kind = values.kind
   mutable.top = values.top
   mutable.height = values.height
@@ -664,6 +674,11 @@ export function alignChunkEnd(value: number, chunkSize: number): number {
 export function foldMapMatchesText(foldMap: FoldMap | null, textLength: number): boolean {
   if (!foldMap) return false
   return foldMap.snapshot.length === textLength
+}
+
+export function inlineMapMatchesText(inlineMap: InlineMap | null, textLength: number): boolean {
+  if (!inlineMap) return false
+  return inlineMap.snapshot.length === textLength
 }
 
 export function asFoldPoint(point: { readonly row: number; readonly column: number }): FoldPoint {

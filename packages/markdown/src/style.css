@@ -1,0 +1,7 @@
+/*
+ * Markdown live preview. The buffer still holds markdown source, so these rules only style what the
+ * inline transform already decided to show — they never hide anything themselves.
+ */
+.editor-virtualized {
+  --editor-markdown-heading-scale: 1;
+}

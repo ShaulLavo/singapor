@@ -55,6 +55,11 @@ import type {
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
 import {
+  type RowInlineMapping,
+  offsetForLocalIndex,
+  rowInlineMappingForDisplayRow,
+} from './virtualizedTextViewInlineMapping'
+import {
   createRenderedChunkParts,
   createTextChunkParts,
   domBoundaryForOffset,
@@ -92,6 +97,7 @@ type RowUpdatePass = {
 type RowUpdateState = EditorGutterRowContext & {
   readonly blockRow: DisplayBlockRow | null
   readonly cursorVirtualLine: boolean
+  readonly inlineMapping: RowInlineMapping | null
 }
 
 export function rowsKey(
@@ -411,6 +417,7 @@ function rowUpdateState(
     startOffset: lineStartOffset(view, index),
     endOffset: lineEndOffset(view, index),
     text: displayRow?.text ?? '',
+    inlineMapping: rowInlineMappingForDisplayRow(displayRow),
     kind: displayRow?.kind ?? 'text',
     primaryText,
     cursorLine: primaryText && bufferRow === updatePass.cursorBufferRow,
@@ -441,6 +448,7 @@ function mountedRowUpdateState(
     startOffset: row.startOffset,
     endOffset: row.endOffset,
     text: row.text,
+    inlineMapping: row.inlineMapping ?? null,
     kind: row.kind,
     primaryText,
     cursorLine: primaryText && row.bufferRow === updatePass.cursorBufferRow,
@@ -529,6 +537,7 @@ function updateRow(
     source: state.source,
     startOffset: state.startOffset,
     text: state.text,
+    inlineMapping: state.inlineMapping,
     textRevision: view.textRevision,
     top: item.start,
     chunkKey: rowChunkKey(view, state.text, snapshot),
@@ -554,7 +563,7 @@ function updateRowElement(
   }
 
   disposeBlockRowMount(row)
-  updateRowTextChunks(view, row, state.text, state.startOffset, snapshot)
+  updateRowTextChunks(view, row, state.text, state.startOffset, state.inlineMapping, snapshot)
   updateRowFoldPresentation(row, state.foldMarker)
 }
 
@@ -611,6 +620,7 @@ function updateRowAfterSameLineEdit(
     source: state.source,
     startOffset: state.startOffset,
     text: state.text,
+    inlineMapping: state.inlineMapping,
     textRevision: view.textRevision,
     top: item.start,
     chunkKey: rowChunkKey(view, state.text, snapshot),
@@ -644,6 +654,7 @@ function updateRowElementForSameLineEdit(
     state.text,
     patch,
     state.startOffset,
+    state.inlineMapping,
     snapshot,
   )
   updateRowFoldPresentation(row, state.foldMarker)
@@ -732,39 +743,44 @@ function updateRowTextForSameLineEdit(
   text: string,
   patch: SameLineEditPatch,
   startOffset: number,
+  mapping: RowInlineMapping | null,
   snapshot: FixedRowVirtualizerSnapshot,
 ): boolean {
   if (item.index !== patch.rowIndex) {
-    if (row.text !== text) updateRowTextChunks(view, row, text, startOffset, snapshot)
-    if (row.text === text) syncRowChunkOffsets(row, startOffset)
+    if (row.text !== text) updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
+    if (row.text === text) syncRowChunkOffsets(row, startOffset, mapping)
     return false
   }
 
   if (row.textNode.data !== row.text) {
-    updateRowTextChunks(view, row, text, startOffset, snapshot)
+    updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
     return false
   }
 
   if (shouldChunkLine(view, text)) {
-    updateRowTextChunks(view, row, text, startOffset, snapshot)
+    updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
     return false
   }
 
   row.textNode.replaceData(patch.localFrom, patch.deleteLength, patch.text)
   if (row.textRenderMode === 'simple') {
-    syncSimpleDirectRowChunk(row, text, startOffset)
+    syncSimpleDirectRowChunk(row, text, startOffset, mapping)
     return true
   }
 
-  syncDirectRowChunk(row, text, startOffset)
+  syncDirectRowChunk(row, text, startOffset, mapping)
   return true
 }
 
-function syncRowChunkOffsets(row: MountedVirtualizedTextRow, startOffset: number): void {
+function syncRowChunkOffsets(
+  row: MountedVirtualizedTextRow,
+  startOffset: number,
+  mapping: RowInlineMapping | null,
+): void {
   const chunks = row.chunks.map((chunk) => ({
     ...chunk,
-    startOffset: startOffset + chunk.localStart,
-    endOffset: startOffset + chunk.localEnd,
+    startOffset: offsetForLocalIndex(mapping, startOffset, chunk.localStart, 'before'),
+    endOffset: offsetForLocalIndex(mapping, startOffset, chunk.localEnd, 'after'),
   }))
   updateMutableRowChunks(row, chunks)
 }
@@ -774,14 +790,15 @@ function updateRowTextChunks(
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
+  mapping: RowInlineMapping | null,
   snapshot = view.virtualizer.getSnapshot(),
 ): void {
   if (!shouldChunkLine(view, text)) {
-    setDirectRowText(view, row, text, startOffset)
+    setDirectRowText(view, row, text, startOffset, mapping)
     return
   }
 
-  setChunkedRowText(view, row, text, startOffset, snapshot)
+  setChunkedRowText(view, row, text, startOffset, mapping, snapshot)
 }
 
 function setDirectRowText(
@@ -789,11 +806,12 @@ function setDirectRowText(
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
+  mapping: RowInlineMapping | null,
 ): void {
-  if (reuseDirectRowText(row, text, startOffset)) return
+  if (reuseDirectRowText(row, text, startOffset, mapping)) return
 
   if (!isSimpleRowText(text)) {
-    setRenderedDirectRowText(view, row, text, startOffset)
+    setRenderedDirectRowText(view, row, text, startOffset, mapping)
     return
   }
 
@@ -802,7 +820,7 @@ function setDirectRowText(
     setTextRenderMode(row, 'simple')
   }
   if (row.textNode.data !== text) row.textNode.data = text
-  syncSimpleDirectRowChunk(row, text, startOffset)
+  syncSimpleDirectRowChunk(row, text, startOffset, mapping)
 }
 
 function setRenderedDirectRowText(
@@ -810,6 +828,7 @@ function setRenderedDirectRowText(
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
+  mapping: RowInlineMapping | null,
 ): void {
   const rendered = createRenderedChunkParts(
     row.element.ownerDocument,
@@ -819,17 +838,18 @@ function setRenderedDirectRowText(
   )
   row.element.replaceChildren(...rendered.nodes)
   setTextRenderMode(row, 'rendered')
-  syncDirectRowChunk(row, text, startOffset, rendered.parts, rendered.textNode)
+  syncDirectRowChunk(row, text, startOffset, mapping, rendered.parts, rendered.textNode)
 }
 
 function reuseDirectRowText(
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
+  mapping: RowInlineMapping | null,
 ): boolean {
   if (row.text !== text) return false
   if (row.textRenderMode === 'simple') {
-    syncSimpleDirectRowChunk(row, text, startOffset)
+    syncSimpleDirectRowChunk(row, text, startOffset, mapping)
     return true
   }
 
@@ -838,7 +858,7 @@ function reuseDirectRowText(
   const chunk = row.chunks[0]
   if (!isReusableRenderedDirectChunk(row, chunk)) return false
 
-  syncDirectRowChunk(row, text, startOffset, chunk.parts, chunk.textNode)
+  syncDirectRowChunk(row, text, startOffset, mapping, chunk.parts, chunk.textNode)
   return true
 }
 
@@ -846,12 +866,13 @@ function syncDirectRowChunk(
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
+  mapping: RowInlineMapping | null,
   parts: readonly VirtualizedTextChunkPart[] = createTextChunkParts(row.textNode, 0, text.length),
   textNode = row.textNode,
 ): void {
   const chunk = {
     startOffset,
-    endOffset: startOffset + text.length,
+    endOffset: offsetForLocalIndex(mapping, startOffset, text.length, 'after'),
     localStart: 0,
     localEnd: text.length,
     text,
@@ -866,10 +887,11 @@ function syncSimpleDirectRowChunk(
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
+  mapping: RowInlineMapping | null,
 ): void {
   const chunk = row.chunks[0]
   if (!isReusableSimpleDirectChunk(row, chunk)) {
-    syncDirectRowChunk(row, text, startOffset)
+    syncDirectRowChunk(row, text, startOffset, mapping)
     return
   }
 
@@ -926,7 +948,7 @@ function setBlockRowText(row: MountedVirtualizedTextRow, text: string, startOffs
     setTextRenderMode(row, 'simple')
   }
   if (row.textNode.data !== text) row.textNode.data = text
-  syncSimpleDirectRowChunk(row, text, startOffset)
+  syncSimpleDirectRowChunk(row, text, startOffset, null)
 }
 
 function shouldReplaceBlockTextChildren(row: MountedVirtualizedTextRow): boolean {
@@ -940,10 +962,11 @@ function setChunkedRowText(
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
+  mapping: RowInlineMapping | null,
   snapshot: FixedRowVirtualizerSnapshot,
 ): void {
   const window = horizontalChunkWindow(view, text, snapshot)
-  const chunks = createRowChunks(view, text, window, startOffset)
+  const chunks = createRowChunks(view, text, window, startOffset, mapping)
   const elements = chunks
     .map((chunk) => chunk.element)
     .filter((element): element is HTMLSpanElement => element !== null)
@@ -960,6 +983,7 @@ function createRowChunks(
   text: string,
   window: HorizontalChunkWindow,
   startOffset: number,
+  mapping: RowInlineMapping | null,
 ): VirtualizedTextChunk[] {
   const chunks: VirtualizedTextChunk[] = []
 
@@ -968,7 +992,7 @@ function createRowChunks(
     localStart < window.end;
     localStart += view.longLineChunkSize
   ) {
-    chunks.push(createRowChunk(view, text, localStart, window.end, startOffset))
+    chunks.push(createRowChunk(view, text, localStart, window.end, startOffset, mapping))
   }
 
   return chunks
@@ -980,6 +1004,7 @@ function createRowChunk(
   localStart: number,
   windowEnd: number,
   startOffset: number,
+  mapping: RowInlineMapping | null,
 ): VirtualizedTextChunk {
   const localEnd = Math.min(localStart + view.longLineChunkSize, windowEnd)
   const element = view.scrollElement.ownerDocument.createElement('span')
@@ -999,8 +1024,8 @@ function createRowChunk(
   element.append(...(rendered?.nodes ?? [textNode]))
 
   return {
-    startOffset: startOffset + localStart,
-    endOffset: startOffset + localEnd,
+    startOffset: offsetForLocalIndex(mapping, startOffset, localStart, 'before'),
+    endOffset: offsetForLocalIndex(mapping, startOffset, localEnd, 'after'),
     localStart,
     localEnd,
     text: chunkText,

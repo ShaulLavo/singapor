@@ -4,6 +4,7 @@ import {
   type TransformBias,
 } from '../displayTransforms'
 import { clamp } from '../style-utils'
+import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 import type {
   MountedVirtualizedTextRow,
   VirtualizedTextChunk,
@@ -248,11 +249,12 @@ function estimatedRowWidth(text: string, tabSize: number, cellWidth: number): nu
 
 export function createDomRangeForChunkRange(
   document: Document,
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   start: number,
   end: number,
 ): Range | null {
-  const boundaries = domBoundariesForChunkRange(chunk, start, end)
+  const boundaries = domBoundariesForChunkRange(row, chunk, start, end)
   if (!boundaries) return null
 
   const range = document.createRange()
@@ -263,11 +265,12 @@ export function createDomRangeForChunkRange(
 
 export function createStaticRangeForChunkRange(
   document: Document,
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   start: number,
   end: number,
 ): StaticRange | null {
-  const boundaries = domBoundariesForChunkRange(chunk, start, end)
+  const boundaries = domBoundariesForChunkRange(row, chunk, start, end)
   const StaticRangeConstructor = document.defaultView?.StaticRange
   if (!boundaries || !StaticRangeConstructor) return null
 
@@ -280,6 +283,7 @@ export function createStaticRangeForChunkRange(
 }
 
 function domBoundariesForChunkRange(
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   start: number,
   end: number,
@@ -287,8 +291,8 @@ function domBoundariesForChunkRange(
   if (end <= start) return null
   if (end <= chunk.startOffset || start >= chunk.endOffset) return null
 
-  const localStart = chunk.localStart + clamp(start - chunk.startOffset, 0, chunk.text.length)
-  const localEnd = chunk.localStart + clamp(end - chunk.startOffset, 0, chunk.text.length)
+  const localStart = clampChunkLocal(chunk, rowLocalIndexForOffset(row, start, 'before'))
+  const localEnd = clampChunkLocal(chunk, rowLocalIndexForOffset(row, end, 'after'))
   const startBoundary = domBoundaryForChunkLocalOffset(chunk, localStart)
   const endBoundary = domBoundaryForChunkLocalOffset(chunk, localEnd)
   if (!startBoundary || !endBoundary) return null
@@ -300,7 +304,7 @@ export function domBoundaryForOffset(
   row: MountedVirtualizedTextRow,
   offset: number,
 ): DomBoundary | null {
-  const local = clamp(offset - row.startOffset, 0, row.text.length)
+  const local = clamp(rowLocalIndexForOffset(row, offset), 0, row.text.length)
   const chunk = chunkForLocalOffset(row, local)
   if (!chunk) return null
   return domBoundaryForChunkLocalOffset(chunk, local)
@@ -382,8 +386,11 @@ function calculatedXToOffset(
   const localX = Math.max(0, x - rowTextInsetLeft(row))
   const visualColumn = Math.floor(localX / Math.max(1, view.metrics.characterWidth))
   const local = visualColumnToBufferColumn(row.text, visualColumn, 'nearest', view.tabSize)
-  return row.startOffset + clampLocalOffsetToMountedChunks(row, local)
+  return rowOffsetForLocalIndex(row, clampLocalOffsetToMountedChunks(row, local))
 }
+
+const clampChunkLocal = (chunk: VirtualizedTextChunk, local: number): number =>
+  clamp(local, chunk.localStart, chunk.localEnd)
 
 function clampLocalOffsetToMountedChunks(
   row: MountedVirtualizedTextRow,
@@ -404,7 +411,11 @@ function appendCalculatedChunkBoundaries(
   const cellWidth = view.metrics.characterWidth
   for (let local = chunk.localStart; local <= chunk.localEnd; local += 1) {
     const column = bufferColumnToVisualColumn(row.text, local, view.tabSize)
-    appendBoundary(boundaries, row.startOffset + local, rowTextInsetLeft(row) + column * cellWidth)
+    appendBoundary(
+      boundaries,
+      rowOffsetForLocalIndex(row, local),
+      rowTextInsetLeft(row) + column * cellWidth,
+    )
   }
 }
 
@@ -429,13 +440,13 @@ function appendMeasuredChunkBoundaries(
   chunk: VirtualizedTextChunk,
 ): void {
   let fallbackX = rowTextInsetLeft(row) + estimatedPrefixWidth(view, row, chunk.localStart)
-  appendBoundary(boundaries, row.startOffset + chunk.localStart, fallbackX)
+  appendBoundary(boundaries, rowOffsetForLocalIndex(row, chunk.localStart), fallbackX)
 
   for (const part of chunk.parts) {
     fallbackX = appendMeasuredPartBoundaries(boundaries, view, row, part, fallbackX)
   }
 
-  appendBoundary(boundaries, row.startOffset + chunk.localEnd, fallbackX)
+  appendBoundary(boundaries, rowOffsetForLocalIndex(row, chunk.localEnd), fallbackX)
 }
 
 function appendMeasuredPartBoundaries(
@@ -478,8 +489,8 @@ function appendTextSegmentBoundaries(
   const measured = measuredTextSegmentRect(row, part.node, segment.index, segment.segment.length)
   const width = measured?.width ?? estimatedLocalRangeWidth(view, row, localStart, localEnd)
   const left = measured?.left ?? fallbackX
-  appendBoundary(boundaries, row.startOffset + localStart, left)
-  appendBoundary(boundaries, row.startOffset + localEnd, left + width)
+  appendBoundary(boundaries, rowOffsetForLocalIndex(row, localStart), left)
+  appendBoundary(boundaries, rowOffsetForLocalIndex(row, localEnd), left + width)
   return left + width
 }
 
@@ -493,8 +504,8 @@ function appendControlBoundaries(
   const measured = measuredElementRect(row, part.element)
   const width = measured?.width ?? part.widthCells * view.metrics.characterWidth
   const left = measured?.left ?? fallbackX
-  appendBoundary(boundaries, row.startOffset + part.localStart, left)
-  appendBoundary(boundaries, row.startOffset + part.localEnd, left + width)
+  appendBoundary(boundaries, rowOffsetForLocalIndex(row, part.localStart), left)
+  appendBoundary(boundaries, rowOffsetForLocalIndex(row, part.localEnd), left + width)
   return left + width
 }
 
@@ -1016,7 +1027,7 @@ function offsetFromTextPartBoundary(
   if (!part) return null
 
   const local = part.localStart + clamp(offset, 0, part.node.length)
-  return row.startOffset + local
+  return rowOffsetForLocalIndex(row, local)
 }
 
 function offsetFromControlPartBoundary(
@@ -1026,12 +1037,13 @@ function offsetFromControlPartBoundary(
 ): number | null {
   const part = controlPartForNode(row, node)
   if (!part) return null
-  if (node === part.element && offset <= 0) return row.startOffset + part.localStart
+  if (node === part.element && offset <= 0) return rowOffsetForLocalIndex(row, part.localStart)
 
   const labelLength = part.element.textContent?.length ?? 0
-  if (node !== part.element && offset <= 0) return row.startOffset + part.localStart
-  if (node !== part.element && offset < labelLength / 2) return row.startOffset + part.localStart
-  return row.startOffset + part.localEnd
+  if (node !== part.element && offset <= 0) return rowOffsetForLocalIndex(row, part.localStart)
+  if (node !== part.element && offset < labelLength / 2)
+    return rowOffsetForLocalIndex(row, part.localStart)
+  return rowOffsetForLocalIndex(row, part.localEnd)
 }
 
 function offsetFromElementBoundary(
@@ -1050,7 +1062,7 @@ function offsetFromElementBoundary(
 
   const part = partAtElementChildBoundary(row, node, offset)
   if (!part) return row.endOffset
-  return row.startOffset + part.localStart
+  return rowOffsetForLocalIndex(row, part.localStart)
 }
 
 function chunkForElement(

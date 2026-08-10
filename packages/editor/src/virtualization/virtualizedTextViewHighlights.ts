@@ -11,7 +11,8 @@ import {
 import { getEditorTokenIndex, type EditorTokenIndex } from '../editor/tokenIndex'
 import { clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
 import { getSharedTokenHighlights } from './sharedTokenHighlights'
-import { scheduleHighlightRepaintNudge } from './geckoHighlightRepaint'
+import { rowLocalIndexForOffset } from './virtualizedTextViewInlineMapping'
+import { reregisterHighlights, scheduleHighlightRepaintNudge } from './geckoHighlightRepaint'
 import {
   addTokenRangeToChunk,
   appendTokenRange,
@@ -38,8 +39,8 @@ import type {
   MountedVirtualizedTextRow,
   TokenGroup,
   TokenRowSegment,
+  HighlightRegistry,
   VirtualizedTextChunk,
-  VirtualizedTextRow,
 } from './virtualizedTextViewTypes'
 import type {
   SameLineTokenEdit,
@@ -530,6 +531,52 @@ export function clearTokenHighlightsFromRow(
   scheduleHighlightRepaintNudge(view.highlightRegistry)
 }
 
+export function restoreHighlightsAfterBrowserResume(view: VirtualizedTextViewInternal): void {
+  const registry = view.highlightRegistry
+  if (!registry) return
+  if (!view.scrollElement.isConnected) return
+
+  const restoredTokenHighlights = restoreTokenHighlightGroups(view, registry)
+  const restoredRangeHighlights = restoreRangeHighlightGroups(view, registry)
+  restoreStyleRuleElements(view)
+  if (!restoredTokenHighlights && !restoredRangeHighlights) return
+
+  reregisterHighlights(registry)
+}
+
+function restoreTokenHighlightGroups(
+  view: VirtualizedTextViewInternal,
+  registry: HighlightRegistry,
+): boolean {
+  let restored = false
+  for (const group of view.tokenGroups.values()) {
+    registry.set(group.name, group.highlight)
+    restored = true
+  }
+
+  return restored
+}
+
+function restoreRangeHighlightGroups(
+  view: VirtualizedTextViewInternal,
+  registry: HighlightRegistry,
+): boolean {
+  let restored = false
+  for (const group of view.rangeHighlightGroups.values()) {
+    if (!group.registered) continue
+
+    registry.set(group.name, group.highlight)
+    restored = true
+  }
+
+  return restored
+}
+
+function restoreStyleRuleElements(view: VirtualizedTextViewInternal): void {
+  getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)?.restore()
+  syncStyleElementConnection(view, view.styleEl.textContent ?? '')
+}
+
 function ensureTokenRenderIndex(view: VirtualizedTextViewInternal): void {
   if (!view.tokenRenderIndexDirty) return
 
@@ -768,7 +815,14 @@ function appendIndexedTokenSegmentsForChunk(
     const token = tokenRenderEntry(view, view.tokens[index]!, index, styleSource)
     if (!token) continue
     if (token.end <= chunk.startOffset) continue
-    const result = appendTokenSegmentForChunk(segments, chunk, token, token.style, token.styleKey)
+    const result = appendTokenSegmentForChunk(
+      segments,
+      row,
+      chunk,
+      token,
+      token.style,
+      token.styleKey,
+    )
     recordTokenSegmentAppend(stats, result)
   }
 }
@@ -806,7 +860,14 @@ function appendTokenSegmentsForChunk(
 
     const token = view.tokenRenderEntries[index]!
     if (token.end <= chunk.startOffset) continue
-    const result = appendTokenSegmentForChunk(segments, chunk, token, token.style, token.styleKey)
+    const result = appendTokenSegmentForChunk(
+      segments,
+      row,
+      chunk,
+      token,
+      token.style,
+      token.styleKey,
+    )
     recordTokenSegmentAppend(stats, result)
   }
 }
@@ -946,6 +1007,7 @@ function addTokenSegmentsForRow(
     const range = addTokenRangeToChunk(
       document,
       group.highlight,
+      row,
       segment.chunk,
       segment.start,
       segment.end,
@@ -1201,7 +1263,7 @@ function addMountedRangeHighlightRanges(
 function addMountedRangeHighlightRangesForRow(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
-  row: VirtualizedTextRow,
+  row: MountedVirtualizedTextRow,
 ): void {
   for (const range of group.ranges) {
     addMountedRangeHighlightRange(view, group, row, range)
@@ -1211,25 +1273,27 @@ function addMountedRangeHighlightRangesForRow(
 function addMountedRangeHighlightRange(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
-  row: VirtualizedTextRow,
+  row: MountedVirtualizedTextRow,
   range: VirtualizedTextHighlightRange,
 ): void {
   if (range.start === range.end) return
   if (range.end <= row.startOffset || range.start >= row.endOffset) return
 
   for (const chunk of row.chunks) {
-    addRangeHighlightToChunk(view, group, chunk, range)
+    addRangeHighlightToChunk(view, group, row, chunk, range)
   }
 }
 
 function addRangeHighlightToChunk(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   range: VirtualizedTextHighlightRange,
 ): void {
   const domRange = createDomRangeForChunkRange(
     view.scrollElement.ownerDocument,
+    row,
     chunk,
     range.start,
     range.end,
@@ -1275,7 +1339,7 @@ function rangeHighlightSignature(
 
 function appendRangeHighlightRowSignature(
   parts: string[],
-  row: VirtualizedTextRow,
+  row: MountedVirtualizedTextRow,
   group: VirtualizedTextHighlightGroup,
 ): void {
   for (const range of group.ranges) {
@@ -1285,7 +1349,7 @@ function appendRangeHighlightRowSignature(
 
 function appendRangeHighlightRangeSignature(
   parts: string[],
-  row: VirtualizedTextRow,
+  row: MountedVirtualizedTextRow,
   range: VirtualizedTextHighlightRange,
 ): void {
   if (range.start === range.end) return
@@ -1404,15 +1468,23 @@ function rangeHighlightRule(name: string, style: VirtualizedTextHighlightStyle):
 }
 
 function selectionChunkSignature(
-  row: VirtualizedTextRow,
+  row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   start: number,
   end: number,
 ): string | null {
   if (end <= chunk.startOffset || start >= chunk.endOffset) return null
 
-  const localStart = clamp(start - chunk.startOffset, 0, chunk.text.length)
-  const localEnd = clamp(end - chunk.startOffset, 0, chunk.text.length)
+  const localStart = clamp(
+    rowLocalIndexForOffset(row, start, 'before') - chunk.localStart,
+    0,
+    chunk.text.length,
+  )
+  const localEnd = clamp(
+    rowLocalIndexForOffset(row, end, 'after') - chunk.localStart,
+    0,
+    chunk.text.length,
+  )
   return `${row.index}:${chunk.localStart}:${chunk.startOffset}:${localStart}:${localEnd}`
 }
 

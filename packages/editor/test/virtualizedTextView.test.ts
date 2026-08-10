@@ -9,6 +9,7 @@ import { type EditorToken, treeSitterCapturesToEditorTokens } from '../src/publi
 import type { VirtualizedFoldMarker } from '../src/public/rendering'
 import type { EditorGutterRowContext } from '../src/public/extensions'
 import { createFoldMap } from '../src/foldMap'
+import { createInlineMap } from '../src/inlineMap'
 import {
   clearBrowserTextMetricsCache,
   measureBrowserTextMetrics,
@@ -2139,6 +2140,29 @@ describe('VirtualizedTextView', () => {
     expect(ranges[0]!.endOffset).toBe(4)
   })
 
+  it('restores token and range highlight registry entries when the window regains focus', () => {
+    view.setText('alpha\nbeta')
+    view.setScrollMetrics(0, 40)
+    view.setTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
+    view.setRangeHighlight('test-find', [{ start: 6, end: 10 }], {
+      backgroundColor: 'rgba(234, 179, 8, 0.34)',
+    })
+
+    const tokenHighlightName = tokenHighlightNames()[0]!
+    const tokenHighlight = highlightsMap.get(tokenHighlightName)!
+    const rangeHighlight = highlightsMap.get('test-find')!
+    const styleTexts = styleElementTexts()
+    highlightsMap.delete(tokenHighlightName)
+    highlightsMap.delete('test-find')
+    document.head.querySelectorAll('style').forEach((element) => element.remove())
+
+    window.dispatchEvent(new Event('focus'))
+
+    expect(highlightsMap.get(tokenHighlightName)).toBe(tokenHighlight)
+    expect(highlightsMap.get('test-find')).toBe(rangeHighlight)
+    expect(styleElementTexts()).toEqual(styleTexts)
+  })
+
   it('does not create token groups while scrolling to a newly visible style', () => {
     const lines = Array.from({ length: 20 }, (_, index) => `line-${index}`)
     const offsets = lineStartOffsets(lines)
@@ -2645,6 +2669,10 @@ function tokenHighlightNames(): string[] {
   return [...highlightsMap.keys()].filter((name) => name.includes('-token-'))
 }
 
+function styleElementTexts(): string[] {
+  return [...document.head.querySelectorAll('style')].map((element) => element.textContent ?? '')
+}
+
 function tokenHighlightRanges(): AbstractRange[] {
   return tokenHighlightNames().flatMap((name) => [...highlightsMap.get(name)!])
 }
@@ -2889,3 +2917,147 @@ function restoreRangeGetClientRects(original: Range['getClientRects']): void {
     value: original,
   })
 }
+
+describe('VirtualizedTextView inline map', () => {
+  let container: HTMLElement
+  let view: VirtualizedTextView
+
+  const MARKDOWN = '# Title\na **bold** b\nplain'
+
+  const markdownInlineMap = (text = MARKDOWN) =>
+    createInlineMap(createPieceTableSnapshot(text), [
+      { id: 'heading', startIndex: 0, endIndex: 2, text: '', groupId: 'h1' },
+      { id: 'open', startIndex: 10, endIndex: 12, text: '', groupId: 'bold' },
+      { id: 'close', startIndex: 16, endIndex: 18, text: '', groupId: 'bold' },
+    ])
+
+  beforeEach(() => {
+    highlightsMap.clear()
+    // @ts-expect-error happy-dom does not provide Highlight.
+    globalThis.Highlight = MockHighlight
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 2,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+    })
+  })
+
+  afterEach(() => {
+    view.dispose()
+    container.remove()
+    Reflect.deleteProperty(globalThis, 'Highlight')
+  })
+
+  it('renders display text with markdown markers hidden', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual([
+      'Title',
+      'a bold b',
+      'plain',
+    ])
+  })
+
+  it('keeps row offsets in buffer space while text is in display space', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+
+    expect(view.getState().mountedRows.map((row) => [row.startOffset, row.endOffset])).toEqual([
+      [0, 7],
+      [8, 20],
+      [21, 26],
+    ])
+  })
+
+  it('restores source text under the caret and hides it again when the caret leaves', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+
+    view.setSelection(14, 14)
+    expect(view.getState().mountedRows[1]?.text).toBe('a **bold** b')
+
+    view.setSelection(21, 21)
+    expect(view.getState().mountedRows[1]?.text).toBe('a bold b')
+  })
+
+  it('reveals only the construct the caret is in', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+
+    view.setSelection(14, 14)
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual([
+      'Title',
+      'a **bold** b',
+      'plain',
+    ])
+  })
+
+  it('drops back to buffer text when the inline map is removed', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+    view.setInlineMap(null)
+
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual([
+      '# Title',
+      'a **bold** b',
+      'plain',
+    ])
+  })
+
+  it('maps caret columns through hidden markers', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+
+    // 'a **bold** b' renders as 'a bold b'; the line starts at offset 8.
+    expect(view.visualColumnForOffset(8)).toBe(0)
+    expect(view.visualColumnForOffset(12)).toBe(2)
+    expect(view.visualColumnForOffset(16)).toBe(6)
+    expect(view.visualColumnForOffset(20)).toBe(8)
+  })
+
+  it('collapses both edges of a hidden marker onto one caret column', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+
+    expect(view.visualColumnForOffset(10)).toBe(view.visualColumnForOffset(12))
+    expect(view.visualColumnForOffset(16)).toBe(view.visualColumnForOffset(18))
+  })
+
+  it('resolves an ambiguous caret column to the offset before the hidden run', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+
+    expect(view.offsetByDisplayRows(12, 0, 2)).toBe(10)
+    expect(view.offsetByDisplayRows(12, 0, 6)).toBe(16)
+    expect(view.offsetByDisplayRows(12, 0, 0)).toBe(8)
+  })
+
+  it('keeps line boundaries in buffer space', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap())
+    view.setScrollMetrics(0, 100)
+
+    expect(view.offsetAtLineBoundary(12, 'start')).toBe(8)
+    expect(view.offsetAtLineBoundary(12, 'end')).toBe(20)
+  })
+
+  it('ignores an inline map built against different text', () => {
+    view.setText(MARKDOWN)
+    view.setInlineMap(markdownInlineMap('totally different text'))
+    view.setScrollMetrics(0, 100)
+
+    expect(view.getState().mountedRows[0]?.text).toBe('# Title')
+  })
+})

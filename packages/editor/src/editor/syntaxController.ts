@@ -8,7 +8,12 @@ import type {
   EditorPluginHost,
 } from '../plugins'
 import { createEmptySyntaxResult } from '../syntax/session'
-import type { EditorSyntaxRange, EditorSyntaxResult, EditorSyntaxSession } from '../syntax/session'
+import type {
+  EditorSyntaxCapture,
+  EditorSyntaxRange,
+  EditorSyntaxResult,
+  EditorSyntaxSession,
+} from '../syntax/session'
 import type { EditorSyntaxLanguageId, FoldRange } from '../syntax/session'
 import type { EditorTheme } from '../theme'
 import { editorThemesEqual } from '../theme'
@@ -42,6 +47,7 @@ export type EditorSyntaxControllerOptions = {
   clearSyntaxFolds(): void
   setSyntaxFolds(folds: readonly FoldRange[]): void
   notifyChange(change: DocumentSessionChange | null): void
+  setSyntaxCaptures?(captures: readonly EditorSyntaxCapture[]): void
   notifyThemeChanged(): void
   log?(event: EditorLogInput): void
 }
@@ -594,7 +600,10 @@ export class EditorSyntaxController {
     if (!this.highlighterSession && loadResult.range && !this.pendingWarm) {
       this.warmSyntaxAroundRange(documentVersion, loadResult.range)
     }
-    if (this.shouldApplySyntaxFolds(loadResult)) this.options.setSyntaxFolds(result.folds)
+    if (this.shouldApplySyntaxFolds(loadResult)) {
+      this.options.setSyntaxFolds(result.folds)
+      this.options.setSyntaxCaptures?.(result.captures)
+    }
     this.options.notifyChange(null)
     return true
   }

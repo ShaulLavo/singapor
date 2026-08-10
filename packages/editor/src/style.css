@@ -278,14 +278,24 @@
 }
 
 .editor-virtualized-input {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  caret-color: transparent;
+  color: transparent;
   height: 1px;
   left: 0;
   opacity: 0;
+  outline: none;
   overflow: hidden;
+  padding: 0;
   pointer-events: none;
   position: absolute;
   resize: none;
   top: 0;
+  -webkit-text-fill-color: transparent;
   width: 1px;
 }
 

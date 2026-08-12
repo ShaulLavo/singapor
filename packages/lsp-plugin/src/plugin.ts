@@ -25,6 +25,14 @@ import { DocumentSync, type DocumentSyncOptions } from './documentSync'
 import { HoverDefinitionController } from './hoverDefinitionController'
 import { SignatureHelpController } from './signatureHelpController'
 import { DocumentHighlightController } from './documentHighlightController'
+import { createRenameWidgetController, type RenameWidgetController } from './renameWidget'
+import {
+  workspaceEditForDocument,
+  workspaceEditPlan,
+  workspaceEditTouchesOtherDocuments,
+} from './workspaceEdit'
+import { wordRangeAtOffset } from '@singapor/core/internal'
+import { offsetToLspPosition } from '@singapor/lsp'
 import {
   createWebSocketLspTransportFactory,
   LspConnection,
@@ -67,6 +75,7 @@ export type LanguageServerCommandTarget = {
   runNavigationCommand(command: LanguageServerNavigationCommand): boolean
   moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean
   formatDocument(): boolean
+  renameSymbol(): boolean
 }
 
 export type LanguageServerCommandSpec = {
@@ -74,8 +83,18 @@ export type LanguageServerCommandSpec = {
   run(target: LanguageServerCommandTarget): boolean
 }
 
+export type LanguageServerRenamePrompt = {
+  readonly currentName: string
+  readonly anchor: DOMRect
+}
+
 export type LanguageServerAdapterPluginOptions = {
   readonly name: string
+  /**
+   * Asks the host for a new symbol name. Supply this to use the application's own dialog; without
+   * it the editor shows its own small input at the symbol.
+   */
+  readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
   readonly rootUri?: lsp.DocumentUri | null
   readonly hoverMarkdownCodeBackground?: boolean
   readonly initializationOptions?: unknown
@@ -114,6 +133,7 @@ export type LanguageServerAdapterPluginOptions = {
 
 type LanguageServerResolvedAdapterOptions = {
   readonly name: string
+  readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
   readonly rootUri: lsp.DocumentUri | null
   readonly hoverMarkdownCodeBackground: boolean
   readonly initializationOptions: unknown
@@ -240,6 +260,14 @@ class LanguageServerPluginState implements LanguageServerCommandTarget {
 
     return false
   }
+
+  public renameSymbol(): boolean {
+    for (const contribution of this.contributions) {
+      if (contribution.renameSymbol()) return true
+    }
+
+    return false
+  }
 }
 
 class LanguageServerCommandContribution implements EditorDisposable {
@@ -286,6 +314,7 @@ class LanguageServerContribution implements EditorViewContribution {
   private readonly hoverDefinition: HoverDefinitionController
   private readonly signatureHelp: SignatureHelpController
   private readonly documentHighlights: DocumentHighlightController
+  private rename: RenameWidgetController | null = null
   private readonly connectionRegistration: EditorDisposable | null
   private disposed = false
 
@@ -393,6 +422,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.completion.dispose()
     this.signatureHelp.dispose()
     this.documentHighlights.dispose()
+    this.rename?.dispose()
     this.connection.dispose()
   }
 
@@ -428,6 +458,100 @@ class LanguageServerContribution implements EditorViewContribution {
 
     void this.requestFormatting(active)
     return true
+  }
+
+  /**
+   * Renames the symbol under the caret.
+   *
+   * The new name comes from the host when it supplies `onRequestRenameName`, and otherwise from the
+   * editor's own input widget, so the engine is usable standalone without dictating a dialog to an
+   * application that has one.
+   */
+  public renameSymbol(): boolean {
+    const active = this.documentSync.activeDocument
+    if (!active) return false
+    if (!this.connection.client.serverCapabilities?.renameProvider) return false
+
+    void this.runRename(active)
+    return true
+  }
+
+  private async runRename(active: ActiveDocument): Promise<void> {
+    const selection = this.context.getSnapshot().selections[0]
+    if (!selection) return
+
+    const offset = selection.headOffset
+    const range = wordRangeAtOffset(active.fullText, offset)
+    const currentName = active.fullText.slice(range.start, range.end)
+    if (currentName.length === 0) return
+
+    const anchor = this.context.getRangeClientRect(range.start, range.end)
+    if (!anchor) return
+
+    try {
+      const nextName = await this.promptRenameName({ anchor, currentName })
+      if (nextName === null || nextName === currentName) return
+      if (active !== this.documentSync.activeDocument) return
+
+      const edit = await this.connection.client.request<lsp.WorkspaceEdit | null>(
+        'textDocument/rename',
+        {
+          newName: nextName,
+          position: offsetToLspPosition(active.fullText, offset),
+          textDocument: { uri: active.uri },
+        },
+      )
+      if (active !== this.documentSync.activeDocument) return
+
+      this.applyRenameEdit(active, edit)
+    } catch (error) {
+      this.handleRequestError(error)
+    }
+  }
+
+  private promptRenameName(prompt: LanguageServerRenamePrompt): Promise<string | null> {
+    const host = this.options.onRequestRenameName
+    if (host) return host(prompt)
+
+    return this.renameWidget().prompt(prompt)
+  }
+
+  /** Built on first use, so a host that supplies its own prompt never creates the element. */
+  private renameWidget(): RenameWidgetController {
+    if (this.rename) return this.rename
+
+    this.rename = createRenameWidgetController({
+      classNamespace: this.options.hoverDefinition.tooltipClassNamespace ?? 'lsp-plugin',
+      document: this.context.container.ownerDocument,
+      themeSource: this.context.scrollElement,
+    })
+    return this.rename
+  }
+
+  /**
+   * Applies a rename that stays inside the active document.
+   *
+   * A rename reaching other files is reported rather than partially applied: writing only this
+   * document would leave every other file referring to a name that no longer exists, which is worse
+   * than not renaming at all. Multi-file application needs a workspace-wide edit applicator.
+   */
+  private applyRenameEdit(active: ActiveDocument, edit: lsp.WorkspaceEdit | null): void {
+    const plan = workspaceEditPlan(edit)
+    if (workspaceEditTouchesOtherDocuments(plan, active.uri)) {
+      this.handleRequestError(
+        new Error('Rename spans several files, which this editor cannot apply yet.'),
+      )
+      return
+    }
+
+    const edits = formattingEdits(active.fullText, workspaceEditForDocument(plan, active.uri))
+    if (edits.length === 0) return
+
+    const feature = this.context.getFeature?.(this.options.completion.editFeature)
+    if (!feature) return
+
+    const head = this.context.getSnapshot().selections[0]?.headOffset ?? 0
+    feature.applyCompletion({ edits, selection: { anchor: head, head } })
   }
 
   private async requestFormatting(active: ActiveDocument): Promise<void> {
@@ -593,6 +717,10 @@ const LANGUAGE_SERVER_COMMANDS: readonly LanguageServerCommandSpec[] = [
         openMode: 'peek',
         includeDeclaration: true,
       }),
+  },
+  {
+    id: 'editor.action.rename',
+    run: (state) => state.renameSymbol(),
   },
   {
     id: 'editor.action.formatDocument',

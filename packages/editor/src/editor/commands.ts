@@ -33,6 +33,7 @@ export type EditorCommandId =
   | 'editor.action.jumpToBracket'
   | 'editor.action.toggleWordWrap'
   | 'editor.action.formatDocument'
+  | 'editor.action.rename'
   | 'editor.action.moveSelectionToNextFindMatch'
   | 'deleteBackward'
   | 'deleteForward'

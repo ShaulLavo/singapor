@@ -14,6 +14,7 @@ export {
 } from './documentSession'
 export { defineLazyFullTextProperty } from './documentTextSnapshot'
 export { parseSnippet, snippetInitialSelection } from './editor/snippet'
+export { wordRangeAtOffset } from './textRanges'
 export type { ParsedSnippet, SnippetRange, SnippetStop } from './editor/snippet'
 export { EditorWorkScheduler } from './editor/workScheduler'
 export { VirtualizedTextView } from './virtualization'

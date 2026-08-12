@@ -71,6 +71,7 @@
       "name": "@singapor/core",
       "version": "0.1.1",
       "dependencies": {
+        "@shikijs/themes": "4.2.0",
         "@tanstack/hotkeys": "0.8.0",
         "diff": "^9.0.0",
         "evlog": "^2.19.1",

@@ -159,6 +159,7 @@ function snapshot(): EditorViewSnapshot {
     textVersion: 1,
     lineStarts: [0],
     tokens: [],
+    brackets: [],
     selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
     metrics: { rowHeight: 20, characterWidth: 8 },
     lineCount: 1,

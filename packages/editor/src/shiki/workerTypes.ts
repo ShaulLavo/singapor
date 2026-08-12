@@ -1,10 +1,21 @@
 import type { EditorTheme } from '../theme'
 import type { EditorToken, TextEdit } from '../tokens'
+import type { EditorShikiThemeSettingLike } from './theme'
+
+export type ShikiWorkerThemeRegistration = {
+  readonly name: string
+  readonly bg?: string
+  readonly fg?: string
+  readonly colors?: Readonly<Record<string, string | undefined>>
+  readonly tokenColors?: readonly EditorShikiThemeSettingLike[]
+  readonly settings?: readonly EditorShikiThemeSettingLike[]
+}
 
 export type ShikiWorkerDocumentOptions = {
   readonly documentId: string
   readonly lang: string
   readonly theme: string
+  readonly themeRegistration?: ShikiWorkerThemeRegistration
   readonly text?: string
   readonly langs: readonly string[]
   readonly themes: readonly string[]
@@ -32,6 +43,7 @@ type ShikiWorkerDisposeRequest = {
 export type ShikiWorkerThemeRequest = {
   readonly type: 'theme'
   readonly theme: string
+  readonly themeRegistration?: ShikiWorkerThemeRegistration
   readonly themes: readonly string[]
 }
 

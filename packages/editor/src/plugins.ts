@@ -7,6 +7,7 @@ import type { EditorToken, TextEdit } from './tokens'
 import type { EditorBlockProvider } from './editorBlocks'
 import type { DisplayTextRowSource, InjectedTextRow } from './displayTransforms'
 import {
+  type BracketInfo,
   type EditorSyntaxCapture,
   type EditorSyntaxLanguageId,
   type EditorSyntaxProvider,
@@ -191,6 +192,8 @@ export type EditorViewSnapshot = {
   readonly lineStarts: readonly number[]
   readonly lineStartsView?: EditorLineStartsView
   readonly tokens: readonly EditorToken[]
+  /** Bracket positions from the last structural parse, sorted by offset; empty when unavailable. */
+  readonly brackets: readonly BracketInfo[]
   readonly selections: readonly EditorResolvedSelection[]
   readonly metrics: BrowserTextMetrics
   readonly lineCount: number

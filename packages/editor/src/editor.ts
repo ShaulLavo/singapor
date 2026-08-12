@@ -1,5 +1,9 @@
 import './style.css'
 
+export { createBracketMatchPlugin, EDITOR_BRACKET_MATCH_PLUGIN_ID } from './bracketMatchPlugin'
+export type { EditorBracketMatchPluginOptions } from './bracketMatchPlugin'
+export { bracketJumpTargetOffset, findBracketMatchAtCaret } from './editor/bracketMatching'
+export type { BracketMatch } from './editor/bracketMatching'
 export {
   createMergeConflictPlugin,
   EDITOR_MERGE_CONFLICT_FEATURE,

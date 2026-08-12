@@ -1083,6 +1083,7 @@ function snapshot(
     textVersion: 1,
     lineStarts: starts,
     tokens: overrides.tokens ?? [],
+    brackets: [],
     selections: [],
     metrics: { rowHeight: 20, characterWidth: 8 },
     lineCount: starts.length,

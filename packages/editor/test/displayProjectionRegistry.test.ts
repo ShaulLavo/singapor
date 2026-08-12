@@ -87,13 +87,17 @@ describe('EditorDisplayProjectionRegistry', () => {
     ).toThrow('Display projection row range end must be greater than or equal to start')
   })
 
-  it('rejects nested or overlapping fold projections near ingestion', () => {
+  it('accepts nested fold projections and rejects crossing ones near ingestion', () => {
     const registry = new EditorDisplayProjectionRegistry()
     const outer = foldRange({ startIndex: 0, endIndex: 40, startLine: 0, endLine: 4 })
     const inner = foldRange({ startIndex: 8, endIndex: 20, startLine: 1, endLine: 2 })
+    const crossing = foldRange({ startIndex: 30, endIndex: 60, startLine: 3, endLine: 5 })
 
-    expect(() => registry.set(foldProjection('editor.folds.syntax', [outer, inner]))).toThrow(
-      'Fold projection "editor.folds.syntax" contains overlapping or nested fold ranges',
+    registry.set(foldProjection('editor.folds.syntax', [outer, inner]))
+    expect(registry.get('folds', 'editor.folds.syntax')?.value).toEqual([outer, inner])
+
+    expect(() => registry.set(foldProjection('editor.folds.syntax', [outer, crossing]))).toThrow(
+      'Fold projection "editor.folds.syntax" contains crossing fold ranges',
     )
   })
 
@@ -134,26 +138,40 @@ describe('EditorDisplayProjectionRegistry', () => {
     ])
   })
 
-  it('rejects conflicting folds from multiple providers and preserves existing projections', () => {
+  it('rejects crossing folds from multiple providers and preserves existing projections', () => {
     const registry = new EditorDisplayProjectionRegistry()
     const outer = foldRange({ startIndex: 0, endIndex: 40, startLine: 0, endLine: 4 })
     const adjacent = foldRange({ startIndex: 40, endIndex: 80, startLine: 4, endLine: 8 })
-    const inner = foldRange({ startIndex: 8, endIndex: 20, startLine: 1, endLine: 2 })
+    const crossing = foldRange({ startIndex: 30, endIndex: 60, startLine: 3, endLine: 5 })
 
     registry.set(foldProjection('editor.folds.syntax', [outer]))
     registry.set(foldProjection('test.folds.semantic', [adjacent]))
 
-    expect(() => registry.set(foldProjection('test.folds.outline', [inner]))).toThrow(
-      'Fold projections "editor.folds.syntax" and "test.folds.outline" contain overlapping or nested fold ranges',
+    expect(() => registry.set(foldProjection('test.folds.outline', [crossing]))).toThrow(
+      'Fold projections "editor.folds.syntax" and "test.folds.outline" contain crossing fold ranges',
     )
-    expect(() => registry.replaceValue('folds', 'test.folds.semantic', [inner])).toThrow(
-      'Fold projections "editor.folds.syntax" and "test.folds.semantic" contain overlapping or nested fold ranges',
+    expect(() => registry.replaceValue('folds', 'test.folds.semantic', [crossing])).toThrow(
+      'Fold projections "editor.folds.syntax" and "test.folds.semantic" contain crossing fold ranges',
     )
     expect(registry.values('folds').map((projection) => projection.owner)).toEqual([
       'editor.folds.syntax',
       'test.folds.semantic',
     ])
     expect(registry.get('folds', 'test.folds.semantic')?.value).toEqual([adjacent])
+  })
+
+  it('accepts nested folds from multiple providers', () => {
+    const registry = new EditorDisplayProjectionRegistry()
+    const outer = foldRange({ startIndex: 0, endIndex: 40, startLine: 0, endLine: 4 })
+    const inner = foldRange({ startIndex: 8, endIndex: 20, startLine: 1, endLine: 2 })
+
+    registry.set(foldProjection('editor.folds.syntax', [outer]))
+    registry.set(foldProjection('test.folds.outline', [inner]))
+
+    expect(registry.values('folds').map((projection) => projection.owner)).toEqual([
+      'editor.folds.syntax',
+      'test.folds.outline',
+    ])
   })
 })
 

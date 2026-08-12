@@ -6,7 +6,7 @@ import {
 import {
   foldRangesEqual,
   projectSyntaxFoldsThroughLineEdit,
-  rejectNestedOrOverlappingFoldRanges,
+  rejectCrossingFoldRanges,
   type FoldRangeRejection,
   type SyntaxFoldProjection,
 } from './folds'
@@ -70,7 +70,7 @@ import type {
 import { EditorViewContributionController } from './viewContributions'
 import type { FoldMap } from '../foldMap'
 import { createInlineMap, type InlineMap } from '../inlineMap'
-import type { EditorSyntaxCapture } from '../syntax/session'
+import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
 import type { EditorInlineReplacementProvider } from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
 import type { BlockLane, BlockRow, InjectedTextRow } from '../displayTransforms'
@@ -316,6 +316,10 @@ export class Editor {
 
   private get tokens(): readonly EditorToken[] {
     return this.syntax.tokens
+  }
+
+  private get brackets(): readonly BracketInfo[] {
+    return this.syntax.brackets
   }
 
   constructor(container: HTMLElement, options: EditorOptions = {}) {
@@ -1685,7 +1689,7 @@ export class Editor {
   }
 
   private setSyntaxFoldProjection(folds: readonly FoldRange[]): boolean {
-    const result = rejectNestedOrOverlappingFoldRanges(folds)
+    const result = rejectCrossingFoldRanges(folds)
     if (result.rejected.length > 0) this.logRejectedSyntaxFoldProjection(result.rejected)
 
     const acceptedFolds = result.folds
@@ -2133,6 +2137,7 @@ export class Editor {
       },
       lineStartsView,
       tokens: this.tokens,
+      brackets: this.brackets,
       selections: this.inputSelection.resolveViewSelections(),
       metrics: viewState.metrics,
       lineCount: viewState.lineCount,

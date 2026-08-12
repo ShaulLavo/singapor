@@ -5341,7 +5341,7 @@ describe('Editor', () => {
       expect(editorRoot().textContent).toContain('  y();')
     })
 
-    it('rejects nested syntax fold projections before fold state consumption', async () => {
+    it('keeps nested syntax fold projections as markers', async () => {
       const text = 'if (x) {\n  if (y) {\n    z();\n  }\n}\na();'
       const outerEnd = text.indexOf('\na();')
       const innerStart = text.indexOf('if (y)')
@@ -5381,12 +5381,18 @@ describe('Editor', () => {
       editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
       await flushMicrotasks()
 
-      expect(latestFoldMarkers(events)).toHaveLength(1)
+      expect(latestFoldMarkers(events)).toHaveLength(2)
       expect(latestFoldMarkers(events)[0]).toMatchObject({
         endOffset: outerEnd,
         endRow: 4,
         startOffset: 0,
         startRow: 0,
+      })
+      expect(latestFoldMarkers(events)[1]).toMatchObject({
+        endOffset: innerEnd,
+        endRow: 3,
+        startOffset: innerStart,
+        startRow: 1,
       })
     })
 

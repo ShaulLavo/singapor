@@ -2,7 +2,7 @@ import type { BlockLane, BlockRow, InjectedTextRow } from '../displayTransforms'
 import type { EditorGutterContribution, EditorDisposable } from '../plugins'
 import type { FoldRange } from '../syntax/session'
 import type { VirtualizedTextRowDecoration } from '../virtualization/virtualizedTextViewTypes'
-import { rejectNestedOrOverlappingFoldRanges, type FoldRangeRejection } from './folds'
+import { rejectCrossingFoldRanges, type FoldRangeRejection } from './folds'
 import type { EditorRangeDecoration } from './types'
 
 export type EditorDisplayProjectionKind =
@@ -261,10 +261,10 @@ function validateDisplayProjection<K extends EditorDisplayProjectionKind>(
 }
 
 function validateFoldProjectionValue(owner: string, folds: readonly FoldRange[]): void {
-  const rejected = rejectNestedOrOverlappingFoldRanges(folds).rejected[0]
+  const rejected = rejectCrossingFoldRanges(folds).rejected[0]
   if (!rejected) return
   if (rejected.kind === 'overlap') {
-    throw new Error(`Fold projection "${owner}" contains overlapping or nested fold ranges`)
+    throw new Error(`Fold projection "${owner}" contains crossing fold ranges`)
   }
 
   throw new Error(`Fold projection "${owner}" contains an invalid fold range: ${rejected.message}`)
@@ -272,9 +272,8 @@ function validateFoldProjectionValue(owner: string, folds: readonly FoldRange[])
 
 function validateFoldProjectionSet(projections: readonly StoredDisplayProjection<'folds'>[]): void {
   const ownedFolds = foldRangesFromProjections(projections)
-  const rejected = rejectNestedOrOverlappingFoldRanges(
-    ownedFolds.map((ownedFold) => ownedFold.fold),
-  ).rejected[0]
+  const rejected = rejectCrossingFoldRanges(ownedFolds.map((ownedFold) => ownedFold.fold))
+    .rejected[0]
   if (!rejected) return
 
   throw foldProjectionSetError(ownedFolds, rejected)
@@ -301,7 +300,7 @@ function foldProjectionSetError(
   const previousOwner = rejection.previous ? ownerForFold(ownedFolds, rejection.previous) : null
   if (rejection.kind === 'overlap' && owner && previousOwner && owner !== previousOwner) {
     return new Error(
-      `Fold projections "${previousOwner}" and "${owner}" contain overlapping or nested fold ranges`,
+      `Fold projections "${previousOwner}" and "${owner}" contain crossing fold ranges`,
     )
   }
   if (owner) return new Error(`Fold projection "${owner}" contains ${rejection.message}`)

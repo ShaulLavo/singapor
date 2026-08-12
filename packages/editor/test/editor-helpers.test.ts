@@ -22,7 +22,7 @@ import {
   foldRangeKey,
   foldRangesEqual,
   projectSyntaxFoldsThroughLineEdit,
-  rejectNestedOrOverlappingFoldRanges,
+  rejectCrossingFoldRanges,
 } from '../src/editor/folds'
 import { mouseSelectionAutoScrollDelta } from '../src/editor/mouseSelection'
 import { nextWordOffset, previousWordOffset } from '../src/editor/navigation'
@@ -107,7 +107,7 @@ describe('editor fold helpers', () => {
     })
   })
 
-  it('rejects nested and overlapping fold ranges while accepting adjacent ranges', () => {
+  it('accepts nested fold ranges while rejecting crossing ranges', () => {
     const outer = foldRange({
       startIndex: 0,
       endIndex: 40,
@@ -137,12 +137,42 @@ describe('editor fold helpers', () => {
       type: 'adjacent',
     })
 
-    const result = rejectNestedOrOverlappingFoldRanges([inner, adjacent, crossing, outer])
+    const result = rejectCrossingFoldRanges([inner, adjacent, crossing, outer])
 
-    expect(result.folds).toEqual([outer, adjacent])
-    expect(result.rejected.map((rejection) => rejection.kind)).toEqual(['overlap', 'overlap'])
-    expect(result.rejected.map((rejection) => rejection.fold.type)).toEqual(['inner', 'crossing'])
-    expect(result.rejected.every((rejection) => rejection.previous === outer)).toBe(true)
+    expect(result.folds).toEqual([outer, inner, adjacent])
+    expect(result.rejected.map((rejection) => rejection.kind)).toEqual(['overlap'])
+    expect(result.rejected.map((rejection) => rejection.fold.type)).toEqual(['crossing'])
+    expect(result.rejected[0]?.previous?.type).toBe('outer')
+  })
+
+  it('rejects a range crossing a sibling nested inside the same parent', () => {
+    const outer = foldRange({
+      startIndex: 0,
+      endIndex: 100,
+      startLine: 0,
+      endLine: 10,
+      type: 'outer',
+    })
+    const sibling = foldRange({
+      startIndex: 10,
+      endIndex: 20,
+      startLine: 1,
+      endLine: 2,
+      type: 'sibling',
+    })
+    const crossingSibling = foldRange({
+      startIndex: 15,
+      endIndex: 30,
+      startLine: 1,
+      endLine: 3,
+      type: 'crossing-sibling',
+    })
+
+    const result = rejectCrossingFoldRanges([outer, sibling, crossingSibling])
+
+    expect(result.folds).toEqual([outer, sibling])
+    expect(result.rejected.map((rejection) => rejection.fold.type)).toEqual(['crossing-sibling'])
+    expect(result.rejected[0]?.previous?.type).toBe('sibling')
   })
 })
 
@@ -168,6 +198,28 @@ describe('EditorFoldState', () => {
     const [markers, foldMap] = setFoldState.mock.lastCall ?? []
     expect(markers?.[0]).toMatchObject({ key: 'typescript:block:2:30', collapsed: true })
     expect(foldMap).not.toBeNull()
+  })
+
+  it('keeps markers for nested folds and collapses the outer range when both are folded', () => {
+    const setFoldState = vi.fn()
+    const state = new EditorFoldState({ setFoldState }, () =>
+      createPieceTableSnapshot('function f() {\n  if (x) {\n    y();\n  }\n}\n'),
+    )
+    const outer = foldRange({ startIndex: 14, endIndex: 40, startLine: 0, endLine: 4 })
+    const inner = foldRange({ startIndex: 25, endIndex: 38, startLine: 1, endLine: 3 })
+
+    state.setFoldProjections([foldProjection([outer, inner])])
+
+    const [markers] = setFoldState.mock.lastCall ?? []
+    expect(markers).toHaveLength(2)
+    expect(markers?.map((marker: { startRow: number }) => marker.startRow)).toEqual([0, 1])
+
+    state.foldAll()
+
+    const [foldedMarkers, foldMap] = setFoldState.mock.lastCall ?? []
+    expect(foldedMarkers?.every((marker: { collapsed: boolean }) => marker.collapsed)).toBe(true)
+    expect(foldMap?.ranges).toHaveLength(1)
+    expect(foldMap?.ranges[0]).toMatchObject({ startOffset: 14, endOffset: 40 })
   })
 })
 

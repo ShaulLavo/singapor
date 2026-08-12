@@ -373,6 +373,7 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
     textVersion: 1,
     lineStarts: [0],
     tokens: [],
+    brackets: [],
     selections: [],
     metrics: { rowHeight: 20, characterWidth: 8 },
     lineCount: 1,

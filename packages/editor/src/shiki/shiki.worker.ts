@@ -1,8 +1,8 @@
-import { createHighlighter, type HighlighterGeneric } from 'shiki'
+import { createHighlighter, type HighlighterGeneric, type ThemeRegistrationAny } from 'shiki'
 import { createIncrementalTokenizer, type IncrementalTokenizer } from './tokenizer'
 import { snapshotToEditorTokens } from './editor-tokens'
 import type { EditorTheme } from '../theme'
-import { EDITOR_SHIKI_SYNTAX_SCOPE_MAPPINGS, type EditorShikiThemeSettingLike } from './theme'
+import { editorThemeFromShikiTheme, type ShikiThemeLike } from './theme-extract'
 import type {
   ShikiWorkerDocumentOptions,
   ShikiWorkerEditRequest,
@@ -10,6 +10,7 @@ import type {
   ShikiWorkerRequest,
   ShikiWorkerResponse,
   ShikiWorkerResult,
+  ShikiWorkerThemeRegistration,
   ShikiWorkerThemeRequest,
 } from './workerTypes'
 
@@ -17,16 +18,9 @@ type DocumentState = {
   readonly documentId: string
   readonly lang: string
   readonly theme: string
+  readonly themeRegistration?: ShikiWorkerThemeRegistration
   readonly highlighter: HighlighterGeneric<string, string>
   readonly tokenizer: IncrementalTokenizer
-}
-
-type ShikiThemeLike = {
-  readonly bg?: string
-  readonly fg?: string
-  readonly colors?: Readonly<Record<string, string | undefined>>
-  readonly tokenColors?: readonly EditorShikiThemeSettingLike[]
-  readonly settings?: readonly EditorShikiThemeSettingLike[]
 }
 
 const documents = new Map<string, DocumentState>()
@@ -99,6 +93,7 @@ const openDocument = async (payload: ShikiWorkerOpenRequest): Promise<ShikiWorke
     documentId: payload.documentId,
     lang: payload.lang,
     theme: payload.theme,
+    themeRegistration: payload.themeRegistration,
     highlighter,
     tokenizer,
   }
@@ -131,6 +126,7 @@ const openRequestFromEdit = (payload: ShikiWorkerEditRequest, text: string) => (
   documentId: payload.documentId,
   lang: payload.lang,
   theme: payload.theme,
+  themeRegistration: payload.themeRegistration,
   text,
   langs: payload.langs,
   themes: payload.themes,
@@ -141,35 +137,47 @@ const ensureHighlighter = (
   options: ShikiWorkerDocumentOptions,
 ): Promise<HighlighterGeneric<string, string>> => {
   const langs = unique([options.lang, ...options.langs])
-  const themes = unique([options.theme, ...options.themes])
+  const themes = highlighterThemes([options.theme, ...options.themes], options.themeRegistration)
   return ensureHighlighterFor(langs, themes)
 }
 
 const ensureHighlighterFor = (
   langs: readonly string[],
-  themes: readonly string[],
+  themes: readonly (string | ShikiWorkerThemeRegistration)[],
 ): Promise<HighlighterGeneric<string, string>> => {
   const key = highlighterKey(langs, themes)
   const existing = highlighterPromises.get(key)
   if (existing) return existing
 
-  const promise = createHighlighter({ langs: [...langs], themes: [...themes] }) as Promise<
-    HighlighterGeneric<string, string>
-  >
+  const promise = createHighlighter({
+    langs: [...langs],
+    themes: themes.map(highlighterThemeInput),
+  }) as Promise<HighlighterGeneric<string, string>>
   highlighterPromises.set(key, promise)
   return promise
 }
 
+const highlighterThemes = (
+  themeNames: readonly string[],
+  registration: ShikiWorkerThemeRegistration | undefined,
+): (string | ShikiWorkerThemeRegistration)[] => {
+  const names = unique(themeNames.filter((name) => name !== registration?.name))
+  if (!registration) return names
+  return [registration, ...names]
+}
+
 const loadTheme = async (payload: ShikiWorkerThemeRequest): Promise<ShikiWorkerResult> => {
-  const themes = unique([payload.theme, ...payload.themes])
+  const themes = highlighterThemes([payload.theme, ...payload.themes], payload.themeRegistration)
   const highlighter = await ensureHighlighterFor([], themes)
-  return { theme: editorThemeFromHighlighter(highlighter, payload.theme) }
+  return {
+    theme: editorThemeFromHighlighter(highlighter, payload.theme, payload.themeRegistration),
+  }
 }
 
 const resultFromState = (state: DocumentState): ShikiWorkerResult => ({
   documentId: state.documentId,
   tokens: snapshotToEditorTokens(state.tokenizer.getSnapshot()),
-  theme: editorThemeFromHighlighter(state.highlighter, state.theme),
+  theme: editorThemeFromHighlighter(state.highlighter, state.theme, state.themeRegistration),
 })
 
 const documentMatches = (state: DocumentState, payload: ShikiWorkerDocumentOptions): boolean =>
@@ -193,11 +201,23 @@ const postResponse = (response: ShikiWorkerResponse): void => {
   self.postMessage(response)
 }
 
-const highlighterKey = (langs: readonly string[], themes: readonly string[]): string => {
+const highlighterKey = (
+  langs: readonly string[],
+  themes: readonly (string | ShikiWorkerThemeRegistration)[],
+): string => {
   const normalizedLangs = langs.toSorted()
-  const normalizedThemes = themes.toSorted()
+  const normalizedThemes = themes.map(highlighterThemeKey).toSorted()
   return JSON.stringify({ langs: normalizedLangs, themes: normalizedThemes })
 }
+
+const highlighterThemeKey = (theme: string | ShikiWorkerThemeRegistration): string =>
+  typeof theme === 'string' ? theme : theme.name
+
+// Registrations arrive as plain JSON over postMessage; shiki accepts the same shape at runtime.
+const highlighterThemeInput = (
+  theme: string | ShikiWorkerThemeRegistration,
+): string | ThemeRegistrationAny =>
+  typeof theme === 'string' ? theme : (theme as ThemeRegistrationAny)
 
 const unique = (items: readonly string[]): string[] => Array.from(new Set(items))
 
@@ -209,133 +229,17 @@ const createErrorMessage = (error: unknown): string => {
 function editorThemeFromHighlighter(
   highlighter: HighlighterGeneric<string, string>,
   themeName: string,
+  registration: ShikiWorkerThemeRegistration | undefined,
 ): EditorTheme | undefined {
   const getTheme = (highlighter as Partial<Pick<HighlighterGeneric<string, string>, 'getTheme'>>)
     .getTheme
-  if (!getTheme) return undefined
-
-  return editorThemeFromShikiTheme(getTheme.call(highlighter, themeName))
-}
-
-function editorThemeFromShikiTheme(theme: ShikiThemeLike): EditorTheme {
-  const backgroundColor = theme.bg ?? theme.colors?.['editor.background']
-  const foregroundColor = theme.fg ?? theme.colors?.['editor.foreground']
-  const syntax = editorSyntaxThemeFromShikiTheme(theme)
-
-  return {
-    backgroundColor,
-    foregroundColor,
-    gutterBackgroundColor: theme.colors?.['editorGutter.background'] ?? backgroundColor,
-    gutterForegroundColor: theme.colors?.['editorLineNumber.foreground'],
-    caretColor: theme.colors?.['editorCursor.foreground'] ?? foregroundColor,
-    minimapBackgroundColor: backgroundColor,
-    ...(syntax ? { syntax } : {}),
+  if (getTheme) {
+    const theme = getTheme.call(highlighter, themeName) as ShikiThemeLike | undefined
+    if (theme) return editorThemeFromShikiTheme(theme)
   }
-}
 
-function editorSyntaxThemeFromShikiTheme(
-  theme: ShikiThemeLike,
-): NonNullable<EditorTheme['syntax']> | undefined {
-  const syntax: NonNullable<EditorTheme['syntax']> = {}
-  for (const mapping of EDITOR_SHIKI_SYNTAX_SCOPE_MAPPINGS) {
-    const color = themeColorForScopes(theme, mapping.scopes)
-    if (color !== undefined) syntax[mapping.key] = color
+  if (registration && registration.name === themeName) {
+    return editorThemeFromShikiTheme(registration)
   }
-  const bracketColor = theme.fg ?? theme.colors?.['editor.foreground']
-  if (syntax.bracket === undefined && bracketColor !== undefined) syntax.bracket = bracketColor
-  if (Object.keys(syntax).length === 0) return undefined
-  return syntax
-}
-
-function themeColorForScopes(
-  theme: ShikiThemeLike,
-  targetScopes: readonly string[],
-): string | undefined {
-  const settings = shikiThemeSettings(theme)
-  let bestMatch: ScopeColorMatch | null = null
-  for (let index = 0; index < settings.length; index += 1) {
-    const match = settingColorMatch(settings[index], targetScopes, index)
-    if (!match) continue
-    if (!isBetterScopeColorMatch(match, bestMatch)) continue
-
-    bestMatch = match
-  }
-  return bestMatch?.color
-}
-
-type ScopeColorMatch = {
-  readonly color: string
-  readonly order: number
-  readonly score: number
-}
-
-function shikiThemeSettings(theme: ShikiThemeLike): readonly EditorShikiThemeSettingLike[] {
-  return theme.tokenColors ?? theme.settings ?? []
-}
-
-function settingColorMatch(
-  setting: EditorShikiThemeSettingLike | undefined,
-  targetScopes: readonly string[],
-  order: number,
-): ScopeColorMatch | null {
-  const color = setting?.settings?.foreground
-  if (!color) return null
-
-  const score = settingScopeMatchScore(setting, targetScopes)
-  if (score === 0) return null
-
-  return { color, order, score }
-}
-
-function settingScopeMatchScore(
-  setting: EditorShikiThemeSettingLike,
-  targetScopes: readonly string[],
-): number {
-  let bestScore = 0
-  const scopes = normalizedSettingScopes(setting.scope)
-  for (const scope of scopes) {
-    bestScore = Math.max(bestScore, scopeMatchScore(scope, targetScopes))
-  }
-  return bestScore
-}
-
-function normalizedSettingScopes(scope: string | readonly string[] | undefined): readonly string[] {
-  if (scope === undefined) return []
-  if (typeof scope === 'string') return splitScopeList(scope)
-  return scope.flatMap(splitScopeList)
-}
-
-function splitScopeList(scope: string): string[] {
-  return scope
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
-
-function scopeMatchScore(scope: string, targetScopes: readonly string[]): number {
-  let bestScore = 0
-  for (let index = 0; index < targetScopes.length; index += 1) {
-    bestScore = Math.max(bestScore, scopeTargetMatchScore(scope, targetScopes[index], index))
-  }
-  return bestScore
-}
-
-function scopeTargetMatchScore(scope: string, target: string, targetIndex: number): number {
-  const targetPriority = Math.max(0, 20 - targetIndex)
-  if (scope === target) return 300 + targetPriority + scopeDepth(scope)
-  if (target.startsWith(`${scope}.`)) return 100 + targetPriority + scopeDepth(scope)
-  return 0
-}
-
-function scopeDepth(scope: string): number {
-  return scope.split('.').length
-}
-
-function isBetterScopeColorMatch(
-  candidate: ScopeColorMatch,
-  current: ScopeColorMatch | null,
-): boolean {
-  if (!current) return true
-  if (candidate.score !== current.score) return candidate.score > current.score
-  return candidate.order > current.order
+  return undefined
 }

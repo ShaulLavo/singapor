@@ -79,6 +79,8 @@ const DEFAULT_ROW_HEIGHT = 1
 const DEFAULT_ROW_GAP = 0
 // Keep native spacer heights below browser element-size caps while preserving logical scroll size.
 const DEFAULT_MAX_SCROLL_HEIGHT = 16_000_000
+// Quiet period before a scroll-only change delivers its trailing snapshot.
+const TRAILING_SCROLL_EMIT_DELAY_MS = 100
 
 export function computeFixedRowTotalSize(
   count: number,
@@ -147,6 +149,7 @@ export class FixedRowVirtualizer {
   private changeHandler: FixedRowVirtualizerChangeHandler | null = null
   private scrollAnimationFrame = 0
   private resizeAnimationFrame = 0
+  private trailingScrollEmitTimer: ReturnType<typeof setTimeout> | null = null
   private pendingResizeMetrics: PendingResizeMetrics | null = null
   private itemCache = new Map<number, FixedRowVirtualItem>()
   private cachedRowHeight = DEFAULT_ROW_HEIGHT
@@ -204,6 +207,7 @@ export class FixedRowVirtualizer {
     this.disableAttachedScrollElement(attached)
     attached.resizeObserver?.disconnect()
     this.clearPendingResizeSync()
+    this.cancelTrailingScrollEmit()
     this.attached = null
   }
 
@@ -246,6 +250,14 @@ export class FixedRowVirtualizer {
     )
       return
 
+    const previousScrollTop = this.scrollTop
+    const geometryChanged =
+      nextScrollLeft !== this.scrollLeft ||
+      nextViewportWidth !== this.viewportWidth ||
+      viewportHeightChanged ||
+      nextBorderBoxWidth !== this.borderBoxWidth ||
+      nextBorderBoxHeight !== this.borderBoxHeight
+
     this.scrollTop = nextScrollTop
     this.scrollLeft = nextScrollLeft
     this.viewportWidth = nextViewportWidth
@@ -254,7 +266,59 @@ export class FixedRowVirtualizer {
     this.borderBoxHeight = nextBorderBoxHeight
     if (viewportHeightChanged) this.stableVirtualWindow = null
     this.syncAttachedNativeScrollTop()
-    this.emitChange()
+    if (this.shouldEmitImmediately(previousScrollTop, geometryChanged)) {
+      this.emitChange()
+      return
+    }
+    this.scheduleTrailingScrollEmit()
+  }
+
+  /**
+   * Scroll events arrive at display rate, but most frames change nothing a
+   * consumer can observe: the stable window still covers the visible range
+   * and the geometry is untouched. Emitting there pushes a fresh snapshot
+   * into every subscriber (React stores included) for no visible effect, so
+   * those frames defer to one trailing emit that delivers the exact final
+   * scrollTop once scrolling stops. Geometry changes and stable-window shifts
+   * still emit at once, and so does capped native scroll (huge files), where
+   * the spacer transform derives from scrollTop on every change.
+   */
+  private shouldEmitImmediately(previousScrollTop: number, geometryChanged: boolean): boolean {
+    if (geometryChanged) return true
+    if (this.scrollTop === previousScrollTop) return true
+
+    const geometry = this.scrollGeometry()
+    if (geometry.nativeScrollHeight !== geometry.scrollHeight) return true
+    return this.stableWindowWouldChange()
+  }
+
+  private scheduleTrailingScrollEmit(): void {
+    this.cancelTrailingScrollEmit()
+    this.trailingScrollEmitTimer = setTimeout(() => {
+      this.trailingScrollEmitTimer = null
+      this.emitChange()
+    }, TRAILING_SCROLL_EMIT_DELAY_MS)
+  }
+
+  private cancelTrailingScrollEmit(): void {
+    if (this.trailingScrollEmitTimer === null) return
+
+    clearTimeout(this.trailingScrollEmitTimer)
+    this.trailingScrollEmitTimer = null
+  }
+
+  private stableWindowWouldChange(): boolean {
+    const currentWindow = this.stableVirtualWindow
+    const deadband = stableWindowDeadband(this.options.overscan)
+    if (!currentWindow || deadband === 0) return true
+
+    const visibleRange = this.getVisibleRange()
+    return !stableWindowContainsVisibleRange(
+      currentWindow,
+      visibleRange,
+      deadband,
+      this.options.count,
+    )
   }
 
   public getSnapshot(): FixedRowVirtualizerSnapshot {
@@ -468,6 +532,7 @@ export class FixedRowVirtualizer {
   }
 
   private emitChange(): void {
+    this.cancelTrailingScrollEmit()
     this.changeHandler?.(this.getSnapshot())
   }
 

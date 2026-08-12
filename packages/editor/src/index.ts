@@ -4,15 +4,20 @@ export {
   createEditorLoggingPlugin,
 } from './logging'
 export {
+  bracketJumpTargetOffset,
+  createBracketMatchPlugin,
   createMergeConflictDocumentText,
   createMergeConflictPlugin,
   Editor,
+  EDITOR_BRACKET_MATCH_PLUGIN_ID,
   EDITOR_MERGE_CONFLICT_FEATURE,
   EDITOR_MERGE_CONFLICT_FEATURE_ID,
+  findBracketMatchAtCaret,
   observeEditorMountTiming,
   parseMergeConflicts,
   resolveMergeConflict,
 } from './editor'
+export type { BracketMatch, EditorBracketMatchPluginOptions } from './editor'
 export {
   Anchor,
   anchorAfter,

@@ -77,6 +77,79 @@ describe('fixed row virtualizer', () => {
     ])
   })
 
+  it('defers scroll-only changes to one trailing emit with the exact final position', () => {
+    vi.useFakeTimers()
+
+    try {
+      const onChange = vi.fn()
+      const virtualizer = new FixedRowVirtualizer({
+        count: 100,
+        overscan: 2,
+        rowHeight: 20,
+      })
+      const element = document.createElement('div')
+
+      virtualizer.attachScrollElement(element, onChange, {
+        readInitialScrollPosition: false,
+      })
+      virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 60 })
+      virtualizer.getSnapshot()
+      onChange.mockClear()
+
+      // Same stable window, untouched geometry: no immediate emit...
+      virtualizer.setScrollMetrics({ scrollTop: 5, viewportHeight: 60 })
+      expect(onChange).not.toHaveBeenCalled()
+
+      // ...but the exact position is emitted once scrolling stops.
+      vi.advanceTimersByTime(200)
+      expect(onChange).toHaveBeenCalledTimes(1)
+      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ scrollTop: 5 }))
+
+      onChange.mockClear()
+
+      // A stable-window shift still emits immediately and supersedes the trailing emit.
+      virtualizer.setScrollMetrics({ scrollTop: 200, viewportHeight: 60 })
+      expect(onChange).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(200)
+      expect(onChange).toHaveBeenCalledTimes(1)
+
+      onChange.mockClear()
+
+      // Horizontal scroll is geometry: always immediate.
+      virtualizer.setScrollMetrics({ scrollLeft: 4, scrollTop: 200, viewportHeight: 60 })
+      expect(onChange).toHaveBeenCalledTimes(1)
+
+      virtualizer.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('emits every scroll change while the native scroll height is capped', () => {
+    const onChange = vi.fn()
+    const virtualizer = new FixedRowVirtualizer({
+      count: 1000,
+      maxScrollHeight: 500,
+      overscan: 2,
+      rowHeight: 20,
+    })
+    const element = document.createElement('div')
+
+    virtualizer.attachScrollElement(element, onChange, {
+      readInitialScrollPosition: false,
+    })
+    virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 100 })
+    virtualizer.getSnapshot()
+    onChange.mockClear()
+
+    // The spacer transform derives from scrollTop every frame in capped mode,
+    // so even a sub-row scroll must emit.
+    virtualizer.setScrollMetrics({ scrollTop: 5, viewportHeight: 100 })
+    expect(onChange).toHaveBeenCalledTimes(1)
+
+    virtualizer.dispose()
+  })
+
   it('computes fixed row gaps without adding a trailing gap', () => {
     const virtualizer = new FixedRowVirtualizer({
       count: 3,

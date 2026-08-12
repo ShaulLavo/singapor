@@ -9,6 +9,7 @@ import type {
 } from '../plugins'
 import { createEmptySyntaxResult } from '../syntax/session'
 import type {
+  BracketInfo,
   EditorSyntaxCapture,
   EditorSyntaxRange,
   EditorSyntaxResult,
@@ -138,6 +139,7 @@ export class EditorSyntaxController {
     taskClass: 'background-derived',
   })
   private currentTokens: readonly EditorToken[] = []
+  private currentBrackets: readonly BracketInfo[] = []
   private syntaxContentVersion = 0
   private parsedSyntaxContentVersion: number | null = null
   private pendingSyntaxContentVersion: number | null = null
@@ -153,6 +155,14 @@ export class EditorSyntaxController {
 
   get tokens(): readonly EditorToken[] {
     return this.currentTokens
+  }
+
+  /**
+   * Bracket positions from the last structural parse, sorted by offset. Empty while a windowed
+   * parse is in flight, because a partial list would pair brackets across a hole it cannot see.
+   */
+  get brackets(): readonly BracketInfo[] {
+    return this.currentBrackets
   }
 
   get providerTheme(): EditorTheme | null {
@@ -175,6 +185,7 @@ export class EditorSyntaxController {
     this.disposeHighlighterSession()
     this.clearSyntaxRangeCache()
     this.resetSyntaxContentVersion()
+    this.currentBrackets = []
     this.highlighterSession = this.createHighlighterSession(
       document.documentId,
       document.languageId,
@@ -603,6 +614,9 @@ export class EditorSyntaxController {
     if (this.shouldApplySyntaxFolds(loadResult)) {
       this.options.setSyntaxFolds(result.folds)
       this.options.setSyntaxCaptures?.(result.captures)
+      // Brackets share the folds gate: both are whole-scope facts, and adopting them from a window
+      // that does not cover the viewport would pair brackets across the part it never parsed.
+      this.currentBrackets = result.brackets
     }
     this.options.notifyChange(null)
     return true

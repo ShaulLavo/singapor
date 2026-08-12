@@ -30,6 +30,7 @@ export type EditorCommandId =
   | 'editor.action.insertCursorBelow'
   | 'editor.action.selectHighlights'
   | 'editor.action.changeAll'
+  | 'editor.action.jumpToBracket'
   | 'editor.action.moveSelectionToNextFindMatch'
   | 'deleteBackward'
   | 'deleteForward'

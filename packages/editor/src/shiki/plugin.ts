@@ -9,14 +9,20 @@ import {
   type ShikiHighlighterSessionOptions,
   type ShikiWorkerOwner,
 } from './workerClient'
+import type { ShikiWorkerThemeRegistration } from './workerTypes'
 
 export type ShikiLanguageMap = Partial<Record<EditorSyntaxLanguageId, string>>
 
 export type ShikiHighlighterPluginOptions = {
   readonly theme?: string | (() => string)
+  readonly themeRegistration?:
+    | ShikiWorkerThemeRegistration
+    | (() => ShikiWorkerThemeRegistration | undefined)
   readonly languages?: ShikiLanguageMap
   readonly preloadLanguages?: readonly string[]
   readonly preloadThemes?: readonly string[]
+  readonly onThemeChanged?: (listener: () => void) => (() => void) | void
+  readonly workerOwner?: ShikiWorkerOwner
 }
 
 const DEFAULT_THEME = 'github-dark'
@@ -38,13 +44,30 @@ export function createShikiHighlighterPlugin(
   return {
     name: 'shiki-highlighter',
     activate(context) {
-      const owner = createShikiWorkerOwner()
-      const provider = createHighlighterProvider(options, owner)
+      const sharedOwner = options.workerOwner
+      const owner = sharedOwner ?? createShikiWorkerOwner()
+      let registration = context.registerHighlighter(createHighlighterProvider(options, owner))
+
+      const reloadProvider = (): void => {
+        registration.dispose()
+        registration = context.registerHighlighter(createHighlighterProvider(options, owner))
+      }
+      const unsubscribeTheme = options.onThemeChanged?.(reloadProvider)
 
       return [
-        context.registerHighlighter(provider),
         {
           dispose: () => {
+            registration.dispose()
+          },
+        },
+        {
+          dispose: () => {
+            unsubscribeTheme?.()
+          },
+        },
+        {
+          dispose: () => {
+            if (sharedOwner) return
             void owner.dispose().catch(() => undefined)
           },
         },
@@ -77,6 +100,7 @@ const createSession = (
     ...sessionOptions,
     lang,
     theme: shikiThemeName(pluginOptions),
+    themeRegistration: shikiThemeRegistration(pluginOptions),
     langs: preloadLanguages(lang, pluginOptions),
     themes: pluginOptions.preloadThemes,
   } satisfies ShikiHighlighterSessionOptions)
@@ -85,6 +109,7 @@ const createSession = (
 const loadConfiguredTheme = (options: ShikiHighlighterPluginOptions, owner: ShikiWorkerOwner) =>
   owner.loadTheme({
     theme: shikiThemeName(options),
+    themeRegistration: shikiThemeRegistration(options),
     themes: options.preloadThemes,
   })
 
@@ -93,6 +118,18 @@ const shikiThemeName = (options: ShikiHighlighterPluginOptions): string => {
   if (typeof theme === 'function') return theme()
 
   return theme ?? DEFAULT_THEME
+}
+
+const shikiThemeRegistration = (
+  options: ShikiHighlighterPluginOptions,
+): ShikiWorkerThemeRegistration | undefined => {
+  const themeRegistration = options.themeRegistration
+  const registration =
+    typeof themeRegistration === 'function' ? themeRegistration() : themeRegistration
+  if (!registration) return undefined
+  if (!registration.name) throw new Error('Shiki theme registrations require a non-empty name')
+
+  return registration
 }
 
 const shikiLanguageForSession = (

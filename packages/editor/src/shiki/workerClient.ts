@@ -15,6 +15,7 @@ import type {
   ShikiWorkerRequestPayload,
   ShikiWorkerResponse,
   ShikiWorkerResult,
+  ShikiWorkerThemeRegistration,
 } from './workerTypes'
 
 export type ShikiHighlighterSessionOptions = Omit<
@@ -24,12 +25,14 @@ export type ShikiHighlighterSessionOptions = Omit<
   readonly textSnapshot?: DocumentTextSnapshot
   readonly lang: string
   readonly theme: string
+  readonly themeRegistration?: ShikiWorkerThemeRegistration
   readonly langs?: readonly string[]
   readonly themes?: readonly string[]
 }
 
 export type ShikiThemeOptions = {
   readonly theme: string
+  readonly themeRegistration?: ShikiWorkerThemeRegistration
   readonly themes?: readonly string[]
 }
 
@@ -224,6 +227,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
   private readonly documentId: string
   private readonly lang: string
   private readonly theme: string
+  private readonly themeRegistration: ShikiWorkerThemeRegistration | undefined
   private readonly langs: readonly string[]
   private readonly themes: readonly string[]
   private snapshot: PieceTableSnapshot
@@ -239,6 +243,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     this.documentId = options.documentId
     this.lang = options.lang
     this.theme = options.theme
+    this.themeRegistration = options.themeRegistration
     this.langs = options.langs ?? []
     this.themes = options.themes ?? []
     this.snapshot = options.snapshot
@@ -334,6 +339,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       documentId: this.documentId,
       lang: this.lang,
       theme: this.theme,
+      themeRegistration: this.themeRegistration,
       text,
       langs: this.langs,
       themes: this.themes,
@@ -396,6 +402,7 @@ async function requestShikiTheme(
   const result = await owner.request({
     type: 'theme',
     theme: options.theme,
+    themeRegistration: options.themeRegistration,
     themes: options.themes ?? [],
   })
   return result?.theme
@@ -404,8 +411,17 @@ async function requestShikiTheme(
 function shikiThemeRequestKey(options: ShikiThemeOptions): string {
   return JSON.stringify({
     theme: options.theme,
+    themeRegistration: themeRegistrationKey(options.themeRegistration),
     themes: (options.themes ?? []).toSorted(),
   })
+}
+
+function themeRegistrationKey(registration: ShikiWorkerThemeRegistration | undefined): string {
+  if (!registration) return ''
+  if (!registration.name) {
+    throw new Error('Shiki theme registrations require a non-empty name')
+  }
+  return registration.name
 }
 
 function workerRequestError(error: unknown): Error {

@@ -374,6 +374,7 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
     textVersion: 1,
     lineStarts: lineStarts(text),
     tokens: [],
+    brackets: [],
     selections: [],
     metrics: { rowHeight: 20, characterWidth: 8 },
     lineCount: lineStarts(text).length,

@@ -239,7 +239,7 @@ describe('VirtualizedTextView', () => {
     expect(spacer.style.height).toBe('140px')
   })
 
-  it('notifies viewport changes when the rendered row window is unchanged', () => {
+  it('skips viewport notifications for sub-row scrolls inside the stable window', () => {
     view.dispose()
     const events: number[] = []
     view = new VirtualizedTextView(container, {
@@ -255,7 +255,11 @@ describe('VirtualizedTextView', () => {
 
     view.setScrollMetrics(1, 100)
 
-    expect(events).toEqual([1])
+    expect(events).toEqual([])
+
+    view.setScrollMetrics(21, 100)
+
+    expect(events).toEqual([21])
   })
 
   it('spaces rows with rowGap without adding a trailing gap', () => {

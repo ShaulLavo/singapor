@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createPieceTableSnapshot } from '../../src'
-import type { EditorHighlighterProvider, EditorPluginContext } from '../../src/plugins'
-import { createShikiHighlighterPlugin } from '../../src/shiki'
+import type {
+  EditorDisposable,
+  EditorHighlighterProvider,
+  EditorPluginContext,
+} from '../../src/plugins'
+import { createShikiHighlighterPlugin, type ShikiWorkerOwner } from '../../src/shiki'
 
 const workerOwner = vi.hoisted(() => ({
   canUseWorker: vi.fn(() => true),
@@ -93,6 +97,128 @@ describe('createShikiHighlighterPlugin', () => {
     expect(createShikiWorkerOwner).toHaveBeenCalledTimes(2)
     expect(second).not.toBe(first)
   })
+
+  it('re-registers a fresh provider when the theme changes and honors unsubscribe', () => {
+    let listener: (() => void) | null = null
+    const unsubscribe = vi.fn()
+    const registrations: { provider: EditorHighlighterProvider; disposed: boolean }[] = []
+    const context = {
+      registerHighlighter: (provider: EditorHighlighterProvider) => {
+        const registration = { provider, disposed: false }
+        registrations.push(registration)
+        return {
+          dispose: () => {
+            registration.disposed = true
+          },
+        }
+      },
+    } satisfies Partial<EditorPluginContext>
+
+    const disposables = createShikiHighlighterPlugin({
+      onThemeChanged: (nextListener) => {
+        listener = nextListener
+        return unsubscribe
+      },
+    }).activate(context as EditorPluginContext)
+
+    expect(registrations).toHaveLength(1)
+    expect(listener).not.toBeNull()
+
+    listener!()
+
+    expect(registrations).toHaveLength(2)
+    expect(registrations[0]!.disposed).toBe(true)
+    expect(registrations[1]!.disposed).toBe(false)
+    expect(registrations[1]!.provider).not.toBe(registrations[0]!.provider)
+
+    for (const disposable of disposables) disposable.dispose()
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(registrations[1]!.disposed).toBe(true)
+  })
+
+  it('uses a provided worker owner for sessions without disposing it', () => {
+    const sharedOwner = {
+      canUseWorker: vi.fn(() => true),
+      createSession: vi.fn(() => null),
+      dispose: vi.fn(async () => undefined),
+      loadTheme: vi.fn(),
+    }
+    const provider = activateHighlighterProvider({
+      workerOwner: sharedOwner as unknown as ShikiWorkerOwner,
+    })
+    const text = 'const value = 1'
+
+    provider.createSession({
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      text,
+      snapshot: createPieceTableSnapshot(text),
+    })
+
+    expect(sharedOwner.createSession).toHaveBeenCalledTimes(1)
+    expect(workerOwner.createSession).not.toHaveBeenCalled()
+    expect(createShikiWorkerOwner).not.toHaveBeenCalled()
+  })
+
+  it('keeps a provided worker owner alive when the plugin disposes', () => {
+    const sharedOwner = {
+      canUseWorker: vi.fn(() => true),
+      createSession: vi.fn(() => null),
+      dispose: vi.fn(async () => undefined),
+      loadTheme: vi.fn(),
+    }
+    const disposables = activateWithDisposables({
+      workerOwner: sharedOwner as unknown as ShikiWorkerOwner,
+    })
+
+    for (const disposable of disposables) disposable.dispose()
+
+    expect(sharedOwner.dispose).not.toHaveBeenCalled()
+    expect(workerOwner.dispose).not.toHaveBeenCalled()
+  })
+
+  it('passes inline theme registrations through to worker sessions', () => {
+    const provider = activateHighlighterProvider({
+      theme: 'my-custom-theme',
+      themeRegistration: {
+        name: 'my-custom-theme',
+        colors: { 'editor.background': '#101010' },
+        tokenColors: [],
+      },
+    })
+    const text = 'const value = 1'
+
+    provider.createSession({
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      text,
+      snapshot: createPieceTableSnapshot(text),
+    })
+
+    expect(workerOwner.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        theme: 'my-custom-theme',
+        themeRegistration: expect.objectContaining({ name: 'my-custom-theme' }),
+      }),
+    )
+  })
+
+  it('requires a non-empty name on inline theme registrations', () => {
+    const provider = activateHighlighterProvider({
+      themeRegistration: { name: '' },
+    })
+    const text = 'const value = 1'
+
+    expect(() =>
+      provider.createSession({
+        documentId: 'index.ts',
+        languageId: 'typescript',
+        text,
+        snapshot: createPieceTableSnapshot(text),
+      }),
+    ).toThrow('Shiki theme registrations require a non-empty name')
+  })
 })
 
 function activateHighlighterProvider(
@@ -109,4 +235,17 @@ function activateHighlighterProvider(
   createShikiHighlighterPlugin(options).activate(context as EditorPluginContext)
   if (!provider) throw new Error('Expected Shiki plugin to register a highlighter')
   return provider
+}
+
+function activateWithDisposables(
+  options: Parameters<typeof createShikiHighlighterPlugin>[0] = {},
+): readonly EditorDisposable[] {
+  const context = {
+    registerHighlighter: () => ({ dispose: () => undefined }),
+  } satisfies Partial<EditorPluginContext>
+
+  const result = createShikiHighlighterPlugin(options).activate(context as EditorPluginContext)
+  if (!result) return []
+  if (Array.isArray(result)) return result
+  return [result]
 }

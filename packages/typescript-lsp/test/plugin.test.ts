@@ -1504,6 +1504,7 @@ function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSn
     textVersion: 1,
     lineStarts: [0],
     tokens: [],
+    brackets: [],
     selections: [],
     metrics: {} as EditorViewSnapshot['metrics'],
     lineCount: 1,

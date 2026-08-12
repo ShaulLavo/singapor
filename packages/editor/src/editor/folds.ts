@@ -52,11 +52,10 @@ export function foldRangesEqual(left: readonly FoldRange[], right: readonly Fold
   return true
 }
 
-export function rejectNestedOrOverlappingFoldRanges(
-  folds: readonly FoldRange[],
-): FoldRangeIngestionResult {
+export function rejectCrossingFoldRanges(folds: readonly FoldRange[]): FoldRangeIngestionResult {
   const accepted: FoldRange[] = []
   const rejected: FoldRangeRejection[] = []
+  const openAncestors: FoldRange[] = []
 
   for (const fold of sortedFoldRangesForIngestion(folds)) {
     const invalidMessage = invalidFoldRangeMessage(fold)
@@ -65,18 +64,19 @@ export function rejectNestedOrOverlappingFoldRanges(
       continue
     }
 
-    const previous = accepted.at(-1)
-    if (previous && foldRangesOverlap(previous, fold)) {
+    const parent = innermostOpenAncestor(openAncestors, fold)
+    if (parent && fold.endIndex > parent.endIndex) {
       rejected.push({
         kind: 'overlap',
         fold,
-        previous,
-        message: 'Fold ranges must not overlap or nest',
+        previous: parent,
+        message: 'Fold ranges must not cross',
       })
       continue
     }
 
     accepted.push(fold)
+    openAncestors.push(fold)
   }
 
   return { folds: accepted, rejected }
@@ -140,8 +140,14 @@ function invalidNonNegativeIntegerMessage(value: number, name: string): string |
   return null
 }
 
-function foldRangesOverlap(left: FoldRange, right: FoldRange): boolean {
-  return right.startIndex < left.endIndex
+function innermostOpenAncestor(openAncestors: FoldRange[], fold: FoldRange): FoldRange | null {
+  while (openAncestors.length > 0) {
+    const ancestor = openAncestors.at(-1)!
+    if (ancestor.endIndex > fold.startIndex) return ancestor
+    openAncestors.pop()
+  }
+
+  return null
 }
 
 function foldRangeEqual(left: FoldRange, right: FoldRange): boolean {

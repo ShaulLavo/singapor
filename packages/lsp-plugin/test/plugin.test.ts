@@ -327,6 +327,7 @@ function editorSnapshot(): EditorViewSnapshot {
     lineStarts: [0],
     textSnapshot: stringTextSnapshot(fullText),
     tokens: [],
+    brackets: [],
     selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
     metrics: {} as EditorViewSnapshot['metrics'],
     lineCount: 1,

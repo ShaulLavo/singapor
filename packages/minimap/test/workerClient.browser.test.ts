@@ -56,6 +56,7 @@ function snapshot(text: string): EditorViewSnapshot {
     textVersion: 1,
     lineStarts: lineStarts(text),
     tokens: [{ start: 0, end: 5, style: { color: 'var(--editor-syntax-keyword)' } }],
+    brackets: [],
     selections: [{ anchorOffset: 0, headOffset: 5, startOffset: 0, endOffset: 5 }],
     metrics: { rowHeight: 20, characterWidth: 8 },
     lineCount: 2,

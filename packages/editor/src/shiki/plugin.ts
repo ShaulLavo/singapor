@@ -20,7 +20,14 @@ export type ShikiHighlighterPluginOptions = {
     | (() => ShikiWorkerThemeRegistration | undefined)
   readonly languages?: ShikiLanguageMap
   readonly preloadLanguages?: readonly string[]
-  readonly preloadThemes?: readonly string[]
+  /**
+   * Themes to name alongside the active one when a session is created. The
+   * worker cache-keys a highlighter on its theme set, so naming a stable set
+   * keeps theme swaps on one highlighter instead of building a new one each
+   * time. Resolved per session, so a host can widen the set once switching
+   * themes becomes likely rather than paying for it at every document open.
+   */
+  readonly preloadThemes?: readonly string[] | (() => readonly string[])
   readonly onThemeChanged?: (listener: () => void) => (() => void) | void
   readonly workerOwner?: ShikiWorkerOwner
 }
@@ -102,7 +109,7 @@ const createSession = (
     theme: shikiThemeName(pluginOptions),
     themeRegistration: shikiThemeRegistration(pluginOptions),
     langs: preloadLanguages(lang, pluginOptions),
-    themes: pluginOptions.preloadThemes,
+    themes: preloadThemes(pluginOptions),
   } satisfies ShikiHighlighterSessionOptions)
 }
 
@@ -110,8 +117,17 @@ const loadConfiguredTheme = (options: ShikiHighlighterPluginOptions, owner: Shik
   owner.loadTheme({
     theme: shikiThemeName(options),
     themeRegistration: shikiThemeRegistration(options),
-    themes: options.preloadThemes,
+    themes: preloadThemes(options),
   })
+
+const preloadThemes = (
+  options: ShikiHighlighterPluginOptions,
+): readonly string[] | undefined => {
+  const themes = options.preloadThemes
+  if (typeof themes === 'function') return themes()
+
+  return themes
+}
 
 const shikiThemeName = (options: ShikiHighlighterPluginOptions): string => {
   const theme = options.theme

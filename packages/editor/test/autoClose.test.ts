@@ -130,11 +130,50 @@ describe('auto-closing pairs', () => {
     expect(editor.materializeFullText()).toBe("don'")
   })
 
-  it('surrounds nothing and stays out of the way for a line break', () => {
+  // The pairing auto-close exists for: the closer moves to its own line and the caret lands on a
+  // blank indented line between them.
+  it('expands into a block when Enter is pressed inside a pair', () => {
     type('(')
     editor.el.dispatchEvent(lineBreak())
 
-    expect(editor.materializeFullText()).toBe('(\n)')
+    expect(editor.materializeFullText()).toBe('(\n    \n)')
+    expect(editor.getState().cursor).toMatchObject({ column: 4, row: 1 })
+  })
+
+  it('continues the previous line indentation', () => {
+    editor.setText('    foo')
+    editor.setSelection(7, 7)
+
+    editor.el.dispatchEvent(lineBreak())
+
+    expect(editor.materializeFullText()).toBe('    foo\n    ')
+  })
+
+  it('indents one level deeper after an opener with no closer following', () => {
+    editor.setText('  if (x) {', { languageId: 'typescript' })
+    editor.setSelection(10, 10)
+
+    editor.el.dispatchEvent(lineBreak())
+
+    expect(editor.materializeFullText()).toBe('  if (x) {\n      ')
+  })
+
+  it('keeps tabs when the line uses tabs', () => {
+    editor.setText('\tif (x) {', { languageId: 'typescript' })
+    editor.setSelection(9, 9)
+
+    editor.el.dispatchEvent(lineBreak())
+
+    expect(editor.materializeFullText()).toBe('\tif (x) {\n\t\t')
+  })
+
+  it('adds no indentation at the top level', () => {
+    editor.setText('foo')
+    editor.setSelection(3, 3)
+
+    editor.el.dispatchEvent(lineBreak())
+
+    expect(editor.materializeFullText()).toBe('foo\n')
   })
 
   it('does not auto-close in a language with no pairs', () => {

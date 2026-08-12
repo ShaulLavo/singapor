@@ -69,6 +69,8 @@ import {
 } from './autoClose'
 import { AutoCloseStore, characterAt, characterBefore } from './autoCloseStore'
 import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import { offsetToPoint } from '../pieceTable/positions'
+import { lineBreakIndent } from './indentation'
 
 export type InputSelectionControllerOptions = {
   readonly el: HTMLDivElement
@@ -166,6 +168,10 @@ export class InputSelectionController {
    * offset pass batch validation but apply in an unspecified order.
    */
   private applyTypedText(session: DocumentSession, text: string): DocumentSessionChange {
+    // The keydown fallback turns Enter into '\n', so it arrives here rather than as a
+    // beforeinput line break; both routes must indent identically.
+    if (text === '\n') return this.applyLineBreak(session, text)
+
     const decided = this.autoCloseChange(session, text)
     if (decided) return decided
 
@@ -173,6 +179,49 @@ export class InputSelectionController {
     // Plain typing keeps tracked pairs alive; their anchors have already shifted with the edit.
     this.autoClose.advance(change.snapshot)
     return change
+  }
+
+  /**
+   * Line break with indentation continued from the current line.
+   *
+   * Falls back to a plain newline for anything but a single collapsed caret, for the same reason
+   * auto-close does: a batch would need one edit per caret.
+   */
+  private applyLineBreak(session: DocumentSession, text: string): DocumentSessionChange {
+    if (text !== '\n') return session.applyText(text)
+
+    const snapshot = session.getSnapshot()
+    const caret = this.collapsedCaretOffset(session, snapshot)
+    if (caret === null) return session.applyText(text)
+
+    const charBefore = characterBefore(snapshot, caret)
+    const charAfter = characterAt(snapshot, caret)
+    const pair = charBefore === null ? null : autoClosingPairForOpen(this.options.getLanguageId(), charBefore)
+    const indent = lineBreakIndent({
+      afterOpener: pair !== null && !pair.quote,
+      betweenPair: pair !== null && !pair.quote && charAfter === pair.close,
+      charAfter,
+      charBefore,
+      lineTextBeforeCaret: this.lineTextBeforeCaret(snapshot, caret),
+      tabSize: this.options.tabSize,
+    })
+
+    const change = session.applyEdits(
+      [{ from: caret, text: indent.insert + indent.trailing, to: caret }],
+      { selections: [{ anchor: caret + indent.insert.length, head: caret + indent.insert.length }] },
+    )
+    // The pair the caret was inside has been split across lines; its closer is no longer adjacent.
+    this.autoClose.clear()
+    this.markSessionSelectionForNextInput()
+    return change
+  }
+
+  /** Current line's text up to the caret, read without materializing the document. */
+  private lineTextBeforeCaret(snapshot: PieceTableSnapshot, caret: number): string {
+    const point = offsetToPoint(snapshot, caret)
+    if (point.column === 0) return ''
+
+    return readPieceTableTextRange(snapshot, caret - point.column, caret)
   }
 
   /** The auto-close variant of a keystroke, or null when the keystroke is ordinary. */
@@ -1029,7 +1078,7 @@ export class InputSelectionController {
     const textChange = measureEditorPerformance('session.applyText', () =>
       event.inputType === 'insertText'
         ? this.applyTypedText(session, inserted)
-        : session.applyText(inserted),
+        : this.applyLineBreak(session, inserted),
     )
     this.transitionInputState({ type: 'transaction-committed' })
     this.options.applySessionChange(

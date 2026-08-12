@@ -530,3 +530,63 @@ export function completionNeedsResolve(
 
   return Boolean(serverCapabilities?.completionProvider?.resolveProvider)
 }
+
+/**
+ * Word being typed at `offset`, which is what the list should be filtered against. The server's
+ * answer is for the moment the request was sent; the user has usually typed more since.
+ */
+export function completionPrefix(text: string, offset: number): string {
+  let start = Math.max(0, Math.min(offset, text.length))
+  while (start > 0 && isIdentifierCharacter(text[start - 1] ?? '')) start -= 1
+
+  return text.slice(start, Math.max(0, Math.min(offset, text.length)))
+}
+
+/**
+ * Filters and orders a completion list against what has been typed.
+ *
+ * Matching goes prefix, then case-insensitive prefix, then subsequence — the order of how much the
+ * user has confirmed about their intent. Ties fall back to the server's own `sortText`, which is
+ * how a server expresses relevance it knows and the client does not.
+ */
+export function rankCompletionItems(
+  items: readonly lsp.CompletionItem[],
+  prefix: string,
+): readonly lsp.CompletionItem[] {
+  if (prefix.length === 0) return items
+
+  const scored: { item: lsp.CompletionItem; score: number }[] = []
+  for (const item of items) {
+    const score = completionMatchScore(item.filterText ?? item.label, prefix)
+    if (score === 0) continue
+
+    scored.push({ item, score })
+  }
+
+  return scored
+    .sort((left, right) => right.score - left.score || compareCompletionOrder(left.item, right.item))
+    .map((entry) => entry.item)
+}
+
+function completionMatchScore(candidate: string, prefix: string): number {
+  if (candidate.startsWith(prefix)) return 3
+  if (candidate.toLowerCase().startsWith(prefix.toLowerCase())) return 2
+
+  return isSubsequence(candidate.toLowerCase(), prefix.toLowerCase()) ? 1 : 0
+}
+
+function isSubsequence(candidate: string, prefix: string): boolean {
+  let cursor = 0
+  for (const char of candidate) {
+    if (char === prefix[cursor]) cursor += 1
+    if (cursor === prefix.length) return true
+  }
+
+  return prefix.length === 0
+}
+
+function compareCompletionOrder(left: lsp.CompletionItem, right: lsp.CompletionItem): number {
+  const leftKey = left.sortText ?? left.label
+  const rightKey = right.sortText ?? right.label
+  return leftKey.localeCompare(rightKey)
+}

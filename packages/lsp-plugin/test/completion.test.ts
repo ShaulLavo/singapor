@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   completionApplication,
   completionNeedsResolve,
+  completionPrefix,
+  rankCompletionItems,
   completionTriggerFromChange,
   createCompletionEditFeature,
   createCompletionWidgetController,
@@ -163,5 +165,63 @@ describe('snippet completions', () => {
     const application = completionApplication('f', 1, { insertText: 'fn(${1:arg})', label: 'fn' })
 
     expect(application?.edits[0]?.text).toBe('fn(${1:arg})')
+  })
+})
+
+describe('completionPrefix', () => {
+  it('reads the identifier being typed', () => {
+    expect(completionPrefix('const val', 9)).toBe('val')
+  })
+
+  it('is empty after a non-identifier character', () => {
+    expect(completionPrefix('const ', 6)).toBe('')
+  })
+})
+
+describe('rankCompletionItems', () => {
+  const items = (...labels: readonly string[]) => labels.map((label) => ({ label }))
+
+  it('keeps the list untouched with no prefix', () => {
+    const list = items('b', 'a')
+
+    expect(rankCompletionItems(list, '')).toBe(list)
+  })
+
+  it('drops items that do not match', () => {
+    expect(rankCompletionItems(items('value', 'other'), 'val').map((i) => i.label)).toEqual([
+      'value',
+    ])
+  })
+
+  it('prefers an exact-case prefix over a case-insensitive one', () => {
+    const ranked = rankCompletionItems(items('Value', 'value'), 'val')
+
+    expect(ranked.map((item) => item.label)).toEqual(['value', 'Value'])
+  })
+
+  it('ranks a prefix above a subsequence', () => {
+    // verticalAlign contains v-a-l in order; canVerifyLater does not, and is rightly excluded.
+    const ranked = rankCompletionItems(items('verticalAlign', 'value'), 'val')
+
+    expect(ranked.map((item) => item.label)).toEqual(['value', 'verticalAlign'])
+  })
+
+  // sortText is how a server expresses relevance the client cannot compute.
+  it('falls back to the server order for equal matches', () => {
+    const ranked = rankCompletionItems(
+      [
+        { label: 'valueB', sortText: '1' },
+        { label: 'valueA', sortText: '0' },
+      ],
+      'value',
+    )
+
+    expect(ranked.map((item) => item.label)).toEqual(['valueA', 'valueB'])
+  })
+
+  it('matches on filterText when the server supplies one', () => {
+    const ranked = rankCompletionItems([{ filterText: 'value', label: 'Different' }], 'val')
+
+    expect(ranked.map((item) => item.label)).toEqual(['Different'])
   })
 })

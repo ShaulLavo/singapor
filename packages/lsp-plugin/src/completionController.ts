@@ -15,8 +15,10 @@ import {
   completionApplication,
   completionItems,
   completionNeedsResolve,
+  completionPrefix,
   completionTriggerFromChange,
   createCompletionWidgetController,
+  rankCompletionItems,
   type CompletionWidgetController,
   type LanguageServerCompletionEditFeature,
   type LanguageServerCompletionTrigger,
@@ -202,11 +204,16 @@ export class CompletionController {
     const rect = this.context.getRangeClientRect(range.start, range.end)
     if (!rect) return this.hide()
 
+    // The answer describes the document as it was when the request went out; filtering against the
+    // word as it stands now is what keeps the list honest while typing continues.
+    const ranked = rankCompletionItems(items, completionPrefix(active.fullText, offset))
+    if (ranked.length === 0) return this.hide()
+
     this.options.onBeforeShow()
     this.completionSession = { active, offset }
     this.completion.show({
       anchor: rect,
-      items: items.slice(0, 100),
+      items: ranked.slice(0, 100),
     })
   }
 

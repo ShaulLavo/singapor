@@ -3,6 +3,7 @@ import type { EditorEditContributionContext, EditorSelectionRange } from '@singa
 import { createEditorCapabilityToken } from '@singapor/core/extensions'
 import { lspPositionToOffset } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
+import { parseSnippet } from '@singapor/core/internal'
 
 export const LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE_ID = 'editor.lsp-plugin.completion-edit'
 
@@ -179,9 +180,12 @@ export function completionApplication(
   const additional = additionalCompletionEdits(text, item.additionalTextEdits ?? [])
   const edits = [primary, ...additional]
   const head = completionSelectionHead(primary, additional)
+  // A snippet's first placeholder is selected so the next keystroke replaces it; without a stop the
+  // caret sits after the insertion exactly as a plain completion leaves it.
+  const snippet = completionSnippetSelection(item, head - primary.text.length)
   return {
     edits,
-    selection: { anchor: head, head },
+    selection: snippet ?? { anchor: head, head },
   }
 }
 
@@ -423,7 +427,34 @@ function defaultCompletionReplacementRange(
 
 function plainCompletionText(text: string, format: lsp.InsertTextFormat | undefined): string {
   if (format !== 2) return text
-  return text.replace(/\$\{\d+:([^}]*)\}/g, '$1').replace(/\$\d+/g, '')
+
+  return parseSnippet(text).text
+}
+
+/** The snippet source of the item's primary insertion, or null when it is not a snippet. */
+function completionSnippetSource(item: lsp.CompletionItem): string | null {
+  if (item.insertTextFormat !== 2) return null
+
+  const textEdit = completionTextEdit(item)
+  return textEdit ? textEdit.newText : (item.insertText ?? item.label)
+}
+
+/**
+ * Where the caret lands after accepting a snippet: its first tab stop, selected so typing replaces
+ * the placeholder. Falls back to the end of the insertion, which is what a plain completion does.
+ */
+export function completionSnippetSelection(
+  item: lsp.CompletionItem,
+  insertionOffset: number,
+): { readonly anchor: number; readonly head: number } | null {
+  const source = completionSnippetSource(item)
+  if (source === null) return null
+
+  const parsed = parseSnippet(source)
+  const first = parsed.stops[0]?.ranges[0]
+  if (!first) return null
+
+  return { anchor: insertionOffset + first.start, head: insertionOffset + first.end }
 }
 
 function completionRowTarget(

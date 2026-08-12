@@ -130,3 +130,38 @@ describe('completionNeedsResolve', () => {
     expect(completionNeedsResolve({ label: 'value' }, undefined)).toBe(false)
   })
 })
+
+describe('snippet completions', () => {
+  const snippetItem = (insertText: string) => ({
+    insertText,
+    insertTextFormat: 2 as const,
+    label: 'fn',
+  })
+
+  it('expands a snippet and selects its first placeholder', () => {
+    const application = completionApplication('const x = f', 11, snippetItem('fn(${1:arg})'))
+
+    expect(application?.edits).toEqual([{ from: 10, to: 11, text: 'fn(arg)' }])
+    expect(application?.selection).toEqual({ anchor: 13, head: 16 })
+  })
+
+  it('puts the caret at an empty tab stop', () => {
+    const application = completionApplication('f', 1, snippetItem('fn($1)'))
+
+    expect(application?.edits[0]?.text).toBe('fn()')
+    expect(application?.selection).toEqual({ anchor: 3, head: 3 })
+  })
+
+  // Without a stop there is nothing to select, so it behaves like a plain completion.
+  it('falls back to the end of the insertion when a snippet has no stops', () => {
+    const application = completionApplication('f', 1, snippetItem('fn()'))
+
+    expect(application?.selection).toEqual({ anchor: 4, head: 4 })
+  })
+
+  it('leaves a non-snippet completion alone', () => {
+    const application = completionApplication('f', 1, { insertText: 'fn(${1:arg})', label: 'fn' })
+
+    expect(application?.edits[0]?.text).toBe('fn(${1:arg})')
+  })
+})

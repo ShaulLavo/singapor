@@ -29,7 +29,7 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
         resolveSupport: {
           properties: ['documentation', 'detail', 'additionalTextEdits'],
         },
-        snippetSupport: false,
+        snippetSupport: true,
       },
     },
     // Servers only answer what the client advertises, so this has to be declared for

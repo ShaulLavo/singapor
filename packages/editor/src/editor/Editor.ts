@@ -348,6 +348,7 @@ export class Editor {
       scrollMode: options.scrollMode,
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
+      wrap: options.wordWrap ?? false,
       blockRowMount: (container, row) => this.blockSurfaces.mountRow(container, row),
       blockLaneMount: (container, lane) => this.blockSurfaces.mountLane(container, lane),
       onFoldToggle: this.handleFoldToggle,
@@ -416,6 +417,10 @@ export class Editor {
         this.inputSelection.applySelectExactOccurrencesCommand(command, context),
       moveSelectionToNextOccurrence: (context) =>
         this.inputSelection.applyMoveSelectionToNextOccurrenceCommand(context),
+      toggleWordWrap: () => {
+        this.setWordWrap(!this.isWordWrapEnabled())
+        return true
+      },
       navigation: (command, context) =>
         this.inputSelection.applyNavigationCommand(command, context),
     })
@@ -539,6 +544,16 @@ export class Editor {
   setDocument(document: EditorDocument): void {
     this.setContent(document.text)
     this.setTokens(document.tokens ?? [])
+  }
+
+  /** Turns soft wrap on or off. Returns the state actually in effect afterwards. */
+  setWordWrap(enabled: boolean): boolean {
+    this.view.setWrapEnabled(enabled)
+    return this.isWordWrapEnabled()
+  }
+
+  isWordWrapEnabled(): boolean {
+    return this.view.isWrapEnabled()
   }
 
   setFoldMap(foldMap: FoldMap | null): void {

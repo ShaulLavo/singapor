@@ -545,6 +545,10 @@ export class VirtualizedTextView {
     })
   }
 
+  public isWrapEnabled(): boolean {
+    return this.view.wrapEnabled
+  }
+
   public setWrapEnabled(enabled: boolean): void {
     const view = this.view
     if (!setWrapEnabledLayout(view, enabled, horizontalViewportColumns(view))) return

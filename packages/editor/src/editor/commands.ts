@@ -31,6 +31,7 @@ export type EditorCommandId =
   | 'editor.action.selectHighlights'
   | 'editor.action.changeAll'
   | 'editor.action.jumpToBracket'
+  | 'editor.action.toggleWordWrap'
   | 'editor.action.moveSelectionToNextFindMatch'
   | 'deleteBackward'
   | 'deleteForward'

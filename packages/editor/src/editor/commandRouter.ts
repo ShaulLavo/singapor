@@ -16,6 +16,7 @@ export type EditorCommandRouterHandlers = {
     context: EditorCommandContext,
   ): boolean
   moveSelectionToNextOccurrence(context: EditorCommandContext): boolean
+  toggleWordWrap(context: EditorCommandContext): boolean
   navigation(command: EditorCommandId, context: EditorCommandContext): boolean
 }
 
@@ -53,6 +54,7 @@ export class EditorCommandRouter {
     if (command === 'editor.action.moveSelectionToNextFindMatch') {
       return this.handlers.moveSelectionToNextOccurrence(context)
     }
+    if (command === 'editor.action.toggleWordWrap') return this.handlers.toggleWordWrap(context)
     if (command === 'deleteBackward') return this.handlers.delete('backward', context)
     if (command === 'deleteForward') return this.handlers.delete('forward', context)
     if (isEditorEditActionCommand(command)) return this.handlers.editAction(command, context)

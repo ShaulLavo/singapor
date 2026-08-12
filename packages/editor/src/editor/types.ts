@@ -91,6 +91,8 @@ export type EditorOptions = {
   readonly selectionSyncMode?: EditorSelectionSyncMode
   readonly tabSize?: number
   readonly textMetrics?: BrowserTextMetrics
+  /** Soft-wraps long lines to the viewport width instead of scrolling horizontally. */
+  readonly wordWrap?: boolean
 }
 
 export type EditorSetTextOptions = {

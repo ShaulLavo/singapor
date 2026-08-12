@@ -483,3 +483,19 @@ function isCompletionList(
 ): value is lsp.CompletionList {
   return !Array.isArray(value)
 }
+
+/**
+ * Whether an accepted item still needs a `completionItem/resolve` round-trip.
+ *
+ * Servers routinely send a list whose items carry only a label, deferring documentation and — the
+ * one that matters — the import edit until resolve. Applying such an item directly is what silently
+ * drops auto-imports.
+ */
+export function completionNeedsResolve(
+  item: lsp.CompletionItem,
+  serverCapabilities: lsp.ServerCapabilities | null | undefined,
+): boolean {
+  if (item.additionalTextEdits !== undefined) return false
+
+  return Boolean(serverCapabilities?.completionProvider?.resolveProvider)
+}

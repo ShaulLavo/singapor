@@ -14,6 +14,7 @@ import {
   completionAnchorRange,
   completionApplication,
   completionItems,
+  completionNeedsResolve,
   completionTriggerFromChange,
   createCompletionWidgetController,
   type CompletionWidgetController,
@@ -215,13 +216,49 @@ export class CompletionController {
     if (!session || !item) return false
     if (session.active !== this.options.getActiveDocument()) return false
 
-    const application = completionApplication(session.active.fullText, session.offset, item)
-    if (!application) return false
-
     const feature = this.completionEditFeature()
     if (!feature) return false
 
     this.hide()
+    // Most servers send an item without its import edit and expect a resolve round-trip; applying
+    // the unresolved item is what silently drops auto-imports.
+    if (completionNeedsResolve(item, this.client.serverCapabilities)) {
+      void this.applyResolvedCompletion(session, item, feature)
+      return true
+    }
+
+    return this.applyCompletionItem(session, item, feature)
+  }
+
+  private async applyResolvedCompletion(
+    session: CompletionSession,
+    item: lsp.CompletionItem,
+    feature: LanguageServerCompletionEditFeature,
+  ): Promise<void> {
+    let resolved = item
+    try {
+      resolved = await this.client.request<lsp.CompletionItem>('completionItem/resolve', item)
+      this.options.onRequestSuccess?.()
+    } catch (error) {
+      // A server that cannot resolve should still get its completion applied, unresolved.
+      this.options.onRequestError(error)
+    }
+
+    // The document can move between accepting and resolving; applying then would edit the wrong
+    // text at the wrong offset.
+    if (session.active !== this.options.getActiveDocument()) return
+
+    this.applyCompletionItem(session, resolved, feature)
+  }
+
+  private applyCompletionItem(
+    session: CompletionSession,
+    item: lsp.CompletionItem,
+    feature: LanguageServerCompletionEditFeature,
+  ): boolean {
+    const application = completionApplication(session.active.fullText, session.offset, item)
+    if (!application) return false
+
     return feature.applyCompletion(application)
   }
 

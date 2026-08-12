@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   completionApplication,
+  completionNeedsResolve,
   completionTriggerFromChange,
   createCompletionEditFeature,
   createCompletionWidgetController,
@@ -108,3 +109,24 @@ function editChange(text: string): Parameters<typeof completionTriggerFromChange
     edits: [{ from: 0, to: 0, text }],
   } as unknown as Parameters<typeof completionTriggerFromChange>[0]
 }
+
+describe('completionNeedsResolve', () => {
+  const resolving = { completionProvider: { resolveProvider: true } }
+
+  it('resolves an item whose edits the server deferred', () => {
+    expect(completionNeedsResolve({ label: 'value' }, resolving)).toBe(true)
+  })
+
+  // The import edit is already in hand; a round-trip would only add latency.
+  it('does not resolve an item that already carries its edits', () => {
+    expect(completionNeedsResolve({ additionalTextEdits: [], label: 'value' }, resolving)).toBe(
+      false,
+    )
+  })
+
+  it('does not resolve when the server cannot', () => {
+    expect(completionNeedsResolve({ label: 'value' }, { completionProvider: {} })).toBe(false)
+    expect(completionNeedsResolve({ label: 'value' }, null)).toBe(false)
+    expect(completionNeedsResolve({ label: 'value' }, undefined)).toBe(false)
+  })
+})

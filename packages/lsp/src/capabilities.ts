@@ -23,6 +23,12 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
       completionItem: {
         documentationFormat: ['markdown', 'plaintext'],
         labelDetailsSupport: true,
+        // Servers defer the expensive parts of an item until resolve; without this they either
+        // send nothing there or refuse the request. additionalTextEdits is the load-bearing one —
+        // it carries the auto-import.
+        resolveSupport: {
+          properties: ['documentation', 'detail', 'additionalTextEdits'],
+        },
         snippetSupport: false,
       },
     },

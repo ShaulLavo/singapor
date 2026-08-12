@@ -320,6 +320,12 @@ export type EditorEditContributionContext = EditorDocumentContributionContext &
       timingName: string,
       selection?: EditorSelectionRange,
     ): void
+    /**
+     * Starts tab-stop navigation over ranges of the text just inserted. Optional so existing
+     * hand-written contexts (test doubles, mostly) keep compiling; a host without it simply leaves
+     * the caret at the first stop.
+     */
+    startSnippetSession?(ranges: readonly { readonly start: number; readonly end: number }[]): void
   }
 
 export type EditorFeatureContributionContext = EditorFeatureDomContributionContext &

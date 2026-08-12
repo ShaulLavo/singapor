@@ -68,6 +68,7 @@ import {
   shouldTypeOverCloser,
 } from './autoClose'
 import { AutoCloseStore, characterAt, characterBefore } from './autoCloseStore'
+import { SnippetSession, type SnippetStopRange } from './snippetSession'
 import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import { offsetToPoint } from '../pieceTable/positions'
 import { lineBreakIndent } from './indentation'
@@ -97,6 +98,7 @@ export type InputSelectionControllerOptions = {
 
 export class InputSelectionController {
   private readonly autoClose = new AutoCloseStore()
+  private readonly snippet = new SnippetSession()
   private mouseSelectionDrag: MouseSelectionDrag | null = null
   private mouseSelectionAutoScrollFrame = 0
   private inputState: EditorInputState = createEditorInputState()
@@ -176,8 +178,10 @@ export class InputSelectionController {
     if (decided) return decided
 
     const change = session.applyText(text)
-    // Plain typing keeps tracked pairs alive; their anchors have already shifted with the edit.
+    // Plain typing keeps tracked pairs and snippet stops alive; their anchors have already shifted
+    // with the edit.
     this.autoClose.advance(change.snapshot)
+    this.snippet.advance(change.snapshot)
     return change
   }
 
@@ -350,6 +354,29 @@ export class InputSelectionController {
     return change
   }
 
+  /** Begins tab-stop navigation for a snippet that was just inserted. */
+  startSnippetSession(ranges: readonly SnippetStopRange[]): void {
+    const session = this.session
+    if (!session) return
+
+    this.snippet.start(session.getSnapshot(), ranges)
+  }
+
+  /** Moves to the next or previous snippet stop, or reports that no session owns the key. */
+  private moveSnippetStop(session: DocumentSession, direction: 1 | -1): boolean {
+    if (!this.snippet.active) return false
+
+    const range = this.snippet.move(session.getSnapshot(), direction)
+    if (!range) return false
+
+    const change = session.setSelection(range.start, range.end)
+    this.snippet.advance(change.snapshot)
+    this.autoClose.advance(change.snapshot)
+    this.markSessionSelectionForNextInput()
+    this.options.applySessionChange(change, 'input.snippetStop')
+    return true
+  }
+
   /** The single collapsed caret offset, or null when there is a selection or several carets. */
   private collapsedCaretOffset(
     session: DocumentSession,
@@ -390,6 +417,10 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return false
     if (!this.options.canEditDocument()) return false
+
+    // Tab belongs to an active snippet first: cycling its stops is what the key means while one is
+    // being filled in, and indenting there would push the placeholder around instead.
+    if (this.moveSnippetStop(session, direction === 'indent' ? 1 : -1)) return true
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const selectionChange = this.selectionChangeBeforeEdit()

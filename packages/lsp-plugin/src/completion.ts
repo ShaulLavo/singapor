@@ -21,6 +21,8 @@ export const LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE =
 export type LanguageServerCompletionApplication = {
   readonly edits: readonly TextEdit[]
   readonly selection: EditorSelectionRange
+  /** Tab stops to cycle with Tab, when the accepted item was a snippet with more than one. */
+  readonly snippetStops?: readonly { readonly start: number; readonly end: number }[]
 }
 
 export type LanguageServerCompletionTrigger = {
@@ -182,10 +184,12 @@ export function completionApplication(
   const head = completionSelectionHead(primary, additional)
   // A snippet's first placeholder is selected so the next keystroke replaces it; without a stop the
   // caret sits after the insertion exactly as a plain completion leaves it.
-  const snippet = completionSnippetSelection(item, head - primary.text.length)
+  const insertionOffset = head - primary.text.length
+  const snippet = completionSnippetSelection(item, insertionOffset)
   return {
     edits,
     selection: snippet ?? { anchor: head, head },
+    snippetStops: completionSnippetStops(item, insertionOffset),
   }
 }
 
@@ -208,6 +212,9 @@ export function createCompletionEditFeature(
       if (!context.hasDocument()) return false
 
       context.applyEdits(application.edits, timingName, application.selection)
+      // Started after the edit so the ranges refer to the text now in the document. A host without
+      // the hook simply leaves the caret on the first placeholder.
+      if (application.snippetStops) context.startSnippetSession?.(application.snippetStops)
       context.focusEditor()
       return true
     },
@@ -443,6 +450,25 @@ function completionSnippetSource(item: lsp.CompletionItem): string | null {
  * Where the caret lands after accepting a snippet: its first tab stop, selected so typing replaces
  * the placeholder. Falls back to the end of the insertion, which is what a plain completion does.
  */
+/** Every tab stop of a snippet, in visit order and in document offsets. */
+export function completionSnippetStops(
+  item: lsp.CompletionItem,
+  insertionOffset: number,
+): readonly { readonly start: number; readonly end: number }[] | undefined {
+  const source = completionSnippetSource(item)
+  if (source === null) return undefined
+
+  const parsed = parseSnippet(source)
+  if (parsed.stops.length === 0) return undefined
+
+  // One range per stop: a repeated stop's mirrors are not edited together yet, so the first
+  // occurrence is the one the caret visits.
+  return parsed.stops.flatMap((stop) => {
+    const range = stop.ranges[0]
+    return range ? [{ end: insertionOffset + range.end, start: insertionOffset + range.start }] : []
+  })
+}
+
 export function completionSnippetSelection(
   item: lsp.CompletionItem,
   insertionOffset: number,

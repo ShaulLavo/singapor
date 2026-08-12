@@ -5,6 +5,11 @@ export type { EditorBracketMatchPluginOptions } from './bracketMatchPlugin'
 export { bracketJumpTargetOffset, findBracketMatchAtCaret } from './editor/bracketMatching'
 export type { BracketMatch } from './editor/bracketMatching'
 export {
+  createOccurrenceHighlightPlugin,
+  EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID,
+} from './occurrenceHighlightPlugin'
+export type { EditorOccurrenceHighlightPluginOptions } from './occurrenceHighlightPlugin'
+export {
   createMergeConflictPlugin,
   EDITOR_MERGE_CONFLICT_FEATURE,
   EDITOR_MERGE_CONFLICT_FEATURE_ID,

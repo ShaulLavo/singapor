@@ -8,8 +8,10 @@ export {
   createBracketMatchPlugin,
   createMergeConflictDocumentText,
   createMergeConflictPlugin,
+  createOccurrenceHighlightPlugin,
   Editor,
   EDITOR_BRACKET_MATCH_PLUGIN_ID,
+  EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID,
   EDITOR_MERGE_CONFLICT_FEATURE,
   EDITOR_MERGE_CONFLICT_FEATURE_ID,
   findBracketMatchAtCaret,
@@ -17,7 +19,11 @@ export {
   parseMergeConflicts,
   resolveMergeConflict,
 } from './editor'
-export type { BracketMatch, EditorBracketMatchPluginOptions } from './editor'
+export type {
+  BracketMatch,
+  EditorBracketMatchPluginOptions,
+  EditorOccurrenceHighlightPluginOptions,
+} from './editor'
 export {
   Anchor,
   anchorAfter,

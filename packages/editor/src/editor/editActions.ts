@@ -19,6 +19,14 @@ export type EditorEditActionCommandId =
   | 'editor.action.moveLinesDownAction'
   | 'editor.action.insertLineBefore'
   | 'editor.action.insertLineAfter'
+  | 'editor.action.trimTrailingWhitespace'
+  | 'editor.action.sortLinesAscending'
+  | 'editor.action.sortLinesDescending'
+  | 'editor.action.joinLines'
+  | 'editor.action.duplicateSelection'
+  | 'editor.action.transformToUppercase'
+  | 'editor.action.transformToLowercase'
+  | 'editor.action.transformToTitlecase'
 
 export type EditorEditActionResult = {
   readonly edits: readonly TextEdit[]
@@ -111,6 +119,14 @@ export function isEditorEditActionCommand(
     command === 'editor.action.indentLines' ||
     command === 'editor.action.outdentLines' ||
     command === 'editor.action.deleteLines' ||
+    command === 'editor.action.trimTrailingWhitespace' ||
+    command === 'editor.action.sortLinesAscending' ||
+    command === 'editor.action.sortLinesDescending' ||
+    command === 'editor.action.joinLines' ||
+    command === 'editor.action.duplicateSelection' ||
+    command === 'editor.action.transformToUppercase' ||
+    command === 'editor.action.transformToLowercase' ||
+    command === 'editor.action.transformToTitlecase' ||
     command === 'editor.action.copyLinesUpAction' ||
     command === 'editor.action.copyLinesDownAction' ||
     command === 'editor.action.moveLinesUpAction' ||
@@ -137,6 +153,28 @@ export function editActionForCommand(
   }
   if (command === 'editor.action.outdentLines') {
     return indentLinesAction(text, selections, 'outdent', options)
+  }
+  if (command === 'editor.action.trimTrailingWhitespace') {
+    return trimTrailingWhitespaceAction(text)
+  }
+  if (command === 'editor.action.sortLinesAscending') {
+    return sortLinesAction(text, selections, 'ascending')
+  }
+  if (command === 'editor.action.sortLinesDescending') {
+    return sortLinesAction(text, selections, 'descending')
+  }
+  if (command === 'editor.action.joinLines') return joinLinesAction(text, selections)
+  if (command === 'editor.action.duplicateSelection') {
+    return duplicateSelectionAction(text, selections)
+  }
+  if (command === 'editor.action.transformToUppercase') {
+    return transformCaseAction(text, selections, 'upper')
+  }
+  if (command === 'editor.action.transformToLowercase') {
+    return transformCaseAction(text, selections, 'lower')
+  }
+  if (command === 'editor.action.transformToTitlecase') {
+    return transformCaseAction(text, selections, 'title')
   }
   if (command === 'editor.action.deleteLines') return deleteLinesAction(text, selections)
   if (command === 'editor.action.copyLinesUpAction') return copyLinesAction(text, selections, 'up')
@@ -171,6 +209,143 @@ function deleteWordAction(
     revealOffset: collapsedSelections[0]?.head,
     timingName: direction === 'left' ? 'input.deleteWordLeft' : 'input.deleteWordRight',
   }
+}
+
+/**
+ * Trims trailing spaces and tabs from every line, whole-document like VS Code's command.
+ *
+ * One edit per affected line rather than one whole-document edit, so untouched lines keep their
+ * piece-table sharing and every anchor outside the trimmed runs survives.
+ */
+function trimTrailingWhitespaceAction(text: string): EditorEditActionResult {
+  const map = createLineMap(text)
+  const edits: TextEdit[] = []
+
+  for (let row = 0; row <= lastRow(map); row += 1) {
+    const start = lineStart(map, row)
+    const end = lineEnd(map, row)
+    const line = text.slice(start, end)
+    const trimmed = line.replace(/[ \t]+$/, '')
+    if (trimmed.length === line.length) continue
+
+    edits.push({ from: start + trimmed.length, text: '', to: end })
+  }
+
+  return { edits, timingName: 'editor.trimTrailingWhitespace' }
+}
+
+function sortLinesAction(
+  text: string,
+  selections: readonly ResolvedSelection[],
+  direction: 'ascending' | 'descending',
+): EditorEditActionResult {
+  const map = createLineMap(text)
+  const edits: TextEdit[] = []
+
+  for (const group of rowGroupsForSelections(map, selections)) {
+    // A single-line selection has nothing to sort against; VS Code sorts the whole document then,
+    // but silently reordering a file the user did not select is worse than doing nothing.
+    if (group.startRow === group.endRow) continue
+
+    const rows: string[] = []
+    for (let row = group.startRow; row <= group.endRow; row += 1) {
+      rows.push(text.slice(lineStart(map, row), lineEnd(map, row)))
+    }
+
+    const sorted = [...rows].sort((left, right) => left.localeCompare(right))
+    if (direction === 'descending') sorted.reverse()
+
+    edits.push({
+      from: lineStart(map, group.startRow),
+      text: sorted.join('\n'),
+      to: lineEnd(map, group.endRow),
+    })
+  }
+
+  return { edits, timingName: 'editor.sortLines' }
+}
+
+/** Joins each selected line with the next, collapsing the break and surrounding indentation. */
+function joinLinesAction(
+  text: string,
+  selections: readonly ResolvedSelection[],
+): EditorEditActionResult {
+  const map = createLineMap(text)
+  const edits: TextEdit[] = []
+
+  for (const group of rowGroupsForSelections(map, selections)) {
+    const lastJoinRow = group.startRow === group.endRow ? group.startRow : group.endRow - 1
+    for (let row = group.startRow; row <= lastJoinRow; row += 1) {
+      if (row >= lastRow(map)) break
+
+      const from = lineEnd(map, row)
+      const nextStart = lineStart(map, row + 1)
+      const nextLine = text.slice(nextStart, lineEnd(map, row + 1))
+      const indent = nextLine.length - nextLine.trimStart().length
+      // A single space, unless the joined line is empty — then the lines simply meet.
+      const separator = nextLine.trim().length === 0 ? '' : ' '
+      edits.push({ from, text: separator, to: nextStart + indent })
+    }
+  }
+
+  return { edits, timingName: 'editor.joinLines' }
+}
+
+/** Duplicates the selected text, or the whole line when the caret is collapsed. */
+function duplicateSelectionAction(
+  text: string,
+  selections: readonly ResolvedSelection[],
+): EditorEditActionResult {
+  const map = createLineMap(text)
+  const edits: TextEdit[] = []
+
+  for (const selection of selections) {
+    if (selection.startOffset !== selection.endOffset) {
+      const slice = text.slice(selection.startOffset, selection.endOffset)
+      edits.push({ from: selection.endOffset, text: slice, to: selection.endOffset })
+      continue
+    }
+
+    const row = rowAtOffset(map, selection.headOffset)
+    const start = lineStart(map, row)
+    const end = lineFullEnd(map, row)
+    const line = text.slice(start, end)
+    edits.push({ from: end, text: line.endsWith('\n') ? line : `\n${line}`, to: end })
+  }
+
+  return { edits, timingName: 'editor.duplicateSelection' }
+}
+
+function transformCaseAction(
+  text: string,
+  selections: readonly ResolvedSelection[],
+  kind: 'upper' | 'lower' | 'title',
+): EditorEditActionResult {
+  const edits: TextEdit[] = []
+
+  for (const selection of selections) {
+    // With no selection there is no range to transform; the word under the caret would be a
+    // different command, and guessing between them is worse than doing nothing.
+    if (selection.startOffset === selection.endOffset) continue
+
+    const slice = text.slice(selection.startOffset, selection.endOffset)
+    const transformed = transformCase(slice, kind)
+    if (transformed === slice) continue
+
+    edits.push({ from: selection.startOffset, text: transformed, to: selection.endOffset })
+  }
+
+  return { edits, timingName: 'editor.transformCase' }
+}
+
+function transformCase(text: string, kind: 'upper' | 'lower' | 'title'): string {
+  if (kind === 'upper') return text.toUpperCase()
+  if (kind === 'lower') return text.toLowerCase()
+
+  return text.replace(/\p{L}[\p{L}\p{N}']*/gu, (word) => {
+    const first = word.slice(0, 1).toUpperCase()
+    return first + word.slice(1).toLowerCase()
+  })
 }
 
 function deleteLinesAction(

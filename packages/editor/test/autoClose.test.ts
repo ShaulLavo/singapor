@@ -176,6 +176,43 @@ describe('auto-closing pairs', () => {
     expect(editor.materializeFullText()).toBe('foo\n')
   })
 
+  it('wraps a selection instead of replacing it', () => {
+    editor.setText('foo bar', { languageId: 'typescript' })
+    editor.setSelection(0, 3)
+
+    type('(')
+
+    expect(editor.materializeFullText()).toBe('(foo) bar')
+  })
+
+  it('wraps with quotes too', () => {
+    editor.setText('foo', { languageId: 'typescript' })
+    editor.setSelection(0, 3)
+
+    type('"')
+
+    expect(editor.materializeFullText()).toBe('"foo"')
+  })
+
+  // The wrapped text stays selected, so a second wrap nests rather than starting over.
+  it('keeps the wrapped text selected', () => {
+    editor.setText('foo', { languageId: 'typescript' })
+    editor.setSelection(0, 3)
+
+    type('(', '[')
+
+    expect(editor.materializeFullText()).toBe('([foo])')
+  })
+
+  it('wraps a backwards selection and keeps its direction', () => {
+    editor.setText('foo bar', { languageId: 'typescript' })
+    editor.setSelection(3, 0)
+
+    type('(')
+
+    expect(editor.materializeFullText()).toBe('(foo) bar')
+  })
+
   it('does not auto-close in a language with no pairs', () => {
     editor.openDocument({ documentId: 'notes.txt', languageId: null, text: '' })
 

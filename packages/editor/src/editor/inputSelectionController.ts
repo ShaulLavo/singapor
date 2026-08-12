@@ -231,6 +231,9 @@ export class InputSelectionController {
   ): DocumentSessionChange | null {
     if (text.length !== 1) return null
 
+    const surrounded = this.surroundSelection(session, text)
+    if (surrounded) return surrounded
+
     const snapshot = session.getSnapshot()
     const caret = this.collapsedCaretOffset(session, snapshot)
     if (caret === null) return null
@@ -305,6 +308,44 @@ export class InputSelectionController {
       selections: [{ anchor: caret - 1, head: caret - 1 }],
     })
     this.autoClose.advance(change.snapshot)
+    this.markSessionSelectionForNextInput()
+    return change
+  }
+
+  /**
+   * Typing an opener over a non-empty selection wraps it instead of replacing it.
+   *
+   * The two edits sit at different offsets, so they are safe as a batch — unlike a collapsed caret,
+   * where opener and closer would be two zero-width edits at one offset with no defined order.
+   */
+  private surroundSelection(session: DocumentSession, text: string): DocumentSessionChange | null {
+    const opening = autoClosingPairForOpen(this.options.getLanguageId(), text)
+    if (!opening) return null
+
+    const snapshot = session.getSnapshot()
+    const selections = session.getSelections().selections
+    if (selections.length !== 1) return null
+
+    const only = selections[0]
+    if (!only) return null
+
+    const resolved = resolveSelection(snapshot, only)
+    if (resolved.startOffset === resolved.endOffset) return null
+
+    const shift = opening.open.length
+    const start = resolved.startOffset + shift
+    const end = resolved.endOffset + shift
+    // Direction is preserved so a second wrap, or shift+arrow, continues from the same end.
+    const forward = resolved.headOffset >= resolved.anchorOffset
+    const change = session.applyEdits(
+      [
+        { from: resolved.startOffset, text: opening.open, to: resolved.startOffset },
+        { from: resolved.endOffset, text: opening.close, to: resolved.endOffset },
+      ],
+      { selections: [forward ? { anchor: start, head: end } : { anchor: end, head: start }] },
+    )
+    // The closer here is deliberate, not a speculative auto-insert: nothing to type over.
+    this.autoClose.clear()
     this.markSessionSelectionForNextInput()
     return change
   }

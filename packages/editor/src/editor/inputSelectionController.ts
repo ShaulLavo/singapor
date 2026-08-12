@@ -60,6 +60,15 @@ import {
 } from './inputState'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import type { EditorSelectionSyncMode, EditorSessionOptions } from './types'
+import {
+  autoClosingPairForClose,
+  autoClosingPairForOpen,
+  shouldAutoClose,
+  shouldDeletePair,
+  shouldTypeOverCloser,
+} from './autoClose'
+import { AutoCloseStore, characterAt, characterBefore } from './autoCloseStore'
+import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 
 export type InputSelectionControllerOptions = {
   readonly el: HTMLDivElement
@@ -85,6 +94,7 @@ export type InputSelectionControllerOptions = {
 }
 
 export class InputSelectionController {
+  private readonly autoClose = new AutoCloseStore()
   private mouseSelectionDrag: MouseSelectionDrag | null = null
   private mouseSelectionAutoScrollFrame = 0
   private inputState: EditorInputState = createEditorInputState()
@@ -148,6 +158,125 @@ export class InputSelectionController {
     return true
   }
 
+  /**
+   * Typing path for a single plain character, with auto-closing pairs applied.
+   *
+   * Only a single collapsed caret takes the auto-close path. Several carets fall through to plain
+   * insertion: a batch would need one edit per caret, and two zero-width edits landing at the same
+   * offset pass batch validation but apply in an unspecified order.
+   */
+  private applyTypedText(session: DocumentSession, text: string): DocumentSessionChange {
+    const decided = this.autoCloseChange(session, text)
+    if (decided) return decided
+
+    const change = session.applyText(text)
+    // Plain typing keeps tracked pairs alive; their anchors have already shifted with the edit.
+    this.autoClose.advance(change.snapshot)
+    return change
+  }
+
+  /** The auto-close variant of a keystroke, or null when the keystroke is ordinary. */
+  private autoCloseChange(
+    session: DocumentSession,
+    text: string,
+  ): DocumentSessionChange | null {
+    if (text.length !== 1) return null
+
+    const snapshot = session.getSnapshot()
+    const caret = this.collapsedCaretOffset(session, snapshot)
+    if (caret === null) return null
+
+    const languageId = this.options.getLanguageId()
+    const closing = autoClosingPairForClose(languageId, text)
+    if (
+      closing &&
+      shouldTypeOverCloser({
+        charAfter: characterAt(snapshot, caret),
+        close: closing.close,
+        trackedAtCaret: this.autoClose.hasCloserAt(snapshot, caret, closing.close),
+      })
+    ) {
+      return this.typeOverCloser(session, snapshot, caret)
+    }
+
+    const opening = autoClosingPairForOpen(languageId, text)
+    if (!opening) return null
+    if (
+      !shouldAutoClose(opening, {
+        charAfter: characterAt(snapshot, caret),
+        charBefore: characterBefore(snapshot, caret),
+      })
+    ) {
+      return null
+    }
+
+    // One edit, not two: the renderer only takes its incremental path for a single-edit change.
+    const change = session.applyEdits([{ from: caret, text: opening.open + opening.close, to: caret }], {
+      selections: [{ anchor: caret + opening.open.length, head: caret + opening.open.length }],
+    })
+    this.autoClose.track(change.snapshot, caret + opening.open.length, opening.close)
+    this.markSessionSelectionForNextInput()
+    return change
+  }
+
+  /** Steps the caret over a closer this editor inserted, without touching the text. */
+  private typeOverCloser(
+    session: DocumentSession,
+    snapshot: PieceTableSnapshot,
+    caret: number,
+  ): DocumentSessionChange {
+    this.autoClose.forget(snapshot, caret)
+    const change = session.setSelection(caret + 1, caret + 1)
+    this.autoClose.advance(change.snapshot)
+    this.markSessionSelectionForNextInput()
+    return change
+  }
+
+  /** Backspace between the halves of a pair this editor inserted removes both, or null. */
+  private deleteAutoClosedPair(session: DocumentSession): DocumentSessionChange | null {
+    const snapshot = session.getSnapshot()
+    const caret = this.collapsedCaretOffset(session, snapshot)
+    if (caret === null) return null
+
+    const charBefore = characterBefore(snapshot, caret)
+    const pair = charBefore === null ? null : autoClosingPairForOpen(this.options.getLanguageId(), charBefore)
+    if (
+      !shouldDeletePair({
+        charAfter: characterAt(snapshot, caret),
+        charBefore,
+        pair,
+        trackedAtCaret: this.autoClose.hasCloserAt(snapshot, caret, pair?.close ?? ''),
+      })
+    ) {
+      return null
+    }
+
+    this.autoClose.forget(snapshot, caret)
+    const change = session.applyEdits([{ from: caret - 1, text: '', to: caret + 1 }], {
+      selections: [{ anchor: caret - 1, head: caret - 1 }],
+    })
+    this.autoClose.advance(change.snapshot)
+    this.markSessionSelectionForNextInput()
+    return change
+  }
+
+  /** The single collapsed caret offset, or null when there is a selection or several carets. */
+  private collapsedCaretOffset(
+    session: DocumentSession,
+    snapshot: PieceTableSnapshot,
+  ): number | null {
+    const selections = session.getSelections().selections
+    if (selections.length !== 1) return null
+
+    const only = selections[0]
+    if (!only) return null
+
+    const resolved = resolveSelection(snapshot, only)
+    if (resolved.startOffset !== resolved.endOffset) return null
+
+    return resolved.headOffset
+  }
+
   applyDeleteCommand(direction: 'backward' | 'forward', context: EditorCommandContext): boolean {
     const session = this.session
     if (!session) return false
@@ -155,7 +284,10 @@ export class InputSelectionController {
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const selectionChange = this.selectionChangeBeforeEdit()
-    const change = direction === 'backward' ? session.backspace() : session.deleteSelection()
+    const change =
+      direction === 'backward'
+        ? (this.deleteAutoClosedPair(session) ?? session.backspace())
+        : session.deleteSelection()
     this.options.applySessionChange(
       mergeChangeTimings(change, selectionChange),
       direction === 'backward' ? 'input.backspace' : 'input.delete',
@@ -892,8 +1024,12 @@ export class InputSelectionController {
     )
     event.preventDefault()
     this.transitionInputState({ text: inserted, type: 'beforeinput-pending' })
+    // Only a plain typed character can auto-close; insertLineBreak also yields a 1-character
+    // string, and composition results must never be rewritten.
     const textChange = measureEditorPerformance('session.applyText', () =>
-      session.applyText(inserted),
+      event.inputType === 'insertText'
+        ? this.applyTypedText(session, inserted)
+        : session.applyText(inserted),
     )
     this.transitionInputState({ type: 'transaction-committed' })
     this.options.applySessionChange(
@@ -1049,7 +1185,9 @@ export class InputSelectionController {
     )
     this.options.view.inputElement.value = ''
     this.transitionInputState({ type: 'hidden-input-cleared' })
-    const textChange = measureEditorPerformance('session.applyText', () => session.applyText(text))
+    const textChange = measureEditorPerformance('session.applyText', () =>
+      this.applyTypedText(session, text),
+    )
     this.transitionInputState({ type: 'transaction-committed' })
     this.options.applySessionChange(
       mergeChangeTimings(textChange, selectionChange),

@@ -29,7 +29,13 @@ import {
   LspConnection,
   type LspConnectionTransportFactory,
 } from './lspConnection'
-import type { DiagnosticMarkerDirection, LanguageServerNavigationCommand } from './pluginTypes'
+import type {
+  ActiveDocument,
+  DiagnosticMarkerDirection,
+  LanguageServerNavigationCommand,
+} from './pluginTypes'
+import { formattingChangesText, formattingEdits, formattingOptions } from './formatting'
+import type { TextEdit } from '@singapor/core'
 import type {
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticSummary,
@@ -59,6 +65,7 @@ export type LanguageServerCommandTarget = {
   goToDefinitionFromSelection(): boolean
   runNavigationCommand(command: LanguageServerNavigationCommand): boolean
   moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean
+  formatDocument(): boolean
 }
 
 export type LanguageServerCommandSpec = {
@@ -224,6 +231,14 @@ class LanguageServerPluginState implements LanguageServerCommandTarget {
 
     return false
   }
+
+  public formatDocument(): boolean {
+    for (const contribution of this.contributions) {
+      if (contribution.formatDocument()) return true
+    }
+
+    return false
+  }
 }
 
 class LanguageServerCommandContribution implements EditorDisposable {
@@ -273,7 +288,7 @@ class LanguageServerContribution implements EditorViewContribution {
   private disposed = false
 
   public constructor(
-    context: EditorViewContributionContext,
+    private readonly context: EditorViewContributionContext,
     private readonly state: LanguageServerPluginState,
     private readonly options: LanguageServerResolvedAdapterOptions,
   ) {
@@ -387,6 +402,61 @@ class LanguageServerContribution implements EditorViewContribution {
       this.documentSync.diagnostics,
       direction,
     )
+  }
+
+  /**
+   * Formats the whole document through the language server.
+   *
+   * Reports handled as soon as the request is on its way: the answer arrives asynchronously, and
+   * returning false would let the keystroke fall through to another binding.
+   */
+  public formatDocument(): boolean {
+    const active = this.documentSync.activeDocument
+    if (!active) return false
+    if (!this.connection.client.serverCapabilities?.documentFormattingProvider) return false
+
+    void this.requestFormatting(active)
+    return true
+  }
+
+  private async requestFormatting(active: ActiveDocument): Promise<void> {
+    try {
+      const edits = await this.connection.client.request<lsp.TextEdit[] | null>(
+        'textDocument/formatting',
+        {
+          // The view snapshot carries the editor's own tab size, so the formatter is told the same
+          // width the document is displayed with.
+          options: formattingOptions(this.context.getSnapshot().tabSize),
+          textDocument: { uri: active.uri },
+        },
+      )
+      // The document can change while the formatter runs; its edits describe the text it was given.
+      if (active !== this.documentSync.activeDocument) return
+
+      const converted = formattingEdits(active.fullText, edits)
+      if (converted.length === 0) return
+      if (!formattingChangesText(active.fullText, converted)) return
+
+      this.applyFormattingEdits(converted)
+    } catch (error) {
+      this.handleRequestError(error)
+    }
+  }
+
+  /**
+   * Applies formatting through the same edit feature completions use, so a format is one
+   * transaction and one undo step.
+   *
+   * The caret is pinned to its offset rather than tracked through the edits: formatting moves text
+   * wholesale, and an offset that survives is closer to where the user was looking than a position
+   * mapped through a rewrite of the whole file.
+   */
+  private applyFormattingEdits(edits: readonly TextEdit[]): void {
+    const feature = this.context.getFeature?.(this.options.completion.editFeature)
+    if (!feature) return
+
+    const head = this.context.getSnapshot().selections[0]?.headOffset ?? 0
+    feature.applyCompletion({ edits, selection: { anchor: head, head } })
   }
 
   private handleConnected(): void {
@@ -512,6 +582,10 @@ const LANGUAGE_SERVER_COMMANDS: readonly LanguageServerCommandSpec[] = [
         openMode: 'peek',
         includeDeclaration: true,
       }),
+  },
+  {
+    id: 'editor.action.formatDocument',
+    run: (state) => state.formatDocument(),
   },
   {
     id: 'editor.action.marker.next',

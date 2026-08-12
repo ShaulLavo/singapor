@@ -6,11 +6,13 @@ export {
 export {
   bracketJumpTargetOffset,
   createBracketMatchPlugin,
+  createDocumentLinkPlugin,
   createMergeConflictDocumentText,
   createMergeConflictPlugin,
   createOccurrenceHighlightPlugin,
   Editor,
   EDITOR_BRACKET_MATCH_PLUGIN_ID,
+  EDITOR_DOCUMENT_LINK_PLUGIN_ID,
   EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID,
   EDITOR_MERGE_CONFLICT_FEATURE,
   EDITOR_MERGE_CONFLICT_FEATURE_ID,
@@ -22,6 +24,7 @@ export {
 export type {
   BracketMatch,
   EditorBracketMatchPluginOptions,
+  EditorDocumentLinkPluginOptions,
   EditorOccurrenceHighlightPluginOptions,
 } from './editor'
 export {

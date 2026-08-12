@@ -185,3 +185,73 @@ function rightIsWordBoundary(text: string, range: TextOffsetRange, length: numbe
   if (length === 0) return false
   return !isWordCodePointBefore(text, range.end)
 }
+
+/**
+ * Subword boundaries: the transitions inside an identifier that camelCase and snake_case create.
+ *
+ * `parseHTTPResponse` reads as parse | HTTP | Response, and `read_file_sync` as read | file | sync.
+ * An acronym run ends one character before the capital that starts the next word, which is what
+ * keeps `HTTPResponse` from being read as `HTTPR | esponse`.
+ */
+export function nextWordPartOffset(text: string, offset: number): number {
+  const limit = text.length
+  let cursor = clampTextOffset(text, offset)
+  if (cursor >= limit) return limit
+
+  // Step off any run of separators first, so a caret before '_' lands on the next word.
+  while (cursor < limit && isSubwordSeparator(text[cursor])) cursor += 1
+  if (cursor >= limit) return limit
+
+  cursor += 1
+  while (cursor < limit) {
+    const char = text[cursor]
+    if (char === undefined || isSubwordSeparator(char)) break
+    if (startsSubword(text, cursor)) break
+
+    cursor += 1
+  }
+
+  return cursor
+}
+
+export function previousWordPartOffset(text: string, offset: number): number {
+  let cursor = clampTextOffset(text, offset)
+  if (cursor <= 0) return 0
+
+  cursor -= 1
+  while (cursor > 0 && isSubwordSeparator(text[cursor])) cursor -= 1
+  if (cursor <= 0) return 0
+
+  while (cursor > 0) {
+    if (isSubwordSeparator(text[cursor - 1])) break
+    if (startsSubword(text, cursor)) break
+
+    cursor -= 1
+  }
+
+  return cursor
+}
+
+/** True when `index` begins a new subword: a capital after lower, or a letter after a digit. */
+function startsSubword(text: string, index: number): boolean {
+  const previous = text[index - 1]
+  const current = text[index]
+  if (previous === undefined || current === undefined) return false
+  if (!isUpper(current)) return isLetter(current) && isDigit(previous)
+  if (isLower(previous)) return true
+  if (isDigit(previous)) return true
+
+  // Inside an acronym, the boundary is the capital that a lowercase letter follows: HTTP|Response.
+  return isUpper(previous) && isLower(text[index + 1] ?? '')
+}
+
+function isSubwordSeparator(char: string | undefined): boolean {
+  if (char === undefined) return false
+
+  return !/[\p{L}\p{N}]/u.test(char)
+}
+
+const isUpper = (char: string) => /\p{Lu}/u.test(char)
+const isLower = (char: string) => /\p{Ll}/u.test(char)
+const isDigit = (char: string) => /\p{Nd}/u.test(char)
+const isLetter = (char: string) => /\p{L}/u.test(char)

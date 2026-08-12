@@ -4,7 +4,9 @@ import {
   nextCodePointOffset,
   nextWordOffset,
   previousCodePointOffset,
+  nextWordPartOffset,
   previousWordOffset,
+  previousWordPartOffset,
 } from './navigation'
 
 export type NavigationTarget = {
@@ -39,6 +41,10 @@ export function navigationTargetForCommand(
   if (command === 'selectRight') return horizontalTarget(context, 'right', true)
   if (command === 'cursorWordLeft') return wordTarget(context, 'left', false)
   if (command === 'cursorWordRight') return wordTarget(context, 'right', false)
+  if (command === 'cursorWordPartLeft') return wordPartTarget(context, 'left', false)
+  if (command === 'cursorWordPartRight') return wordPartTarget(context, 'right', false)
+  if (command === 'cursorWordPartLeftSelect') return wordPartTarget(context, 'left', true)
+  if (command === 'cursorWordPartRightSelect') return wordPartTarget(context, 'right', true)
   if (command === 'selectWordLeft') return wordTarget(context, 'left', true)
   if (command === 'selectWordRight') return wordTarget(context, 'right', true)
   if (command === 'cursorUp') return verticalTarget(context, -1, false, 'input.cursorUp')
@@ -86,6 +92,25 @@ function wordTarget(
     timingName: extend
       ? `input.selectWord${capitalize(direction)}`
       : `input.cursorWord${capitalize(direction)}`,
+  }
+}
+
+function wordPartTarget(
+  context: NavigationTargetContext,
+  direction: 'left' | 'right',
+  extend: boolean,
+): NavigationTarget {
+  const offset =
+    direction === 'left'
+      ? previousWordPartOffset(context.text, context.resolved.headOffset)
+      : nextWordPartOffset(context.text, context.resolved.headOffset)
+
+  return {
+    extend,
+    offset,
+    timingName: extend
+      ? `input.selectWordPart${capitalize(direction)}`
+      : `input.cursorWordPart${capitalize(direction)}`,
   }
 }
 

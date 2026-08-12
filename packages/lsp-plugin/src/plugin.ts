@@ -23,6 +23,7 @@ import { CompletionController } from './completionController'
 import { DiagnosticsPresenter } from './diagnosticsPresenter'
 import { DocumentSync, type DocumentSyncOptions } from './documentSync'
 import { HoverDefinitionController } from './hoverDefinitionController'
+import { SignatureHelpController } from './signatureHelpController'
 import {
   createWebSocketLspTransportFactory,
   LspConnection,
@@ -267,6 +268,7 @@ class LanguageServerContribution implements EditorViewContribution {
   private readonly documentSync: DocumentSync
   private readonly completion: CompletionController
   private readonly hoverDefinition: HoverDefinitionController
+  private readonly signatureHelp: SignatureHelpController
   private readonly connectionRegistration: EditorDisposable | null
   private disposed = false
 
@@ -327,6 +329,14 @@ class LanguageServerContribution implements EditorViewContribution {
       onRequestSuccess: () => options.onInteractiveReady?.(),
       onRequestError: (error) => this.handleRequestError(error),
     })
+    this.signatureHelp = new SignatureHelpController({
+      client: this.connection.client,
+      context,
+      getActiveDocument: () => this.documentSync.activeDocument,
+      onRequestError: (error) => this.handleRequestError(error),
+      onRequestSuccess: () => options.onInteractiveReady?.(),
+      tooltipClassNamespace: options.hoverDefinition.tooltipClassNamespace,
+    })
     this.state.register(this)
     this.connection.connect()
     this.update(context.getSnapshot(), 'document', null)
@@ -343,6 +353,7 @@ class LanguageServerContribution implements EditorViewContribution {
     if (this.documentSync.shouldSync(kind, snapshot))
       this.documentSync.sync(snapshot, change ?? null)
     this.completion.update(snapshot, kind, change ?? null)
+    this.signatureHelp.update(snapshot, kind, change ?? null)
   }
 
   public dispose(): void {
@@ -355,6 +366,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.completion.hide()
     this.documentSync.close()
     this.completion.dispose()
+    this.signatureHelp.dispose()
     this.connection.dispose()
   }
 

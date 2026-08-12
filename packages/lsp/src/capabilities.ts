@@ -26,6 +26,17 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
         snippetSupport: false,
       },
     },
+    // Servers only answer what the client advertises, so this has to be declared for
+    // textDocument/signatureHelp to come back at all.
+    signatureHelp: {
+      contextSupport: true,
+      signatureInformation: {
+        documentationFormat: ['markdown', 'plaintext'],
+        parameterInformation: {
+          labelOffsetSupport: true,
+        },
+      },
+    },
   },
   window: {
     showMessage: {},

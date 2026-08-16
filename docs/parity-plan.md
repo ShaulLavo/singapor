@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**15 / 99 findings complete.** Update this count when you check a box.
+**22 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 2 / 16 complete.
+Milestones: 3 / 16 complete.
 
 
 ---
@@ -154,7 +154,7 @@ Milestones: 2 / 16 complete.
 
 ---
 
-## Milestone 3 — Core session infrastructure
+## Milestone 3 — Core session infrastructure ✅
 
 `effort XL` · `risk high` · 7 findings
 
@@ -164,20 +164,47 @@ Milestones: 2 / 16 complete.
 
 > Ordering in this milestone rests partly on un-analyzed domains (text-model).
 
-- [ ] **DisposableStore and a pluggable disposable tracker for leak detection**  
+- [x] **DisposableStore and a pluggable disposable tracker for leak detection**  
   `medium` `S` `partial` `api-perf-infra`
-- [ ] **Operation batching: coalesce DOM reads/writes across nested and repeated edits**  
+- [x] **Operation batching: coalesce DOM reads/writes across nested and repeated edits**  
   `high` `L` `partial` `api-perf-infra`
-- [ ] **Emitter/Event: lazy wiring, listener-error isolation, re-entrancy-safe delivery, leak detection**  
+- [x] **Emitter/Event: lazy wiring, listener-error isolation, re-entrancy-safe delivery, leak detection**  
   `medium` `M` `partial` `api-perf-infra`
-- [ ] **Typed option registry: validate → compute → per-option change diff**  
+- [x] **Typed option registry: validate → compute → per-option change diff**  
   `high` `L` `missing` `api-perf-infra`
-- [ ] **Undo coalescing keyed on edit-operation type, so consecutive deletes merge and an explicit undo-stop API exists**  
+- [x] **Undo coalescing keyed on edit-operation type, so consecutive deletes merge and an explicit undo-stop API exists**  
   `high` `M` `partial` `text-model`
-- [ ] **Bounded undo history — depth cap, and serializing closed stack elements out of the live heap**  
+- [x] **Bounded undo history — depth cap, and serializing closed stack elements out of the live heap**  
   `high` `M` `missing` `text-model`
-- [ ] **Cursor undo/redo as an independent bounded stack**  
+- [x] **Cursor undo/redo as an independent bounded stack**  
   `medium` `S` `missing` `cursor-selection`
+
+> **Deviations, recorded.** Each finding was cut to its Verifier scope, so several halves named in
+> the prose are deliberately absent: no global disposable tracker or stack capture (the leak it
+> would have found was a silent-drop branch in `plugins.ts`, closed directly); no five-phase
+> read/write split (one pass with a rect cache); no lazy first-listener wiring and no
+> debounce/throttle operators on the emitter (`workScheduler` is the deferral primitive); no
+> compute/derived-options layer (a descriptor array both bindings iterate); no undo-stop API (we
+> have one); no history blob serialization, and tombstone compaction stays a separate future item
+> that the depth cap unblocks.
+>
+> Two exit criteria were not met as written. "updateOptions and the 21 legacy setters" was reduced
+> to the descriptor registry, which is what the Verifier asked for. And the operation-batching
+> criterion asks for a *browser* test counting forced-layout reads; the count is asserted in the
+> happy-dom project instead, against a stubbed layout — the editor package runs no browser project.
+>
+> **Infrastructure fix that belongs to the whole plan.** `packages/react` and `packages/solid`
+> resolved `@singapor/core` through its exports map, i.e. to `packages/editor/dist`. Every test in
+> those two packages was therefore asserting against the last build rather than the current source,
+> and a deliberate mutation to the editor's option descriptors left both suites green. Their vitest
+> configs now alias the package's subpaths to `packages/editor/src`, derived from that same exports
+> map so the two cannot drift.
+>
+> **One guard left untested.** `recordCursorHistory`'s `before.session !== this.cursorHistorySession`
+> check is defence against recording a caret reading taken against a document the pass then swapped.
+> No scenario I could construct reaches it — `cursorHistoryForSession()` clears first in every path
+> I tried — so it survives mutation. Kept rather than removed, because it guards a corruption whose
+> cost is far above the cost of an unreachable branch.
 
 
 ---

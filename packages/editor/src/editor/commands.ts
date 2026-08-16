@@ -1,6 +1,8 @@
 export type EditorCommandId =
   | 'undo'
   | 'redo'
+  | 'cursorUndo'
+  | 'cursorRedo'
   | 'find'
   | 'findReplace'
   | 'findNext'

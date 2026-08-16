@@ -24,6 +24,8 @@ import { measureEditorPerformance } from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
 import { EditorCommandRouter } from './commandRouter'
+import { EditorOperation, type EditorOperationFlush } from './operation'
+import { CursorHistory, sameCursorSelections, type CursorHistoryEntry } from './cursorHistory'
 import {
   EditorDisplayProjectionRegistry,
   FULL_DISPLAY_PROJECTION_INVALIDATION,
@@ -43,11 +45,7 @@ import {
   type ResetOwnedDocumentOptions,
 } from './editorDocument'
 import { EditorDocumentController } from './documentController'
-import {
-  removeArrayItem,
-  viewContributionKindForChange,
-  type SessionChangeOptions,
-} from './editorUtils'
+import { removeArrayItem, type SessionChangeOptions } from './editorUtils'
 import { EDITOR_FIND_FEATURE, type EditorFindFeature } from './findFeature'
 import { foldCandidateAtLocation, type FoldOperation } from './foldOperations'
 import {
@@ -136,6 +134,11 @@ import {
   type VirtualizedFoldMarker,
   type VirtualizedTextRowDecoration,
 } from '../virtualization/virtualizedTextView'
+import {
+  beginRowRectMeasurements,
+  endRowRectMeasurements,
+  invalidateRowRectMeasurements,
+} from '../virtualization/virtualizedTextViewGeometry'
 
 const RAPID_INPUT_SECONDARY_WORK_DELAY_MS = 150
 // A sustained typing run never leaves a 150ms gap, so a pure debounce would
@@ -270,6 +273,14 @@ export class Editor {
   private appliedInjectedTextRows: readonly InjectedTextRow[] = []
   private readonly lifecycleSummary = createEditorLifecycleSummary()
   private readonly tabSize: number
+  private operation: EditorOperation | null = null
+  private readonly cursorHistory = new CursorHistory()
+  private cursorHistorySession: DocumentSession | null = null
+  private cursorHistoryBefore: {
+    readonly session: DocumentSession
+    readonly entry: CursorHistoryEntry
+  } | null = null
+  private restoringCursorHistory = false
   private disposed = false
 
   private get text(): string {
@@ -412,6 +423,7 @@ export class Editor {
     })
     this.commandRouter = new EditorCommandRouter({
       history: (command, context) => this.inputSelection.applyHistoryCommand(command, context),
+      cursorHistory: (command) => this.applyCursorHistory(command),
       delete: (direction, context) => this.inputSelection.applyDeleteCommand(direction, context),
       indent: (direction, context) => this.inputSelection.applyIndentCommand(direction, context),
       editAction: (command, context) =>
@@ -626,8 +638,10 @@ export class Editor {
   }
 
   setSyntaxFolds(folds: readonly FoldRange[]): void {
-    this.setSyntaxFoldProjection(folds)
-    this.syncFoldStateFromProjections()
+    this.runInOperation(() => {
+      this.setSyntaxFoldProjection(folds)
+      this.syncFoldStateFromProjections()
+    })
   }
 
   toggleFold(offset?: number): boolean {
@@ -673,22 +687,24 @@ export class Editor {
   }
 
   setText(text: string, options: EditorSetTextOptions = {}): void {
-    const currentScrollPosition = this.getScrollPosition()
-    const documentVersion = this.resetOwnedDocument(
-      {
-        text,
-        documentMode: options.documentMode ?? this.documentMode,
-        languageId: options.languageId,
-      },
-      {
-        documentId: null,
-        persistentIdentity: false,
-        scrollPosition: preservedScrollPosition(currentScrollPosition, options.scrollPosition),
-      },
-    )
-    this.notifyChange(null)
-    this.refreshSyntax(documentVersion, null)
-    this.lifecycleSummary.document.setTextCount += 1
+    this.runInOperation(() => {
+      const currentScrollPosition = this.getScrollPosition()
+      const documentVersion = this.resetOwnedDocument(
+        {
+          text,
+          documentMode: options.documentMode ?? this.documentMode,
+          languageId: options.languageId,
+        },
+        {
+          documentId: null,
+          persistentIdentity: false,
+          scrollPosition: preservedScrollPosition(currentScrollPosition, options.scrollPosition),
+        },
+      )
+      this.notifyChange(null)
+      this.refreshSyntax(documentVersion, null)
+      this.lifecycleSummary.document.setTextCount += 1
+    })
   }
 
   syncText(text: string, options: EditorSetTextOptions = {}): void {
@@ -713,17 +729,29 @@ export class Editor {
     this.lifecycleSummary.document.syncedTextCount += 1
   }
 
+  /**
+   * Runs `run` as a single mutating pass. Whatever it changes, the caret is
+   * revealed once, the DOM selection is written back once and listeners hear
+   * once, at the end — so a sequence of edits costs one visual update instead of
+   * one each. Calls made from inside a pass join it rather than opening another.
+   */
+  runInOperation<T>(run: () => T): T {
+    return this.withOperation(() => run())
+  }
+
   edit(editOrEdits: EditorEditInput, options: EditorEditOptions = {}): void {
-    if (!this.canEditDocument()) return
+    this.runInOperation(() => {
+      if (!this.canEditDocument()) return
 
-    this.ensureAnonymousSession()
-    if (!this.session) return
+      this.ensureAnonymousSession()
+      if (!this.session) return
 
-    const edits = normalizeEditorEditInput(editOrEdits)
-    const change = this.session.applyEdits(edits, options)
-    if (change.kind === 'none') return
+      const edits = normalizeEditorEditInput(editOrEdits)
+      const change = this.session.applyEdits(edits, options)
+      if (change.kind === 'none') return
 
-    this.applySessionChange(change, 'editor.edit', nowMs())
+      this.applySessionChange(change, 'editor.edit', nowMs())
+    })
   }
 
   openDocument(document: EditorOpenDocumentOptions): void {
@@ -832,8 +860,10 @@ export class Editor {
   }
 
   setSelection(anchor: number, head = anchor, reveal?: EditorSelectionRevealTarget): void {
-    const revealOffset = selectionRevealOffset(reveal, head)
-    this.inputSelection.applyFindSelection(anchor, head, 'editor.setSelection', revealOffset)
+    this.runInOperation(() => {
+      const revealOffset = selectionRevealOffset(reveal, head)
+      this.inputSelection.applyFindSelection(anchor, head, 'editor.setSelection', revealOffset)
+    })
   }
 
   openFind(): boolean {
@@ -866,6 +896,15 @@ export class Editor {
 
   selectAllMatches(): boolean {
     return this.findFeature()?.selectAllMatches() ?? false
+  }
+
+  /** Returns the carets, and the view, to where they were before the last caret move. */
+  cursorUndo(): boolean {
+    return this.applyCursorHistory('undo')
+  }
+
+  cursorRedo(): boolean {
+    return this.applyCursorHistory('redo')
   }
 
   getScrollPosition(): Required<EditorScrollPosition> {
@@ -928,40 +967,44 @@ export class Editor {
   setRangeDecorations(decorations: readonly EditorRangeDecoration[]): void {
     if (sameEditorRangeDecorations(this.directRangeDecorations(), decorations)) return
 
-    this.displayProjections.set({
-      kind: 'rangeDecorations',
-      owner: DIRECT_RANGE_DECORATION_OWNER,
-      source: this.currentDisplayProjectionSource(),
-      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
-      layer: 0,
-      priority: 0,
-      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
-      value: [...decorations],
-    })
-    this.applyRangeDecorations()
-    this.log({
-      action: 'editor.decorations.range.changed',
-      level: 'info',
-      decorations: { count: decorations.length },
+    this.runInOperation(() => {
+      this.displayProjections.set({
+        kind: 'rangeDecorations',
+        owner: DIRECT_RANGE_DECORATION_OWNER,
+        source: this.currentDisplayProjectionSource(),
+        invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+        layer: 0,
+        priority: 0,
+        disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+        value: [...decorations],
+      })
+      this.applyRangeDecorations()
+      this.log({
+        action: 'editor.decorations.range.changed',
+        level: 'info',
+        decorations: { count: decorations.length },
+      })
     })
   }
 
   setRowDecorations(decorations: ReadonlyMap<number, VirtualizedTextRowDecoration>): void {
-    this.displayProjections.set({
-      kind: 'rowDecorations',
-      owner: DIRECT_ROW_DECORATION_OWNER,
-      source: this.currentDisplayProjectionSource(),
-      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
-      layer: 0,
-      priority: 0,
-      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
-      value: new Map(decorations),
-    })
-    this.applyComposedRowDecorations()
-    this.log({
-      action: 'editor.decorations.row.changed',
-      level: 'info',
-      decorations: { count: decorations.size },
+    this.runInOperation(() => {
+      this.displayProjections.set({
+        kind: 'rowDecorations',
+        owner: DIRECT_ROW_DECORATION_OWNER,
+        source: this.currentDisplayProjectionSource(),
+        invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+        layer: 0,
+        priority: 0,
+        disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+        value: new Map(decorations),
+      })
+      this.applyComposedRowDecorations()
+      this.log({
+        action: 'editor.decorations.row.changed',
+        level: 'info',
+        decorations: { count: decorations.size },
+      })
     })
   }
 
@@ -1017,7 +1060,7 @@ export class Editor {
 
   dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
     const start = nowMs()
-    const handled = this.commandRouter.dispatch(command, context)
+    const handled = this.runInOperation(() => this.commandRouter.dispatch(command, context))
     this.log({
       action: 'editor.command.dispatched',
       level: handled ? 'info' : 'debug',
@@ -2396,34 +2439,178 @@ export class Editor {
     totalStart = nowMs(),
     options: SessionChangeOptions = {},
   ): void {
-    this.syntax.projectCacheForChange(change)
-    let timedChange = change
-    const renderStart = nowMs()
-    measureEditorPerformance('editor.renderSessionChange', () => this.renderSessionChange(change))
-    timedChange = appendTiming(timedChange, 'editor.render', renderStart)
+    this.withOperation((operation) => {
+      this.syntax.projectCacheForChange(change)
+      const renderStart = nowMs()
+      measureEditorPerformance('editor.renderSessionChange', () => this.renderSessionChange(change))
+      invalidateRowRectMeasurements()
+      operation.record(
+        appendTiming(change, 'editor.render', renderStart),
+        totalName,
+        totalStart,
+        options,
+      )
+    })
+  }
 
-    if (options.revealOffset !== undefined) {
+  private withOperation<T>(run: (operation: EditorOperation) => T): T {
+    const open = this.operation
+    if (open) return run(open)
+
+    const operation = new EditorOperation()
+    this.operation = operation
+    // Read before the pass runs: by the time it ends the caret has been revealed
+    // somewhere else, and it is the view the user is leaving that cursor history
+    // has to be able to hand back.
+    this.cursorHistoryBefore = this.captureCursorHistoryBefore()
+    beginRowRectMeasurements()
+    try {
+      return run(operation)
+    } finally {
+      // Cleared before the flush so a listener that edits from inside it opens
+      // a pass of its own rather than appending to one nobody will drain again,
+      // and in a finally so a pass that throws part-way still closes instead of
+      // leaving the editor wedged inside it.
+      this.operation = null
+      try {
+        this.flushOperation(operation)
+      } finally {
+        endRowRectMeasurements()
+      }
+    }
+  }
+
+  private flushOperation(operation: EditorOperation): void {
+    const flush = operation.flush()
+    if (!flush) return
+
+    // Ahead of the fan-out below, because a listener that moves the caret from
+    // inside it opens a pass of its own and that pass belongs after this one.
+    this.recordCursorHistory(flush)
+
+    let timedChange = flush.latest.change
+    if (flush.revealOffset !== null) {
       const revealStart = nowMs()
-      this.view.revealOffset(options.revealOffset, options.revealBlock)
+      this.view.revealOffset(flush.revealOffset, flush.revealBlock)
+      invalidateRowRectMeasurements()
       timedChange = appendTiming(timedChange, 'editor.reveal', revealStart)
     }
 
-    if (options.syncDomSelection !== false) {
+    if (flush.syncDomSelection) {
       const selectionStart = nowMs()
       this.inputSelection.syncDomSelection()
       timedChange = appendTiming(timedChange, 'editor.syncDomSelection', selectionStart)
     }
-    const finalChange = appendTiming(timedChange, totalName, totalStart)
-    this.sessionOptions.onChange?.(finalChange)
+    const finalChange = appendTiming(timedChange, flush.latest.totalName, flush.latest.totalStart)
+    // The notifications describe the pass; the hand-off below describes each
+    // change in it. Only the first can be coalesced.
+    const passChange = coalescedPassChange(flush, finalChange)
+    this.sessionOptions.onChange?.(passChange)
     measureEditorPerformance('editor.notifyViewContributions', () =>
-      this.notifyViewContributions(viewContributionKindForChange(finalChange), finalChange),
+      this.notifyViewContributions(flush.contributionKind, passChange),
     )
     measureEditorPerformance('editor.notifyChangeWithTiming', () =>
-      this.notifyChangeWithTiming(finalChange),
+      this.notifyChangeWithTiming(passChange),
     )
-    this.logSessionChange(finalChange, totalName)
-    this.sessionChangeVersion += 1
-    this.scheduleSecondarySessionChangeWork(finalChange, totalName, this.sessionChangeVersion)
+    // Syntax is reparsed from one change onto the previous one, so every change
+    // the pass made still has to be handed over, in the order it was made — only
+    // the notifications above describe a state, and only a state can be skipped.
+    for (const pending of flush.changes) {
+      const recorded = pending === flush.latest ? finalChange : pending.change
+      this.logSessionChange(recorded, pending.totalName)
+      this.sessionChangeVersion += 1
+      this.scheduleSecondarySessionChangeWork(
+        recorded,
+        pending.totalName,
+        this.sessionChangeVersion,
+      )
+    }
+  }
+
+  /**
+   * A pass either moved the carets or changed the text; only the first is a
+   * place worth being able to return to, and the second makes every place
+   * already recorded meaningless.
+   */
+  private recordCursorHistory(flush: EditorOperationFlush): void {
+    // A restore is itself a pass of caret moves. Recording it would make going
+    // back and forward the same single step.
+    if (this.restoringCursorHistory) return
+
+    const before = this.cursorHistoryBefore
+    const history = this.cursorHistoryForSession()
+    if (flush.changes.some((pending) => pending.change.edits.length > 0)) {
+      history.clear()
+      return
+    }
+    // A pass that swapped the document leaves a reading of the one before it,
+    // which addresses nothing here.
+    if (!before || before.session !== this.cursorHistorySession) return
+    // Plenty of passes flush without moving a caret — a decoration update, a
+    // theme change, an arrow key at the end of the document. Recording those
+    // spends a step of history that then walks back to where the user already
+    // is, and fills the stack with steps that look broken when taken.
+    if (sameCursorSelections(before.entry, this.captureCursorHistoryEntry())) return
+
+    history.record(before.entry)
+  }
+
+  private cursorHistoryForSession(): CursorHistory {
+    // Entries are offsets into one document; against another they address text
+    // that has nothing to do with them.
+    if (this.cursorHistorySession !== this.session) {
+      this.cursorHistorySession = this.session
+      this.cursorHistory.clear()
+    }
+
+    return this.cursorHistory
+  }
+
+  private captureCursorHistoryBefore(): {
+    readonly session: DocumentSession
+    readonly entry: CursorHistoryEntry
+  } | null {
+    const session = this.session
+    if (!session) return null
+
+    return { entry: this.captureCursorHistoryEntry(), session }
+  }
+
+  private captureCursorHistoryEntry(): CursorHistoryEntry {
+    const scrollPosition = this.getScrollPosition()
+    return {
+      scrollLeft: scrollPosition.left,
+      scrollTop: scrollPosition.top,
+      selections: this.inputSelection
+        .resolveViewSelections()
+        .map((selection) => ({ anchor: selection.anchorOffset, head: selection.headOffset })),
+    }
+  }
+
+  private applyCursorHistory(direction: 'undo' | 'redo'): boolean {
+    if (!this.session) return false
+
+    const current = this.captureCursorHistoryEntry()
+    const history = this.cursorHistoryForSession()
+    const entry = direction === 'undo' ? history.undo(current) : history.redo(current)
+    if (!entry) return false
+
+    const timingName = direction === 'undo' ? 'editor.cursorUndo' : 'editor.cursorRedo'
+    this.restoringCursorHistory = true
+    try {
+      this.runInOperation(() => {
+        this.inputSelection.applyFindSelections(entry.selections, timingName)
+      })
+    } finally {
+      this.restoringCursorHistory = false
+      // An enclosing pass has now walked the stack rather than moved the caret
+      // once, so where it started is not a place to be handed back to.
+      this.cursorHistoryBefore = null
+    }
+    // After the pass, so the recorded position is the one that survives rather
+    // than whatever settling the restored carets scrolled the view to.
+    this.applyScrollPosition({ top: entry.scrollTop, left: entry.scrollLeft })
+    return true
   }
 
   private renderSessionChange(change: DocumentSessionChange): void {
@@ -2853,6 +3040,26 @@ function joinClassNames(left: string | undefined, right: string | undefined): st
   if (!left) return right
   if (!right) return left
   return `${left} ${right}`
+}
+
+/**
+ * The one change a coalesced pass reports.
+ *
+ * A pass shows only its net result, so its listeners get the newest snapshot and
+ * selections — but they also get every edit that produced them, in order, under
+ * the kind of the last change that carried edits. Reporting the final change
+ * alone would tell a listener the text stood still whenever a pass happened to
+ * end on a caret move.
+ */
+function coalescedPassChange(
+  flush: EditorOperationFlush,
+  latest: DocumentSessionChange,
+): DocumentSessionChange {
+  const edits = flush.changes.flatMap((pending) => pending.change.edits)
+  if (edits.length === latest.edits.length) return latest
+
+  const lastEditing = flush.changes.findLast((pending) => pending.change.edits.length > 0)
+  return { ...latest, edits, kind: lastEditing?.change.kind ?? latest.kind }
 }
 
 function disposableOnce(dispose: () => void): EditorDisposable {

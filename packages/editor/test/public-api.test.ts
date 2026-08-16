@@ -66,6 +66,24 @@ describe('public API facade', () => {
     expect('createAnchorSelection' in core).toBe(false)
   })
 
+  it('exports the option registry the framework bindings iterate', () => {
+    // Both bindings drive controlled options from this list rather than from a
+    // hand-written effect each, so it is their contract with the editor and not
+    // an internal detail: dropping or renaming it breaks their builds.
+    expect(core.EDITOR_OPTION_DESCRIPTORS.length).toBeGreaterThan(0)
+    expect(core.createEditorOptionSync).toBeTypeOf('function')
+    for (const descriptor of core.EDITOR_OPTION_DESCRIPTORS) {
+      expect(descriptor.name).toBeTypeOf('string')
+      expect(descriptor.applyTo).toBeTypeOf('function')
+    }
+  })
+
+  it('exposes the pass and cursor-history methods hosts drive the editor through', () => {
+    for (const method of ['runInOperation', 'cursorUndo', 'cursorRedo']) {
+      expect(Editor.prototype[method as keyof Editor]).toBeTypeOf('function')
+    }
+  })
+
   it('exposes named category entrypoints for public, test, internal, and debug consumers', () => {
     const host = new EditorPluginHost([])
     const syntax = createEmptySyntaxResult()

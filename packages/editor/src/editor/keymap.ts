@@ -362,6 +362,8 @@ const FIND_COMMANDS = new Set<EditorCommandId>([
 const TEXT_EDITING_COMMANDS = new Set<EditorCommandId>([
   'undo',
   'redo',
+  'cursorUndo',
+  'cursorRedo',
   'deleteBackward',
   'deleteForward',
   'indentSelection',
@@ -432,6 +434,8 @@ function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBindin
     { hotkey: key('Enter', { mod: true, alt: true }), command: 'replaceAll' },
     { hotkey: key('Z', { mod: true }), command: 'undo' },
     { hotkey: key('Z', { mod: true, shift: true }), command: 'redo' },
+    { hotkey: key('U', { mod: true }), command: 'cursorUndo' },
+    { hotkey: key('U', { mod: true, shift: true }), command: 'cursorRedo' },
     ...platformBindings,
   ]
 }

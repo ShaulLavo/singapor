@@ -4,6 +4,7 @@ import { isEditorEditActionCommand, type EditorEditActionCommandId } from './edi
 
 export type EditorCommandRouterHandlers = {
   history(command: 'undo' | 'redo', context: EditorCommandContext): boolean
+  cursorHistory(command: 'undo' | 'redo', context: EditorCommandContext): boolean
   delete(direction: 'backward' | 'forward', context: EditorCommandContext): boolean
   indent(direction: 'indent' | 'outdent', context: EditorCommandContext): boolean
   editAction(command: EditorEditActionCommandId, context: EditorCommandContext): boolean
@@ -37,6 +38,8 @@ export class EditorCommandRouter {
 
     if (command === 'undo') return this.handlers.history('undo', context)
     if (command === 'redo') return this.handlers.history('redo', context)
+    if (command === 'cursorUndo') return this.handlers.cursorHistory('undo', context)
+    if (command === 'cursorRedo') return this.handlers.cursorHistory('redo', context)
     if (command === 'selectAll') return this.handlers.selectAll(context)
     if (command === 'addNextOccurrence') return this.handlers.addNextOccurrence(context)
     if (command === 'clearSecondarySelections') {

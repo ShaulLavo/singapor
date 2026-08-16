@@ -135,10 +135,15 @@ function createViewContributionPlugin(events: ViewContributionEvent[]): EditorPl
       context.registerViewContribution({
         createContribution: () => ({
           update: (snapshot, kind, change) => {
-            events.push({ kind, snapshot, changeKind: change?.kind ?? null })
+            events.push({
+              kind,
+              snapshot,
+              changeKind: change?.kind ?? null,
+              editCount: change?.edits.length ?? 0,
+            })
           },
           dispose: () => {
-            events.push({ kind: 'dispose', snapshot: null, changeKind: null })
+            events.push({ kind: 'dispose', snapshot: null, changeKind: null, editCount: 0 })
           },
         }),
       }),
@@ -171,6 +176,7 @@ type ViewContributionEvent = {
   readonly kind: EditorViewContributionUpdateKind | 'dispose'
   readonly snapshot: EditorViewSnapshot | null
   readonly changeKind: DocumentSessionChange['kind'] | null
+  readonly editCount: number
 }
 
 class MockResizeObserver implements ResizeObserver {
@@ -1333,6 +1339,29 @@ describe('Editor', () => {
         true,
       )
       expect(events.at(-1)?.snapshot?.fullText).toBe('const a = 1;!')
+    })
+
+    it('reports a pass that ends on a caret move as the edit it made', () => {
+      const events: ViewContributionEvent[] = []
+      editor.dispose()
+      editor = new Editor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor.openDocument({ documentId: 'test.ts', text: 'alpha beta' })
+      events.length = 0
+
+      editor.runInOperation(() => {
+        editor.edit({ from: 0, to: 5, text: 'ALPHA' })
+        editor.setSelection(0, 0)
+      })
+
+      // One update for the pass, and it has to describe the pass: a listener
+      // told the text changed and handed a change carrying no edits cannot act
+      // on either half of the message.
+      const updates = events.filter((event) => event.changeKind !== null)
+      expect(updates).toHaveLength(1)
+      expect(updates[0]?.kind).toBe('content')
+      expect(updates[0]?.changeKind).toBe('edit')
+      expect(updates[0]?.editCount).toBe(1)
+      expect(editor.materializeFullText()).toBe('ALPHA beta')
     })
 
     it('increments snapshot textVersion for text edits', () => {

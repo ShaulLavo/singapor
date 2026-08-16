@@ -6,12 +6,14 @@ import type {
   EditorCapabilityToken,
   EditorDisposable,
   EditorGutterContribution,
+  EditorInjectedTextRowProvider,
   EditorLogEvent,
   EditorPlugin,
   EditorPluginContext,
 } from '../plugins'
 import { createEditorCapabilityToken, EditorPluginHost } from '../plugins'
 import type { EditorOptions } from './types'
+import { EditorDisposableStore, MutableEditorDisposable } from './disposables'
 import { setHighlightRegistry } from './runtime'
 import { Editor } from './Editor'
 
@@ -511,6 +513,174 @@ describe('editor plugin lifecycle', () => {
     lease.dispose()
     host.dispose()
   })
+
+  test('disposes registrations made outside a plugin lifecycle body when the host is disposed', () => {
+    const host = new EditorPluginHost()
+    let changes = 0
+    host.setEvents({
+      onSyntaxProvidersChanged: () => {
+        changes += 1
+      },
+    })
+    let captured: EditorPluginContext | null = null
+    host.setPlugins([
+      {
+        name: 'late-registration',
+        activate: (context) => {
+          captured = context
+        },
+      },
+    ])
+    const context = requireContext(captured)
+
+    // Stands in for a plugin registering from a resolved promise or a timer.
+    context.registerSyntaxProvider({ createSession: () => null })
+
+    expect(host.hasSyntaxProviders()).toBe(true)
+    expect(changes).toBe(1)
+
+    host.dispose()
+
+    expect(changes).toBe(2)
+    expect(host.hasSyntaxProviders()).toBe(false)
+  })
+
+  test('refuses plugin registrations that arrive after the editor is disposed', () => {
+    const editor = createEditor()
+    let captured: EditorPluginContext | null = null
+    let created = 0
+    let disposed = 0
+    editor.addPlugin({
+      name: 'late-registration',
+      activate: (context) => {
+        captured = context
+      },
+    })
+    const context = requireContext(captured)
+
+    editor.dispose()
+    const registration = context.registerViewContribution({
+      createContribution: () => {
+        created += 1
+        return {
+          update: () => undefined,
+          dispose: () => {
+            disposed += 1
+          },
+        }
+      },
+    })
+    registration.dispose()
+
+    expect(created).toBe(0)
+    expect(disposed).toBe(0)
+  })
+
+  test('releases the previous invalidation subscription when a provider registers twice', () => {
+    const host = new EditorPluginHost()
+    const disposedSubscriptions: string[] = []
+    let subscriptions = 0
+    const provider: EditorInjectedTextRowProvider = {
+      getInjectedTextRows: () => [],
+      onDidChangeInjectedTextRows: () => {
+        subscriptions += 1
+        const id = `subscription-${subscriptions}`
+        return { dispose: () => disposedSubscriptions.push(id) }
+      },
+    }
+
+    host.setPlugins([
+      {
+        name: 'double-registration',
+        activate: (context) => [
+          context.registerInjectedTextRowProvider(provider),
+          context.registerInjectedTextRowProvider(provider),
+        ],
+      },
+    ])
+
+    expect(disposedSubscriptions).toEqual(['subscription-1'])
+
+    host.dispose()
+
+    expect(disposedSubscriptions).toEqual(['subscription-1', 'subscription-2'])
+  })
+
+  test('stops tracking host-owned registrations the caller released before teardown', () => {
+    const host = new EditorPluginHost()
+    let captured: EditorPluginContext | null = null
+    host.setPlugins([
+      {
+        name: 'per-document-registration',
+        activate: (context) => {
+          captured = context
+        },
+      },
+    ])
+    const context = requireContext(captured)
+
+    // Stands in for a plugin that registers and releases a provider per document or per view: the
+    // host outlives every one of them, so nothing it still tracks is ever collected.
+    for (let index = 0; index < 3; index += 1)
+      context.registerSyntaxProvider({ createSession: () => null }).dispose()
+
+    expect(hostRegistrationCount(host)).toBe(0)
+
+    host.dispose()
+  })
+})
+
+describe('editor disposable ownership', () => {
+  test('unwinds a store newest first', () => {
+    const store = new EditorDisposableStore()
+    const unwound: string[] = []
+    store.add({ dispose: () => unwound.push('outer') })
+    store.add({ dispose: () => unwound.push('inner') })
+
+    store.dispose()
+
+    expect(unwound).toEqual(['inner', 'outer'])
+  })
+
+  test('releases its references to everything it unwound', () => {
+    const store = new EditorDisposableStore()
+    const selfRemoving: EditorDisposable = { dispose: () => store.delete(selfRemoving) }
+    store.add({ dispose: () => undefined })
+    store.add(selfRemoving)
+
+    store.dispose()
+
+    expect(store.size).toBe(0)
+  })
+
+  test('unwinds an addition made after the store is disposed', () => {
+    const store = new EditorDisposableStore()
+    let unwound = 0
+    store.dispose()
+
+    store.add({
+      dispose: () => {
+        unwound += 1
+      },
+    })
+
+    expect(unwound).toBe(1)
+    expect(store.size).toBe(0)
+  })
+
+  test('unwinds a value assigned after the slot is disposed', () => {
+    const slot = new MutableEditorDisposable()
+    let unwound = 0
+    slot.dispose()
+
+    slot.value = {
+      dispose: () => {
+        unwound += 1
+      },
+    }
+
+    expect(unwound).toBe(1)
+  })
 })
 
 function createEditor(options: EditorOptions = {}): Editor {
@@ -695,6 +865,16 @@ function createRowDecorationPlugin(
 function requireDisposable(disposable: EditorDisposable | null): EditorDisposable {
   if (!disposable) throw new Error('missing disposable')
   return disposable
+}
+
+function requireContext(context: EditorPluginContext | null): EditorPluginContext {
+  if (!context) throw new Error('missing plugin context')
+  return context
+}
+
+function hostRegistrationCount(host: EditorPluginHost): number {
+  return (host as unknown as { readonly hostRegistrations: { readonly size: number } })
+    .hostRegistrations.size
 }
 
 function findVirtualRow(index: number): HTMLElement | null {

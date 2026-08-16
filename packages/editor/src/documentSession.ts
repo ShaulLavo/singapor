@@ -25,6 +25,7 @@ import {
   type EditorHistory,
 } from './history'
 import type { TextEdit } from './tokens'
+import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from './pieceTable/pieceTableTypes'
 import { applyBatchToPieceTable, snapBatchEditRanges } from './pieceTable/edits'
@@ -247,9 +248,23 @@ type DocumentHistory = EditorHistory<
   DocumentTransaction
 >
 
+type DocumentTransactionIntent = DocumentTransactionMetadata['intent']
+
+type TypingRunKind = 'insert' | 'backspace' | 'delete'
+
+// Whether the run currently ends in a space, and whether that space had one
+// before it. A lone space belongs to the word that follows, so it must not end
+// a run; a second one is deliberate enough that the text either side of it is
+// worth undoing separately.
+type TypingRunSpacing = 'none' | 'first-space' | 'consecutive-space'
+
 type TypingRun = {
-  readonly endOffset: number
-  readonly lastChar: string
+  readonly kind: TypingRunKind
+  readonly spacing: TypingRunSpacing
+  // Where the run left the caret, which is the only place the next keystroke of
+  // the same kind can continue it from: inserts and forward deletes start here,
+  // a backspace ends here.
+  readonly caretOffset: number
 }
 
 // Roughly 512MB of UTF-16 for one string, so past this point materializing the
@@ -260,7 +275,9 @@ export const exceedsHeapOperationBudget = (length: number): boolean =>
   length > MAX_HEAP_OPERATION_LENGTH
 
 class PieceTableEditorTextBuffer implements EditorTextBuffer {
-  private readonly listeners = new Set<EditorTextBufferChangeListener>()
+  private readonly changes = new EditorEventSource<EditorTextBufferChange>({
+    action: 'editor.buffer.change_listener_failed',
+  })
   private history: DocumentHistory
   private cleanSnapshot: PieceTableSnapshot
   private dirtyCacheSnapshot: PieceTableSnapshot
@@ -527,8 +544,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   }
 
   public subscribe(listener: EditorTextBufferChangeListener): () => void {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+    const subscription = this.changes.subscribe(listener)
+    return () => subscription.dispose()
   }
 
   private commitEdit(
@@ -552,7 +569,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.history = { ...this.history, current: snapshot, selections }
     }
 
-    this.updateTypingRun(edits, options)
+    this.typingRun = createTypingRun(this.typingRun, edits, options.metadata.intent, transaction)
     this.textSnapshot = createDocumentTextSnapshot(snapshot)
     this.revision += 1
     const change = this.createChange('edit', edits, transaction)
@@ -567,15 +584,15 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     options: CommitEditOptions,
     transaction: DocumentTransaction,
   ): void {
-    const edit = edits[0]
     const previous = this.history.undo?.entry.transaction
+    const kind = typingRunKind(options.metadata.intent)
 
-    if (edit && previous && this.shouldAmendTypingRun(edits, options, previous)) {
+    if (kind && previous && this.shouldAmendTypingRun(kind, edits, transaction, previous)) {
       this.history = amendEditorHistory(
         this.history,
         snapshot,
         selections,
-        createAmendedTypingTransaction(previous, snapshot, selections, edit),
+        createAmendedTypingTransaction(previous, transaction, kind),
       )
       return
     }
@@ -589,37 +606,20 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   }
 
   private shouldAmendTypingRun(
+    kind: TypingRunKind,
     edits: readonly TextEdit[],
-    options: CommitEditOptions,
+    transaction: DocumentTransaction,
     previous: DocumentTransaction,
   ): boolean {
-    const edit = singleTypingInsertEdit(edits)
+    const run = this.typingRun
+    if (!run || run.kind !== kind) return false
+
+    const edit = singleTypingRunEdit(edits, kind)
     if (!edit) return false
-    if (options.metadata.intent !== 'insert-text') return false
-    if (!this.typingRun) return false
-    if (edit.from !== this.typingRun.endOffset) return false
-    if (edit.text.includes('\n')) return false
-    if (startsNewWordAfterWhitespace(this.typingRun.lastChar, edit.text)) return false
-    return canAmendTypingTransaction(previous)
-  }
-
-  private updateTypingRun(edits: readonly TextEdit[], options: CommitEditOptions): void {
-    const edit = singleTypingInsertEdit(edits)
-
-    if (options.history !== 'record') {
-      this.typingRun = null
-      return
-    }
-
-    if (options.metadata.intent !== 'insert-text' || !edit || edit.text.includes('\n')) {
-      this.typingRun = null
-      return
-    }
-
-    this.typingRun = {
-      endOffset: edit.from + edit.text.length,
-      lastChar: edit.text.at(-1)!,
-    }
+    if (!continuesTypingRun(run, edit)) return false
+    if (kind === 'insert' && endsInsertRun(run.spacing, edit.text)) return false
+    if (kind !== 'insert' && !removesSingleCodePoint(transaction)) return false
+    return canAmendTypingTransaction(previous, kind)
   }
 
   private selectionsAfterProgrammaticEdit(
@@ -677,11 +677,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private emitChange(change: DocumentSessionChange, sourceViewId: string | null | undefined): void {
     if (change.kind === 'none') return
 
-    const event = {
-      change,
-      sourceViewId: sourceViewId ?? null,
-    }
-    for (const listener of this.listeners) listener(event)
+    this.changes.fire({ change, sourceViewId: sourceViewId ?? null })
   }
 }
 
@@ -1209,47 +1205,146 @@ function createDocumentSessionChange(fields: DocumentSessionChangeFields): Docum
   return { ...fields } // TODO why do we need this func??
 }
 
-function singleTypingInsertEdit(edits: readonly TextEdit[]): TextEdit | null {
+function typingRunKind(intent: DocumentTransactionIntent): TypingRunKind | null {
+  if (intent === 'insert-text') return 'insert'
+  if (intent === 'backspace') return 'backspace'
+  if (intent === 'delete') return 'delete'
+  return null
+}
+
+// A run is what one held-down key produces, so it is built from single edits
+// only; a multi-cursor pass or an inserted newline is a separate action and gets
+// its own undo entry.
+function singleTypingRunEdit(edits: readonly TextEdit[], kind: TypingRunKind): TextEdit | null {
   const edit = edits[0]
   if (edits.length !== 1 || !edit) return null
-  if (edit.from !== edit.to) return null
-  if (edit.text.length === 0) return null
-  return edit
+
+  if (kind === 'insert') {
+    if (edit.from !== edit.to || edit.text.length === 0) return null
+    return edit.text.includes('\n') ? null : edit
+  }
+
+  return edit.from !== edit.to && edit.text.length === 0 ? edit : null
+}
+
+function continuesTypingRun(run: TypingRun, edit: TextEdit): boolean {
+  return run.kind === 'backspace' ? edit.to === run.caretOffset : edit.from === run.caretOffset
+}
+
+// Deleting a selection is one deliberate action rather than a keystroke in a
+// run, so it must not swallow the keystrokes around it into its undo entry.
+function removesSingleCodePoint(transaction: DocumentTransaction): boolean {
+  const removed = transaction.inverseEdits[0]?.text ?? ''
+  return [...removed].length === 1
 }
 
 function isWhitespace(text: string): boolean {
   return /\s/u.test(text)
 }
 
-function startsNewWordAfterWhitespace(previous: string, text: string): boolean {
-  const first = text[0]
-  if (!first) return false
-  return isWhitespace(previous) && !isWhitespace(first)
+function endsInsertRun(spacing: TypingRunSpacing, text: string): boolean {
+  const typed = text[0]
+  if (!typed) return false
+  if (spacing === 'first-space') return false
+  return isWhitespace(typed) !== (spacing === 'consecutive-space')
 }
 
-function canAmendTypingTransaction(transaction: DocumentTransaction): boolean {
-  const edit = singleTypingInsertEdit(transaction.edits)
-  if (!edit) return false
-  if (transaction.metadata.intent !== 'insert-text') return false
-  return !edit.text.includes('\n')
+function nextTypingRunSpacing(spacing: TypingRunSpacing, text: string): TypingRunSpacing {
+  const last = text.at(-1)!
+  if (!isWhitespace(last)) return 'none'
+  return spacing === 'none' ? 'first-space' : 'consecutive-space'
+}
+
+function createTypingRun(
+  previous: TypingRun | null,
+  edits: readonly TextEdit[],
+  intent: DocumentTransactionIntent,
+  transaction: DocumentTransaction,
+): TypingRun | null {
+  const kind = typingRunKind(intent)
+  if (!kind) return null
+
+  const edit = singleTypingRunEdit(edits, kind)
+  if (!edit) return null
+
+  if (kind !== 'insert') {
+    return removesSingleCodePoint(transaction)
+      ? { kind, spacing: 'none', caretOffset: edit.from }
+      : null
+  }
+
+  return {
+    kind,
+    spacing: nextTypingRunSpacing(
+      previous?.kind === 'insert' ? previous.spacing : 'none',
+      edit.text,
+    ),
+    caretOffset: edit.from + edit.text.length,
+  }
+}
+
+function canAmendTypingTransaction(transaction: DocumentTransaction, kind: TypingRunKind): boolean {
+  return singleTypingRunEdit(transaction.edits, kind) !== null
 }
 
 function createAmendedTypingTransaction(
   previous: DocumentTransaction,
-  snapshot: PieceTableSnapshot,
-  selections: SelectionSet<PieceTableAnchor>,
-  edit: TextEdit,
+  next: DocumentTransaction,
+  kind: TypingRunKind,
 ): DocumentTransaction {
-  const previousEdit = previous.edits[0]!
-  const runStart = previousEdit.from
-  const text = previousEdit.text + edit.text
+  const merged =
+    kind === 'insert'
+      ? mergeInsertedRun(previous, next)
+      : mergeRemovedRun(previous, next, kind === 'backspace')
 
   return {
     ...previous,
+    edits: merged.edits,
+    inverseEdits: merged.inverseEdits,
+    snapshotAfter: next.snapshotAfter,
+    selectionAfter: next.selectionAfter,
+  }
+}
+
+type MergedRunEdits = {
+  readonly edits: readonly TextEdit[]
+  readonly inverseEdits: readonly TextEdit[]
+}
+
+function mergeInsertedRun(
+  previous: DocumentTransaction,
+  next: DocumentTransaction,
+): MergedRunEdits {
+  const previousEdit = previous.edits[0]!
+  const runStart = previousEdit.from
+  const text = previousEdit.text + next.edits[0]!.text
+
+  return {
     edits: [{ from: runStart, to: runStart, text }],
     inverseEdits: [{ from: runStart, to: runStart + text.length, text: '' }],
-    snapshotAfter: snapshot,
-    selectionAfter: selections,
+  }
+}
+
+// Both edits are ranges of the document the run started from, and a backspace
+// only ever widens that range to the left while a forward delete only widens it
+// to the right — which is also the order the removed text has to be put back in.
+function mergeRemovedRun(
+  previous: DocumentTransaction,
+  next: DocumentTransaction,
+  backwards: boolean,
+): MergedRunEdits {
+  const previousEdit = previous.edits[0]!
+  const nextEdit = next.edits[0]!
+  const previousText = previous.inverseEdits[0]!.text
+  const nextText = next.inverseEdits[0]!.text
+
+  const from = backwards ? nextEdit.from : previousEdit.from
+  const to = backwards ? previousEdit.to : previousEdit.to + (nextEdit.to - nextEdit.from)
+  const text = backwards ? nextText + previousText : previousText + nextText
+
+  return {
+    edits: [{ from, to, text: '' }],
+    inverseEdits: [{ from, to: from, text }],
   }
 }
 

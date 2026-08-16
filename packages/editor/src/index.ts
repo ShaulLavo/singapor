@@ -27,6 +27,13 @@ export type {
   EditorDocumentLinkPluginOptions,
   EditorOccurrenceHighlightPluginOptions,
 } from './editor'
+export { createEditorOptionSync, EDITOR_OPTION_DESCRIPTORS } from './editor/optionDescriptors'
+export type {
+  EditorControlledOptionName,
+  EditorControlledSelection,
+  EditorOptionDescriptor,
+  EditorOptionSync,
+} from './editor/optionDescriptors'
 export {
   Anchor,
   anchorAfter,

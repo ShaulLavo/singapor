@@ -1,4 +1,10 @@
 import {
+  createEditorOptionSync,
+  EDITOR_OPTION_DESCRIPTORS,
+  type EditorControlledSelection,
+  type EditorOptionSync,
+} from '@singapor/core'
+import {
   Editor,
   type EditorChangeHandler,
   type EditorCommandContext,
@@ -8,7 +14,6 @@ import {
   type EditorEditOptions,
   type EditorOpenDocumentOptions,
   type EditorOptions,
-  type EditorRangeDecoration,
   type EditorScrollPosition,
   type EditorSelectionRevealTarget,
   type EditorSetTextOptions,
@@ -66,12 +71,7 @@ export type ReactEditorDocument = {
 
 export type ReactEditorDocumentTextSyncMode = 'open' | 'incremental'
 
-export type ReactEditorSelection = {
-  readonly anchor: number
-  readonly head?: number
-  readonly reveal?: boolean
-  readonly revealOffset?: number
-}
+export type ReactEditorSelection = EditorControlledSelection
 
 export type ReactEditorOptions = Omit<EditorOptions, 'hiddenCharacters' | 'onChange' | 'theme'> & {
   readonly document?: ReactEditorDocument | null | undefined
@@ -243,6 +243,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   public readonly commands: ReactEditorCommands
   private readonly reactSyncPlugin: EditorPlugin
   private readonly documentState = createDocumentState()
+  private readonly optionSync: EditorOptionSync = createEditorOptionSync()
   private syncedPlugins: readonly EditorPlugin[] | null = null
   private syncedStoreSyncMode: ReactEditorStoreSyncMode | null = null
   private options: ReactEditorOptions
@@ -264,6 +265,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     this.store.batch(() => {
       disposeEditor(this.store)
       this.documentState.clear()
+      this.optionSync.reset()
       this.clearSyncedPlugins()
     })
   }
@@ -316,40 +318,8 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     syncDocument(this.getEditor(), this.options.document, this.documentState)
   }
 
-  public syncThemeOption(): void {
-    syncTheme(this.getEditor(), this.options.theme)
-  }
-
-  public syncHiddenCharactersOption(): void {
-    syncHiddenCharacters(this.getEditor(), this.options.hiddenCharacters)
-  }
-
-  public syncEditabilityOption(): void {
-    syncEditability(this.getEditor(), this.options.editability)
-  }
-
-  public syncKeymapOption(): void {
-    syncKeymap(this.getEditor(), this.options.keymap)
-  }
-
-  public syncRangeDecorationsOption(): void {
-    syncRangeDecorations(this.getEditor(), this.options.rangeDecorations)
-  }
-
-  public syncRowGapOption(): void {
-    syncRowGap(this.getEditor(), this.options.rowGap)
-  }
-
-  public syncScrollModeOption(): void {
-    syncScrollMode(this.getEditor(), this.options.scrollMode)
-  }
-
-  public syncSelectionOption(): void {
-    syncSelection(this.getEditor(), this.options.selection)
-  }
-
-  public syncScrollPositionOption(): void {
-    syncScrollPosition(this.getEditor(), this.options.scrollPosition)
+  public syncControlledOptions(): void {
+    this.applyControlledOptions(this.getEditor())
   }
 
   public syncPluginsOption(): void {
@@ -428,14 +398,13 @@ class ReactEditorControllerImplementation implements ReactEditorController {
 
   private syncMountedOptions(editor: Editor): void {
     syncDocument(editor, this.options.document, this.documentState)
-    syncTheme(editor, this.options.theme)
-    syncHiddenCharacters(editor, this.options.hiddenCharacters)
-    syncEditability(editor, this.options.editability)
-    syncRangeDecorations(editor, this.options.rangeDecorations)
-    syncRowGap(editor, this.options.rowGap)
-    syncScrollMode(editor, this.options.scrollMode)
-    syncSelection(editor, this.options.selection)
-    syncScrollPosition(editor, this.options.scrollPosition)
+    this.applyControlledOptions(editor)
+  }
+
+  private applyControlledOptions(editor: Editor | null): void {
+    for (const descriptor of EDITOR_OPTION_DESCRIPTORS) {
+      this.optionSync.apply(editor, descriptor, this.options[descriptor.name])
+    }
   }
 
   private shouldSyncStore(): boolean {
@@ -567,31 +536,10 @@ function useControlledOptionSync(
   options: ReactEditorOptions,
 ): void {
   const documentIdentity = documentKey(options.document)
-  const selection = options.selection
-  const scrollPosition = options.scrollPosition
 
   useEditorLayoutEffect(() => controller.syncDocumentOption(), [controller, documentIdentity])
-  useEditorLayoutEffect(() => controller.syncThemeOption(), [controller, options.theme])
-  useEditorLayoutEffect(
-    () => controller.syncHiddenCharactersOption(),
-    [controller, options.hiddenCharacters],
-  )
-  useEditorLayoutEffect(() => controller.syncEditabilityOption(), [controller, options.editability])
-  useEditorLayoutEffect(() => controller.syncKeymapOption(), [controller, options.keymap])
-  useEditorLayoutEffect(
-    () => controller.syncRangeDecorationsOption(),
-    [controller, options.rangeDecorations],
-  )
-  useEditorLayoutEffect(() => controller.syncRowGapOption(), [controller, options.rowGap])
-  useEditorLayoutEffect(() => controller.syncScrollModeOption(), [controller, options.scrollMode])
-  useEditorLayoutEffect(
-    () => controller.syncSelectionOption(),
-    [controller, selection?.anchor, selection?.head, selection?.reveal, selection?.revealOffset],
-  )
-  useEditorLayoutEffect(
-    () => controller.syncScrollPositionOption(),
-    [controller, scrollPosition?.top, scrollPosition?.left],
-  )
+  // Runs on every render because the descriptors, not a dependency list, decide what moved.
+  useEditorLayoutEffect(() => controller.syncControlledOptions())
   useEditorLayoutEffect(
     () => controller.syncPluginsOption(),
     [controller, options.plugins, options.storeSync],
@@ -667,83 +615,6 @@ function canSyncDocumentTextIncrementally(
   if (previousIdentityKey === NO_DOCUMENT) return false
 
   return previousIdentityKey === identityKey
-}
-
-function syncTheme(editor: Editor | null, theme: EditorTheme | null | undefined): void {
-  if (!editor) return
-
-  editor.setTheme(theme)
-}
-
-function syncHiddenCharacters(
-  editor: Editor | null,
-  hiddenCharacters: HiddenCharactersMode | undefined,
-): void {
-  if (!editor || hiddenCharacters === undefined) return
-
-  editor.setHiddenCharacters(hiddenCharacters)
-}
-
-function syncEditability(
-  editor: Editor | null,
-  editability: ReactEditorOptions['editability'],
-): void {
-  if (!editor || editability === undefined) return
-
-  editor.setEditability(editability)
-}
-
-function syncKeymap(editor: Editor | null, keymap: ReactEditorOptions['keymap']): void {
-  if (!editor) return
-
-  editor.setKeymap(keymap)
-}
-
-function syncRangeDecorations(
-  editor: Editor | null,
-  rangeDecorations: readonly EditorRangeDecoration[] | undefined,
-): void {
-  if (!editor || rangeDecorations === undefined) return
-
-  editor.setRangeDecorations(rangeDecorations)
-}
-
-function syncRowGap(editor: Editor | null, rowGap: number | undefined): void {
-  if (!editor || rowGap === undefined) return
-
-  editor.setRowGap(rowGap)
-}
-
-function syncScrollMode(editor: Editor | null, scrollMode: EditorOptions['scrollMode']): void {
-  if (!editor) return
-
-  editor.setScrollMode(scrollMode)
-}
-
-function syncSelection(
-  editor: Editor | null,
-  selection: ReactEditorSelection | null | undefined,
-): void {
-  if (!editor || !selection) return
-
-  editor.setSelection(selection.anchor, selection.head, reactSelectionRevealTarget(selection))
-}
-
-function reactSelectionRevealTarget(
-  selection: ReactEditorSelection,
-): EditorSelectionRevealTarget | undefined {
-  if (selection.reveal === false) return { reveal: false }
-
-  return selection.revealOffset
-}
-
-function syncScrollPosition(
-  editor: Editor | null,
-  scrollPosition: EditorScrollPosition | null | undefined,
-): void {
-  if (!editor || !scrollPosition) return
-
-  editor.setScrollPosition(scrollPosition)
 }
 
 function syncPlugins(

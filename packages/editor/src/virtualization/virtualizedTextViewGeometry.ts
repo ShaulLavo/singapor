@@ -78,6 +78,9 @@ type IntlWithSegmenter = typeof Intl & {
 
 const graphemeSegmenter = createGraphemeSegmenter()
 
+let rowRectMeasurementDepth = 0
+let measuredRowRects: Map<HTMLElement, DOMRect> | null = null
+
 export function isSimpleRowText(text: string): boolean {
   for (let index = 0; index < text.length; index += 1) {
     if (!isSimpleRowCodeUnit(text.charCodeAt(index))) return false
@@ -686,8 +689,7 @@ function measuredRangeRect(
   const rect = firstRangeRect(range)
   if (!rect || rect.width <= 0) return null
 
-  const rowRect = row.element.getBoundingClientRect()
-  return { left: rect.left - rowRect.left, width: rect.width }
+  return { left: rect.left - measuredRowRect(row).left, width: rect.width }
 }
 
 function measuredElementRect(
@@ -697,8 +699,42 @@ function measuredElementRect(
   const rect = element.getBoundingClientRect()
   if (rect.width <= 0) return null
 
-  const rowRect = row.element.getBoundingClientRect()
-  return { left: rect.left - rowRect.left, width: rect.width }
+  return { left: rect.left - measuredRowRect(row).left, width: rect.width }
+}
+
+/**
+ * A measured row asks for its own rect once per grapheme and once per control
+ * glyph, because that rect is the origin every part of the row is measured
+ * against — the same layout read, repeated for the length of the row. Between
+ * `beginRowRectMeasurements` and `endRowRectMeasurements` it is read once per
+ * row instead, on the caller's promise that it reports anything moving a row —
+ * a write to row DOM, a scroll — through `invalidateRowRectMeasurements`.
+ * Outside that window nothing is remembered, so a caller that cannot make the
+ * promise simply does not open one.
+ */
+export function beginRowRectMeasurements(): void {
+  rowRectMeasurementDepth += 1
+  measuredRowRects ??= new Map()
+}
+
+export function invalidateRowRectMeasurements(): void {
+  measuredRowRects?.clear()
+}
+
+export function endRowRectMeasurements(): void {
+  rowRectMeasurementDepth = Math.max(0, rowRectMeasurementDepth - 1)
+  if (rowRectMeasurementDepth > 0) return
+
+  measuredRowRects = null
+}
+
+function measuredRowRect(row: MountedVirtualizedTextRow): DOMRect {
+  const cached = measuredRowRects?.get(row.element)
+  if (cached) return cached
+
+  const rect = row.element.getBoundingClientRect()
+  measuredRowRects?.set(row.element, rect)
+  return rect
 }
 
 function firstRangeRect(range: Range): DOMRect | null {

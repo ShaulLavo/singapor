@@ -507,10 +507,13 @@ describe('piece table', () => {
     expect(resolveAnchor(replaced, right)).toEqual({ offset: 3, liveness: 'deleted' })
   })
 
-  test('rejects anchors inside surrogate pairs', () => {
+  test('snaps anchors inside surrogate pairs to the start of the code point', () => {
     const snapshot = createPieceTableSnapshot('a😀b')
 
-    expect(() => anchorAfter(snapshot, 2)).toThrow(RangeError)
+    expect(resolveAnchor(snapshot, anchorAfter(snapshot, 2))).toEqual({
+      offset: 1,
+      liveness: 'live',
+    })
     expect(anchorAfter(snapshot, 1)).toMatchObject({ kind: 'anchor' })
     expect(anchorAfter(snapshot, 3)).toMatchObject({ kind: 'anchor' })
   })

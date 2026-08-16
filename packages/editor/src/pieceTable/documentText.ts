@@ -22,6 +22,11 @@ export type PieceTableDocumentTextOptions = {
 // re-attaches its BOM. Hosts that persist the buffer should save this, not
 // materializePieceTableFullText, or a CRLF file silently becomes an LF file on
 // first save and every line of it shows as changed in git.
+//
+// Deliberately not a full inverse: U+2028/U+2029 folded at ingestion come back
+// as LF. Restoring them would re-plant the row-geometry landmine the fold was
+// there to remove. A host that needs to warn about the loss can see it on
+// `normalizeDocumentText`'s result; it is not recoverable from a snapshot.
 export const pieceTableDocumentText = (
   snapshot: PieceTableTreeSnapshot,
   options: PieceTableDocumentTextOptions = {},

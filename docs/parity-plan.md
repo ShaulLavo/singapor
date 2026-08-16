@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**9 / 99 findings complete.** Update this count when you check a box.
+**15 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 1 / 16 complete.
+Milestones: 2 / 16 complete.
 
 
 ---
@@ -104,7 +104,7 @@ Milestones: 1 / 16 complete.
 
 ---
 
-## Milestone 2 — Text-model ingestion and indexes
+## Milestone 2 — Text-model ingestion and indexes ✅
 
 `effort L` · `risk medium` · 7 findings · 1 already landed
 
@@ -116,18 +116,40 @@ Milestones: 1 / 16 complete.
 
 - [x] **EOL detection, normalization, and BOM stripping at buffer-construction time**  
   `high` `M` `missing` `text-model`
-- [ ] **U+2028/U+2029 line separators are a rendering/geometry landmine**  
+- [x] **U+2028/U+2029 line separators are a rendering/geometry landmine**  
   `high` `S` `missing` `input-a11y`
-- [ ] **Surrogate-pair-aware range validation before an edit is applied**  
+- [x] **Surrogate-pair-aware range validation before an edit is applied**  
   `medium` `S` `partial` `text-model`
-- [ ] **Huge-file guards decided once at construction and permanently respected**  
+- [x] **Huge-file guards decided once at construction and permanently respected**  
   `high` `S` `partial` `text-model`
-- [ ] **Buffer-level `mightContainRTL` / `mightContainNonBasicASCII` flags that unlock a per-line rendering fast path**  
+- [~] **Buffer-level `mightContainRTL` / `mightContainNonBasicASCII` flags that unlock a per-line rendering fast path**  
   `medium` `M` `partial` `text-model`
-- [ ] **Position<->offset conversion caches: a node search cache, a last-visited-line cache, and a remainder trick that avoids the second tree descent**  
+- [x] **Position<->offset conversion caches: a node search cache, a last-visited-line cache, and a remainder trick that avoids the second tree descent**  
   `medium` `M` `partial` `text-model`
-- [ ] **Chunked change buffer with re-chunking, and typed-array line-start indexes**  
+- [x] **Chunked change buffer with re-chunking, and typed-array line-start indexes**  
   `medium` `M` `partial` `text-model`
+
+> **`[~]` reason (RTL/ASCII flags).** Two of its three sub-items are dead here. The ASCII fast path
+> already exists and is applied harder than the reference's — `isSimpleRowText` gates seven call
+> sites including `rowUsesCalculatedGeometry`, which skips DOM measurement for the whole row, not
+> just grapheme analysis. `mightContainRTL === false` is only useful as a proof that lets you skip
+> bidi work, and we have none to skip (the sole hit for bidi in the repo is the TODO at
+> virtualizedTextViewGeometry.ts:161); the real finding hiding behind it is BiDi geometry itself,
+> which is its own project. The third sub-item, unusual line terminators, shipped as the
+> U+2028/U+2029 finding above.
+>
+> **Deviations, recorded.** (a) Surrogate snapping validates the *result*, not the range: an edit is
+> only widened when it would actually orphan half a pair. A code-unit diff that replaces one low
+> surrogate with another (which is what `syncTextEdit` emits for an emoji swap) is left alone, and
+> two adjacent edits that between them consume a whole pair no longer collide. Range-only snapping
+> corrupted the first case and threw on the second. (b) The applied ranges — not the caller's — are
+> what `DocumentSessionChange.edits` reports, since undo inversion, incremental re-render and the
+> LSP's document copy all patch from that list. (c) Only the materialization budget landed; a size
+> cutoff on tokenization or worker syncing would replace the viewport windowing those layers already
+> do with a cliff. (d) Per-finding scope creep worth knowing at revert time: this milestone also
+> touches `editor/inputSelectionController.ts` (paste/drop normalization) and
+> `virtualization/virtualizedTextViewLayout.ts` (`computeLineStartsFromSnapshot` indexOf), neither of
+> which is in the piece table or the session.
 
 
 ---

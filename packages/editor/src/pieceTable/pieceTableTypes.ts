@@ -56,7 +56,10 @@ export type PieceTableBuffers = {
 }
 
 export type PieceBufferLineIndex = {
-  offsets: number[]
+  // Grown by doubling, so `offsets.length` is capacity and `count` is the only
+  // safe bound to read or search within.
+  offsets: Uint32Array
+  count: number
   scannedLength: number
 }
 

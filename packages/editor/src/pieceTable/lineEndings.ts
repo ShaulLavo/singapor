@@ -8,7 +8,8 @@
 // stray CR *inside* every rendered line, so End lands a column too far,
 // selections and gutter widths are off by one, and the CR reaches the DOM.
 // Normalizing once here is what keeps every one of those consumers correct
-// without each re-solving it.
+// without each re-solving it. U+2028/U+2029 are folded for the same reason from
+// the other direction: they are line breaks to CSS but not to us.
 
 export type DocumentLineEnding = '\n' | '\r\n'
 
@@ -20,23 +21,32 @@ export type NormalizedDocumentText = {
   readonly text: string
   readonly lineEnding: DocumentLineEnding
   readonly byteOrderMark: string
+  // U+2028/U+2029 were present and have been folded into the text above, so the
+  // document a host saves back is no longer byte-identical to the one it handed
+  // us. Decided once during ingestion, which is why every later content change
+  // can ignore the question.
+  readonly containsUnusualLineTerminators: boolean
 }
 
 const CARRIAGE_RETURN = 0x0d
 const LINE_FEED = 0x0a
+const LINE_SEPARATOR = 0x2028
+const PARAGRAPH_SEPARATOR = 0x2029
 const BYTE_ORDER_MARK = 0xfeff
 
-// Majority vote over the terminators actually present, matching Monaco's
-// pieceTreeTextBufferBuilder `_getEOL`: a document is CRLF only when more than
-// half its line endings carry a CR. Mixed-ending files therefore normalize to
-// whichever form dominates rather than to whichever appeared first.
-export const detectDocumentLineEnding = (
-  text: string,
-  fallback: DocumentLineEnding = DEFAULT_DOCUMENT_LINE_ENDING,
-): DocumentLineEnding => {
+type LineTerminatorScan = {
+  readonly lineEnding: DocumentLineEnding
+  readonly containsUnusualLineTerminators: boolean
+}
+
+// One pass over the document decides both answers. U+2028/U+2029 are counted
+// only as a flag, never as a vote: a Word paste dropped into a CRLF file must
+// not flip what that file is saved as.
+const scanLineTerminators = (text: string, fallback: DocumentLineEnding): LineTerminatorScan => {
   let carriageReturns = 0
   let lineFeeds = 0
   let pairs = 0
+  let unusual = false
 
   for (let index = 0; index < text.length; index++) {
     const code = text.charCodeAt(index)
@@ -49,19 +59,42 @@ export const detectDocumentLineEnding = (
       }
     } else if (code === LINE_FEED) {
       lineFeeds++
+    } else if (code === LINE_SEPARATOR || code === PARAGRAPH_SEPARATOR) {
+      unusual = true
     }
   }
 
   const total = carriageReturns + lineFeeds + pairs
-  if (total === 0) return fallback
-  return carriageReturns + pairs > total / 2 ? '\r\n' : '\n'
+  const majorityCarriageReturn = carriageReturns + pairs > total / 2
+  return {
+    lineEnding: total === 0 ? fallback : majorityCarriageReturn ? '\r\n' : '\n',
+    containsUnusualLineTerminators: unusual,
+  }
 }
+
+// Majority vote over the terminators actually present: a document is CRLF only
+// when more than half its line endings carry a CR. Mixed-ending files therefore
+// normalize to whichever form dominates rather than to whichever appeared first.
+export const detectDocumentLineEnding = (
+  text: string,
+  fallback: DocumentLineEnding = DEFAULT_DOCUMENT_LINE_ENDING,
+): DocumentLineEnding => scanLineTerminators(text, fallback).lineEnding
+
+const LINE_TERMINATOR_PROBE = /[\r\u2028\u2029]/
+const LINE_TERMINATORS = /\r\n|[\r\u2028\u2029]/g
 
 // Collapses CRLF and lone CR to LF. Lone CR counts as a terminator because
 // classic-Mac and mis-transcoded files use it, and leaving it in would make it
 // an invisible in-line character rather than a line break.
+//
+// U+2028/U+2029 collapse for the mirror-image reason. They arrive from JSON
+// string literals and from Word/PDF pastes, and CSS `white-space: pre` — which
+// is how rows are painted — treats them as forced breaks while the model counts
+// only '\n'. One left in the text makes a model row occupy two visual lines, so
+// its measured height, offsetToX, hit testing and selection rects all describe
+// geometry the model does not know exists.
 export const normalizeLineEndings = (text: string): string =>
-  text.includes('\r') ? text.replace(/\r\n|\r/g, '\n') : text
+  LINE_TERMINATOR_PROBE.test(text) ? text.replace(LINE_TERMINATORS, '\n') : text
 
 export const applyDocumentLineEnding = (text: string, lineEnding: DocumentLineEnding): string =>
   lineEnding === '\n' ? text : text.replace(/\n/g, '\r\n')
@@ -76,9 +109,11 @@ export const normalizeDocumentText = (
 ): NormalizedDocumentText => {
   const byteOrderMark = hasByteOrderMark(text) ? UTF8_BYTE_ORDER_MARK : ''
   const body = byteOrderMark === '' ? text : text.slice(1)
+  const scan = scanLineTerminators(body, fallback)
   return {
     text: normalizeLineEndings(body),
-    lineEnding: detectDocumentLineEnding(body, fallback),
+    lineEnding: scan.lineEnding,
     byteOrderMark,
+    containsUnusualLineTerminators: scan.containsUnusualLineTerminators,
   }
 }

@@ -48,6 +48,7 @@ describe('normalizeDocumentText', () => {
       text: 'a\nb\nc',
       lineEnding: '\r\n',
       byteOrderMark: '',
+      containsUnusualLineTerminators: false,
     })
   })
 
@@ -56,7 +57,22 @@ describe('normalizeDocumentText', () => {
       text: 'a\nb',
       lineEnding: '\n',
       byteOrderMark: UTF8_BYTE_ORDER_MARK,
+      containsUnusualLineTerminators: false,
     })
+  })
+
+  test('folds unusual line terminators and reports that it did', () => {
+    expect(normalizeDocumentText('a\u2028b\u2029c')).toEqual({
+      text: 'a\nb\nc',
+      lineEnding: '\n',
+      byteOrderMark: '',
+      containsUnusualLineTerminators: true,
+    })
+  })
+
+  test('unusual line terminators do not sway the line-ending vote', () => {
+    // A Word paste inside a CRLF file must not make the file save as LF.
+    expect(normalizeDocumentText('a\r\nb\u2028c\u2028d').lineEnding).toBe('\r\n')
   })
 
   test('only strips a byte order mark at offset zero', () => {
@@ -68,6 +84,22 @@ describe('normalizeDocumentText', () => {
   test('leaves lone line feeds untouched', () => {
     const text = 'a\nb\nc'
     expect(normalizeLineEndings(text)).toBe(text)
+  })
+})
+
+describe('normalizeLineEndings', () => {
+  test('gives the same answer however many times it is called', () => {
+    // The fast-path probe must not carry state between calls: a stateful regex
+    // would skip normalization on alternate documents, and a raw CR or U+2028
+    // reaching the piece table breaks the LF-only invariant every line index
+    // and every row-geometry calculation is built on.
+    const text = 'a\rb\u2028c'
+
+    expect([
+      normalizeLineEndings(text),
+      normalizeLineEndings(text),
+      normalizeLineEndings(text),
+    ]).toEqual(['a\nb\nc', 'a\nb\nc', 'a\nb\nc'])
   })
 })
 
@@ -92,6 +124,15 @@ describe('createPieceTableSnapshot line ending ingestion', () => {
     expect(materializePieceTableFullText(snapshot)).toBe('hello')
     expect(pieceTableByteOrderMark(snapshot)).toBe(UTF8_BYTE_ORDER_MARK)
     expect(offsetToPoint(snapshot, 0)).toEqual({ row: 0, column: 0 })
+  })
+
+  test('an unusual line terminator becomes a real row boundary', () => {
+    const snapshot = createPieceTableSnapshot('ab\u2028cd')
+    // CSS `white-space: pre` breaks the painted row on the separator whether or
+    // not we do, so the model has to agree: two rows, break at offset 2.
+    expect(materializePieceTableFullText(snapshot)).toBe('ab\ncd')
+    expect(offsetToPoint(snapshot, 3)).toEqual({ row: 1, column: 0 })
+    expect(pointToOffset(snapshot, { row: 1, column: 2 })).toBe(5)
   })
 
   test('normalized: true skips re-scanning already-flat text', () => {
@@ -132,6 +173,12 @@ describe('editing keeps the line-feed-only invariant', () => {
     const session = createDocumentSession('start')
     session.applyEdits([{ from: 5, to: 5, text: '\r\nnext\r\nlast' }])
     expect(materializePieceTableFullText(session.getSnapshot())).toBe('start\nnext\nlast')
+  })
+
+  test('an applied edit cannot smuggle in an unusual line terminator', () => {
+    const session = createDocumentSession('start')
+    session.applyEdits([{ from: 5, to: 5, text: '\u2028next\u2029para' }])
+    expect(materializePieceTableFullText(session.getSnapshot())).toBe('start\nnext\npara')
   })
 
   test('an edit reports the length it actually inserted', () => {

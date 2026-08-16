@@ -8,7 +8,7 @@ import type {
   ResolvedAnchor,
 } from './pieceTableTypes'
 import { getBufferText } from './buffers'
-import { readPieceTableTextRange } from './reads'
+import { splitsSurrogatePair } from './reads'
 import {
   coversAnchorOffset,
   lookupReverseIndex,
@@ -29,20 +29,6 @@ export const Anchor = {
   MIN: { kind: 'min' },
   MAX: { kind: 'max' },
 } as const satisfies Record<'MIN' | 'MAX', AnchorType>
-
-const ensureCodePointBoundary = (snapshot: PieceTableTreeSnapshot, offset: number): void => {
-  if (offset <= 0 || offset >= snapshot.length) return
-
-  const text = readPieceTableTextRange(snapshot, offset - 1, offset + 1)
-  const before = text.charCodeAt(0)
-  const after = text.charCodeAt(1)
-  const beforeIsHighSurrogate = before >= 0xd800 && before <= 0xdbff
-  const afterIsLowSurrogate = after >= 0xdc00 && after <= 0xdfff
-
-  if (beforeIsHighSurrogate && afterIsLowSurrogate) {
-    throw new RangeError('anchor offset must be a code-point boundary')
-  }
-}
 
 const anchorFromLocation = (
   location: AnchorLocation,
@@ -197,12 +183,14 @@ export const anchorAt = (
     throw new RangeError('invalid offset')
   }
 
-  ensureCodePointBoundary(snapshot, offset)
+  // A stray offset from outside — an LSP position, a plugin — should degrade to
+  // the start of the code point it lands inside rather than crash the editor.
+  const from = splitsSurrogatePair(snapshot, offset) ? offset - 1 : offset
 
-  const location = findAnchorLocation(snapshot, offset, bias)
+  const location = findAnchorLocation(snapshot, from, bias)
   if (!location) return anchorInEmptySnapshot(snapshot, bias)
 
-  return anchorFromLocation(location, offset, bias)
+  return anchorFromLocation(location, from, bias)
 }
 
 export const anchorBefore = (snapshot: PieceTableTreeSnapshot, offset: number): RealAnchor =>

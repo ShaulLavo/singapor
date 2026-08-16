@@ -12,6 +12,10 @@ import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEnd
 export const BUFFER_CHUNK_SIZE = 16 * 1024
 const BUFFER_ID_PREFIX = 'buffer:'
 const BUFFER_STORE_PAGE_SIZE = 1024
+const LINE_INDEX_MIN_CAPACITY = 64
+const CARRIAGE_RETURN = 0x0d
+const HIGH_SURROGATE_FIRST = 0xd800
+const HIGH_SURROGATE_LAST = 0xdbff
 
 class PieceBufferChunkStore implements PieceBufferChunks {
   public readonly [Symbol.toStringTag] = 'PieceBufferChunkStore'
@@ -161,7 +165,7 @@ const bufferLineIndex = (
 
   let index = holder.lineIndexes.get(buffer)
   if (!index) {
-    index = { offsets: [], scannedLength: 0 }
+    index = { offsets: new Uint32Array(0), count: 0, scannedLength: 0 }
     holder.lineIndexes.set(buffer, index)
   }
   if (index.scannedLength < text.length) extendBufferLineIndex(index, text)
@@ -172,16 +176,32 @@ const bufferLineIndex = (
 const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void => {
   let at = text.indexOf('\n', index.scannedLength)
   while (at !== -1) {
-    index.offsets.push(at)
+    pushLineBreakOffset(index, at)
     at = text.indexOf('\n', at + 1)
   }
 
   index.scannedLength = text.length
 }
 
-const firstLineBreakAtOrAfter = (offsets: readonly number[], target: number): number => {
+// Four bytes per offset: a 5M-line document costs 20MB of index here, and the
+// binary search above stays cache-local. Growth doubles so filling the index one
+// break at a time stays linear overall. Offsets cannot overflow 32 bits — V8 caps
+// strings near 2^29 code units — so the width needs no widening path.
+const pushLineBreakOffset = (index: PieceBufferLineIndex, offset: number): void => {
+  if (index.count === index.offsets.length) {
+    const grown = new Uint32Array(Math.max(index.offsets.length * 2, LINE_INDEX_MIN_CAPACITY))
+    grown.set(index.offsets)
+    index.offsets = grown
+  }
+
+  index.offsets[index.count] = offset
+  index.count += 1
+}
+
+const firstLineBreakAtOrAfter = (index: PieceBufferLineIndex, target: number): number => {
+  const offsets = index.offsets
   let low = 0
-  let high = offsets.length
+  let high = index.count
   while (low < high) {
     const middle = (low + high) >> 1
     if (offsets[middle]! < target) low = middle + 1
@@ -200,8 +220,8 @@ export const countBufferLineBreaks = (
   if (end <= start) return 0
 
   const text = getBufferText(buffers, buffer)
-  const offsets = bufferLineIndex(buffers, buffer, text).offsets
-  return firstLineBreakAtOrAfter(offsets, end) - firstLineBreakAtOrAfter(offsets, start)
+  const index = bufferLineIndex(buffers, buffer, text)
+  return firstLineBreakAtOrAfter(index, end) - firstLineBreakAtOrAfter(index, start)
 }
 
 // Absolute buffer offset of the ordinal-th (1-based) '\n' at or after start.
@@ -212,11 +232,11 @@ export const findBufferLineBreakOffset = (
   ordinal: number,
 ): number | null => {
   const text = getBufferText(buffers, buffer)
-  const offsets = bufferLineIndex(buffers, buffer, text).offsets
-  const at = firstLineBreakAtOrAfter(offsets, start) + ordinal - 1
-  if (at >= offsets.length) return null
+  const index = bufferLineIndex(buffers, buffer, text)
+  const at = firstLineBreakAtOrAfter(index, start) + ordinal - 1
+  if (at >= index.count) return null
 
-  return offsets[at]!
+  return index.offsets[at]!
 }
 
 export const getBufferText = (buffers: PieceTableBuffers, buffer: PieceBufferId): string => {
@@ -246,6 +266,22 @@ export const createPiece = (
 export const bufferForPiece = (buffers: PieceTableBuffers, piece: Piece): string =>
   getBufferText(buffers, piece.buffer)
 
+// The walker rejoins code points across piece boundaries, but everything that
+// reads a chunk directly (getBufferText and every slice taken from it) would
+// see a lone surrogate or a stray CR if a split landed inside a pair. Hold the
+// trailing unit back so it starts the next chunk instead. One unit is always
+// enough: both sequences are two units, and BUFFER_CHUNK_SIZE is far larger, so
+// the chunk can never collapse to empty and the loop always advances.
+const chunkEndFor = (text: string, start: number): number => {
+  const end = start + BUFFER_CHUNK_SIZE
+  if (end >= text.length) return text.length
+
+  const last = text.charCodeAt(end - 1)
+  const splitsPair =
+    last === CARRIAGE_RETURN || (last >= HIGH_SURROGATE_FIRST && last <= HIGH_SURROGATE_LAST)
+  return splitsPair ? end - 1 : end
+}
+
 export const appendChunksToBuffers = (
   buffers: PieceTableBuffers,
   text: string,
@@ -256,7 +292,7 @@ export const appendChunksToBuffers = (
   let textOffset = 0
 
   while (textOffset < text.length) {
-    const chunkText = text.slice(textOffset, textOffset + BUFFER_CHUNK_SIZE)
+    const chunkText = text.slice(textOffset, chunkEndFor(text, textOffset))
     const buffer = createBufferId(nextBufferSequence)
     nextBufferSequence += 1
     chunkTexts.push(chunkText)

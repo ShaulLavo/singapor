@@ -112,10 +112,8 @@ function indexAtOrBefore(matches: readonly FindMatch[], offset: number): number 
 
 // A zero-width match sitting exactly on the cursor answers the search again on
 // every press, so `^`, `$`, `\b` and lookaheads would pin navigation there
-// forever. Monaco re-probes the document by a code point or a whole line
-// depending on whether the pattern is anchored; we already hold every match in
-// document order, so the neighbouring entry is that answer without the probe or
-// the anchor guess.
+// forever. Stepping to the neighbouring entry escapes it without re-probing the
+// document, and without having to guess whether the pattern is anchored.
 function escapesEmptyMatch(match: FindMatch, offset: number, escape: boolean): boolean {
   return escape && match.start === match.end && match.start === offset
 }

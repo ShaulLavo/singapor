@@ -27,10 +27,10 @@ import {
 import type { TextEdit } from './tokens'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from './pieceTable/pieceTableTypes'
-import { applyBatchToPieceTable } from './pieceTable/edits'
+import { applyBatchToPieceTable, snapBatchEditRanges } from './pieceTable/edits'
 import { readPieceTableTextRange, pieceTableSnapshotsHaveSameText } from './pieceTable/reads'
 import { createPieceTableSnapshot } from './pieceTable/snapshot'
-import { normalizeLineEndings } from './pieceTable/lineEndings'
+import { normalizeDocumentText, normalizeLineEndings } from './pieceTable/lineEndings'
 
 export type DocumentSessionChangeKind = 'edit' | 'selection' | 'undo' | 'redo' | 'none'
 
@@ -146,6 +146,12 @@ export type EditorTextBuffer = {
   getTextSnapshot(): DocumentTextSnapshot
   getSnapshot(): PieceTableSnapshot
   getRevision(): number
+  // Whether materializing the whole document as one string is a heap hazard,
+  // the streaming alternative being `getTextSnapshot()`'s `forEachTextChunk`.
+  // Decided once when the buffer is constructed and never re-evaluated, so a
+  // consumer that branched on it at open cannot have the answer change under it
+  // mid-session. Nothing in the repo branches on it yet.
+  isTooLargeForHeapOperation(): boolean
   canUndo(): boolean
   canRedo(): boolean
   isDirty(): boolean
@@ -246,6 +252,13 @@ type TypingRun = {
   readonly lastChar: string
 }
 
+// Roughly 512MB of UTF-16 for one string, so past this point materializing the
+// whole document is a bug rather than a slow path.
+export const MAX_HEAP_OPERATION_LENGTH = 256 * 1024 * 1024
+
+export const exceedsHeapOperationBudget = (length: number): boolean =>
+  length > MAX_HEAP_OPERATION_LENGTH
+
 class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private readonly listeners = new Set<EditorTextBufferChangeListener>()
   private history: DocumentHistory
@@ -255,9 +268,21 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private revision = 0
   private typingRun: TypingRun | null = null
   private textSnapshot: DocumentTextSnapshot
+  private readonly tooLargeForHeapOperation: boolean
 
-  public constructor(text: string) {
-    const snapshot = createPieceTableSnapshot(text)
+  public constructor(rawText: string) {
+    // Ingested first so the retained copy below is the text the piece table
+    // actually holds. Folding U+2028/U+2029 to LF does not change the length,
+    // so handing the raw string to createDocumentTextSnapshot would sail past
+    // its length check and leave every reader — including the view's line-start
+    // scan — looking at characters the model does not have.
+    const ingested = normalizeDocumentText(rawText)
+    const text = ingested.text
+    const snapshot = createPieceTableSnapshot(text, {
+      normalized: true,
+      lineEnding: ingested.lineEnding,
+      byteOrderMark: ingested.byteOrderMark,
+    })
     const selections = createInitialSelectionSet(snapshot, createSelectionIdFactory())
     this.history = createEditorHistory<
       PieceTableSnapshot,
@@ -267,6 +292,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     this.cleanSnapshot = snapshot
     this.dirtyCacheSnapshot = snapshot
     this.textSnapshot = createDocumentTextSnapshot(snapshot, text)
+    this.tooLargeForHeapOperation = exceedsHeapOperationBudget(snapshot.length)
   }
 
   public applyText(
@@ -345,8 +371,13 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
 
-    const nextSnapshot = applyBatchToPieceTable(this.history.current, normalizedEdits)
-    const effectiveEdits = normalizedEdits.filter(isEffectiveTextEdit)
+    // Snapping can widen an edit off a surrogate pair, so the applied ranges are
+    // not always the ones we were handed. Everything downstream of this change —
+    // undo inversion, incremental re-render, decoration remapping, the LSP's
+    // copy of the document — has to be told what actually happened.
+    const appliedEdits = snapBatchEditRanges(this.history.current, normalizedEdits)
+    const nextSnapshot = applyBatchToPieceTable(this.history.current, appliedEdits)
+    const effectiveEdits = appliedEdits.filter(isEffectiveTextEdit)
     if (effectiveEdits.length === 0) {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
@@ -461,6 +492,10 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public getRevision(): number {
     return this.revision
+  }
+
+  public isTooLargeForHeapOperation(): boolean {
+    return this.tooLargeForHeapOperation
   }
 
   public canUndo(): boolean {
@@ -916,9 +951,15 @@ class StaticDocumentSession implements DocumentSession {
   private textSnapshot: DocumentTextSnapshot
   private selections: SelectionSet<PieceTableAnchor>
 
-  public constructor(text: string) {
-    this.snapshot = createPieceTableSnapshot(text)
-    this.textSnapshot = createDocumentTextSnapshot(this.snapshot, text)
+  public constructor(rawText: string) {
+    // Same ingestion-before-retention rule as PieceTableEditorTextBuffer.
+    const ingested = normalizeDocumentText(rawText)
+    this.snapshot = createPieceTableSnapshot(ingested.text, {
+      normalized: true,
+      lineEnding: ingested.lineEnding,
+      byteOrderMark: ingested.byteOrderMark,
+    })
+    this.textSnapshot = createDocumentTextSnapshot(this.snapshot, ingested.text)
     this.selections = createSelectionSet(
       [
         createAnchorSelection(this.snapshot, this.snapshot.length, this.snapshot.length, {
@@ -952,8 +993,9 @@ class StaticDocumentSession implements DocumentSession {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
 
-    const nextSnapshot = applyBatchToPieceTable(this.snapshot, normalizedEdits)
-    const effectiveEdits = normalizedEdits.filter(isEffectiveTextEdit)
+    const appliedEdits = snapBatchEditRanges(this.snapshot, normalizedEdits)
+    const nextSnapshot = applyBatchToPieceTable(this.snapshot, appliedEdits)
+    const effectiveEdits = appliedEdits.filter(isEffectiveTextEdit)
     if (effectiveEdits.length === 0) {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }

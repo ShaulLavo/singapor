@@ -1,4 +1,5 @@
 import type { DocumentSession, DocumentSessionChange } from '../documentSession'
+import { normalizeLineEndings } from '../pieceTable/lineEndings'
 import { readPieceTableTextRange } from '../pieceTable/reads'
 import {
   SelectionGoal,
@@ -200,7 +201,8 @@ export class InputSelectionController {
 
     const charBefore = characterBefore(snapshot, caret)
     const charAfter = characterAt(snapshot, caret)
-    const pair = charBefore === null ? null : autoClosingPairForOpen(this.options.getLanguageId(), charBefore)
+    const pair =
+      charBefore === null ? null : autoClosingPairForOpen(this.options.getLanguageId(), charBefore)
     const indent = lineBreakIndent({
       afterOpener: pair !== null && !pair.quote,
       betweenPair: pair !== null && !pair.quote && charAfter === pair.close,
@@ -212,7 +214,9 @@ export class InputSelectionController {
 
     const change = session.applyEdits(
       [{ from: caret, text: indent.insert + indent.trailing, to: caret }],
-      { selections: [{ anchor: caret + indent.insert.length, head: caret + indent.insert.length }] },
+      {
+        selections: [{ anchor: caret + indent.insert.length, head: caret + indent.insert.length }],
+      },
     )
     // The pair the caret was inside has been split across lines; its closer is no longer adjacent.
     this.autoClose.clear()
@@ -229,10 +233,7 @@ export class InputSelectionController {
   }
 
   /** The auto-close variant of a keystroke, or null when the keystroke is ordinary. */
-  private autoCloseChange(
-    session: DocumentSession,
-    text: string,
-  ): DocumentSessionChange | null {
+  private autoCloseChange(session: DocumentSession, text: string): DocumentSessionChange | null {
     if (text.length !== 1) return null
 
     const surrounded = this.surroundSelection(session, text)
@@ -267,9 +268,12 @@ export class InputSelectionController {
     }
 
     // One edit, not two: the renderer only takes its incremental path for a single-edit change.
-    const change = session.applyEdits([{ from: caret, text: opening.open + opening.close, to: caret }], {
-      selections: [{ anchor: caret + opening.open.length, head: caret + opening.open.length }],
-    })
+    const change = session.applyEdits(
+      [{ from: caret, text: opening.open + opening.close, to: caret }],
+      {
+        selections: [{ anchor: caret + opening.open.length, head: caret + opening.open.length }],
+      },
+    )
     this.autoClose.track(change.snapshot, caret + opening.open.length, opening.close)
     this.markSessionSelectionForNextInput()
     return change
@@ -295,7 +299,8 @@ export class InputSelectionController {
     if (caret === null) return null
 
     const charBefore = characterBefore(snapshot, caret)
-    const pair = charBefore === null ? null : autoClosingPairForOpen(this.options.getLanguageId(), charBefore)
+    const pair =
+      charBefore === null ? null : autoClosingPairForOpen(this.options.getLanguageId(), charBefore)
     if (
       !shouldDeletePair({
         charAfter: characterAt(snapshot, caret),
@@ -1168,7 +1173,12 @@ export class InputSelectionController {
       return
     }
 
-    const text = event.clipboardData?.getData('text/plain') ?? ''
+    // The session flattens terminators again on its way into the buffer, so
+    // this is not what keeps them out of the document. It is what pasteRevealBlock
+    // reads: the reveal is decided from the payload rather than from the document
+    // it produces, and a Word or PDF paste whose only breaks are U+2028/U+2029
+    // would otherwise count as a single line and leave its new rows unrevealed.
+    const text = normalizeLineEndings(event.clipboardData?.getData('text/plain') ?? '')
     if (text.length === 0) return
 
     this.cancelPendingKeyboardTextFallback()
@@ -1192,7 +1202,8 @@ export class InputSelectionController {
     event.preventDefault()
     if (!this.options.canEditDocument()) return
 
-    const text = dropPlainText(event)
+    // Folded for the same reason as the pasted payload above.
+    const text = normalizeLineEndings(dropPlainText(event))
     if (text.length === 0) return
 
     const offset = this.textOffsetFromPoint(event.clientX, event.clientY)

@@ -95,8 +95,12 @@
 }
 
 .editor-virtualized-spacer {
+  /* Width and height are always set inline from JS (applySpacerWidth /
+     applyTotalHeight). No `min-width: max-content`: intrinsic sizing would make
+     the spacer's size depend on every mounted row's text, which disqualifies
+     rows as relayout boundaries and forces document-rooted layout on every
+     recycle frame. */
   contain: layout paint style;
-  min-width: max-content;
   position: relative;
 }
 
@@ -113,7 +117,11 @@
 .editor-virtualized-gutter-row {
   align-items: center;
   box-sizing: border-box;
-  contain: layout paint style;
+  /* `size` requires externally imposed dimensions: height comes from
+     --editor-row-height, width from left/right against the fixed-width gutter.
+     layout+size containment makes each gutter row a relayout boundary, so
+     counter-set/content writes on recycle re-lay-out only that row. */
+  contain: layout paint style size;
   display: flex;
   height: var(--editor-row-height);
   justify-content: flex-start;
@@ -157,11 +165,19 @@
 
 .editor-virtualized-row {
   box-sizing: border-box;
-  contain: layout paint style;
+  /* layout+size containment makes each row a Blink relayout boundary, so a
+     recycled row's text swap re-lays-out ~7 boxes instead of a document-rooted
+     pass over every mounted row (measured 105-118ms/frame at ~7fps). `size` is
+     safe because both dimensions are externally imposed: height from
+     --editor-row-height, width from left/right against the JS-sized spacer.
+     No `min-width: max-content` for the same reason: it made row size depend on
+     line text, forcing a full intrinsic re-measure of every mounted row per
+     recycle frame. Tradeoff: horizontal scroll extent now trusts the JS column
+     estimate (visualColumnLength), which undercounts double-width glyphs. */
+  contain: layout paint style size;
   height: var(--editor-row-height);
   left: var(--editor-gutter-width);
   line-height: var(--editor-row-height);
-  min-width: max-content;
   position: absolute;
   right: 0;
   top: 0;

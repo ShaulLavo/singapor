@@ -247,6 +247,8 @@ export type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly rowDecorationClassName: string
   readonly rowDecorationGutterClassName: string
   readonly rowDecorationKey: string
+  /** Classes derived from the row's inline replacement kinds (`editor-inline-<kind>`). */
+  readonly inlineKindsClassName: string
   readonly cursorLineContentActive: boolean
   readonly geometryCache: unknown | null
 }

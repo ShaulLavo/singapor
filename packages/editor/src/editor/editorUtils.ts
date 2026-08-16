@@ -4,6 +4,13 @@ import type { ResolvedSelection } from '../selections'
 
 const SYNTAX_EDIT_DEBOUNCE_MS = 75
 
+// A sustained typist keeps keystrokes closer together than the debounce, which
+// would postpone re-tokenizing for as long as they keep typing and leave
+// highlighting visibly stale on shifted token positions. This ceiling forces a
+// refresh mid-burst; it is well above the debounce so ordinary typing pauses
+// still decide when the refresh happens.
+export const SYNTAX_REFRESH_MAX_DELAY_MS = 400
+
 export type SessionChangeOptions = {
   readonly syncDomSelection?: boolean
   readonly revealOffset?: number

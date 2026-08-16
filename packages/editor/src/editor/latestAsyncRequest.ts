@@ -8,6 +8,7 @@ import {
 
 export type LatestAsyncRequestOptions<T> = {
   readonly delayMs?: number
+  readonly maxDelayMs?: number
   readonly budgetMs?: number
   readonly taskClass?: EditorWorkTaskClass
   readonly priority?: EditorWorkPriority
@@ -45,12 +46,15 @@ export class LatestAsyncRequest<T> {
   public schedule(options: LatestAsyncRequestOptions<T>): void {
     if (this.disposed) return
 
-    this.cancel()
+    // No explicit cancel first: scheduling the same key already replaces the
+    // pending work, and cancelling would drop the burst deadline that
+    // maxDelayMs relies on.
     this.handle = this.scheduler.schedule({
       key: this.key,
       taskClass: options.taskClass ?? this.taskClass,
       priority: options.priority,
       delayMs: normalizeDelay(options.delayMs),
+      maxDelayMs: normalizeDelay(options.maxDelayMs),
       budgetMs: options.budgetMs,
       tags: options.tags,
       run: options.run,

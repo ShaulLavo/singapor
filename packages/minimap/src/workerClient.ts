@@ -33,7 +33,6 @@ const MINIMAP_UPDATE_QUIET_DELAY_MS = 120
 const MINIMAP_UPDATE_MAX_DELAY_MS = 300
 const MINIMAP_FRAME_FLUSH_KEY = 'minimap.flush.frame'
 const MINIMAP_QUIET_FLUSH_KEY = 'minimap.flush.quiet'
-const MINIMAP_MAX_FLUSH_KEY = 'minimap.flush.max'
 const MINIMAP_RENDER_KEY = 'minimap.render'
 
 export type MinimapHost = {
@@ -348,21 +347,16 @@ export class MinimapWorkerClient {
 
   private scheduleDeferredFlush(): void {
     this.cancelScheduledFrame()
+    // One key: the scheduler caps how long continuous edits may postpone the
+    // quiet delay, which previously needed a second non-replacing key running
+    // the same callback.
     this.scheduler.schedule({
       key: MINIMAP_QUIET_FLUSH_KEY,
       taskClass: 'background-derived',
       priority: 'low',
       delayMs: MINIMAP_UPDATE_QUIET_DELAY_MS,
+      maxDelayMs: MINIMAP_UPDATE_MAX_DELAY_MS,
       tags: { configuration: 'quiet', version: this.latestSnapshot.textVersion },
-      run: this.flushDeferredUpdate,
-    })
-    this.scheduler.schedule({
-      key: MINIMAP_MAX_FLUSH_KEY,
-      taskClass: 'background-derived',
-      priority: 'normal',
-      delayMs: MINIMAP_UPDATE_MAX_DELAY_MS,
-      replace: false,
-      tags: { configuration: 'max', version: this.latestSnapshot.textVersion },
       run: this.flushDeferredUpdate,
     })
   }
@@ -806,7 +800,6 @@ export class MinimapWorkerClient {
 
   private cancelDeferredFlush(): void {
     this.scheduler.cancel(MINIMAP_QUIET_FLUSH_KEY)
-    this.scheduler.cancel(MINIMAP_MAX_FLUSH_KEY)
   }
 
   private isCurrentRenderResponse(

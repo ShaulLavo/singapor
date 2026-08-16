@@ -36,6 +36,7 @@ type CaptureIndex = {
 const DELIMITED_SPAN_CAPTURES = new Set(['text.strong', 'text.emphasis', 'text.literal'])
 const HEADING_MARKER = /^#{1,6}$/
 const BULLET_MARKER = /^[-*+](\s*)$/
+const QUOTE_MARKER = /^>(\s*)$/
 
 const createCaptureIndex = (captures: readonly EditorSyntaxCapture[]): CaptureIndex => {
   const delimitersByStart = new Map<number, EditorSyntaxCapture>()
@@ -87,7 +88,9 @@ const appendDelimitedSpanReplacements = (
 /**
  * `punctuation.special` is shared by heading markers, list bullets, thematic breaks, setext
  * underlines, and block-quote markers, so they are told apart by their own text. Heading markers hide
- * along with the space that follows them; bullets are substituted width-for-width so nothing shifts.
+ * along with the space that follows them, and their kind carries the level (`heading-marker-2`) so
+ * the row class the editor derives from it can size each level; bullets and quote markers are
+ * substituted width-for-width so nothing shifts.
  */
 const appendBlockMarkerReplacements = (
   specs: InlineReplacementSpec[],
@@ -100,22 +103,40 @@ const appendBlockMarkerReplacements = (
     const markerText = text.slice(capture.startIndex, capture.endIndex)
     if (HEADING_MARKER.test(markerText)) {
       const end = capture.endIndex + leadingSpaceCount(text, capture.endIndex)
-      specs.push(hidden(capture.startIndex, end, 'heading-marker', `heading:${capture.startIndex}`))
+      const kind = `heading-marker-${markerText.length}`
+      specs.push(hidden(capture.startIndex, end, kind, `heading:${capture.startIndex}`))
       continue
     }
 
     const bullet = BULLET_MARKER.exec(markerText)
-    if (!bullet) continue
-    specs.push({
-      id: `bullet:${capture.startIndex}`,
-      startIndex: capture.startIndex,
-      endIndex: capture.endIndex,
-      text: `•${bullet[1] ?? ''}`,
-      kind: 'list-marker',
-      groupId: `bullet:${capture.startIndex}`,
-    })
+    if (bullet) {
+      specs.push(
+        substituted(capture, `•${bullet[1] ?? ''}`, 'list-marker', `bullet:${capture.startIndex}`),
+      )
+      continue
+    }
+
+    const quote = QUOTE_MARKER.exec(markerText)
+    if (!quote) continue
+    specs.push(
+      substituted(capture, `│${quote[1] ?? ''}`, 'quote-marker', `quote:${capture.startIndex}`),
+    )
   }
 }
+
+const substituted = (
+  capture: EditorSyntaxCapture,
+  text: string,
+  kind: string,
+  groupId: string,
+): InlineReplacementSpec => ({
+  id: groupId,
+  startIndex: capture.startIndex,
+  endIndex: capture.endIndex,
+  text,
+  kind,
+  groupId,
+})
 
 /**
  * `[label](target)` and `![alt](target)`. The queries capture each bracket separately and never mark

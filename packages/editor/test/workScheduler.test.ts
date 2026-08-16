@@ -194,4 +194,93 @@ describe('EditorWorkScheduler', () => {
     flushSchedulerTicks()
     expect(calls).toEqual(['visible', 'background', 'idle'])
   })
+
+  it('starves delayed work that is rescheduled faster than its delay', () => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    const scheduler = new EditorWorkScheduler()
+
+    // A typist sustaining 40ms between keystrokes against a 150ms debounce.
+    for (let keystroke = 0; keystroke < 20; keystroke += 1) {
+      scheduler.schedule({
+        key: 'editor.syntax.refresh',
+        taskClass: 'viewport-derived',
+        delayMs: 150,
+        run: () => calls.push('refresh'),
+      })
+      vi.advanceTimersByTime(40)
+    }
+
+    expect(calls).toEqual([])
+    scheduler.dispose()
+  })
+
+  it('runs rescheduled work once maxDelayMs elapses', () => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    const scheduler = new EditorWorkScheduler()
+
+    for (let keystroke = 0; keystroke < 20; keystroke += 1) {
+      scheduler.schedule({
+        key: 'editor.syntax.refresh',
+        taskClass: 'viewport-derived',
+        delayMs: 150,
+        maxDelayMs: 400,
+        run: () => calls.push('refresh'),
+      })
+      vi.advanceTimersByTime(40)
+    }
+
+    // 800ms of continuous typing must have produced refreshes rather than none.
+    expect(calls.length).toBeGreaterThan(0)
+    scheduler.dispose()
+  })
+
+  it('does not delay work beyond its own delayMs when maxDelayMs is generous', () => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    const scheduler = new EditorWorkScheduler()
+
+    scheduler.schedule({
+      key: 'editor.syntax.refresh',
+      taskClass: 'viewport-derived',
+      delayMs: 50,
+      maxDelayMs: 5_000,
+      run: () => calls.push('refresh'),
+    })
+
+    vi.advanceTimersByTime(49)
+    expect(calls).toEqual([])
+    vi.advanceTimersByTime(1)
+    expect(calls).toEqual(['refresh'])
+    scheduler.dispose()
+  })
+
+  it('restarts the maximum wait after the work actually runs', () => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    const scheduler = new EditorWorkScheduler()
+
+    const schedule = () =>
+      scheduler.schedule({
+        key: 'editor.syntax.refresh',
+        taskClass: 'viewport-derived',
+        delayMs: 50,
+        maxDelayMs: 200,
+        run: () => calls.push('refresh'),
+      })
+
+    schedule()
+    vi.advanceTimersByTime(50)
+    expect(calls).toEqual(['refresh'])
+
+    // A fresh burst gets the full debounce again, not a deadline inherited
+    // from the run that already completed.
+    schedule()
+    vi.advanceTimersByTime(49)
+    expect(calls).toEqual(['refresh'])
+    vi.advanceTimersByTime(1)
+    expect(calls).toEqual(['refresh', 'refresh'])
+    scheduler.dispose()
+  })
 })

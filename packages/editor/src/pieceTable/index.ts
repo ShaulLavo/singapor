@@ -10,7 +10,13 @@ export type {
   ResolvedAnchor,
 } from './pieceTableTypes'
 
-export type { PieceTableWalker, PieceTableWalkerChunk } from './pieceTable'
+export type {
+  DocumentLineEnding,
+  NormalizedDocumentText,
+  PieceTableDocumentTextOptions,
+  PieceTableWalker,
+  PieceTableWalkerChunk,
+} from './pieceTable'
 
 export {
   Anchor,
@@ -18,17 +24,26 @@ export {
   anchorAt,
   anchorBefore,
   applyBatchToPieceTable,
+  applyDocumentLineEnding,
   compareAnchors,
   createPieceTableSnapshot,
   createPieceTableWalker,
+  DEFAULT_DOCUMENT_LINE_ENDING,
   deleteFromPieceTable,
   debugPieceTable,
+  detectDocumentLineEnding,
   diffPieceTableSnapshots,
   forEachPieceTableTextChunk,
   getPieceTableLength,
+  hasByteOrderMark,
   insertIntoPieceTable,
   materializePieceTableFullText,
+  normalizeDocumentText,
+  normalizeLineEndings,
   offsetToPoint,
+  pieceTableByteOrderMark,
+  pieceTableDocumentText,
+  pieceTableLineEnding,
   pieceTableSnapshotsHaveSameText,
   pointToOffset,
   readPieceTableTextRange,
@@ -36,4 +51,5 @@ export {
   resolveAnchorLinear,
   streamPieceTablePieces,
   streamPieceTableTextChunks,
+  UTF8_BYTE_ORDER_MARK,
 } from './pieceTable'

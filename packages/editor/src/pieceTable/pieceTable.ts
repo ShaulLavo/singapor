@@ -23,6 +23,23 @@ export {
   streamPieceTableTextChunks,
 } from './reads'
 export { createPieceTableSnapshot } from './snapshot'
+export {
+  applyDocumentLineEnding,
+  DEFAULT_DOCUMENT_LINE_ENDING,
+  detectDocumentLineEnding,
+  hasByteOrderMark,
+  normalizeDocumentText,
+  normalizeLineEndings,
+  UTF8_BYTE_ORDER_MARK,
+  type DocumentLineEnding,
+  type NormalizedDocumentText,
+} from './lineEndings'
+export {
+  pieceTableByteOrderMark,
+  pieceTableDocumentText,
+  pieceTableLineEnding,
+  type PieceTableDocumentTextOptions,
+} from './documentText'
 export { createPieceTableWalker, type PieceTableWalker, type PieceTableWalkerChunk } from './walker'
 
 export const debugPieceTable = (snapshot: PieceTableTreeSnapshot): Piece[] =>

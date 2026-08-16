@@ -657,6 +657,10 @@ function stableWindowDeadband(overscan: number): number {
   // measured 10 updates in Chrome (3.83ms range, 2.27ms segment, 0 long frames),
   // WebKit still averaged 36.64ms/frame with 11.5 long frames. Keep this gate:
   // `bun run --cwd apps/web bench:editor-scroll:gate`.
+  //
+  // Direction: recycle headroom is `overscan - deadband`, so RAISING the
+  // deadband recycles MORE often, on every engine. The deadband is a trigger
+  // margin, not a throttle; the lever for less-frequent recycling is overscan.
   return Math.min(2, Math.floor(overscan / 2))
 }
 

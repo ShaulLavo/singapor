@@ -7,6 +7,7 @@ import type {
 } from './pieceTableTypes'
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_PIECE_TABLE_PRIORITY_SEED } from './priority'
+import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEndings'
 
 export const BUFFER_CHUNK_SIZE = 16 * 1024
 const BUFFER_ID_PREFIX = 'buffer:'
@@ -105,6 +106,10 @@ class PieceBufferChunkStore implements PieceBufferChunks {
 
 export type PieceTableBufferOptions = {
   readonly prioritySeed?: number
+  // Recorded, not applied: `original` is expected to already be LF-normalized
+  // by the caller (see createPieceTableSnapshot).
+  readonly lineEnding?: DocumentLineEnding
+  readonly byteOrderMark?: string
 }
 
 export type AppendChunksToBuffersResult = {
@@ -328,6 +333,8 @@ export const createInitialBuffers = (
     chunks,
     nextBufferSequence: 1,
     prioritySeed: options.prioritySeed ?? DEFAULT_PIECE_TABLE_PRIORITY_SEED,
+    lineEnding: options.lineEnding ?? DEFAULT_DOCUMENT_LINE_ENDING,
+    byteOrderMark: options.byteOrderMark ?? '',
   }
 }
 

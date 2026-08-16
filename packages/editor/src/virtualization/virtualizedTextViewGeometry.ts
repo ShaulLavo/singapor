@@ -48,7 +48,7 @@ type DomBoundary = {
   readonly offset: number
 }
 
-type RenderedChunkParts = {
+export type RenderedChunkParts = {
   readonly nodes: readonly Node[]
   readonly parts: readonly VirtualizedTextChunkPart[]
   readonly textNode: Text
@@ -171,7 +171,7 @@ export function xToOffset(
   row: MountedVirtualizedTextRow,
   x: number,
 ): number {
-  if (isSimpleRowText(row.text)) return calculatedXToOffset(view, row, x)
+  if (rowUsesCalculatedGeometry(row)) return calculatedXToOffset(view, row, x)
 
   const geometry = ensureRowGeometry(view, row)
   const boundary = nearestBoundaryForX(geometry.hitBoundaries, Math.max(0, x))
@@ -348,6 +348,8 @@ function rowGeometryCacheKey(
     row.displayKind,
     row.foldMarkerKey,
     row.rowDecorationKey,
+    // Inline-kind classes restyle the row's font, so measured boundaries die with them.
+    row.inlineKindsClassName,
     row.leftBlockLaneWidth,
     row.rightBlockLaneWidth,
     view.tabSize,
@@ -359,8 +361,18 @@ function buildRowGeometry(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): RowGeometry {
-  if (isSimpleRowText(row.text)) return buildCalculatedRowGeometry(view, row)
+  if (rowUsesCalculatedGeometry(row)) return buildCalculatedRowGeometry(view, row)
   return buildMeasuredRowGeometry(view, row)
+}
+
+/**
+ * Calculated geometry multiplies the global character width, which assumes every row renders in the
+ * editor's base font. Rows with inline replacements can be restyled per replacement kind — a
+ * markdown heading row is bold and larger — so their advance widths only exist in the DOM.
+ */
+function rowUsesCalculatedGeometry(row: MountedVirtualizedTextRow): boolean {
+  if (row.inlineMapping) return false
+  return isSimpleRowText(row.text)
 }
 
 function buildCalculatedRowGeometry(

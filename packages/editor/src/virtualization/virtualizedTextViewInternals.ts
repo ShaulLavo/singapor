@@ -47,6 +47,10 @@ export type VirtualizedTextHighlightStyle = {
   readonly backgroundColor?: string
   readonly color?: string
   readonly textDecoration?: string
+  // Stacking against other highlight groups, highest paints last. Without it
+  // the CSS highlight registry falls back to registration order, which shifts
+  // as groups scroll in and out of the mounted window.
+  readonly zIndex?: number
 }
 
 export type VirtualizedTextHighlightGroup = {

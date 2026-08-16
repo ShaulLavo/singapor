@@ -62,14 +62,14 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**4 / 99 findings complete.** Update this count when you check a box.
+**9 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 0 / 16 complete.
+Milestones: 1 / 16 complete.
 
 
 ---
 
-## Milestone 1 — Cheap correctness wins
+## Milestone 1 — Cheap correctness wins ✅
 
 `effort M` · `risk low` · 8 findings · 3 already landed
 
@@ -77,15 +77,15 @@ Milestones: 0 / 16 complete.
 
 **Exit criteria.** Row geometry survives a 1px horizontal scroll (browser assertion); a find match keeps its stacking order after scrolling out of and back into view; find navigation terminates on a zero-width match; regex-mode seeding escapes metacharacters; '19999+' renders for a truncated result set and selectAllMatches is either uncapped or explicitly refuses; a 'İ'/'ẞ' regression test asserts returned ranges slice back to the query; syntax refresh fires within maxDelayMs under continuous typing. Full test suite green.
 
-- [ ] **Semantic render-input equality as the invalidation key, not a scroll-position-derived string**  
+- [x] **Semantic render-input equality as the invalidation key, not a scroll-position-derived string**  
   `medium` `S` `partial` `rendering`
-- [ ] **Range-highlight paint order is registration-order dependent, so overlapping decorations can swap z-order after scrolling**  
+- [x] **Range-highlight paint order is registration-order dependent, so overlapping decorations can swap z-order after scrolling**  
   `medium` `S` `missing` `decorations-widgets`
-- [ ] **Zero-width matches deadlock navigation; both references have an explicit escape and Monaco adds a line-stop rule**  
+- [x] **Zero-width matches deadlock navigation; both references have an explicit escape and Monaco adds a line-stop rule**  
   `high` `S` `partial` `find-replace`
-- [ ] **Seeding the search string from the selection does not escape regex metacharacters when regex mode is on**  
+- [x] **Seeding the search string from the selection does not escape regex metacharacters when regex mode is on**  
   `medium` `S` `partial` `find-replace`
-- [ ] **Replace-pattern edge cases: out-of-range $nn should degrade digit-by-digit, and a backslash should swallow the next character**  
+- [x] **Replace-pattern edge cases: out-of-range $nn should degrade digit-by-digit, and a backslash should swallow the next character**  
   `medium` `S` `partial` `find-replace`
 - [x] **Replace All silently stops at 19,999 matches; Monaco has a dedicated large-replace path**  
   `high` `S` `missing` `find-replace`
@@ -93,6 +93,13 @@ Milestones: 0 / 16 complete.
   `high` `S` `missing` `find-replace`
 - [x] **Debounces with no maximum wait starve syntax refresh under continuous typing**  
   `high` `S` `partial` `api-perf-infra`
+
+> **Deviations, recorded.** (a) The zero-width escape steps the ordered match list rather than
+> re-probing the document, so Monaco's `^`/`$` line-stop rule is not ported: we already hold every
+> match in document order, and the anchor heuristic it needs mis-fires on `[^,]*`. (b) Find
+> Next/Previous still walk the capped match list — that is M12's "Find Next past the match limit"
+> finding, and the truncated-count tooltip names Replace All and Select All Matches specifically
+> rather than claiming all find operations are uncapped.
 
 
 ---

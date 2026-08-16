@@ -1085,8 +1085,11 @@ function rowChunkKey(
 ): string {
   if (!shouldChunkLine(view, text)) return 'direct'
 
+  // Only the aligned window bounds describe what the row rendered. Folding the raw scroll position
+  // or viewport width in would invalidate the row — and the geometry measured for it — on every
+  // pixel of horizontal scroll, even though the mounted chunks are identical.
   const window = horizontalChunkWindow(view, text, snapshot)
-  return `${window.start}:${window.end}:${snapshot.viewportWidth}:${snapshot.scrollLeft}`
+  return `${window.start}:${window.end}`
 }
 
 function horizontalChunkWindow(
@@ -1144,21 +1147,20 @@ function horizontalWindowKey(
   items: readonly FixedRowVirtualItem[],
   snapshot: FixedRowVirtualizerSnapshot,
 ): string {
-  if (!hasHorizontalChunkedRows(view, items)) return 'direct'
-
-  const scrollLeft = Math.floor(snapshot.scrollLeft)
-  return `${scrollLeft}:${snapshot.viewportWidth}:${view.longLineChunkSize}`
-}
-
-function hasHorizontalChunkedRows(
-  view: VirtualizedTextViewInternal,
-  items: readonly FixedRowVirtualItem[],
-): boolean {
+  // Same reasoning as `rowChunkKey`: the render pass only has work to do once a chunked row's
+  // window actually shifts, so the key is the windows themselves rather than the scroll offset
+  // they were derived from. Rows that are not chunked contribute nothing — horizontal scroll never
+  // changes what they render.
+  let key = ''
   for (const item of items) {
-    if (shouldChunkLine(view, lineText(view, item.index))) return true
+    const text = lineText(view, item.index)
+    if (!shouldChunkLine(view, text)) continue
+
+    const window = horizontalChunkWindow(view, text, snapshot)
+    key += `${item.index}:${window.start}:${window.end}|`
   }
 
-  return false
+  return key === '' ? 'direct' : key
 }
 
 function updateRowFoldPresentation(

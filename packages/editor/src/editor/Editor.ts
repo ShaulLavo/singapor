@@ -50,7 +50,11 @@ import {
 } from './editorUtils'
 import { EDITOR_FIND_FEATURE, type EditorFindFeature } from './findFeature'
 import { foldCandidateAtLocation, type FoldOperation } from './foldOperations'
-import { groupedRangeDecorations, sameEditorRangeDecorations } from './rangeDecorations'
+import {
+  groupedRangeDecorations,
+  rangeDecorationsWithProjectionStacking,
+  sameEditorRangeDecorations,
+} from './rangeDecorations'
 import { selectionRevealOffset, type EditorSelectionRevealTarget } from './selectionReveal'
 import { syncTextEdit } from './textEdits'
 import type {
@@ -134,6 +138,10 @@ import {
 } from '../virtualization/virtualizedTextView'
 
 const RAPID_INPUT_SECONDARY_WORK_DELAY_MS = 150
+// A sustained typing run never leaves a 150ms gap, so a pure debounce would
+// defer syntax and feature work for as long as the user keeps typing. This is
+// the ceiling on that wait, measured from the first keystroke of the burst.
+const RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS = 400
 const RAPID_INPUT_TIMING_NAMES = new Set([
   'input.beforeinput',
   'input.composition',
@@ -2099,12 +2107,9 @@ export class Editor {
   }
 
   private composedRangeDecorations(): readonly EditorRangeDecoration[] {
-    const decorations: EditorRangeDecoration[] = []
-    for (const projection of this.displayProjections.values('rangeDecorations')) {
-      decorations.push(...projection.value)
-    }
-
-    return decorations
+    return rangeDecorationsWithProjectionStacking(
+      this.displayProjections.values('rangeDecorations').map((projection) => projection.value),
+    )
   }
 
   private retagDisplayProjectionSources(): void {
@@ -2544,6 +2549,7 @@ export class Editor {
     this.secondaryWork.schedule({
       key: 'editor.syntaxRefresh',
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
+      maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
       version: sessionChangeVersion,
       isCurrent: (version) => version === this.sessionChangeVersion,
       run: () =>
@@ -2554,6 +2560,7 @@ export class Editor {
     this.secondaryWork.schedule({
       key: 'editor.featureContributions',
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
+      maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
       version: sessionChangeVersion,
       isCurrent: (version) => version === this.sessionChangeVersion,
       run: () =>

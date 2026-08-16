@@ -248,6 +248,9 @@ export function setRangeHighlight(
     end: clamp(range.end, 0, view.model.textLength),
   }))
   const group = getOrCreateRangeHighlightGroup(view, name, style)
+  // Equal-priority highlights paint in registry order, which we cannot keep stable across mount
+  // cycles, so the declared stacking is mirrored onto the Highlight itself.
+  group.highlight.priority = style.zIndex ?? 0
   if (canSkipRangeHighlightUpdate(view, group, nextRanges, style)) return
 
   group.ranges = nextRanges
@@ -270,11 +273,9 @@ export function renderRangeHighlight(view: VirtualizedTextViewInternal, name: st
   // Find/diagnostic range highlights swap StaticRanges over recycled rows the
   // same way token highlights do, so they need the same Gecko repaint nudge.
   scheduleHighlightRepaintNudge(view.highlightRegistry)
-  if (group.highlight.size === 0) {
-    unregisterRangeHighlight(view, group)
-    return
-  }
-
+  // A group whose ranges have all scrolled out stays registered with an empty Highlight. Dropping
+  // it and re-registering on the way back would move it to the end of the registry, which is
+  // where paint order comes from once priorities tie.
   ensureRangeHighlightRegistered(view, group)
 }
 
@@ -1238,6 +1239,7 @@ function sameHighlightStyle(
 ): boolean {
   if (left.backgroundColor !== right.backgroundColor) return false
   if (left.color !== right.color) return false
+  if (left.zIndex !== right.zIndex) return false
 
   return left.textDecoration === right.textDecoration
 }

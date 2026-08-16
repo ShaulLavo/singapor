@@ -23,7 +23,7 @@
   },
   "scripts": {
     "build": "bun ../../scripts/build-package.ts",
-    "test": "vitest run test/search.test.ts test/plugin.test.ts",
+    "test": "vitest run test/search.test.ts test/replacePattern.test.ts test/plugin.test.ts",
     "test:browser": "vitest run --browser.enabled --browser.headless test/style.browser.test.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",

@@ -122,7 +122,9 @@ function consumeReplaceEscape(
     return index + 1
   }
 
-  if (!isCaseOperation(next)) return index
+  // An unrecognized escape still swallows the escaped character, so `\$1` stays literal
+  // instead of the '$' being re-read as a capture reference by consumeReplaceDollar.
+  if (!isCaseOperation(next)) return index + 1
 
   builder.emitUnchanged(index)
   builder.emitStatic('', index + 2)
@@ -185,8 +187,19 @@ function replacePieceValue(piece: ReplacePiece, matches: readonly string[] | nul
 function substituteMatch(index: number, matches: readonly string[] | null): string {
   if (!matches) return ''
   if (index === 0) return matches[0] ?? ''
-  if (index < matches.length) return matches[index] ?? ''
-  return `$${index}`
+
+  // An out-of-range index degrades digit by digit, the way JavaScript's own String.replace
+  // does: with a single capture group `$12` is group 1 followed by a literal '2', and only a
+  // first digit that is also out of range falls back to the literal `$…`.
+  let captureIndex = index
+  let remainder = ''
+  while (captureIndex > 0) {
+    if (captureIndex < matches.length) return `${matches[captureIndex] ?? ''}${remainder}`
+
+    remainder = `${captureIndex % 10}${remainder}`
+    captureIndex = Math.floor(captureIndex / 10)
+  }
+  return `$${remainder}`
 }
 
 function applyCaseOperations(value: string, caseOps: readonly string[]): string {

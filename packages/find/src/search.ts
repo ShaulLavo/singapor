@@ -60,35 +60,64 @@ export function nextMatchAfter(
   matches: readonly FindMatch[],
   offset: number,
   loop: boolean,
+  escapeEmptyMatchAtOffset = false,
 ): FindMatch | null {
   if (matches.length === 0) return null
 
-  const next = matches.find((match) => match.start >= offset)
-  if (next) return next
-  return loop ? (matches[0] ?? null) : null
+  const found = indexAtOrAfter(matches, offset)
+  if (found === -1) return loop ? (matches[0] ?? null) : null
+
+  const index = escapesEmptyMatch(matches[found]!, offset, escapeEmptyMatchAtOffset)
+    ? found + 1
+    : found
+  return matches[index] ?? (loop ? (matches[0] ?? null) : null)
 }
 
 export function previousMatchBefore(
   matches: readonly FindMatch[],
   offset: number,
   loop: boolean,
+  escapeEmptyMatchAtOffset = false,
 ): FindMatch | null {
   if (matches.length === 0) return null
 
-  for (let index = matches.length - 1; index >= 0; index -= 1) {
-    const match = matches[index]!
-    if (match.end <= offset) return match
-  }
+  const found = indexAtOrBefore(matches, offset)
+  if (found === -1) return loop ? (matches.at(-1) ?? null) : null
 
-  return loop ? (matches.at(-1) ?? null) : null
+  const index = escapesEmptyMatch(matches[found]!, offset, escapeEmptyMatchAtOffset)
+    ? found - 1
+    : found
+  return matches[index] ?? (loop ? (matches.at(-1) ?? null) : null)
 }
 
 export function findMatchIndex(matches: readonly FindMatch[], range: FindRange): number {
   return matches.findIndex((match) => match.start === range.start && match.end === range.end)
 }
 
-function escapeRegExpCharacters(value: string): string {
+export function escapeRegExpCharacters(value: string): string {
   return value.replace(/[\\{}*+?|^$.[\]()]/g, '\\$&')
+}
+
+function indexAtOrAfter(matches: readonly FindMatch[], offset: number): number {
+  return matches.findIndex((match) => match.start >= offset)
+}
+
+function indexAtOrBefore(matches: readonly FindMatch[], offset: number): number {
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    if (matches[index]!.end <= offset) return index
+  }
+
+  return -1
+}
+
+// A zero-width match sitting exactly on the cursor answers the search again on
+// every press, so `^`, `$`, `\b` and lookaheads would pin navigation there
+// forever. Monaco re-probes the document by a code point or a whole line
+// depending on whether the pattern is anchored; we already hold every match in
+// document order, so the neighbouring entry is that answer without the probe or
+// the anchor guess.
+function escapesEmptyMatch(match: FindMatch, offset: number, escape: boolean): boolean {
+  return escape && match.start === match.end && match.start === offset
 }
 
 // True when the query contains at least one character whose case can differ,

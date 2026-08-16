@@ -10,13 +10,34 @@ type PendingRangeDecorationGroup = RangeDecorationGroup & {
   readonly key: string
 }
 
+/**
+ * Flattens per-projection decorations into one paint-ordered list. Projections
+ * arrive already ordered by layer then priority, so a projection's position in
+ * that order is the stacking its decorations inherit when they declare none.
+ */
+export function rangeDecorationsWithProjectionStacking(
+  projections: readonly (readonly EditorRangeDecoration[])[],
+): readonly EditorRangeDecoration[] {
+  const decorations: EditorRangeDecoration[] = []
+  for (const [zIndex, projection] of projections.entries()) {
+    for (const decoration of projection) {
+      decorations.push(decoration.zIndex === undefined ? { ...decoration, zIndex } : decoration)
+    }
+  }
+
+  return decorations
+}
+
 export function groupedRangeDecorations(
   decorations: readonly EditorRangeDecoration[],
   highlightPrefix: string,
 ): readonly RangeDecorationGroup[] {
   const groups: PendingRangeDecorationGroup[] = []
 
-  for (const decoration of decorations) {
+  // Group names carry the index they were minted at, so the input has to arrive in paint order:
+  // a group that changes index between frames changes name, which re-registers it at the end of
+  // the highlight registry and silently restacks it against whatever it overlaps.
+  for (const decoration of decorations.toSorted(byRangeDecorationZIndex)) {
     const style = rangeDecorationStyle(decoration)
     const key = rangeDecorationGroupKey(decoration.className, style)
     const previous = groups.at(-1)
@@ -43,15 +64,28 @@ export function sameEditorRangeDecorations(
   })
 }
 
+function byRangeDecorationZIndex(
+  left: EditorRangeDecoration,
+  right: EditorRangeDecoration,
+): number {
+  return rangeDecorationZIndex(left) - rangeDecorationZIndex(right)
+}
+
+function rangeDecorationZIndex(decoration: EditorRangeDecoration): number {
+  return decoration.zIndex ?? 0
+}
+
 function rangeDecorationStyle(decoration: EditorRangeDecoration): {
   readonly backgroundColor?: string
   readonly color?: string
   readonly textDecoration?: string
+  readonly zIndex: number
 } {
   return {
     backgroundColor: decoration.style?.backgroundColor || undefined,
     color: decoration.style?.color || undefined,
     textDecoration: decoration.style?.textDecoration || undefined,
+    zIndex: rangeDecorationZIndex(decoration),
   }
 }
 
@@ -89,6 +123,7 @@ function rangeDecorationGroupKey(
     style.backgroundColor ?? '',
     style.color ?? '',
     style.textDecoration ?? '',
+    String(style.zIndex),
   ].join('\u0000')
 }
 
@@ -99,6 +134,7 @@ function sameEditorRangeDecoration(
   if (left.start !== right.start) return false
   if (left.end !== right.end) return false
   if (left.className !== right.className) return false
+  if (left.zIndex !== right.zIndex) return false
 
   return sameRangeDecorationStyle(left, right)
 }

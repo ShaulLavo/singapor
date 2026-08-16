@@ -39,6 +39,12 @@ export type EditorRangeDecoration = {
   readonly end: number
   readonly start: number
   readonly style?: Partial<CSSStyleDeclaration>
+  /**
+   * Stacking order against other range decorations, highest paints last. Without it the CSS
+   * highlight registry falls back to registration order, which reshuffles as groups scroll in
+   * and out of the mounted window.
+   */
+  readonly zIndex?: number
 }
 
 export type EditorScrollPosition = {

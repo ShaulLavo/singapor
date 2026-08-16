@@ -6,6 +6,7 @@ import {
 import type { EditorDisposable, EditorViewContributionUpdateKind } from '@singapor/core/extensions'
 import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
 import {
+  escapeRegExpCharacters,
   FIND_MATCHES_LIMIT,
   FIND_REPLACE_ALL_LIMIT,
   findMatchIndex,
@@ -19,9 +20,20 @@ import {
 import { parseReplaceString, ReplacePattern } from './replacePattern'
 import type { EditorFindOptions } from './types'
 
-const FIND_MATCH_STYLE = { backgroundColor: 'rgba(234, 179, 8, 0.34)' }
-const FIND_CURRENT_STYLE = { backgroundColor: 'rgba(245, 158, 11, 0.72)', color: '#111827' }
-const FIND_SCOPE_STYLE = { backgroundColor: 'rgba(59, 130, 246, 0.22)' }
+// These three overlap by construction — the current match is always also a
+// match, and both sit inside the scope — so their stacking is declared rather
+// than left to the order the groups happen to reach the highlight registry in.
+const FIND_MATCH_STYLE = { backgroundColor: 'rgba(234, 179, 8, 0.34)', zIndex: 2 }
+const FIND_CURRENT_STYLE = {
+  backgroundColor: 'rgba(245, 158, 11, 0.72)',
+  color: '#111827',
+  zIndex: 3,
+}
+const FIND_SCOPE_STYLE = { backgroundColor: 'rgba(59, 130, 246, 0.22)', zIndex: 1 }
+
+// Seeding stops here rather than pushing a multi-megabyte selection through the
+// find input and searching for it.
+const SEARCH_STRING_MAX_LENGTH = 524_288
 
 type EditorFindSelectionRange = {
   readonly anchor: number
@@ -79,6 +91,8 @@ export type EditorFindState = FindQuery & {
 export type EditorFindWidgetState = EditorFindState & {
   readonly matchesCount: number
   readonly matchesPosition: number
+  // The count stopped at FIND_MATCHES_LIMIT, so it is a floor and not a total.
+  readonly matchesTruncated: boolean
 }
 
 export type EditorFindUiEvent =
@@ -110,6 +124,7 @@ export class EditorFindController {
     inSelection: false,
   }
   private matches: readonly FindMatch[] = []
+  private matchesTruncated = false
   private scopes: readonly FindRange[] | null = null
   private currentIndex = -1
 
@@ -175,7 +190,7 @@ export class EditorFindController {
 
     const selection = this.primarySelection()
     const startOffset = selection?.endOffset ?? 0
-    const match = nextMatchAfter(this.matches, startOffset, this.options.loop)
+    const match = nextMatchAfter(this.matches, startOffset, this.options.loop, true)
     return this.selectMatch(match)
   }
 
@@ -184,7 +199,7 @@ export class EditorFindController {
 
     const selection = this.primarySelection()
     const startOffset = selection?.startOffset ?? 0
-    const match = previousMatchBefore(this.matches, startOffset, this.options.loop)
+    const match = previousMatchBefore(this.matches, startOffset, this.options.loop, true)
     return this.selectMatch(match)
   }
 
@@ -238,9 +253,17 @@ export class EditorFindController {
     const host = this.host
     if (!host) return false
     if (!this.ensureFindReady('none')) return false
-    if (this.matches.length === 0) return false
 
-    const selections = orderedMatchSelections(this.matches, this.currentIndex)
+    // Re-queried uncapped for the same reason Replace All is: FIND_MATCHES_LIMIT
+    // bounds painting, and a cursor set that silently stopped at the paint cap
+    // would let the next keystroke edit only part of what the user selected.
+    const matches = this.findAll(false, FIND_REPLACE_ALL_LIMIT)
+    if (matches.length === 0) return false
+
+    const selections = orderedMatchSelections(
+      matches,
+      currentMatchIndex(matches, this.primarySelection()),
+    )
     host.setSelections(selections, 'input.findSelectAll', selections[0]?.head)
     return true
   }
@@ -330,6 +353,7 @@ export class EditorFindController {
     this.scopeHighlightName = ''
     this.state = { ...this.state, revealed: false, inSelection: false }
     this.matches = []
+    this.matchesTruncated = false
     this.scopes = null
     this.currentIndex = -1
   }
@@ -367,7 +391,11 @@ export class EditorFindController {
   private research(moveCursor: boolean): void {
     if (!this.host) return
 
-    this.matches = this.findAll(false)
+    // One past the cap, so a document holding exactly FIND_MATCHES_LIMIT
+    // matches is reported as a complete count rather than an overflow.
+    const found = this.findAll(false, FIND_MATCHES_LIMIT + 1)
+    this.matchesTruncated = found.length > FIND_MATCHES_LIMIT
+    this.matches = this.matchesTruncated ? found.slice(0, FIND_MATCHES_LIMIT) : found
     this.currentIndex = currentMatchIndex(this.matches, this.primarySelection())
     this.updateHighlights()
     this.updateWidget()
@@ -384,6 +412,9 @@ export class EditorFindController {
   private selectFirstMatchFromSelection(): void {
     const selection = this.primarySelection()
     const offset = selection?.endOffset ?? 0
+    // Deliberately not escaping an empty match here: re-searching should land
+    // on the match at the cursor, empty or not. Only an explicit Find
+    // Next/Previous is asking to move off it.
     const match = nextMatchAfter(this.matches, offset, this.options.loop)
     this.selectMatch(match)
   }
@@ -436,6 +467,7 @@ export class EditorFindController {
       ...this.state,
       matchesCount: this.matches.length,
       matchesPosition: this.currentIndex >= 0 ? this.currentIndex + 1 : 0,
+      matchesTruncated: this.matchesTruncated,
     }
   }
 
@@ -450,11 +482,19 @@ export class EditorFindController {
     const text = host.materializeFullText()
     const selection = this.primarySelection()
     if (!selection) return ''
-    if (!selection.collapsed) return selectedSingleLineText(text, selection)
+    if (!selection.collapsed)
+      return this.seedFromLiteralText(selectedSingleLineText(text, selection))
     if (this.options.seedSearchStringFromSelection === 'selection') return ''
 
     const range = wordRangeAtOffset(text, selection.headOffset)
-    return text.slice(range.start, range.end)
+    return this.seedFromLiteralText(text.slice(range.start, range.end))
+  }
+
+  // The seed is document text, never a pattern: unescaped, `foo(bar)` seeded
+  // into a regex search becomes a capture group and finds nothing, with no hint
+  // to the user why.
+  private seedFromLiteralText(value: string): string {
+    return this.state.isRegex ? escapeRegExpCharacters(value) : value
   }
 
   private applyAutoFindInSelection(host: EditorFindHost): void {
@@ -514,6 +554,9 @@ function isFindDocumentUpdate(kind: EditorViewContributionUpdateKind): boolean {
 }
 
 function selectedSingleLineText(text: string, selection: EditorFindResolvedSelection): string {
+  // Bounded before the slice so an oversized selection is never copied at all.
+  if (selection.endOffset - selection.startOffset >= SEARCH_STRING_MAX_LENGTH) return ''
+
   const value = text.slice(selection.startOffset, selection.endOffset)
   if (value.includes('\n')) return ''
   return value

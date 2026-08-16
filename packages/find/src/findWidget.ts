@@ -96,8 +96,14 @@ export class EditorFindWidget {
       this.replaceInput.value = state.replaceString
     this.replaceRow.hidden = !state.replaceRevealed
     setToggleExpanded(this.replaceToggleButton, state.replaceRevealed, 'Replace')
-    this.count.textContent = resultCountText(state.matchesPosition, state.matchesCount)
-    this.count.title = this.count.textContent
+    this.count.textContent = resultCountText(
+      state.matchesPosition,
+      state.matchesCount,
+      state.matchesTruncated,
+    )
+    this.count.title = state.matchesTruncated
+      ? truncatedCountTitle(state.matchesCount)
+      : this.count.textContent
     setTogglePressed(this.caseButton, state.matchCase, 'Match Case')
     setTogglePressed(this.wordButton, state.wholeWord, 'Match Whole Word')
     setTogglePressed(this.regexButton, state.isRegex, 'Use Regular Expression')
@@ -273,7 +279,14 @@ function toggleTooltip(label: string, active: boolean): string {
   return active ? `${label} (On)` : `${label} (Off)`
 }
 
-function resultCountText(position: number, count: number): string {
+function resultCountText(position: number, count: number, truncated: boolean): string {
   if (count === 0) return 'No results'
-  return `${position || '?'} of ${count}`
+  return `${position || '?'} of ${count}${truncated ? '+' : ''}`
+}
+
+// The '+' alone reads as an error; name the operations that ignore the cap
+// rather than claiming all of them do — navigation still walks the capped list
+// until the incremental searcher lands.
+function truncatedCountTitle(count: number): string {
+  return `Only the first ${count} results are counted and highlighted. Replace All and Select All Matches still cover the entire text.`
 }

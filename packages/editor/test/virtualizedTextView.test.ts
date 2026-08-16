@@ -387,7 +387,7 @@ describe('VirtualizedTextView', () => {
     )
   })
 
-  it('unregisters custom range highlights while all ranges are offscreen', () => {
+  it('keeps custom range highlights registered while all ranges are offscreen', () => {
     view.setText(createLines(20))
     view.setScrollMetrics(0, 20)
 
@@ -398,7 +398,7 @@ describe('VirtualizedTextView', () => {
       backgroundColor: 'rgba(234, 179, 8, 0.34)',
     })
 
-    expect(highlightsMap.has('test-find')).toBe(false)
+    expect(highlightsMap.get('test-find')?.size).toBe(0)
 
     view.setScrollMetrics(200, 20)
 
@@ -719,6 +719,82 @@ describe('VirtualizedTextView', () => {
 
     expect(scrolledChunk?.localStart).toBeGreaterThan(0)
     expect(scrolledChunk?.textNode.length).toBeLessThanOrEqual(1_000)
+  })
+
+  /**
+   * A single line long enough to be chunked, plus a gutter cell whose updates count render passes:
+   * the cell is refreshed for every mounted row on every pass, including rows that stay current.
+   */
+  function mountLongLineView(onGutterCellUpdate: () => void = () => {}): void {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      longLineChunkSize: 1_000,
+      longLineChunkThreshold: 1_000,
+      horizontalOverscanColumns: 0,
+      gutterContributions: [
+        {
+          id: 'render-pass-counter',
+          createCell: (document) => document.createElement('div'),
+          width: () => 10,
+          updateCell: onGutterCellUpdate,
+        },
+      ],
+    })
+    view.setText('x'.repeat(20_000))
+  }
+
+  it('skips the render pass while horizontal scrolling stays inside the chunk window', () => {
+    let gutterCellUpdates = 0
+    mountLongLineView(() => {
+      gutterCellUpdates += 1
+    })
+    const { characterWidth } = view.getState().metrics
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth)
+    const chunkLocalStart = view.getState().mountedRows[0]!.chunks[0]!.localStart
+    gutterCellUpdates = 0
+
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth + 1)
+
+    expect(gutterCellUpdates).toBe(0)
+
+    view.setScrollMetrics(0, 20, 80, 3_400 * characterWidth)
+
+    expect(gutterCellUpdates).toBeGreaterThan(0)
+    expect(view.getState().mountedRows[0]!.chunks[0]!.localStart).toBeGreaterThan(chunkLocalStart)
+  })
+
+  it('keeps measured row geometry across a sub-chunk horizontal scroll', () => {
+    mountLongLineView()
+    const { characterWidth } = view.getState().metrics
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth)
+    // Painting a selection over the row materializes its measured geometry,
+    // which is what a scroll-derived chunk key would throw away on the very
+    // next pixel of horizontal scroll.
+    view.setSelection(2_450, 2_500)
+    const geometry = view.getState().mountedRows[0]!.geometryCache
+
+    expect(geometry).not.toBeNull()
+
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth + 1)
+
+    expect(view.getState().mountedRows[0]!.geometryCache).toBe(geometry)
+  })
+
+  it('reuses long-line chunks when a forced render lands on a sub-chunk scroll offset', () => {
+    mountLongLineView()
+    const { characterWidth } = view.getState().metrics
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth)
+    const chunkTextNode = view.getState().mountedRows[0]!.chunks[0]!.textNode
+
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth + 1)
+    // Any decoration update forces a full render pass; the row must still be recognized as current.
+    view.setRowDecorations(new Map())
+
+    expect(view.getState().mountedRows[0]!.chunks[0]!.textNode).toBe(chunkTextNode)
   })
 
   it('mounts wrapped text segments as virtual rows when wrapping is enabled', () => {

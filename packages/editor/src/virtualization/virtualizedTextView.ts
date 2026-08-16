@@ -83,7 +83,12 @@ import {
   visualColumnForOffset,
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
-import { clearRowGeometryCaches, xToOffset } from './virtualizedTextViewGeometry'
+import {
+  clearRowGeometryCaches,
+  knownRowContentWidth,
+  measureRowContentWidth,
+  xToOffset,
+} from './virtualizedTextViewGeometry'
 import {
   disposeAllMountedBlockLanes,
   renderBlockLanes,
@@ -180,6 +185,7 @@ export class VirtualizedTextView {
   public readonly inputElement: HTMLTextAreaElement
   private readonly view: VirtualizedTextViewInternal
   private readonly disposeForegroundHighlightRestore: () => void
+  private cancelContentWidthMeasurement: (() => void) | null = null
 
   public constructor(container: HTMLElement, options: VirtualizedTextViewOptions = {}) {
     const overscan = options.overscan ?? DEFAULT_OVERSCAN
@@ -341,6 +347,8 @@ export class VirtualizedTextView {
 
   public dispose(): void {
     const view = this.view
+    this.cancelContentWidthMeasurement?.()
+    this.cancelContentWidthMeasurement = null
     this.disposeForegroundHighlightRestore()
     clearSelectionHighlight(view)
     for (const name of view.rangeHighlightGroups.keys()) clearRangeHighlight(view, name)
@@ -817,11 +825,72 @@ export class VirtualizedTextView {
 
     view.lastRenderedRowsKey = key
     renderRows(view, snapshot, (rowSlotId) => deleteTokenRangesForRow(view, rowSlotId))
+    this.applyKnownContentWidths(snapshot)
     renderBlockLanes(view, snapshot)
     renderTokenHighlights(view)
     for (const name of view.rangeHighlightGroups.keys()) renderRangeHighlight(view, name)
     renderSelectionHighlight(view)
     view.onViewportChange?.()
+  }
+
+  /**
+   * The horizontal scroll extent is a column-count estimate, and a wide glyph advances further than
+   * the one cell it is counted as — so a CJK or emoji line reaches past the extent and its end
+   * cannot be scrolled to. Rows that already know their rendered width correct it here for free;
+   * the rest are measured off the critical path, because finding out costs a layout read and the
+   * render pass has just finished writing to the DOM.
+   */
+  private applyKnownContentWidths(snapshot: FixedRowVirtualizerSnapshot): void {
+    const view = this.view
+    let unmeasured = false
+    for (const row of view.rowElements.values()) {
+      if (row.kind !== 'text') continue
+
+      const width = knownRowContentWidth(view, row)
+      if (width === null) {
+        unmeasured = true
+        continue
+      }
+
+      raiseVisualColumnsSeen(view, width)
+    }
+
+    updateContentWidth(view, snapshot.virtualItems)
+    if (unmeasured) this.scheduleContentWidthMeasurement()
+  }
+
+  private scheduleContentWidthMeasurement(): void {
+    if (this.cancelContentWidthMeasurement) return
+
+    const win = this.scrollElement.ownerDocument.defaultView
+    if (!win) return
+
+    const run = () => {
+      this.cancelContentWidthMeasurement = null
+      this.measureContentWidths()
+    }
+
+    if (typeof win.requestIdleCallback === 'function') {
+      const handle = win.requestIdleCallback(run)
+      this.cancelContentWidthMeasurement = () => win.cancelIdleCallback(handle)
+      return
+    }
+
+    const handle = win.setTimeout(run, 0)
+    this.cancelContentWidthMeasurement = () => win.clearTimeout(handle)
+  }
+
+  private measureContentWidths(): void {
+    const view = this.view
+    let raised = false
+    for (const row of view.rowElements.values()) {
+      if (row.kind !== 'text') continue
+
+      raised = raiseVisualColumnsSeen(view, measureRowContentWidth(view, row)) || raised
+    }
+
+    if (!raised) return
+    updateContentWidth(view, view.virtualizer.getSnapshot().virtualItems)
   }
 
   private applySameLineEdit(patch: SameLineEditPatch, nextText: TextSnapshot): void {
@@ -910,6 +979,14 @@ export class VirtualizedTextView {
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
   }
+}
+
+function raiseVisualColumnsSeen(view: VirtualizedTextViewInternal, width: number): boolean {
+  const columns = width / Math.max(1, view.metrics.characterWidth)
+  if (columns <= view.maxVisualColumnsSeen) return false
+
+  view.maxVisualColumnsSeen = columns
+  return true
 }
 
 function subscribeToForegroundHighlightRestore(view: VirtualizedTextViewInternal): () => void {

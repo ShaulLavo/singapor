@@ -139,6 +139,8 @@ import {
   endRowRectMeasurements,
   invalidateRowRectMeasurements,
 } from '../virtualization/virtualizedTextViewGeometry'
+import { observeBrowserTextMetricsInvalidation } from '../virtualization/browserMetrics'
+import { EditorDisposableStore } from './disposables'
 
 const RAPID_INPUT_SECONDARY_WORK_DELAY_MS = 150
 // A sustained typing run never leaves a 150ms gap, so a pure debounce would
@@ -256,6 +258,7 @@ export class Editor {
     EditorDecorationContribution
   >()
   private readonly keymap: EditorKeymapController
+  private readonly environmentRegistrations = new EditorDisposableStore()
   private readonly viewContributions: EditorViewContributionController
   private readonly secondaryWork = new EditorSecondaryWorkScheduler()
   private readonly editChain = new DocumentEditChain()
@@ -376,6 +379,9 @@ export class Editor {
     })
     this.foldState = new EditorFoldState(this.view, () => this.session?.getSnapshot() ?? null)
     this.el = this.view.scrollElement
+    this.environmentRegistrations.add(
+      observeBrowserTextMetricsInvalidation(this.el, () => this.remeasureTextMetrics()),
+    )
     this.blockSurfaces = new EditorBlockSurfaceController({
       getDocumentId: () => this.documentId,
       getLineCount: () => this.view.getLineCount(),
@@ -1030,6 +1036,17 @@ export class Editor {
     })
   }
 
+  private remeasureTextMetrics(): void {
+    const metrics = this.view.refreshMetrics()
+
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.layout.text_metrics_remeasured',
+      level: 'info',
+      layout: { rowHeight: metrics.rowHeight, characterWidth: metrics.characterWidth },
+    })
+  }
+
   setScrollMode(scrollMode: EditorOptions['scrollMode']): void {
     if (!this.view.setScrollMode(scrollMode)) return
 
@@ -1116,6 +1133,7 @@ export class Editor {
 
     this.disposed = true
     this.lifecycleSummary.disposingAt = new Date().toISOString()
+    this.environmentRegistrations.dispose()
     this.secondaryWork.dispose()
     this.displayProjections.clear()
     this.blockSurfaces.dispose()

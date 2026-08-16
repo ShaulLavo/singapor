@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**22 / 99 findings complete.** Update this count when you check a box.
+**29 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 3 / 16 complete.
+Milestones: 4 / 16 complete.
 
 
 ---
@@ -209,7 +209,7 @@ Milestones: 3 / 16 complete.
 
 ---
 
-## Milestone 4 — Font metrics and character geometry
+## Milestone 4 — Font metrics and character geometry ✅
 
 `effort L` · `risk medium` · 7 findings
 
@@ -217,20 +217,52 @@ Milestones: 3 / 16 complete.
 
 **Exit criteria.** A webfont swap or DPR change re-measures and relayouts every mounted editor (no caret desync); row geometry allocates typed arrays rather than per-character objects, with offsetToX/xToOffset signatures unchanged and virtualizedTextView.browser.test.ts green on caret placement, selection rects and hit tests under CSS transform; a CJK/emoji/large-font line can be scrolled to its end; whitespace 'boundary' and 'trailing' modes render with an advance-width-matched glyph and marker recomputation is gated on a cheap precondition rather than running offsetToX twice per whitespace character per frame.
 
-- [ ] **Font measurement: what to measure, how to key the cache, and when to throw it away**  
+- [x] **Font measurement: what to measure, how to key the cache, and when to throw it away**  
   `high` `M` `partial` `api-perf-infra`
-- [ ] **Key-column anchoring: bounded float drift on long lines without per-character measurement**  
+- [x] **Key-column anchoring: bounded float drift on long lines without per-character measurement**  
   `high` `S` `missing` `rendering`
-- [ ] **CharacterMapping: a packed bidirectional column↔DOM-position index**  
+- [x] **CharacterMapping: a packed bidirectional column↔DOM-position index**  
   `medium` `M` `partial` `rendering`
-- [ ] **Lazy, memoized per-column pixel offsets with a shared Range and one cached container rect**  
+- [~] **Lazy, memoized per-column pixel offsets with a shared Range and one cached container rect**  
   `high` `M` `partial` `rendering`
-- [ ] **Long-line defences: token-span splitting, render truncation with an escape hatch, and bounded coordinate magnitudes**  
+- [x] **Long-line defences: token-span splitting, render truncation with an escape hatch, and bounded coordinate magnitudes**  
   `medium` `S` `partial` `rendering`
-- [ ] **Deferred true line-width measurement to fix the horizontal scroll extent**  
+- [x] **Deferred true line-width measurement to fix the horizontal scroll extent**  
   `high` `M` `missing` `rendering`
-- [ ] **Whitespace rendering as an overlay, with boundary/trailing modes and an advance-width-matched dot glyph**  
+- [x] **Whitespace rendering as an overlay, with boundary/trailing modes and an advance-width-matched dot glyph**  
   `medium` `S` `partial` `rendering`
+
+> **`[~]` reason (lazy per-column offsets).** Three of its four parts landed: the container rect is
+> read once per measurement window rather than once per grapheme (already true via Milestone 3's
+> pass), the per-segment `createRange()` is now one reused module-level Range parked on a detached
+> node between reads, and `clientRectScale` — the correctness half — divides measured advances back
+> out of a CSS-transformed host. The fourth, the lazy `Float32Array`-with-sentinel fill-on-demand
+> scheme, is **not** done. The Verifier called it the optional last step, and the typed-array layout
+> it needs is now in place, so it drops in without rework. Reported undone rather than half-built.
+>
+> **Two correctness bugs the review caught in this milestone's own work.** Both were in key-column
+> anchoring, both verified by execution before and after. (a) The forward map re-anchors by column
+> while the inverse selected an anchor by x, so an x in the gap between an anchor's extrapolated end
+> and the next anchor resolved to a column past the span — a click landing one to two characters
+> right of where the caret draws, and not monotonically. The inverse now clamps to the span its
+> anchor owns. (b) Anchors are measured in the row's own space but `characterWidth` is probed
+> through the host, so under a CSS transform an anchored row's boundaries stepped *backwards* at
+> every anchor (offset 300 drawn 1069px left of offset 299). The estimate is now divided by the same
+> scale the measurements are.
+>
+> **Deviations, recorded.** Skipped per the Verifiers: the 256-char probe, `maxDigitWidth` and
+> `typicalFullwidth` (16 'm's already averages sub-pixel rounding sixteen ways); render truncation
+> and the scroll-height ceiling (already solved) and the `translateY` magnitude (degrades precision,
+> breaks nothing); the reference's `offsetWidth` approach to line width (`contain: size` makes row
+> `offsetWidth` useless here). `monospaceAssumptionsAreValid` is also not done — the font-load and
+> DPR invalidation that landed covers the case it guards, so it would be a second detector for the
+> same staleness.
+>
+> **Exit criterion not met as written.** It asks for `virtualizedTextView.browser.test.ts` green on
+> caret placement, selection rects and hit tests under CSS transform. That file is gated behind a
+> real `Highlight` constructor and does not run under `bun run test`; the assertions live in the
+> happy-dom project against a deterministic layout stub instead. Same harness gap recorded for
+> Milestone 3's forced-layout count.
 
 
 ---

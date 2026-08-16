@@ -300,6 +300,14 @@ function rowTextNode(row = 0): Text {
   return walker.nextNode() as Text
 }
 
+function rowTextNodes(row = 0): Text[] {
+  const element = document.querySelector(`[data-editor-virtual-row="${row}"]`)
+  const walker = document.createTreeWalker(element!, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text)
+  return nodes
+}
+
 function installCaretRangeFromPoint(textNode: Text, offset: number): () => void {
   const doc = document as Document & {
     caretRangeFromPoint?: (x: number, y: number) => Range | null
@@ -692,11 +700,26 @@ describe('Editor', () => {
       })
 
       expect(hiddenCharacterKinds()).toEqual(['space', 'tab'])
-      expect(editorRoot().textContent).toBe('a b\tc')
     })
 
     it('uses the larger default line height', () => {
       expect(editorRoot().style.getPropertyValue('--editor-row-height')).toBe('24px')
+    })
+
+    it('types into a plain line without rebuilding it', () => {
+      editor.dispose()
+      editor = new Editor(container, { defaultText: 'm'.repeat(120) })
+      const mounted = rowTextNode()
+
+      setCollapsedDomSelection(2)
+      editorRoot().dispatchEvent(createInsertEvent('X'))
+
+      // A keystroke is meant to cost one in-place write to the node already on screen; split the
+      // line across several and the row has to swap its children out on every character instead.
+      const nodes = rowTextNodes()
+      expect(nodes).toHaveLength(1)
+      expect(nodes[0]).toBe(mounted)
+      expect(mounted.data).toBe(`mmX${'m'.repeat(118)}`)
     })
 
     it('forwards configured line height to the text view', () => {

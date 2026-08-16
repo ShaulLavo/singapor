@@ -84,7 +84,14 @@ type VirtualizedBlockLaneMountContext = {
   readonly placement: BlockLanePlacement
 }
 
-export type HiddenCharactersMode = 'hidden' | 'show' | 'show-on-selection'
+export type HiddenCharactersMode =
+  | 'hidden'
+  | 'show'
+  | 'show-on-selection'
+  /** Leading and trailing runs, plus runs of two or more inside the text. */
+  | 'boundary'
+  /** Whitespace past the last non-whitespace character of the line. */
+  | 'trailing'
 
 export type VirtualizedTextHighlightRange = {
   readonly start: number

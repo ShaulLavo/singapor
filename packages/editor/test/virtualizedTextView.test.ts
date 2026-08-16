@@ -710,7 +710,7 @@ describe('VirtualizedTextView', () => {
     const firstChunk = view.getState().mountedRows[0]?.chunks[0]
 
     expect(firstChunk?.localStart).toBe(0)
-    expect(firstChunk?.textNode.length).toBe(1_000)
+    expect(firstChunk?.text).toHaveLength(1_000)
     expect(container.querySelector('.editor-virtualized-row')?.textContent?.length).toBe(1_000)
 
     const scrollLeft = 2_400 * view.getState().metrics.characterWidth
@@ -718,7 +718,60 @@ describe('VirtualizedTextView', () => {
     const scrolledChunk = view.getState().mountedRows[0]?.chunks[0]
 
     expect(scrolledChunk?.localStart).toBeGreaterThan(0)
-    expect(scrolledChunk?.textNode.length).toBeLessThanOrEqual(1_000)
+    expect(scrolledChunk?.text.length).toBeLessThanOrEqual(1_000)
+  })
+
+  it('spreads a mounted chunk over bounded text nodes without moving its offsets', () => {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      longLineChunkSize: 1_000,
+      longLineChunkThreshold: 1_000,
+      horizontalOverscanColumns: 0,
+    })
+    view.setText('x'.repeat(5_000))
+    view.setScrollMetrics(0, 20, 80)
+
+    const chunk = view.getState().mountedRows[0]!.chunks[0]!
+    const caret = view.createRange(chunk.startOffset + 353, chunk.startOffset + 353)
+    const nodes = [...chunk.element!.childNodes]
+
+    expect(chunk.element!.textContent).toBe('x'.repeat(1_000))
+    expect(chunk.textNode).toBe(nodes[0])
+    expect(Math.max(...nodes.map((node) => node.textContent!.length))).toBeLessThanOrEqual(50)
+    expect(caret?.startContainer).toBe(nodes[7])
+    expect(caret?.startOffset).toBe(3)
+    expect(view.textOffsetFromDomBoundary(nodes[7]!, 3)).toBe(chunk.startOffset + 353)
+  })
+
+  it('spreads a long sub-threshold row over bounded text nodes without moving its geometry', () => {
+    const line = 'abcdefghij'.repeat(120)
+    view.setText(`${line}\ntail`)
+    view.setScrollMetrics(0, 40)
+    mockViewport(view.scrollElement, 4_000, 40)
+
+    const row = view.getState().mountedRows[0]!
+    const caret = view.createRange(353, 353)
+    const nodes = [...row.element.childNodes]
+    const { characterWidth } = view.getState().metrics
+
+    expect(row.chunks).toHaveLength(1)
+    expect(row.element.textContent).toBe(line)
+    expect(row.textNode).toBe(nodes[0])
+    expect(Math.max(...nodes.map((node) => node.textContent!.length))).toBeLessThanOrEqual(50)
+    expect(caret?.startContainer).toBe(nodes[7])
+    expect(caret?.startOffset).toBe(3)
+    expect(view.textOffsetFromDomBoundary(nodes[7]!, 3)).toBe(353)
+    expect(view.textOffsetFromPoint(characterWidth * 353.5, 10)).toBe(353)
+
+    view.setSelection(353, 400)
+    const selection = selectionRanges(container)[0]!
+
+    expect(selection.style.left).toBe(`${characterWidth * 353}px`)
+    expect(selection.style.width).toBe(`${characterWidth * 47}px`)
   })
 
   /**
@@ -1192,7 +1245,7 @@ describe('VirtualizedTextView', () => {
     view.setSelection(1, 5)
 
     expect(hiddenCharacterMarkerKinds(container)).toEqual(['space', 'tab'])
-    expect(view.scrollElement.textContent).toBe('a b\tc d')
+    expect(textWithoutHiddenCharacterOverlay(view.scrollElement)).toBe('a b\tc d')
 
     view.setSelection(3, 3)
 
@@ -1229,7 +1282,7 @@ describe('VirtualizedTextView', () => {
 
     expect(hiddenCharacterMarkerKinds(container)).toEqual(['space', 'tab', 'space'])
     expect(hiddenCharacterMarkerOffsets(container)).toEqual(['0', '2', '4'])
-    expect(view.scrollElement.textContent).toBe(' a\tb ')
+    expect(textWithoutHiddenCharacterOverlay(view.scrollElement)).toBe(' a\tb ')
   })
 
   it('updates hidden character markers on mode changes for mounted rows', () => {
@@ -2655,10 +2708,104 @@ describe('VirtualizedTextView', () => {
     expect(metrics.rowHeight).toBe(24)
     expect(metrics.characterWidth).toBe(10)
   })
+
+  it('keeps one measurement waiting however many times the rows are rendered', () => {
+    const idle = captureIdleCallbacks()
+    try {
+      view.setText('漢字テスト\nabc')
+      view.setScrollMetrics(0, 40)
+
+      expect(idle.pending.size).toBe(1)
+
+      view.setRowDecorations(new Map())
+      view.setRowDecorations(new Map())
+
+      expect(idle.pending.size).toBe(1)
+    } finally {
+      idle.restore()
+    }
+  })
+
+  it('leaves nothing waiting to run against a disposed view', () => {
+    const idle = captureIdleCallbacks()
+    try {
+      view.setText('漢字テスト\nabc')
+      view.setScrollMetrics(0, 40)
+
+      expect(idle.pending.size).toBe(1)
+
+      view.dispose()
+
+      expect(idle.pending.size).toBe(0)
+
+      view = new VirtualizedTextView(container, { rowHeight: 20, overscan: 2 })
+    } finally {
+      idle.restore()
+    }
+  })
+
+  it('reads nothing back out of the virtualizer when a measurement pass finds no wider row', () => {
+    const idle = captureIdleCallbacks()
+    try {
+      view.setText('漢字テスト\nabc')
+      view.setScrollMetrics(0, 40)
+
+      const measure = [...idle.pending.values()][0]!
+      // Whatever the rows had to give, the first pass already took.
+      measure()
+
+      const internal = Reflect.get(view, 'view') as {
+        virtualizer: { getSnapshot: () => unknown }
+      }
+      const snapshots = vi.spyOn(internal.virtualizer, 'getSnapshot')
+      measure()
+
+      expect(snapshots).not.toHaveBeenCalled()
+    } finally {
+      idle.restore()
+    }
+  })
 })
 
 function createLines(count: number): string {
   return Array.from({ length: count }, (_, index) => `line ${index}`).join('\n')
+}
+
+type IdleWindow = {
+  requestIdleCallback?: unknown
+  cancelIdleCallback?: unknown
+}
+
+/** The idle queue, held open so what is waiting in it can be counted and run on demand. */
+function captureIdleCallbacks(): {
+  readonly pending: ReadonlyMap<number, () => void>
+  readonly restore: () => void
+} {
+  const pending = new Map<number, () => void>()
+  const win = window as unknown as IdleWindow
+  const request = win.requestIdleCallback
+  const cancel = win.cancelIdleCallback
+  let nextHandle = 1
+
+  win.requestIdleCallback = (callback: () => void) => {
+    const handle = nextHandle
+    nextHandle += 1
+    pending.set(handle, callback)
+    return handle
+  }
+  win.cancelIdleCallback = (handle: number) => {
+    pending.delete(handle)
+  }
+
+  return {
+    pending,
+    restore: () => {
+      win.requestIdleCallback = request
+      // A view disposed after the queue is handed back still reaches for the canceller it was
+      // scheduled with, so that half stays until the environment has one of its own.
+      if (typeof cancel === 'function') win.cancelIdleCallback = cancel
+    },
+  }
 }
 
 function createFoldGutterTestView(
@@ -2838,6 +2985,17 @@ function blockSurfaces(container: HTMLElement): string[] {
   return [...container.querySelectorAll<HTMLElement>('[data-test-block-surface]')].map(
     (surface) => surface.textContent ?? '',
   )
+}
+
+// The whitespace glyphs live in the marker overlay, so the rendered document text is what is left
+// once the overlay is taken away.
+function textWithoutHiddenCharacterOverlay(root: HTMLElement): string {
+  const copy = root.cloneNode(true) as HTMLElement
+  for (const layer of copy.querySelectorAll('.editor-virtualized-hidden-character-layer')) {
+    layer.remove()
+  }
+
+  return copy.textContent ?? ''
 }
 
 function hiddenCharacterMarkerKinds(container: HTMLElement): string[] {

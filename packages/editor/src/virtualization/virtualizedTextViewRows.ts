@@ -85,6 +85,8 @@ const CURSOR_LINE_ROW_CLASS = 'editor-virtualized-cursor-line-row'
 const CURSOR_LINE_GUTTER_CLASS = 'editor-virtualized-cursor-line-gutter'
 const gutterCursorLineStates = new WeakMap<HTMLElement, boolean>()
 const emptyBlockLaneInset = { left: 0, right: 0, key: '' }
+const MAX_ROW_TEXT_NODE_LENGTH = 50
+const MAX_SINGLE_NODE_ROW_LENGTH = 512
 
 type RowUpdatePass = {
   readonly cursorBufferRow: number | null
@@ -813,7 +815,9 @@ function setDirectRowText(
 ): void {
   if (reuseDirectRowText(row, text, startOffset, mapping)) return
 
-  if (!isSimpleRowText(text)) {
+  // Splitting costs the row the in-place `Text.data` patch it lives on while the user types, so a
+  // row short enough to be scanned cheaply keeps its single node and pays nothing.
+  if (!isSimpleRowText(text) || text.length > MAX_SINGLE_NODE_ROW_LENGTH) {
     setRenderedDirectRowText(view, row, text, startOffset, mapping)
     return
   }
@@ -833,12 +837,9 @@ function setRenderedDirectRowText(
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): void {
-  const rendered = createRenderedChunkParts(
-    row.element.ownerDocument,
-    text,
-    0,
-    characterWidth(view),
-  )
+  const rendered = isSimpleRowText(text)
+    ? createSplitTextChunkParts(row.element.ownerDocument, text, 0)
+    : createRenderedChunkParts(row.element.ownerDocument, text, 0, characterWidth(view))
   if (!adoptRenderedSingleTextPart(row, rendered)) {
     row.element.replaceChildren(...rendered.nodes)
   }
@@ -1048,18 +1049,17 @@ function createRowChunk(
   const element = view.scrollElement.ownerDocument.createElement('span')
   const chunkText = text.slice(localStart, localEnd)
   const rendered = isSimpleRowText(chunkText)
-    ? null
+    ? createSplitTextChunkParts(view.scrollElement.ownerDocument, chunkText, localStart)
     : createRenderedChunkParts(
         view.scrollElement.ownerDocument,
         chunkText,
         localStart,
         characterWidth(view),
       )
-  const textNode = rendered?.textNode ?? view.scrollElement.ownerDocument.createTextNode(chunkText)
 
   element.className = 'editor-virtualized-row-chunk'
   element.dataset.editorVirtualChunkStart = String(localStart)
-  element.append(...(rendered?.nodes ?? [textNode]))
+  element.append(...rendered.nodes)
 
   return {
     startOffset: offsetForLocalIndex(mapping, startOffset, localStart, 'before'),
@@ -1068,9 +1068,45 @@ function createRowChunk(
     localEnd,
     text: chunkText,
     element,
-    textNode,
-    parts: rendered?.parts ?? createTextChunkParts(textNode, localStart, localEnd),
+    textNode: rendered.textNode,
+    parts: rendered.parts,
   }
+}
+
+/**
+ * Reading a character position out of a text node costs the browser a scan of that node, and the
+ * scan does not stay linear in its length — so caret placement, hit testing and every highlight
+ * range painted over a very long line get steadily more expensive the more text one node holds.
+ * Spreading the text over several nodes bounds each of those scans and changes nothing about what
+ * renders or what the parts describe: adjacent text nodes lay out as one, and the parts still cover
+ * the same local span end to end.
+ *
+ * Callers must have established that the text is simple. A fixed stride can cut a grapheme cluster
+ * in two, and each half then measures — and stops the caret — as a character of its own.
+ */
+function createSplitTextChunkParts(
+  document: Document,
+  text: string,
+  localStart: number,
+): RenderedChunkParts {
+  const nodeCount = Math.max(1, Math.ceil(text.length / MAX_ROW_TEXT_NODE_LENGTH))
+  const nodes: Text[] = []
+  const parts: VirtualizedTextChunkPart[] = []
+
+  for (let index = 0; index < nodeCount; index += 1) {
+    const start = index * MAX_ROW_TEXT_NODE_LENGTH
+    const end = Math.min(start + MAX_ROW_TEXT_NODE_LENGTH, text.length)
+    const node = document.createTextNode(text.slice(start, end))
+    nodes.push(node)
+    parts.push({
+      kind: 'text',
+      localStart: localStart + start,
+      localEnd: localStart + end,
+      node,
+    })
+  }
+
+  return { nodes, parts, textNode: nodes[0]! }
 }
 
 function shouldChunkLine(view: VirtualizedTextViewInternal, text: string): boolean {

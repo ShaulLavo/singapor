@@ -279,14 +279,6 @@
   white-space: pre;
 }
 
-.editor-virtualized-hidden-character-marker[data-editor-hidden-character='space']::before {
-  content: '\00b7';
-}
-
-.editor-virtualized-hidden-character-marker[data-editor-hidden-character='tab']::before {
-  content: '\2192';
-}
-
 .editor-virtualized-fold-placeholder {
   color: #a1a1aa;
   padding-left: 6px;

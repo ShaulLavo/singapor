@@ -78,6 +78,20 @@ describe('public API facade', () => {
     }
   })
 
+  it('exports the whitespace modes a host can select', () => {
+    // The union is part of EditorOptions, so a mode dropped back out of it is a
+    // break in the bindings' builds rather than in anything here.
+    const modes: core.HiddenCharactersMode[] = [
+      'hidden',
+      'show',
+      'show-on-selection',
+      'boundary',
+      'trailing',
+    ]
+
+    expect(modes).toHaveLength(5)
+  })
+
   it('exposes the pass and cursor-history methods hosts drive the editor through', () => {
     for (const method of ['runInOperation', 'cursorUndo', 'cursorRedo']) {
       expect(Editor.prototype[method as keyof Editor]).toBeTypeOf('function')

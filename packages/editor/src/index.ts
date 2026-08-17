@@ -67,8 +67,16 @@ export {
   EDITOR_FIND_FEATURE_ID,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
+  EditorDecorationStore,
+  projectDecorationRangeThroughEdits,
 } from './public/extensions'
-export type { EditorFindFeature } from './public/extensions'
+export type {
+  EditorDecoration,
+  EditorDecorationRange,
+  EditorDecorationSpec,
+  EditorDecorationSurface,
+  EditorFindFeature,
+} from './public/extensions'
 export { applyEditorTheme, editorThemesEqual, mergeEditorThemes } from './public/rendering'
 export {
   createEditorSyntaxSession,

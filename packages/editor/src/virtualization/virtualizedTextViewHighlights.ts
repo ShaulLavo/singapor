@@ -10,6 +10,7 @@ import {
 } from '../editor/tokenProjection'
 import { getEditorTokenIndex, type EditorTokenIndex } from '../editor/tokenIndex'
 import { clamp, normalizeTokenStyle, serializeTokenStyle } from '../style-utils'
+import { lowerBound, upperBound } from './rowHeightIndex'
 import { getSharedTokenHighlights } from './sharedTokenHighlights'
 import { rowLocalIndexForOffset } from './virtualizedTextViewInlineMapping'
 import { reregisterHighlights, scheduleHighlightRepaintNudge } from './geckoHighlightRepaint'
@@ -86,6 +87,28 @@ type TokenRangeReconcileStats = {
   staticRangeCount: number
   readonly tokenRenderIndexDirty: boolean
 }
+
+type RangeHighlightIndex = {
+  readonly fingerprint: number
+  /**
+   * Running maximum of `end`. A range nested inside an earlier one leaves the raw ends out of
+   * order even where the starts are sorted, and a bisection needs a key that only ever grows.
+   */
+  readonly maxEnds: readonly number[]
+}
+
+const SIGNATURE_HASH_PRIME = 0x01000193
+const SIGNATURE_HASH_SEED = 0x811c9dc5
+
+/**
+ * Keyed by the range array rather than by the group, because a group holds one such array for as
+ * long as the set it was given stays current — so identity is already the invalidation rule, and a
+ * retired set takes its index with it.
+ */
+const rangeHighlightIndexes = new WeakMap<
+  readonly VirtualizedTextHighlightRange[],
+  RangeHighlightIndex
+>()
 
 export function setTokens(view: VirtualizedTextViewInternal, tokens: readonly EditorToken[]): void {
   const copiedTokens = [...tokens]
@@ -243,10 +266,7 @@ export function setRangeHighlight(
     return
   }
 
-  const nextRanges = ranges.map((range) => ({
-    start: clamp(range.start, 0, view.model.textLength),
-    end: clamp(range.end, 0, view.model.textLength),
-  }))
+  const nextRanges = sortedRangeHighlights(view, ranges)
   const group = getOrCreateRangeHighlightGroup(view, name, style)
   // Equal-priority highlights paint in registry order, which we cannot keep stable across mount
   // cycles, so the declared stacking is mirrored onto the Highlight itself.
@@ -633,85 +653,15 @@ function tokenRenderEntry(
   }
 }
 
-function firstTokenRenderEntryStartingAtOrAfter(
-  view: VirtualizedTextViewInternal,
+function firstStartingAtOrAfter(
+  spans: readonly { readonly start: number }[],
   offset: number,
 ): number {
-  let low = 0
-  let high = view.tokenRenderEntries.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    const token = view.tokenRenderEntries[middle]!
-    if (token.start >= offset) {
-      high = middle
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  return low
+  return lowerBound(spans.length, (index) => spans[index]!.start, offset)
 }
 
-function firstTokenRenderEntryEndingAfter(
-  view: VirtualizedTextViewInternal,
-  offset: number,
-  endIndex: number,
-): number {
-  let low = 0
-  let high = endIndex
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    const maxEnd = view.tokenRenderEntryMaxEnds[middle] ?? 0
-    if (maxEnd > offset) {
-      high = middle
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  return low
-}
-
-function firstIndexedTokenStartingAtOrAfter(
-  tokens: readonly EditorToken[],
-  offset: number,
-): number {
-  let low = 0
-  let high = tokens.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if (tokens[middle]!.start >= offset) {
-      high = middle
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  return low
-}
-
-function firstIndexedTokenEndingAfter(
-  tokenIndex: EditorTokenIndex,
-  offset: number,
-  endIndex: number,
-): number {
-  let low = 0
-  let high = endIndex
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    const maxEnd = tokenIndex.maxEnds[middle] ?? 0
-    if (maxEnd > offset) {
-      high = middle
-      continue
-    }
-
-    low = middle + 1
-  }
-
-  return low
+function firstEndingAfter(maxEnds: readonly number[], offset: number, endIndex: number): number {
+  return upperBound(endIndex, (index) => maxEnds[index] ?? 0, offset)
 }
 
 function tokenSegmentsForRows(
@@ -805,8 +755,8 @@ function appendIndexedTokenSegmentsForChunk(
   if (chunk.endOffset <= chunk.startOffset) return
   if (stats) stats.chunkCount += 1
 
-  const endIndex = firstIndexedTokenStartingAtOrAfter(view.tokens, chunk.endOffset)
-  const startIndex = firstIndexedTokenEndingAfter(tokenIndex, chunk.startOffset, endIndex)
+  const endIndex = firstStartingAtOrAfter(view.tokens, chunk.endOffset)
+  const startIndex = firstEndingAfter(tokenIndex.maxEnds, chunk.startOffset, endIndex)
   if (startIndex >= endIndex) return
 
   const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId)
@@ -851,8 +801,8 @@ function appendTokenSegmentsForChunk(
   if (chunk.endOffset <= chunk.startOffset) return
   if (stats) stats.chunkCount += 1
 
-  const endIndex = firstTokenRenderEntryStartingAtOrAfter(view, chunk.endOffset)
-  const startIndex = firstTokenRenderEntryEndingAfter(view, chunk.startOffset, endIndex)
+  const endIndex = firstStartingAtOrAfter(view.tokenRenderEntries, chunk.endOffset)
+  const startIndex = firstEndingAfter(view.tokenRenderEntryMaxEnds, chunk.startOffset, endIndex)
   if (startIndex >= endIndex) return
 
   const segments = getOrCreateTokenSegments(segmentsByRow, row.tokenHighlightSlotId)
@@ -1253,12 +1203,58 @@ function sameHighlightRange(
   return left.end === right.end
 }
 
+/**
+ * Painting seeks into this array once per mounted row, so it has to be ordered, and a caller on
+ * the far side of the plugin boundary hands its ranges over in whatever order it produced them.
+ * Ordering costs a sort per set rather than a scan per frame, and a set can be large: a search for
+ * a common letter in a big file arrives as tens of thousands of ranges.
+ */
+function sortedRangeHighlights(
+  view: VirtualizedTextViewInternal,
+  ranges: readonly VirtualizedTextHighlightRange[],
+): readonly VirtualizedTextHighlightRange[] {
+  const clamped = ranges.map((range) => ({
+    start: clamp(range.start, 0, view.model.textLength),
+    end: clamp(range.end, 0, view.model.textLength),
+  }))
+
+  return clamped.sort(compareRangeHighlights)
+}
+
+function compareRangeHighlights(
+  left: VirtualizedTextHighlightRange,
+  right: VirtualizedTextHighlightRange,
+): number {
+  return left.start - right.start || left.end - right.end
+}
+
+function rangeHighlightIndex(
+  ranges: readonly VirtualizedTextHighlightRange[],
+): RangeHighlightIndex {
+  const cached = rangeHighlightIndexes.get(ranges)
+  if (cached) return cached
+
+  const maxEnds: number[] = []
+  let maxEnd = 0
+  let fingerprint = SIGNATURE_HASH_SEED
+  for (const range of ranges) {
+    maxEnd = Math.max(maxEnd, range.end)
+    maxEnds.push(maxEnd)
+    fingerprint = mixSignatureHash(mixSignatureHash(fingerprint, range.start), range.end)
+  }
+
+  const index: RangeHighlightIndex = { fingerprint, maxEnds }
+  rangeHighlightIndexes.set(ranges, index)
+  return index
+}
+
 function addMountedRangeHighlightRanges(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
 ): void {
+  const index = rangeHighlightIndex(group.ranges)
   for (const row of getMountedRows(view)) {
-    addMountedRangeHighlightRangesForRow(view, group, row)
+    addMountedRangeHighlightRangesForRow(view, group, row, index)
   }
 }
 
@@ -1266,9 +1262,12 @@ function addMountedRangeHighlightRangesForRow(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
   row: MountedVirtualizedTextRow,
+  index: RangeHighlightIndex,
 ): void {
-  for (const range of group.ranges) {
-    addMountedRangeHighlightRange(view, group, row, range)
+  const endIndex = firstStartingAtOrAfter(group.ranges, row.endOffset)
+  const startIndex = firstEndingAfter(index.maxEnds, row.startOffset, endIndex)
+  for (let position = startIndex; position < endIndex; position += 1) {
+    addMountedRangeHighlightRange(view, group, row, group.ranges[position]!)
   }
 }
 
@@ -1330,37 +1329,54 @@ function staleRangeHighlightSignature(): string {
   return '\0'
 }
 
+/**
+ * Guards the repaint, so it has to tell apart any two viewports that would paint differently
+ * without costing what the repaint costs: the ranges the mounted window reaches fold into one
+ * number, and the set as a whole rides along as the fingerprint the index already carries.
+ */
 function rangeHighlightSignature(
   view: VirtualizedTextViewInternal,
   group: VirtualizedTextHighlightGroup,
 ): string {
-  const parts = group.ranges.map((range) => `${range.start}:${range.end}`)
-  for (const row of getMountedRows(view)) appendRangeHighlightRowSignature(parts, row, group)
-  return parts.join('|')
+  const index = rangeHighlightIndex(group.ranges)
+  let hash = index.fingerprint
+  for (const row of getMountedRows(view)) {
+    hash = mixRangeHighlightRowSignature(hash, row, group, index)
+  }
+
+  return String(hash)
 }
 
-function appendRangeHighlightRowSignature(
-  parts: string[],
+function mixRangeHighlightRowSignature(
+  hash: number,
   row: MountedVirtualizedTextRow,
   group: VirtualizedTextHighlightGroup,
-): void {
-  for (const range of group.ranges) {
-    appendRangeHighlightRangeSignature(parts, row, range)
+  index: RangeHighlightIndex,
+): number {
+  const endIndex = firstStartingAtOrAfter(group.ranges, row.endOffset)
+  const startIndex = firstEndingAfter(index.maxEnds, row.startOffset, endIndex)
+  let mixed = hash
+  for (let position = startIndex; position < endIndex; position += 1) {
+    mixed = mixRangeHighlightRangeSignature(mixed, row, group.ranges[position]!)
   }
+
+  return mixed
 }
 
-function appendRangeHighlightRangeSignature(
-  parts: string[],
+function mixRangeHighlightRangeSignature(
+  hash: number,
   row: MountedVirtualizedTextRow,
   range: VirtualizedTextHighlightRange,
-): void {
-  if (range.start === range.end) return
-  if (range.end <= row.startOffset || range.start >= row.endOffset) return
+): number {
+  if (range.start === range.end) return hash
+  if (range.end <= row.startOffset || range.start >= row.endOffset) return hash
 
+  let mixed = hash
   for (const chunk of row.chunks) {
-    const signature = selectionChunkSignature(row, chunk, range.start, range.end)
-    if (signature) parts.push(signature)
+    mixed = mixRangeHighlightChunkSignature(mixed, row, chunk, range.start, range.end)
   }
+
+  return mixed
 }
 
 function clampSelection(
@@ -1469,13 +1485,14 @@ function rangeHighlightRule(name: string, style: VirtualizedTextHighlightStyle):
   return `::highlight(${name}) { ${declarations.join(' ')} }`
 }
 
-function selectionChunkSignature(
+function mixRangeHighlightChunkSignature(
+  hash: number,
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   start: number,
   end: number,
-): string | null {
-  if (end <= chunk.startOffset || start >= chunk.endOffset) return null
+): number {
+  if (end <= chunk.startOffset || start >= chunk.endOffset) return hash
 
   const localStart = clamp(
     rowLocalIndexForOffset(row, start, 'before') - chunk.localStart,
@@ -1487,7 +1504,15 @@ function selectionChunkSignature(
     0,
     chunk.text.length,
   )
-  return `${row.index}:${chunk.localStart}:${chunk.startOffset}:${localStart}:${localEnd}`
+  let mixed = mixSignatureHash(hash, row.index)
+  mixed = mixSignatureHash(mixed, chunk.localStart)
+  mixed = mixSignatureHash(mixed, chunk.startOffset)
+  mixed = mixSignatureHash(mixed, localStart)
+  return mixSignatureHash(mixed, localEnd)
+}
+
+function mixSignatureHash(hash: number, value: number): number {
+  return Math.imul(hash ^ (value | 0), SIGNATURE_HASH_PRIME) >>> 0
 }
 
 function compareTokenRenderEntries(left: TokenRenderEntry, right: TokenRenderEntry): number {

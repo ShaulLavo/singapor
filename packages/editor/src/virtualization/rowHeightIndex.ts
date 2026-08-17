@@ -74,7 +74,11 @@ export function rowHeightIndexRowAtOffset(index: RowHeightIndex, offset: number)
   const normalizedOffset = normalizeOffset(offset)
   if (normalizedOffset >= index.totalSize) return count - 1
 
-  const row = clampRow(upperBound(index.rowStarts, normalizedOffset) - 1, count)
+  const { rowStarts } = index
+  const row = clampRow(
+    upperBound(rowStarts.length, (boundary) => rowStarts[boundary] ?? 0, normalizedOffset) - 1,
+    count,
+  )
   const rowEnd = rowHeightIndexStart(index, row) + (index.rowSizes[row] ?? 0)
   if (normalizedOffset < rowEnd) return row
 
@@ -85,16 +89,30 @@ export function rowHeightIndexRowAfterOffset(index: RowHeightIndex, offset: numb
   const count = index.rowSizes.length
   if (count === 0) return 0
 
-  return Math.min(lowerBound(index.rowStarts, normalizeOffset(offset)), count)
+  const { rowStarts } = index
+  return Math.min(
+    lowerBound(rowStarts.length, (boundary) => rowStarts[boundary] ?? 0, normalizeOffset(offset)),
+    count,
+  )
 }
 
-function lowerBound(values: readonly number[], target: number): number {
+/**
+ * Both bounds read a value by position rather than take the array, so a list sorted on one field of
+ * its records is searched where it lies instead of being copied into a scratch array of that field
+ * ahead of every search. `length` doubles as the ceiling, which is how a second search stays inside
+ * what a first one already narrowed.
+ */
+export function lowerBound(
+  length: number,
+  valueAt: (index: number) => number,
+  target: number,
+): number {
   let low = 0
-  let high = values.length
+  let high = length
 
   while (low < high) {
     const middle = Math.floor((low + high) / 2)
-    if ((values[middle] ?? 0) >= target) {
+    if (valueAt(middle) >= target) {
       high = middle
       continue
     }
@@ -105,13 +123,17 @@ function lowerBound(values: readonly number[], target: number): number {
   return low
 }
 
-function upperBound(values: readonly number[], target: number): number {
+export function upperBound(
+  length: number,
+  valueAt: (index: number) => number,
+  target: number,
+): number {
   let low = 0
-  let high = values.length
+  let high = length
 
   while (low < high) {
     const middle = Math.floor((low + high) / 2)
-    if ((values[middle] ?? 0) > target) {
+    if (valueAt(middle) > target) {
       high = middle
       continue
     }

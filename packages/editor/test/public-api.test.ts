@@ -13,11 +13,17 @@ import {
   createEditorCapabilityToken,
   EDITOR_FIND_FEATURE,
   EDITOR_FIND_FEATURE_ID,
+  type EditorDecoration,
+  EditorDecorationStore,
+  type EditorDecorationRange,
+  type EditorDecorationSpec,
+  type EditorDecorationSurface,
   type EditorFindFeature,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   type EditorPluginContext,
   type EditorViewContributionContext,
+  projectDecorationRangeThroughEdits,
 } from '@singapor/core/extensions'
 import {
   applyEditorTheme,
@@ -45,6 +51,20 @@ describe('public API facade', () => {
     const snapshot = createPieceTableSnapshot('abc')
     const edit: TextEdit = { from: 1, to: 2, text: 'B' }
     const state = { documentId: null } as EditorState
+    // The category entrypoint is not the only door: hosts and framework bindings reach decorations
+    // through the package root, so a name that survives only in `./extensions` still breaks them.
+    const rootSpec: core.EditorDecorationSpec = { owner: 'test.root', start: 0, end: 3, text: {} }
+    const rootDecoration: core.EditorDecoration = {
+      ...rootSpec,
+      id: 'test.root#0',
+      startBias: 'right',
+      endBias: 'left',
+    }
+    const rootSurfaces: core.EditorDecorationSurface[] = ['text', 'row', 'minimap']
+    const rootRange: core.EditorDecorationRange | null = core.projectDecorationRangeThroughEdits(
+      rootDecoration,
+      [edit],
+    )
 
     expect(Editor).toBeTypeOf('function')
     expect(
@@ -61,6 +81,9 @@ describe('public API facade', () => {
     expect(readPieceTableTextRange(snapshot, 1, 3)).toBe('bc')
     expect(wordRangeAtOffset('abc', 1)).toEqual({ start: 0, end: 3 })
     expect(edit).toEqual({ from: 1, to: 2, text: 'B' })
+    expect(core.EditorDecorationStore).toBeTypeOf('function')
+    expect(rootSurfaces).toHaveLength(3)
+    expect(rootRange?.end).toBe(3)
     expect({ index: 0 } as MergeConflictRegion).toMatchObject({ index: 0 })
     expect(state.documentId).toBeNull()
     expect('debugPieceTable' in core).toBe(false)
@@ -128,6 +151,21 @@ describe('public API facade', () => {
     const syntax = createEmptySyntaxResult()
     const theme: EditorTheme = { foregroundColor: 'red' }
     const token = createEditorCapabilityToken('test.capability')
+    // A plugin shipped outside this package hands its ranges to the store and reads them back, and
+    // projects offsets it holds elsewhere through the same edit batch, so both the class and the
+    // free function are part of its build rather than an internal the editor happens to share.
+    const decorations = new EditorDecorationStore()
+    const spec = {
+      owner: 'test.decoration',
+      start: 0,
+      end: 3,
+      text: {},
+    } satisfies EditorDecorationSpec
+    const surface: EditorDecorationSurface = 'text'
+    const shifted: EditorDecorationRange | null = projectDecorationRangeThroughEdits(
+      { start: 0, end: 3, startBias: 'right', endBias: 'left' },
+      [{ from: 0, to: 0, text: 'x' }],
+    )
     const findFeature = {
       openFind: () => false,
       toggleFind: () => false,
@@ -144,6 +182,10 @@ describe('public API facade', () => {
     expect(EDITOR_FIND_FEATURE.id).toBe('editor.find')
     expect(EDITOR_MINIMAP_FEATURE_ID).toBe('editor.minimap')
     expect(EDITOR_MINIMAP_FEATURE.id).toBe('editor.minimap')
+    expect(decorations.add(spec)).toBeTypeOf('string')
+    const stored: readonly EditorDecoration[] = decorations.decorationsInRange(surface, 0, 3)
+    expect(stored.map((decoration) => decoration.owner)).toEqual(['test.decoration'])
+    expect(shifted?.start).toBe(1)
     expect(findFeature.openFind()).toBe(false)
     expect(token.id).toBe('test.capability')
     expect(applyEditorTheme).toBeTypeOf('function')

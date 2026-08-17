@@ -1,7 +1,9 @@
 import {
-  occurrenceHighlightRanges,
-  type OccurrenceHighlightRange,
-} from './occurrenceHighlights'
+  EditorDecorationStore,
+  type EditorDecorationSpec,
+  type EditorDecorationTextSurface,
+} from './editor/decorationStore'
+import { occurrenceHighlightRanges, type OccurrenceHighlightRange } from './occurrenceHighlights'
 import type {
   EditorPlugin,
   EditorViewContribution,
@@ -25,6 +27,13 @@ const RECOMPUTE_KINDS: ReadonlySet<EditorViewContributionUpdateKind> = new Set([
   'tokens',
   'viewport',
 ])
+
+/**
+ * The whole feature paints through one highlight group, which carries the colour, so there is
+ * nothing left for a per-decoration payload to say. Declaring the surface is what puts these in the
+ * text index; the shared object is what lets the store recognize an unchanged set.
+ */
+const OCCURRENCE_TEXT_SURFACE: EditorDecorationTextSurface = {}
 
 export type EditorOccurrenceHighlightPluginOptions = {
   readonly style?: VirtualizedTextHighlightStyle
@@ -56,7 +65,7 @@ export function createOccurrenceHighlightPlugin(
 
 class OccurrenceHighlightController implements EditorViewContribution {
   private readonly highlightName: string
-  private painted: readonly OccurrenceHighlightRange[] = []
+  private readonly decorations = new EditorDecorationStore()
 
   constructor(
     private readonly context: EditorViewContributionContext,
@@ -72,32 +81,46 @@ class OccurrenceHighlightController implements EditorViewContribution {
     }
     if (!RECOMPUTE_KINDS.has(kind)) return
 
-    this.apply(rangesForSnapshot(snapshot))
+    this.apply(snapshot)
   }
 
   dispose(): void {
     this.clear()
   }
 
-  private apply(ranges: readonly OccurrenceHighlightRange[]): void {
+  private apply(snapshot: EditorViewSnapshot): void {
+    const ranges = rangesForSnapshot(snapshot)
     // A single occurrence is the word the caret is already in — painting it says nothing.
-    const next = ranges.length > 1 ? ranges : []
-    if (sameRanges(this.painted, next)) return
+    const painted = ranges.length > 1 ? ranges : []
+    const specs = painted.map(occurrenceDecorationSpec)
+    if (!this.decorations.replaceOwner(EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID, specs)) return
 
-    this.painted = next
-    if (next.length === 0) {
+    if (painted.length === 0) {
       this.context.clearRangeHighlight?.(this.highlightName)
       return
     }
 
-    this.context.setRangeHighlight?.(this.highlightName, next, this.style)
+    this.context.setRangeHighlight?.(this.highlightName, painted, this.style)
   }
 
   private clear(): void {
-    if (this.painted.length === 0) return
+    if (!this.decorations.replaceOwner(EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID, [])) return
 
-    this.painted = []
     this.context.clearRangeHighlight?.(this.highlightName)
+  }
+}
+
+/**
+ * Occurrences mark words that are already in the document, so neither edge absorbs what is typed
+ * against it: a character typed onto the end of a match makes it a different word, not a longer
+ * match. That is the store's default, so the spec only has to say where and on which surface.
+ */
+function occurrenceDecorationSpec(range: OccurrenceHighlightRange): EditorDecorationSpec {
+  return {
+    owner: EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID,
+    start: range.start,
+    end: range.end,
+    text: OCCURRENCE_TEXT_SURFACE,
   }
 }
 
@@ -108,16 +131,4 @@ function rangesForSnapshot(snapshot: EditorViewSnapshot): readonly OccurrenceHig
   if (primary.startOffset !== primary.endOffset) return []
 
   return occurrenceHighlightRanges(snapshot.visibleRows, primary.headOffset)
-}
-
-function sameRanges(
-  left: readonly OccurrenceHighlightRange[],
-  right: readonly OccurrenceHighlightRange[],
-): boolean {
-  if (left.length !== right.length) return false
-
-  return left.every((range, index) => {
-    const other = right[index]
-    return other !== undefined && other.start === range.start && other.end === range.end
-  })
 }

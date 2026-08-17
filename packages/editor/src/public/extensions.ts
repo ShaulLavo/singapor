@@ -3,6 +3,16 @@ export {
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
 } from '../plugins'
+export {
+  EditorDecorationStore,
+  projectDecorationRangeThroughEdits,
+} from '../editor/decorationStore'
+export type {
+  EditorDecoration,
+  EditorDecorationRange,
+  EditorDecorationSpec,
+  EditorDecorationSurface,
+} from '../editor/decorationStore'
 export { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '../editor/findFeature'
 export type { EditorFindFeature } from '../editor/findFeature'
 export type {

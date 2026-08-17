@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**36 / 99 findings complete.** Update this count when you check a box.
+**40 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 5 / 16 complete.
+Milestones: 6 / 16 complete.
 
 
 ---
@@ -324,7 +324,7 @@ Milestones: 5 / 16 complete.
 
 ---
 
-## Milestone 6 — Decoration model
+## Milestone 6 — Decoration model ✅
 
 `effort L` · `risk high` · 4 findings
 
@@ -334,14 +334,47 @@ Milestones: 5 / 16 complete.
 
 > Ordering in this milestone rests partly on un-analyzed domains (text-model).
 
-- [ ] **Edit-tracked decoration identity: interval tree + 4-way stickiness + collapseOnReplaceEdit**  
+- [x] **Edit-tracked decoration identity: interval tree + 4-way stickiness + collapseOnReplaceEdit**  
   `high` `L` `partial` `decorations-widgets`
-- [ ] **Decorations as an interval tree with lazy subtree deltas and a four-way stickiness taxonomy**  
+- [x] **Decorations as an interval tree with lazy subtree deltas and a four-way stickiness taxonomy**  
   `medium` `L` `partial` `text-model`
-- [ ] **One decoration object, many surfaces — text, glyph margin, line margin, minimap, overview ruler, injected text**  
+- [x] **One decoration object, many surfaces — text, glyph margin, line margin, minimap, overview ruler, injected text**  
   `high` `L` `partial` `decorations-widgets`
-- [ ] **Highlight painting is O(mounted rows × total matches) per frame, with no visible-window index**  
+- [x] **Highlight painting is O(mounted rows × total matches) per frame, with no visible-window index**  
   `high` `M` `missing` `find-replace`
+
+> **Deviations, recorded.** Skipped per the Verifiers: no red-black interval tree, no lazy subtree
+> deltas, no four-way stickiness enum (a per-endpoint left|right anchor bias already spans all four
+> growth behaviours — verified against `resolveAnchor` for every pair, not assumed), no
+> `collapseOnReplaceEdit` flag (the collapse-when-swallowed rule is unconditional, which is what
+> both existing consumers already did), no overview ruler, no `affects*` change signal, and no
+> unification rewrite of `displayProjectionRegistry` — its per-projection owner/layer/priority is
+> good design and stayed.
+>
+> **The store tracks by projecting endpoints through edits, not by holding anchor objects.** Neither
+> migration target can reach one: a view contribution is handed a `TextSnapshot`, never a
+> `PieceTableSnapshot`, and `LspTextDocumentSnapshot` has no piece table at all. The store reuses the
+> piece table's `AnchorBias` type and its behaviour is pinned to `resolveAnchor` by a differential
+> test across all four bias pairs, so the two cannot drift apart silently.
+>
+> **What the review caught in this milestone's own work.** The store was built well and driven by
+> nothing: `applyEdits` had no production caller, so the edit-tracking payoff the milestone exists
+> for was exercised only by its own unit test. It is now driven from the editor's change stream and
+> exposed on the decoration contribution context, with an end-to-end test that registers one
+> decoration and never re-supplies it. Also fixed: `replaceOwner` filed decorations under the spec's
+> owner rather than the argument's, so a mismatch stored duplicates on every call; it answered
+> "unchanged" by comparing against post-projection offsets, telling an owner to skip a repaint whose
+> painted result was already stale; and both ends of the highlight seek window were off-by-one-able
+> with a green suite, dropping single-character highlights on a row's first or last column.
+>
+> **A semantic change that rode in under the migration.** A diagnostic whose endpoint fell strictly
+> inside a replaced span used to be dropped whole; the shared projection shrinks it to the edit
+> boundary instead. Kept, deliberately, because a marker near the problem beats no marker until the
+> server republishes — but it is a change from what shipped before this milestone, not a refactor.
+>
+> **Ships with one partition unused.** The store partitions storage per surface so a query for one
+> kind never walks another's entries, which is the finding's whole point, but nothing outside tests
+> registers a `row` or `minimap` decoration yet.
 
 
 ---

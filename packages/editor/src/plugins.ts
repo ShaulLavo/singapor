@@ -1,3 +1,4 @@
+import type { EditorDecorationStore } from './editor/decorationStore'
 import type { DocumentSessionChange } from './documentSession'
 import type { DocumentTextSnapshot, TextSnapshot } from './documentTextSnapshot'
 import type { EditorCommandContext, EditorCommandId } from './editor/commands'
@@ -371,7 +372,15 @@ export type EditorEditContributionProvider = {
 
 export type EditorDecorationContributionContext = EditorDocumentContributionContext &
   EditorRangeHighlightContributionContext &
-  EditorRowDecorationContributionContext
+  EditorRowDecorationContributionContext & {
+    /**
+     * Decorations registered here follow the text through edits, so a
+     * contribution states where a decoration is once instead of recomputing its
+     * offsets after every keystroke. Shared with every other contribution, which
+     * is why each one owns its entries.
+     */
+    readonly decorations: EditorDecorationStore
+  }
 
 export type EditorDecorationContribution = EditorDisposable & {
   handleEditorChange?(change: DocumentSessionChange | null): void

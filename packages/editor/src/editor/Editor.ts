@@ -24,6 +24,7 @@ import { measureEditorPerformance } from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
 import { EditorCommandRouter } from './commandRouter'
+import { EditorDecorationStore } from './decorationStore'
 import { EditorOperation, type EditorOperationFlush } from './operation'
 import { CursorHistory, sameCursorSelections, type CursorHistoryEntry } from './cursorHistory'
 import {
@@ -264,6 +265,7 @@ export class Editor {
   private readonly editChain = new DocumentEditChain()
   private lineStartsViewCache: { textVersion: number; view: LineStartsView } | null = null
   private readonly displayProjections = new EditorDisplayProjectionRegistry()
+  private readonly decorations = new EditorDecorationStore()
   private readonly highlightPrefix: string
   private sessionChangeVersion = 0
   private inlineReplacementProvider: EditorInlineReplacementProvider | null = null
@@ -2080,6 +2082,7 @@ export class Editor {
 
   private createDecorationContributionContext(owner: symbol): EditorDecorationContributionContext {
     return {
+      decorations: this.decorations,
       hasDocument: () => this.session !== null,
       log: (event) => this.log(event),
       materializeFullText: () => this.materializeFullText(),
@@ -2536,6 +2539,10 @@ export class Editor {
     // the notifications above describe a state, and only a state can be skipped.
     for (const pending of flush.changes) {
       const recorded = pending === flush.latest ? finalChange : pending.change
+      // Ahead of the notifications for this change, so a contribution that reads
+      // the store while handling it sees offsets that address the text the
+      // change produced rather than the text it replaced.
+      this.decorations.applyEdits(recorded.edits)
       this.logSessionChange(recorded, pending.totalName)
       this.sessionChangeVersion += 1
       this.scheduleSecondarySessionChangeWork(

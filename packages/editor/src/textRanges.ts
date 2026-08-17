@@ -1,11 +1,33 @@
+import { nextGraphemeBoundary, previousGraphemeBoundary } from './graphemes'
+
 export type TextOffsetRange = {
   readonly start: number
   readonly end: number
 }
 
-export type TextCharacterClass = 'word' | 'space' | 'punctuation'
+export type TextCharacterClass = 'word' | 'space' | 'punctuation' | 'newline'
 
 const WORD_PATTERN = /^[\p{L}\p{N}_]$/u
+
+/**
+ * The characters that end a word for cursor motion.
+ *
+ * Naming the separators rather than testing for letters and digits makes every script we did not
+ * think to enumerate — CJK, Cyrillic, emoji, currency signs — word material by default, and lets a
+ * language whose identifiers carry a sigil keep that sigil attached by dropping it from its list.
+ */
+const DEFAULT_WORD_SEPARATORS = '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?'
+
+const WORD_SEPARATORS_BY_LANGUAGE: Record<string, string> = {
+  // `--brand-color`, `@media` and `#fff` are each one name to anyone editing a stylesheet.
+  css: '`~!$%^&*()=+[{]}\\|;:\'",.<>/?',
+  scss: '`~!$%^&*()=+[{]}\\|;:\'",.<>/?',
+}
+
+export function wordSeparatorsForLanguage(languageId: string | null | undefined): string {
+  if (!languageId) return DEFAULT_WORD_SEPARATORS
+  return WORD_SEPARATORS_BY_LANGUAGE[languageId] ?? DEFAULT_WORD_SEPARATORS
+}
 
 export function clampTextOffset(text: string, offset: number): number {
   return Math.min(Math.max(0, offset), text.length)
@@ -34,25 +56,16 @@ export function normalizeTextOffsetRanges(
 
 export function lineRangeAtOffset(text: string, rawOffset: number): TextOffsetRange {
   const offset = clampTextOffset(text, rawOffset)
-  const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1
+  // Clamping the backward search to 0 instead would let a leading line break — which sits behind no
+  // character at all — answer for offset 0 and report the second line as the caret's own.
+  const lineStart = offset === 0 ? 0 : text.lastIndexOf('\n', offset - 1) + 1
   const nextLineBreak = text.indexOf('\n', offset)
   const lineEnd = nextLineBreak === -1 ? text.length : nextLineBreak
   return { start: lineStart, end: lineEnd }
 }
 
 export function previousCodePointOffset(text: string, offset: number): number {
-  const cursor = clampTextOffset(text, offset)
-  if (cursor <= 0) return 0
-
-  const previous = cursor - 1
-  const codeUnit = text.charCodeAt(previous)
-  const beforePrevious = previous - 1
-  const lowSurrogate = codeUnit >= 0xdc00 && codeUnit <= 0xdfff
-  if (!lowSurrogate || beforePrevious < 0) return previous
-
-  const previousCodeUnit = text.charCodeAt(beforePrevious)
-  const highSurrogate = previousCodeUnit >= 0xd800 && previousCodeUnit <= 0xdbff
-  return highSurrogate ? beforePrevious : previous
+  return previousGraphemeBoundary(text, clampTextOffset(text, offset))
 }
 
 export function previousCodePointStart(text: string, offset: number): number | null {
@@ -61,11 +74,7 @@ export function previousCodePointStart(text: string, offset: number): number | n
 }
 
 export function nextCodePointOffset(text: string, offset: number): number {
-  const cursor = clampTextOffset(text, offset)
-  if (cursor >= text.length) return text.length
-
-  const size = codePointSizeAt(text, cursor)
-  return Math.min(text.length, cursor + Math.max(1, size))
+  return nextGraphemeBoundary(text, clampTextOffset(text, offset))
 }
 
 export function codePointSizeAt(text: string, offset: number): number {
@@ -85,28 +94,56 @@ export function isWordCodePointBefore(text: string, offset: number): boolean {
   return previous !== null && isWordCodePointAt(text, previous)
 }
 
-export function characterClassAt(text: string, offset: number): TextCharacterClass {
+export function characterClassAt(
+  text: string,
+  offset: number,
+  separators: string = DEFAULT_WORD_SEPARATORS,
+): TextCharacterClass {
   const codePoint = text.codePointAt(offset)
   if (codePoint === undefined) return 'space'
+  if (codePoint === 0x0a) return 'newline'
 
   const character = String.fromCodePoint(codePoint)
   if (/\s/u.test(character)) return 'space'
-  if (WORD_PATTERN.test(character)) return 'word'
-  return 'punctuation'
+  if (separators.includes(character)) return 'punctuation'
+  return 'word'
 }
 
-export function previousWordOffset(text: string, offset: number): number {
-  let cursor = clampTextOffset(text, offset)
-  cursor = skipBackward(text, cursor, 'space')
-  const previous = previousCodePointOffset(text, cursor)
-  return skipBackward(text, cursor, characterClassAt(text, previous))
+export function previousWordOffset(text: string, offset: number, separators?: string): number {
+  const cursor = skipBackward(text, clampTextOffset(text, offset), 'space', separators)
+  const runClass = runClassAt(text, previousCodePointOffset(text, cursor), separators)
+  if (runClass === null) return cursor
+
+  return skipBackward(text, cursor, runClass, separators)
 }
 
-export function nextWordOffset(text: string, offset: number): number {
-  let cursor = clampTextOffset(text, offset)
-  cursor = skipForward(text, cursor, 'space')
-  cursor = skipForward(text, cursor, characterClassAt(text, cursor))
-  return skipForward(text, cursor, 'space')
+export function nextWordOffset(text: string, offset: number, separators?: string): number {
+  const cursor = skipForward(text, clampTextOffset(text, offset), 'space', separators)
+  const runClass = runClassAt(text, cursor, separators)
+  if (runClass === null) return cursor
+
+  return skipForward(text, skipForward(text, cursor, runClass, separators), 'space', separators)
+}
+
+/** Where the previous word ends, leaving the whitespace in front of it for the caret to sit on. */
+export function previousWordEndOffset(text: string, offset: number, separators?: string): number {
+  const cursor = clampTextOffset(text, offset)
+  const beforeSpace = skipBackward(text, cursor, 'space', separators)
+  if (beforeSpace !== cursor) return beforeSpace
+
+  const runClass = runClassAt(text, previousCodePointOffset(text, cursor), separators)
+  if (runClass === null) return cursor
+
+  return skipBackward(text, skipBackward(text, cursor, runClass, separators), 'space', separators)
+}
+
+/** Where the next word begins, once the caret's run and the whitespace after it are skipped. */
+export function nextWordStartOffset(text: string, offset: number, separators?: string): number {
+  const cursor = clampTextOffset(text, offset)
+  const runClass = runClassAt(text, cursor, separators)
+  if (runClass === null) return cursor
+
+  return skipForward(text, skipForward(text, cursor, runClass, separators), 'space', separators)
 }
 
 export function wordRangeAtOffset(text: string, rawOffset: number): TextOffsetRange {
@@ -140,23 +177,44 @@ export function isWholeWordRange(text: string, range: TextOffsetRange): boolean 
   )
 }
 
-function skipBackward(text: string, offset: number, targetClass: TextCharacterClass): number {
+/**
+ * The class of the run a word scan may consume, or null at a line break.
+ *
+ * Motion that runs past a line break puts the caret on a line the reader was not looking at, and
+ * because no scan is ever asked for a run of newlines, refusing the class here is the whole guard.
+ */
+function runClassAt(text: string, offset: number, separators?: string): TextCharacterClass | null {
+  const characterClass = characterClassAt(text, offset, separators)
+  return characterClass === 'newline' ? null : characterClass
+}
+
+function skipBackward(
+  text: string,
+  offset: number,
+  targetClass: TextCharacterClass,
+  separators?: string,
+): number {
   let cursor = offset
 
   while (cursor > 0) {
     const previous = previousCodePointOffset(text, cursor)
-    if (characterClassAt(text, previous) !== targetClass) return cursor
+    if (characterClassAt(text, previous, separators) !== targetClass) return cursor
     cursor = previous
   }
 
   return cursor
 }
 
-function skipForward(text: string, offset: number, targetClass: TextCharacterClass): number {
+function skipForward(
+  text: string,
+  offset: number,
+  targetClass: TextCharacterClass,
+  separators?: string,
+): number {
   let cursor = offset
 
   while (cursor < text.length) {
-    if (characterClassAt(text, cursor) !== targetClass) return cursor
+    if (characterClassAt(text, cursor, separators) !== targetClass) return cursor
     cursor = nextCodePointOffset(text, cursor)
   }
 

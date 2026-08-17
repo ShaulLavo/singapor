@@ -3541,6 +3541,23 @@ describe('Editor', () => {
       ])
     })
 
+    it('keeps a cursor inserted from the line end riding the line ends below it', () => {
+      const session = createDocumentSession('alpha\nab\nomega line')
+      session.setSelection(0)
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 80, 60)
+
+      editor.dispatchCommand('cursorLineEnd')
+      editor.dispatchCommand('editor.action.insertCursorBelow')
+      editor.dispatchCommand('editor.action.insertCursorBelow')
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 5, head: 5, start: 5, end: 5 },
+        { anchor: 8, head: 8, start: 8, end: 8 },
+        { anchor: 19, head: 19, start: 19, end: 19 },
+      ])
+    })
+
     it('selects the current word then adds the next exact occurrence with Mod+D', () => {
       const session = createDocumentSession('foo bar foo')
       session.setSelection(1)
@@ -4247,6 +4264,29 @@ describe('Editor', () => {
 
       expect(session.materializeFullText()).toBe('alpha X')
       expect(editorRoot().textContent).toBe('alpha X')
+    })
+
+    it('selects the double-clicked word on a line the document does not start with', () => {
+      const session = createDocumentSession('one\ntwo\nthree\nfour\nalpha beta')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 400, 200)
+
+      editorRoot().dispatchEvent(
+        new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 120,
+          detail: 2,
+        }),
+      )
+
+      const resolved = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      )
+      expect(resolved.startOffset).toBe(19)
+      expect(resolved.endOffset).toBe(24)
     })
 
     it('keeps a multi-click selection when stale DOM selection events arrive', () => {

@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**40 / 99 findings complete.** Update this count when you check a box.
+**47 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 6 / 16 complete.
+Milestones: 7 / 16 complete.
 
 
 ---
@@ -379,7 +379,7 @@ Milestones: 6 / 16 complete.
 
 ---
 
-## Milestone 7 — Word, grapheme, and vertical motion
+## Milestone 7 — Word, grapheme, and vertical motion ✅
 
 `effort L` · `risk medium` · 7 findings
 
@@ -389,20 +389,50 @@ Milestones: 6 / 16 complete.
 
 > Ordering in this milestone rests partly on un-analyzed domains (input-a11y).
 
-- [ ] **Word/character operations are line-scoped with a Uint8Array classifier; ours materialize the whole document and run regexes per character**  
+- [x] **Word/character operations are line-scoped with a Uint8Array classifier; ours materialize the whole document and run regexes per character**  
   `medium` `M` `missing` `cursor-selection`
-- [ ] **Word navigation has three distinct stop policies; ours is a fourth that matches none**  
+- [x] **Word navigation has three distinct stop policies; ours is a fourth that matches none**  
   `high` `M` `partial` `cursor-selection`
-- [ ] **Word-part (subword) motion clamped between the word-start and word-end candidates**  
+- [x] **Word-part (subword) motion clamped between the word-start and word-end candidates**  
   `medium` `S` `partial` `cursor-selection`
-- [ ] **Grapheme-cluster movement and emoji-aware backspace (move ≠ delete granularity)**  
+- [x] **Grapheme-cluster movement and emoji-aware backspace (move ≠ delete granularity)**  
   `high` `M` `missing` `cursor-selection`
-- [ ] **Backspace is code-point aware but not grapheme-cluster aware**  
+- [x] **Backspace is code-point aware but not grapheme-cluster aware**  
   `medium` `S` `partial` `input-a11y`
-- [ ] **Atomic soft-tab movement and tab-stop-aware backspace inside indentation**  
+- [x] **Atomic soft-tab movement and tab-stop-aware backspace inside indentation**  
   `high` `M` `missing` `cursor-selection`
-- [ ] **Vertical motion and Home/End from selection edges, wrapped lines, and first-non-blank**  
+- [x] **Vertical motion and Home/End from selection edges, wrapped lines, and first-non-blank**  
   `medium` `M` `partial` `cursor-selection`
+
+> **Deviations, recorded.** Skipped per the Verifiers: the Uint8Array classifier and the memoized
+> per-line segmenter (line-scoping is the win; those only matter once the O(document) allocation is
+> gone), the `stickyTabStops` arrow-movement half of soft tabs (off by default even in the reference,
+> and our horizontal motion has no access to tabSize — the backspace half landed), sub-item (d) of
+> vertical motion (preserving selection shape when inserting cursors above/below — the
+> display-row-vs-logical-line choice is defensible in a wrapping editor), and any grapheme break
+> table (built on `Intl.Segmenter`, which we already depend on).
+>
+> Word motion is still one stop policy, not three: the Verifier ranked the line-crossing guard and
+> the configurable separators as the wins in that finding, and both landed. WordStart/WordEnd/
+> Accessibility command ids were not added.
+>
+> **Two blockers the review caught in this milestone's own work, both invisible to the suite.**
+> (a) The shared grapheme boundary search segmented a fixed window of the text, and a window opening
+> mid-cluster hands the segmenter a truncated head it reports as a cluster of its own. On a
+> twelve-unit joined emoji, ArrowRight stepped over the whole glyph and ArrowLeft parked inside it —
+> the exact move/delete divergence this milestone exists to remove, reintroduced in the primitive
+> built to fix it. It now widens until two windows agree. (b) Tab-stop backspace was unreachable:
+> `backspaceSelections` gained an optional `tabSize` no caller passed, so six tests covered code the
+> editor never ran. Both had correct unit tests; neither had a test that reached the feature through
+> a keystroke.
+>
+> **Known harness gaps, unchanged by this milestone.** `packages/editor/tsconfig.json` is
+> `include: ["src"]`, so no test file is typechecked — type-level pins in `public-api.test.ts` are
+> inert and only its runtime assertions hold the contract. Making tests typecheck surfaces 141
+> pre-existing errors, mostly tests reaching into private members; that is its own cleanup. And tests
+> importing `@singapor/core/*` by name resolve to `dist`, which is correct for `public-api.test.ts`
+> (it checks the published facade) and is why `turbo.json` orders the build ahead of the tests, but
+> means running vitest in the package directly reads whatever was last built.
 
 
 ---

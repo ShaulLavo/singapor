@@ -1,4 +1,5 @@
-import { normalizeTabSize } from './displayTransforms'
+import { normalizeTabSize, visualColumnLength } from './displayTransforms'
+import { previousDeleteBoundary } from './graphemes'
 import { applyBatchToPieceTable } from './pieceTable/edits'
 import { offsetToPoint, pointToOffset } from './pieceTable/positions'
 import { readPieceTableTextRange } from './pieceTable/reads'
@@ -181,11 +182,12 @@ export const deleteSelections = (
 export const backspaceSelections = (
   snapshot: PieceTableSnapshot,
   set: SelectionSet<PieceTableAnchor>,
+  tabSize?: number,
 ): SelectionEditResult => {
   const normalized = normalizeSelectionSet(snapshot, set)
   const targets = normalized.selections
     .map((selection) => resolveSelection(snapshot, selection))
-    .map((selection) => backspaceTargetForSelection(snapshot, selection))
+    .map((selection) => backspaceTargetForSelection(snapshot, selection, tabSize))
     .filter((target): target is SelectionEditTarget => target !== null)
   const mergedTargets = mergeOffsetRangeTargets(targets)
   const edits = mergedTargets.map((target) => rangeToEdit(target.range, ''))
@@ -323,38 +325,71 @@ const selectionOptions = (selection: ResolvedSelection): CreateAnchorSelectionOp
   reversed: selection.reversed,
 })
 
-const previousCodePointOffset = (snapshot: PieceTableSnapshot, offset: number): number => {
-  if (offset <= 0) return 0
-  if (offset < 2) return offset - 1
+/**
+ * How much text one backwards delete reads to decide what it is deleting. The choice is only ever
+ * between the components at the tail of one cluster, and a joined emoji sequence runs to a few
+ * dozen code units at the outside, so this much always holds every candidate.
+ */
+const DELETE_READ_WINDOW = 64
 
-  const text = readPieceTableTextRange(snapshot, offset - 2, offset)
-  const before = text.charCodeAt(0)
-  const after = text.charCodeAt(1)
-  const beforeIsHighSurrogate = before >= 0xd800 && before <= 0xdbff
-  const afterIsLowSurrogate = after >= 0xdc00 && after <= 0xdfff
-  if (beforeIsHighSurrogate && afterIsLowSurrogate) return offset - 2
+const characterDeleteStart = (snapshot: PieceTableSnapshot, offset: number): number => {
+  const windowStart = Math.max(0, offset - DELETE_READ_WINDOW)
+  const text = readPieceTableTextRange(snapshot, windowStart, offset)
+  return windowStart + previousDeleteBoundary(text, text.length)
+}
 
-  return offset - 1
+/**
+ * Backspace inside a line's indentation takes back a whole level rather than one space.
+ *
+ * Spaces standing in for a tab were put there as a unit, so removing them one at a time makes
+ * unindenting cost as many presses as the indent is wide. Landing on the previous tab stop rather
+ * than counting a fixed number of spaces is what keeps a partial indent from stepping past it.
+ * Everything before the caret has to be whitespace, or this would eat alignment padding sitting
+ * between words.
+ */
+const indentDeleteStart = (
+  snapshot: PieceTableSnapshot,
+  offset: number,
+  tabSize: number | undefined,
+): number | null => {
+  if (tabSize === undefined) return null
+
+  const column = offsetToPoint(snapshot, offset).column
+  if (column === 0) return null
+
+  const indent = readPieceTableTextRange(snapshot, offset - column, offset)
+  if (indent.at(-1) !== ' ') return null
+  if (/[^\t ]/u.test(indent)) return null
+
+  const normalizedTabSize = normalizeTabSize(tabSize)
+  const width = visualColumnLength(indent, normalizedTabSize)
+  // Measuring from one column back is what sends a caret already standing on a stop to the one
+  // before it, rather than to the stop it is on.
+  const previousStop = width - 1 - ((width - 1) % normalizedTabSize)
+  return width - previousStop > 1 ? offset - (width - previousStop) : null
 }
 
 const backspaceRangeForSelection = (
   snapshot: PieceTableSnapshot,
   selection: ResolvedSelection,
+  tabSize: number | undefined,
 ): OffsetRange | null => {
   if (!selection.collapsed) return { start: selection.startOffset, end: selection.endOffset }
   if (selection.startOffset === 0) return null
 
+  const end = selection.startOffset
   return {
-    start: previousCodePointOffset(snapshot, selection.startOffset),
-    end: selection.startOffset,
+    start: indentDeleteStart(snapshot, end, tabSize) ?? characterDeleteStart(snapshot, end),
+    end,
   }
 }
 
 const backspaceTargetForSelection = (
   snapshot: PieceTableSnapshot,
   selection: ResolvedSelection,
+  tabSize: number | undefined,
 ): SelectionEditTarget | null => {
-  const range = backspaceRangeForSelection(snapshot, selection)
+  const range = backspaceRangeForSelection(snapshot, selection, tabSize)
   if (!range) return null
 
   return {

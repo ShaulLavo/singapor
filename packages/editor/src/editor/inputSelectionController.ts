@@ -22,7 +22,6 @@ import {
   capitalize,
   eventTargetInsideBlockSurface,
   indentTimingName,
-  selectionGoalColumn,
   type SessionChangeOptions,
 } from './editorUtils'
 import { keyboardFallbackText } from './input'
@@ -32,7 +31,12 @@ import {
   requestFrame,
   type MouseSelectionDrag,
 } from './mouseSelection'
-import { navigationTargetForCommand } from './navigationTargets'
+import {
+  createNavigationLineReader,
+  navigationTargetForCommand,
+  verticalMoveGoal,
+  type NavigationLine,
+} from './navigationTargets'
 import {
   findAllExactOccurrences,
   findNextExactOccurrence,
@@ -43,7 +47,7 @@ import {
   type OccurrenceQuery,
   type OccurrenceSelectionChange,
 } from './occurrences'
-import { lineRangeAtOffset, wordRangeAtOffset } from './textRanges'
+import { wordRangeAtOffset, wordSeparatorsForLanguage } from '../textRanges'
 import { appendTiming, eventStartMs, mergeChangeTimings, nowMs } from './timing'
 import { measureEditorPerformance } from './performanceDiagnostics'
 import {
@@ -408,7 +412,7 @@ export class InputSelectionController {
     const selectionChange = this.selectionChangeBeforeEdit()
     const change =
       direction === 'backward'
-        ? (this.deleteAutoClosedPair(session) ?? session.backspace())
+        ? (this.deleteAutoClosedPair(session) ?? session.backspace(this.options.tabSize))
         : session.deleteSelection()
     this.options.applySessionChange(
       mergeChangeTimings(change, selectionChange),
@@ -619,19 +623,21 @@ export class InputSelectionController {
     if (!session) return false
 
     const snapshot = session.getSnapshot()
-    const text = session.materializeFullText()
     const resolvedSelections = session
       .getSelections()
       .selections.map((selection) => resolveSelection(snapshot, selection))
     if (resolvedSelections.length === 0) return false
 
+    const readLine = createNavigationLineReader(snapshot, session.getTextSnapshot())
+    const wordSeparators = wordSeparatorsForLanguage(this.options.getLanguageId())
     const navigation = resolvedSelections.map((resolved) => ({
       resolved,
       target: navigationTargetForCommand({
         command,
         resolved,
-        text,
+        readLine,
         documentLength: snapshot.length,
+        wordSeparators,
         view: this.options.view,
       }),
     }))
@@ -1098,21 +1104,35 @@ export class InputSelectionController {
   }
 
   private selectLineAtOffset(event: MouseEvent, offset: number): void {
-    const session = this.session
-    if (!session) return
+    const line = this.readLineAt(offset)
+    if (!line) return
 
-    const range = lineRangeAtOffset(session.materializeFullText(), offset)
-    this.selectRange(event, range, 'input.tripleClick')
+    this.selectRange(
+      event,
+      { start: line.start, end: line.start + line.text.length },
+      'input.tripleClick',
+    )
   }
 
   private selectWordAtOffset(event: MouseEvent, offset: number): void {
-    const session = this.session
-    if (!session) return
+    const line = this.readLineAt(offset)
+    if (!line) return
 
-    const range = wordRangeAtOffset(session.materializeFullText(), offset)
+    const range = wordRangeAtOffset(line.text, offset - line.start)
     if (range.start === range.end) return
 
-    this.selectRange(event, range, 'input.doubleClick')
+    this.selectRange(
+      event,
+      { start: line.start + range.start, end: line.start + range.end },
+      'input.doubleClick',
+    )
+  }
+
+  private readLineAt(offset: number): NavigationLine | null {
+    const session = this.session
+    if (!session) return null
+
+    return createNavigationLineReader(session.getSnapshot(), session.getTextSnapshot())(offset)
   }
 
   private selectRange(
@@ -1373,10 +1393,14 @@ export class InputSelectionController {
     readonly goal: SelectionGoalValue
     readonly sourceHead: number
   } {
-    const visualColumn = selectionGoalColumn(selection, this.options.view)
+    const { goal, column } = verticalMoveGoal(
+      selection.goal,
+      selection.headOffset,
+      this.options.view,
+    )
     return {
-      anchor: this.options.view.offsetByDisplayRows(selection.headOffset, rowDelta, visualColumn),
-      goal: SelectionGoal.horizontal(visualColumn),
+      anchor: this.options.view.offsetByDisplayRows(selection.headOffset, rowDelta, column),
+      goal,
       sourceHead: selection.headOffset,
     }
   }

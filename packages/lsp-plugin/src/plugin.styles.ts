@@ -23,7 +23,7 @@ export const LINK_HIGHLIGHT_STYLE: VirtualizedTextHighlightStyle = {
  * red background plus a wavy red underline so they are unmistakable even on
  * noisy syntax colouring; warnings / information / hints get progressively
  * subtler translucent backgrounds (amber / blue / slate) with no underline,
- * mirroring the visual weight scale users expect from VS Code. All colours
+ * following the severity ordering the styling is meant to convey. All colours
  * are expressed as alpha-blended RGB so they compose over any editor theme
  * without hard-coding a foreground/background pair.
  */

@@ -41,6 +41,8 @@ export type EditorCommandId =
   | 'deleteForward'
   | 'deleteWordLeft'
   | 'deleteWordRight'
+  | 'deleteWordPartLeft'
+  | 'deleteWordPartRight'
   | 'editor.action.commentLine'
   | 'editor.action.blockComment'
   | 'editor.action.indentLines'

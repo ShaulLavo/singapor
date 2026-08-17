@@ -25,7 +25,7 @@ import {
   rejectCrossingFoldRanges,
 } from '../src/editor/folds'
 import { mouseSelectionAutoScrollDelta } from '../src/editor/mouseSelection'
-import { nextWordOffset, previousWordOffset } from '../src/editor/navigation'
+import { nextWordOffset, previousWordOffset } from '../src/textRanges'
 import { lineRangeAtOffset, wordRangeAtOffset } from '../src/editor/textRanges'
 import { appendTiming, eventStartMs, mergeChangeTimings } from '../src/editor/timing'
 import { createDocumentSession, type DocumentSessionChange } from '../src/documentSession'

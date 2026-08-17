@@ -1,0 +1,264 @@
+import { describe, expect, it } from 'vitest'
+
+import { createDocumentTextSnapshot, type TextSnapshot } from '../src/documentTextSnapshot'
+import type { EditorCommandId } from '../src/editor/commands'
+import {
+  createNavigationLineReader,
+  navigationTargetForCommand,
+  type NavigationTarget,
+} from '../src/editor/navigationTargets'
+import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
+import { SelectionGoal, type ResolvedSelection } from '../src/selections'
+import { lineRangeAtOffset, wordSeparatorsForLanguage } from '../src/textRanges'
+
+/** A resolved selection over [anchor, head]; collapsed when they match. */
+function selection(
+  anchor: number,
+  head = anchor,
+  goal: SelectionGoal = SelectionGoal.none(),
+): ResolvedSelection {
+  return {
+    id: `sel:${anchor}:${head}`,
+    startOffset: Math.min(anchor, head),
+    endOffset: Math.max(anchor, head),
+    anchorOffset: anchor,
+    headOffset: head,
+    reversed: head < anchor,
+    collapsed: anchor === head,
+    goal,
+    liveness: 'live',
+    startLiveness: 'live',
+    endLiveness: 'live',
+  }
+}
+
+/** A view over unwrapped rows, where a display row and a buffer line are the same thing. */
+function createTestView(text: string) {
+  const lineStarts = [0, ...[...text].flatMap((char, index) => (char === '\n' ? [index + 1] : []))]
+  const rowForOffset = (offset: number) => lineStarts.findLastIndex((start) => start <= offset)
+
+  return {
+    offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => {
+      const range = lineRangeAtOffset(text, offset)
+      return boundary === 'start' ? range.start : range.end
+    },
+    offsetByDisplayRows: (offset: number, rowDelta: number, goalColumn: number) => {
+      const row = Math.min(Math.max(rowForOffset(offset) + rowDelta, 0), lineStarts.length - 1)
+      const start = lineStarts[row] ?? 0
+      return start + Math.min(goalColumn, lineRangeAtOffset(text, start).end - start)
+    },
+    pageRowDelta: () => 10,
+    visualColumnForOffset: (offset: number) => offset - lineRangeAtOffset(text, offset).start,
+  }
+}
+
+/** A view that soft-wraps every buffer line into display rows of a fixed width. */
+function createWrappedTestView(text: string, rowWidth: number) {
+  return {
+    ...createTestView(text),
+    offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => {
+      const line = lineRangeAtOffset(text, offset)
+      const rowStart = line.start + Math.floor((offset - line.start) / rowWidth) * rowWidth
+      return boundary === 'start' ? rowStart : Math.min(rowStart + rowWidth, line.end)
+    },
+  }
+}
+
+function targets(text: string, view = createTestView(text)) {
+  const snapshot = createPieceTableSnapshot(text)
+
+  return (
+    command: EditorCommandId,
+    resolved: ResolvedSelection,
+    wordSeparators?: string,
+  ): NavigationTarget | null =>
+    navigationTargetForCommand({
+      command,
+      resolved,
+      readLine: createNavigationLineReader(snapshot, createDocumentTextSnapshot(snapshot)),
+      documentLength: snapshot.length,
+      wordSeparators,
+      view,
+    })
+}
+
+/** Runs several selections through one command, which is what shares a single line reader. */
+function targetsForSelections(text: string) {
+  const snapshot = createPieceTableSnapshot(text)
+  const view = createTestView(text)
+  const readLine = createNavigationLineReader(snapshot, createDocumentTextSnapshot(snapshot))
+
+  return (command: EditorCommandId, resolvedSelections: readonly ResolvedSelection[]) =>
+    resolvedSelections.map(
+      (resolved) =>
+        navigationTargetForCommand({
+          command,
+          resolved,
+          readLine,
+          documentLength: snapshot.length,
+          view,
+        })?.offset ?? null,
+    )
+}
+
+const MEASURED_LINE = 'const alpha = beta'
+
+/** Characters pulled out of the buffer while one caret move is resolved. */
+function charactersReadForCaretMove(lineCount: number): number {
+  const text = Array.from({ length: lineCount }, () => MEASURED_LINE).join('\n')
+  const snapshot = createPieceTableSnapshot(text)
+  const source = createDocumentTextSnapshot(snapshot)
+  let charactersRead = 0
+  const counted: TextSnapshot = {
+    length: source.length,
+    readRange: (start, end) => {
+      const value = source.readRange(start, end)
+      charactersRead += value.length
+      return value
+    },
+    materializeFullText: () => {
+      const value = source.materializeFullText()
+      charactersRead += value.length
+      return value
+    },
+    forEachTextChunk: (visit) => source.forEachTextChunk(visit),
+  }
+
+  navigationTargetForCommand({
+    command: 'cursorRight',
+    resolved: selection(Math.floor(text.length / 2)),
+    readLine: createNavigationLineReader(snapshot, counted),
+    documentLength: snapshot.length,
+    view: createTestView(text),
+  })
+
+  return charactersRead
+}
+
+describe('navigation reads', () => {
+  it('costs one line per caret move however long the document is', () => {
+    const short = charactersReadForCaretMove(20)
+    const long = charactersReadForCaretMove(20_000)
+
+    expect(long).toBe(short)
+    expect(long).toBeLessThanOrEqual(MEASURED_LINE.length)
+  })
+
+  it('gives a caret at the start of a line the line it is on, not the one that ends there', () => {
+    const move = targetsForSelections('alpha beta\ngamma delta')
+
+    expect(move('cursorWordRight', [selection(10), selection(11)])).toEqual([10, 17])
+  })
+})
+
+describe('word navigation', () => {
+  const text = 'alpha beta\ngamma delta'
+
+  it('stops at the end of a line rather than continuing onto the next', () => {
+    const move = targets(text)
+
+    expect(move('cursorWordRight', selection(10))?.offset).toBe(10)
+    expect(move('cursorWordLeft', selection(11))?.offset).toBe(11)
+  })
+
+  it('still steps over the line break one character at a time', () => {
+    const move = targets(text)
+
+    expect(move('cursorRight', selection(10))?.offset).toBe(11)
+    expect(move('cursorLeft', selection(11))?.offset).toBe(10)
+  })
+
+  it('stays put at either end of the document rather than stepping past it', () => {
+    const move = targets(text)
+
+    expect(move('cursorLeft', selection(0))?.offset).toBe(0)
+    expect(move('cursorRight', selection(text.length))?.offset).toBe(text.length)
+  })
+
+  it('follows the separator set the language declares', () => {
+    const move = targets('--brand-color: red')
+
+    expect(move('cursorWordRight', selection(0))?.offset).toBe(2)
+    expect(move('cursorWordRight', selection(0), wordSeparatorsForLanguage('css'))?.offset).toBe(13)
+  })
+})
+
+describe('word-part navigation', () => {
+  it('lands on the next word rather than running through to its far end', () => {
+    const move = targets('foo bar\nbaz')
+
+    expect(move('cursorWordPartRight', selection(3))?.offset).toBe(4)
+    expect(move('cursorWordPartLeft', selection(4))?.offset).toBe(3)
+  })
+
+  it('cannot leave the line the caret is on', () => {
+    const move = targets('foo bar\nbaz')
+
+    expect(move('cursorWordPartRight', selection(7))?.offset).toBe(7)
+    expect(move('cursorWordPartLeft', selection(8))?.offset).toBe(8)
+  })
+
+  it('still stops inside an identifier, which word motion would step over', () => {
+    const move = targets('parseHTTPResponse')
+
+    expect(move('cursorWordPartRight', selection(0))?.offset).toBe(5)
+    expect(move('cursorWordPartLeft', selection(17))?.offset).toBe(9)
+  })
+
+  it('stops on an operator instead of running back to the word in front of it', () => {
+    const move = targets('x = y')
+
+    expect(move('cursorWordPartLeft', selection(3))?.offset).toBe(2)
+  })
+})
+
+describe('vertical navigation', () => {
+  const text = 'one\ntwo\nthree\nfour'
+
+  it('leaves a selection from the edge it is heading towards', () => {
+    const move = targets(text)
+
+    expect(move('cursorDown', selection(9, 4))?.offset).toBe(15)
+    expect(move('cursorUp', selection(4, 9))?.offset).toBe(0)
+  })
+
+  it('keeps pivoting on the head while extending', () => {
+    const move = targets(text)
+
+    expect(move('selectDown', selection(9, 4))?.offset).toBe(8)
+    expect(move('selectUp', selection(4, 9))?.offset).toBe(5)
+  })
+})
+
+describe('line boundary navigation', () => {
+  it('escalates Home from the first non-blank character to the margin', () => {
+    const move = targets('    indented')
+
+    expect(move('cursorLineStart', selection(8))?.offset).toBe(4)
+    expect(move('cursorLineStart', selection(4))?.offset).toBe(0)
+    expect(move('cursorLineStart', selection(0))?.offset).toBe(4)
+  })
+
+  it('has nothing to escalate to on a line with no indentation', () => {
+    expect(targets('plain')('cursorLineStart', selection(3))?.offset).toBe(0)
+    expect(targets('    ')('cursorLineStart', selection(4))?.offset).toBe(0)
+  })
+
+  it('stops Home at the start of a wrapped row, which carries no indentation of its own', () => {
+    const text = '    indented line that wraps'
+    const move = targets(text, createWrappedTestView(text, 12))
+
+    expect(move('cursorLineStart', selection(14))?.offset).toBe(12)
+  })
+
+  it('holds the line end as the caret moves down past a shorter line', () => {
+    const move = targets('longer line here\nab\nanother long line')
+    const end = move('cursorLineEnd', selection(0))
+    expect(end).toMatchObject({ offset: 16, goal: { kind: 'lineEnd' } })
+
+    const short = move('cursorDown', selection(16, 16, end?.goal))
+    expect(short).toMatchObject({ offset: 19, goal: { kind: 'lineEnd' } })
+
+    expect(move('cursorDown', selection(19, 19, short?.goal))?.offset).toBe(37)
+  })
+})

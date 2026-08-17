@@ -3,6 +3,13 @@ import {
   visualColumnToBufferColumn,
   type TransformBias,
 } from '../displayTransforms'
+import {
+  codePointLength,
+  isCombiningMark,
+  isVariationSelector,
+  segmentGraphemes,
+  type TextSegment,
+} from '../graphemes'
 import { clamp } from '../style-utils'
 import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 import type {
@@ -109,29 +116,11 @@ export type RenderedChunkParts = {
   readonly textNode: Text
 }
 
-type TextSegment = {
-  readonly index: number
-  readonly segment: string
-}
-
 type ControlCharacterInfo = {
   readonly label: string
   readonly widthCells: number
   readonly key: string
 }
-
-type GraphemeSegmenter = {
-  segment(input: string): Iterable<TextSegment>
-}
-
-type IntlWithSegmenter = typeof Intl & {
-  Segmenter?: new (
-    locale?: string,
-    options?: { readonly granularity?: 'grapheme' },
-  ) => GraphemeSegmenter
-}
-
-const graphemeSegmenter = createGraphemeSegmenter()
 
 let rowRectMeasurementDepth = 0
 let measuredRowRects: Map<HTMLElement, DOMRect> | null = null
@@ -685,7 +674,7 @@ function appendTextBoundaries(
   measurement: RowMeasurementContext,
 ): number {
   let currentX = fallbackX
-  for (const segment of textPartSegments(part.node.data)) {
+  for (const segment of segmentGraphemes(part.node.data)) {
     currentX = appendTextSegmentBoundaries(
       boundaries,
       view,
@@ -1121,41 +1110,6 @@ function hexCode(code: number): string {
   return code.toString(16).toUpperCase().padStart(4, '0')
 }
 
-function textPartSegments(text: string): readonly TextSegment[] {
-  if (graphemeSegmenter) return Array.from(graphemeSegmenter.segment(text))
-  return fallbackTextSegments(text)
-}
-
-function createGraphemeSegmenter(): GraphemeSegmenter | null {
-  const Segmenter = (Intl as IntlWithSegmenter).Segmenter
-  if (!Segmenter) return null
-  return new Segmenter(undefined, { granularity: 'grapheme' })
-}
-
-function fallbackTextSegments(text: string): TextSegment[] {
-  const segments: TextSegment[] = []
-  let index = 0
-  while (index < text.length) {
-    const start = index
-    index += codePointLength(text, index)
-    index = consumeCombiningSuffix(text, index)
-    segments.push({ index: start, segment: text.slice(start, index) })
-  }
-
-  return segments
-}
-
-function consumeCombiningSuffix(text: string, index: number): number {
-  let next = index
-  while (next < text.length) {
-    const codePoint = text.codePointAt(next) ?? 0
-    if (!isCombiningMark(codePoint) && !isVariationSelector(codePoint)) break
-    next += codePointLength(text, next)
-  }
-
-  return next
-}
-
 function estimatedDisplayCellsFrom(
   text: string,
   start: number,
@@ -1228,24 +1182,6 @@ function columnForVisualTarget(
   if (bias === 'before') return startIndex
   if (bias === 'after') return endIndex
   return target - visual <= next - target ? startIndex : endIndex
-}
-
-function codePointLength(text: string, index: number): number {
-  const codePoint = text.codePointAt(index) ?? 0
-  return codePoint > 0xffff ? 2 : 1
-}
-
-function isCombiningMark(codePoint: number): boolean {
-  if (codePoint >= 0x0300 && codePoint <= 0x036f) return true
-  if (codePoint >= 0x1ab0 && codePoint <= 0x1aff) return true
-  if (codePoint >= 0x1dc0 && codePoint <= 0x1dff) return true
-  if (codePoint >= 0x20d0 && codePoint <= 0x20ff) return true
-  return codePoint >= 0xfe20 && codePoint <= 0xfe2f
-}
-
-function isVariationSelector(codePoint: number): boolean {
-  if (codePoint >= 0xfe00 && codePoint <= 0xfe0f) return true
-  return codePoint >= 0xe0100 && codePoint <= 0xe01ef
 }
 
 function isWideCodePoint(codePoint: number): boolean {

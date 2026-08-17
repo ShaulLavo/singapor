@@ -1,34 +1,80 @@
+import type { TextSnapshot } from '../documentTextSnapshot'
+import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
 import { SelectionGoal, type ResolvedSelection } from '../selections'
-import type { EditorCommandId } from './commands'
 import {
   nextCodePointOffset,
   nextWordOffset,
-  previousCodePointOffset,
   nextWordPartOffset,
+  nextWordStartOffset,
+  previousCodePointOffset,
+  previousWordEndOffset,
   previousWordOffset,
   previousWordPartOffset,
-} from './navigation'
+} from '../textRanges'
+import type { EditorCommandId } from './commands'
 
 export type NavigationTarget = {
   readonly offset: number
   readonly extend: boolean
-  readonly goal?: ReturnType<typeof SelectionGoal.horizontal>
+  readonly goal?: SelectionGoal
   readonly timingName: string
 }
 
-type NavigationTargetView = {
+/** One buffer line and the document offset it starts at, so a scan can report absolute offsets. */
+export type NavigationLine = {
+  readonly text: string
+  readonly start: number
+}
+
+type NavigationLineReader = (offset: number) => NavigationLine
+
+type VisualColumnView = {
+  readonly visualColumnForOffset: (offset: number) => number
+}
+
+type NavigationTargetView = VisualColumnView & {
   readonly offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => number
   readonly offsetByDisplayRows: (offset: number, rowDelta: number, goalColumn: number) => number
   readonly pageRowDelta: () => number
-  readonly visualColumnForOffset: (offset: number) => number
 }
 
 type NavigationTargetContext = {
   readonly command: EditorCommandId
   readonly resolved: ResolvedSelection
-  readonly text: string
+  readonly readLine: NavigationLineReader
   readonly documentLength: number
+  readonly wordSeparators?: string
   readonly view: NavigationTargetView
+}
+
+// A column past the end of every line: asking for it yields the line's end, and a caret carrying
+// it as its goal rides the ragged right edge down the file instead of snapping to one line's width.
+const PAST_LINE_END_COLUMN = Number.MAX_SAFE_INTEGER
+
+/**
+ * Reads the single line an offset falls on, so caret motion never scales with the file.
+ *
+ * The cache deliberately spans one command and no longer: several selections moving together
+ * usually share a line, while the next command arrives over a snapshot this one cannot see.
+ */
+export function createNavigationLineReader(
+  snapshot: PieceTableSnapshot,
+  textSnapshot: TextSnapshot,
+): NavigationLineReader {
+  let cached: NavigationLine | null = null
+
+  return (offset) => {
+    if (cached && offset >= cached.start && offset <= cached.start + cached.text.length) {
+      return cached
+    }
+
+    const point = offsetToPoint(snapshot, offset)
+    const start = offset - point.column
+    const end = pointToOffset(snapshot, { row: point.row, column: PAST_LINE_END_COLUMN })
+    cached = { start, text: textSnapshot.readRange(start, end) }
+    return cached
+  }
 }
 
 export function navigationTargetForCommand(
@@ -60,11 +106,11 @@ function horizontalTarget(
   direction: 'left' | 'right',
   extend: boolean,
 ): NavigationTarget {
-  const { resolved, text } = context
+  const { resolved } = context
   const collapsedOffset = direction === 'left' ? resolved.startOffset : resolved.endOffset
   const shouldMoveHead = extend || resolved.collapsed
   const offset = shouldMoveHead
-    ? codePointOffset(text, resolved.headOffset, direction)
+    ? codePointOffset(context, resolved.headOffset, direction)
     : collapsedOffset
 
   return {
@@ -81,13 +127,15 @@ function wordTarget(
   direction: 'left' | 'right',
   extend: boolean,
 ): NavigationTarget {
+  const line = context.readLine(context.resolved.headOffset)
+  const column = context.resolved.headOffset - line.start
   const offset =
     direction === 'left'
-      ? previousWordOffset(context.text, context.resolved.headOffset)
-      : nextWordOffset(context.text, context.resolved.headOffset)
+      ? previousWordOffset(line.text, column, context.wordSeparators)
+      : nextWordOffset(line.text, column, context.wordSeparators)
 
   return {
-    offset,
+    offset: line.start + offset,
     extend,
     timingName: extend
       ? `input.selectWord${capitalize(direction)}`
@@ -100,18 +148,40 @@ function wordPartTarget(
   direction: 'left' | 'right',
   extend: boolean,
 ): NavigationTarget {
-  const offset =
-    direction === 'left'
-      ? previousWordPartOffset(context.text, context.resolved.headOffset)
-      : nextWordPartOffset(context.text, context.resolved.headOffset)
+  const line = context.readLine(context.resolved.headOffset)
+  const column = context.resolved.headOffset - line.start
 
   return {
     extend,
-    offset,
+    offset: line.start + wordPartColumn(line.text, column, direction, context.wordSeparators),
     timingName: extend
       ? `input.selectWordPart${capitalize(direction)}`
       : `input.cursorWordPart${capitalize(direction)}`,
   }
+}
+
+/**
+ * Word motion bounds the subword scanner, never the other way round.
+ *
+ * The scanner only understands identifier shape, so left to itself it walks through whitespace and
+ * punctuation hunting for the next camel hump. Taking whichever candidate is nearest the caret
+ * lets it shorten a word move but never overshoot one.
+ */
+function wordPartColumn(
+  line: string,
+  column: number,
+  direction: 'left' | 'right',
+  separators: string | undefined,
+): number {
+  if (direction === 'left') {
+    return Math.max(
+      previousWordPartOffset(line, column),
+      previousWordOffset(line, column, separators),
+      previousWordEndOffset(line, column, separators),
+    )
+  }
+
+  return Math.min(nextWordPartOffset(line, column), nextWordStartOffset(line, column, separators))
 }
 
 function verticalTarget(
@@ -120,13 +190,28 @@ function verticalTarget(
   extend: boolean,
   timingName: string,
 ): NavigationTarget {
-  const goalColumn = navigationGoalColumn(context)
+  const origin = verticalOriginOffset(context, rowDelta, extend)
+  const { goal, column } = verticalMoveGoal(context.resolved.goal, origin, context.view)
   return {
-    offset: context.view.offsetByDisplayRows(context.resolved.headOffset, rowDelta, goalColumn),
+    offset: context.view.offsetByDisplayRows(origin, rowDelta, column),
     extend,
-    goal: SelectionGoal.horizontal(goalColumn),
+    goal,
     timingName,
   }
+}
+
+/**
+ * Up and Down without Shift leave a selection from the edge they are heading towards, the way
+ * every native text control does; only an extending move keeps pivoting on the head.
+ */
+function verticalOriginOffset(
+  context: NavigationTargetContext,
+  rowDelta: number,
+  extend: boolean,
+): number {
+  const { resolved } = context
+  if (extend || resolved.collapsed) return resolved.headOffset
+  return rowDelta < 0 ? resolved.startOffset : resolved.endOffset
 }
 
 function boundaryNavigationTarget(
@@ -154,13 +239,38 @@ function lineBoundaryTarget(
   boundary: 'start' | 'end',
   extend: boolean,
 ): NavigationTarget {
+  const head = context.resolved.headOffset
   return {
-    offset: context.view.offsetAtLineBoundary(context.resolved.headOffset, boundary),
+    offset:
+      boundary === 'start'
+        ? lineStartTargetOffset(context)
+        : context.view.offsetAtLineBoundary(head, 'end'),
     extend,
+    goal: boundary === 'end' ? SelectionGoal.lineEnd() : undefined,
     timingName: extend
       ? `input.selectLine${capitalize(boundary)}`
       : `input.cursorLine${capitalize(boundary)}`,
   }
+}
+
+/**
+ * Home reaches the first non-blank character before it reaches the margin, so the start of an
+ * indented statement is one press away and column zero stays one press further.
+ *
+ * A wrapped continuation row carries no indentation of its own and a blank line has nothing to
+ * escalate to, so both offer only their own start.
+ */
+function lineStartTargetOffset(context: NavigationTargetContext): number {
+  const head = context.resolved.headOffset
+  const rowStart = context.view.offsetAtLineBoundary(head, 'start')
+  const line = context.readLine(head)
+  if (rowStart > line.start) return rowStart
+
+  const indent = line.text.search(/\S/u)
+  if (indent <= 0) return line.start
+
+  const firstNonBlank = line.start + indent
+  return head === firstNonBlank ? line.start : firstNonBlank
 }
 
 function documentBoundaryTarget(
@@ -184,18 +294,44 @@ function pageTarget(
   extend: boolean,
 ): NavigationTarget {
   const rowDelta = direction * context.view.pageRowDelta()
-  const goalColumn = navigationGoalColumn(context)
+  const { goal, column } = verticalMoveGoal(resolved.goal, resolved.headOffset, context.view)
   return {
-    offset: context.view.offsetByDisplayRows(resolved.headOffset, rowDelta, goalColumn),
+    offset: context.view.offsetByDisplayRows(resolved.headOffset, rowDelta, column),
     extend,
-    goal: SelectionGoal.horizontal(goalColumn),
+    goal,
     timingName: pageTimingName(direction, extend),
   }
 }
 
-function navigationGoalColumn(context: NavigationTargetContext): number {
-  if (context.resolved.goal.kind === 'horizontal') return context.resolved.goal.x
-  return context.view.visualColumnForOffset(context.resolved.headOffset)
+/**
+ * Where a vertical move aims, and the goal it hands to the selection it produces.
+ *
+ * A run of Up/Down presses has to keep aiming at the column the run started from, so a goal the
+ * selection already holds outlives the move and only a selection without one adopts the caret's
+ * column. Every kind names its column here because a kind that did not would be answered with the
+ * caret's own, discarding the goal the run is built on without anything failing.
+ */
+export function verticalMoveGoal(
+  goal: SelectionGoal,
+  offset: number,
+  view: VisualColumnView,
+): { readonly goal: SelectionGoal; readonly column: number } {
+  switch (goal.kind) {
+    case 'horizontal':
+      return { goal, column: goal.x }
+    case 'lineEnd':
+      return { goal, column: PAST_LINE_END_COLUMN }
+    case 'none': {
+      const column = view.visualColumnForOffset(offset)
+      return { goal: SelectionGoal.horizontal(column), column }
+    }
+    default:
+      return unhandledSelectionGoal(goal)
+  }
+}
+
+function unhandledSelectionGoal(goal: never): never {
+  throw new Error(`unhandled selection goal: ${JSON.stringify(goal)}`)
 }
 
 function pageTimingName(direction: -1 | 1, extend: boolean): string {
@@ -203,9 +339,23 @@ function pageTimingName(direction: -1 | 1, extend: boolean): string {
   return direction < 0 ? 'input.cursorPageUp' : 'input.cursorPageDown'
 }
 
-function codePointOffset(text: string, offset: number, direction: 'left' | 'right'): number {
-  if (direction === 'left') return previousCodePointOffset(text, offset)
-  return nextCodePointOffset(text, offset)
+function codePointOffset(
+  context: NavigationTargetContext,
+  offset: number,
+  direction: 'left' | 'right',
+): number {
+  const line = context.readLine(offset)
+  const column = offset - line.start
+
+  // At either edge the neighbouring character is the line break, which the buffer stores as one
+  // character, so stepping over it needs no line of its own to be read.
+  if (direction === 'left') {
+    if (column === 0) return Math.max(0, offset - 1)
+    return line.start + previousCodePointOffset(line.text, column)
+  }
+
+  if (column >= line.text.length) return Math.min(context.documentLength, offset + 1)
+  return line.start + nextCodePointOffset(line.text, column)
 }
 
 function capitalize(value: string): string {

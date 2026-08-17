@@ -61,7 +61,7 @@ export type DocumentSession = {
     edits: readonly TextEdit[],
     options?: DocumentSessionApplyEditsOptions,
   ): DocumentSessionChange
-  backspace(): DocumentSessionChange
+  backspace(tabSize?: number): DocumentSessionChange
   deleteSelection(): DocumentSessionChange
   undo(): DocumentSessionChange
   redo(): DocumentSessionChange
@@ -136,6 +136,7 @@ export type EditorTextBuffer = {
   backspace(
     selections: SelectionSet<PieceTableAnchor>,
     sourceViewId?: string | null,
+    tabSize?: number,
   ): DocumentSessionChange
   deleteSelection(
     selections: SelectionSet<PieceTableAnchor>,
@@ -420,9 +421,10 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   public backspace(
     selections: SelectionSet<PieceTableAnchor>,
     sourceViewId: string | null = null,
+    tabSize?: number,
   ): DocumentSessionChange {
     const start = nowMs()
-    const result = backspaceSelections(this.history.current, selections)
+    const result = backspaceSelections(this.history.current, selections, tabSize)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
@@ -851,9 +853,9 @@ class EditorBufferDocumentSession implements EditorBufferSession {
     )
   }
 
-  public backspace(): DocumentSessionChange {
+  public backspace(tabSize?: number): DocumentSessionChange {
     return this.acceptBufferChange(
-      this.buffer.backspace(this.view.getSelections(), this.view.viewId),
+      this.buffer.backspace(this.view.getSelections(), this.view.viewId, tabSize),
     )
   }
 
@@ -1002,7 +1004,7 @@ class StaticDocumentSession implements DocumentSession {
     return appendTiming(this.createChange('edit', effectiveEdits), 'session.applyEdits', start)
   }
 
-  public backspace(): DocumentSessionChange {
+  public backspace(_tabSize?: number): DocumentSessionChange {
     return this.createChange('none', [])
   }
 

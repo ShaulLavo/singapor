@@ -9,8 +9,8 @@ import { renderTooltipMarkdown } from './markdownTooltip'
  * drives when the tooltip appears). Chosen to debounce rapid pointer sweeps
  * so the user does not trigger a hover round-trip for every token the cursor
  * passes through, while staying short enough that an intentional hover still
- * feels immediate. 250 ms matches the VS Code hover-provider default, which
- * users are already calibrated to.
+ * feels immediate. 250 ms is the interval editors have converged on, so it is
+ * the one users are already calibrated to.
  */
 export const HOVER_REQUEST_DEBOUNCE_MS = 250
 

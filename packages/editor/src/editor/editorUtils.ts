@@ -1,6 +1,5 @@
 import type { DocumentSessionChange } from '../documentSession'
 import type { EditorViewContributionUpdateKind } from '../plugins'
-import type { ResolvedSelection } from '../selections'
 
 const SYNTAX_EDIT_DEBOUNCE_MS = 75
 
@@ -15,10 +14,6 @@ export type SessionChangeOptions = {
   readonly syncDomSelection?: boolean
   readonly revealOffset?: number
   readonly revealBlock?: 'nearest' | 'end'
-}
-
-export type VisualColumnView = {
-  visualColumnForOffset(offset: number): number
 }
 
 export function syntaxRefreshDelay(change: DocumentSessionChange | null): number {
@@ -47,12 +42,6 @@ export function removeArrayItem<T>(items: T[], item: T): void {
 export function eventTargetInsideBlockSurface(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false
   return target.closest('[data-editor-block-surface]') !== null
-}
-
-export function selectionGoalColumn(selection: ResolvedSelection, view: VisualColumnView): number {
-  if (selection.goal.kind === 'horizontal') return selection.goal.x
-  if (selection.goal.kind === 'horizontalRange') return selection.goal.headX
-  return view.visualColumnForOffset(selection.headOffset)
 }
 
 export function capitalize(value: string): string {

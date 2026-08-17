@@ -11,6 +11,11 @@ export default defineConfig({
         },
       },
       {
+        // Tests that import '@singapor/core/*' by name resolve through the
+        // exports map to dist/, which is what public-api.test.ts is for — it
+        // checks the published facade rather than the source behind it. The
+        // build is ordered ahead of the tests in turbo.json so that artifact is
+        // current; running vitest here directly reads whatever was last built.
         test: {
           name: 'dom',
           environment: 'happy-dom',

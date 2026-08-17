@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import * as core from '@singapor/core'
 import {
+  characterClassAt,
   createPieceTableSnapshot,
   materializePieceTableFullText,
+  nextWordOffset,
+  previousWordOffset,
   readPieceTableTextRange,
   wordRangeAtOffset,
+  type TextCharacterClass,
   type TextEdit,
 } from '@singapor/core/document'
 import { Editor } from '@singapor/core/editor'
@@ -118,6 +122,22 @@ describe('public API facade', () => {
     ]
 
     expect(modes).toHaveLength(5)
+  })
+
+  it('exports the character classes and the separator set word motion accepts', () => {
+    // A host switching over the class exhaustively stops compiling when a member is added, and a
+    // host that classifies its own language passes the separators in, so the widened union and the
+    // parameter are both part of its build rather than an argument this package alone chooses.
+    const classes: TextCharacterClass[] = ['word', 'space', 'punctuation', 'newline']
+
+    expect(classes).toHaveLength(4)
+    expect(characterClassAt('a-b', 1, '-')).toBe('punctuation')
+    expect(characterClassAt('a-b', 1, '')).toBe('word')
+    expect(characterClassAt('a\nb', 1, '')).toBe('newline')
+    expect(nextWordOffset('a-b c', 0, '-')).toBe(1)
+    expect(nextWordOffset('a-b c', 0, '')).toBe(4)
+    expect(nextWordOffset('a\nb', 1)).toBe(1)
+    expect(previousWordOffset('a\nb', 2)).toBe(2)
   })
 
   it('exports the hosting modes a block surface can declare', () => {

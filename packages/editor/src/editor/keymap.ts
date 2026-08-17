@@ -323,6 +323,8 @@ const NAVIGATION_COMMANDS = new Set<EditorCommandId>([
   'cursorDown',
   'cursorWordLeft',
   'cursorWordRight',
+  'cursorWordPartLeft',
+  'cursorWordPartRight',
   'cursorLineStart',
   'cursorLineEnd',
   'cursorPageUp',
@@ -339,6 +341,8 @@ const SELECTION_COMMANDS = new Set<EditorCommandId>([
   'selectDown',
   'selectWordLeft',
   'selectWordRight',
+  'cursorWordPartLeftSelect',
+  'cursorWordPartRightSelect',
   'selectLineStart',
   'selectLineEnd',
   'selectPageUp',
@@ -376,6 +380,8 @@ const TEXT_EDITING_COMMANDS = new Set<EditorCommandId>([
 const ADVANCED_EDITING_COMMANDS = new Set<EditorCommandId>([
   'deleteWordLeft',
   'deleteWordRight',
+  'deleteWordPartLeft',
+  'deleteWordPartRight',
   'editor.action.commentLine',
   'editor.action.blockComment',
   'editor.action.indentLines',
@@ -421,6 +427,14 @@ const key = (keyName: string, modifiers: Omit<RawHotkey, 'key'> = {}): RawHotkey
   ...modifiers,
 })
 
+/**
+ * Subword shortcuts take both of the modifiers a word shortcut picks between, on every platform.
+ *
+ * Whichever one a platform spends on word motion, the pair is still free, so the subword shortcut
+ * can never shadow the word shortcut it refines, and reads as an extension of it either way.
+ */
+const WORD_PART_MODIFIER: Omit<RawHotkey, 'key'> = { alt: true, ctrl: true }
+
 function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   const platformBindings: readonly EditorKeyBinding[] =
     platform === 'mac' ? [] : [{ hotkey: key('Y', { ctrl: true }), command: 'redo' }]
@@ -463,6 +477,8 @@ function advancedEditingBindings(platform: EditorPlatform): readonly EditorKeyBi
   return [
     { hotkey: key('Backspace', wordDeleteModifier), command: 'deleteWordLeft' },
     { hotkey: key('Delete', wordDeleteModifier), command: 'deleteWordRight' },
+    { hotkey: key('Backspace', WORD_PART_MODIFIER), command: 'deleteWordPartLeft' },
+    { hotkey: key('Delete', WORD_PART_MODIFIER), command: 'deleteWordPartRight' },
     { hotkey: key('K', { mod: true, shift: true }), command: 'editor.action.deleteLines' },
     { hotkey: key('ArrowUp', copyLineModifier), command: 'editor.action.copyLinesUpAction' },
     { hotkey: key('ArrowDown', copyLineModifier), command: 'editor.action.copyLinesDownAction' },
@@ -578,6 +594,8 @@ function wordNavigationBindings(platform: EditorPlatform): readonly EditorKeyBin
   return [
     { hotkey: key('ArrowLeft', modifier), command: 'cursorWordLeft' },
     { hotkey: key('ArrowRight', modifier), command: 'cursorWordRight' },
+    { hotkey: key('ArrowLeft', WORD_PART_MODIFIER), command: 'cursorWordPartLeft' },
+    { hotkey: key('ArrowRight', WORD_PART_MODIFIER), command: 'cursorWordPartRight' },
   ]
 }
 
@@ -586,6 +604,14 @@ function wordSelectionBindings(platform: EditorPlatform): readonly EditorKeyBind
   return [
     { hotkey: key('ArrowLeft', { ...modifier, shift: true }), command: 'selectWordLeft' },
     { hotkey: key('ArrowRight', { ...modifier, shift: true }), command: 'selectWordRight' },
+    {
+      hotkey: key('ArrowLeft', { ...WORD_PART_MODIFIER, shift: true }),
+      command: 'cursorWordPartLeftSelect',
+    },
+    {
+      hotkey: key('ArrowRight', { ...WORD_PART_MODIFIER, shift: true }),
+      command: 'cursorWordPartRightSelect',
+    },
   ]
 }
 

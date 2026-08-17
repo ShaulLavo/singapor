@@ -9,16 +9,14 @@ import { anchorAt, resolveAnchor } from './pieceTable/anchors'
 export type SelectionGoal =
   | { readonly kind: 'none' }
   | { readonly kind: 'horizontal'; readonly x: number }
-  | { readonly kind: 'horizontalRange'; readonly anchorX: number; readonly headX: number }
+  // The end of the line is not a column, it is wherever the line happens to stop. A caret sent
+  // there by End has to remember that rather than the width of the line it left.
+  | { readonly kind: 'lineEnd' }
 
 export const SelectionGoal = {
   none: (): SelectionGoal => ({ kind: 'none' }),
   horizontal: (x: number): SelectionGoal => ({ kind: 'horizontal', x }),
-  horizontalRange: (anchorX: number, headX: number): SelectionGoal => ({
-    kind: 'horizontalRange',
-    anchorX,
-    headX,
-  }),
+  lineEnd: (): SelectionGoal => ({ kind: 'lineEnd' }),
 } as const
 
 export type Selection<T> = {

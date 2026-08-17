@@ -1,13 +1,25 @@
 import type { DocumentSessionEditSelection } from '../documentSession'
 import { normalizeTabSize } from '../displayTransforms'
 import type { ResolvedSelection } from '../selections'
+import {
+  nextCodePointOffset,
+  nextWordOffset,
+  nextWordPartOffset,
+  nextWordStartOffset,
+  previousCodePointOffset,
+  previousWordEndOffset,
+  previousWordOffset,
+  previousWordPartOffset,
+  wordSeparatorsForLanguage,
+} from '../textRanges'
 import type { TextEdit } from '../tokens'
 import type { EditorCommandId } from './commands'
-import { nextWordOffset, previousWordOffset } from './navigation'
 
 export type EditorEditActionCommandId =
   | 'deleteWordLeft'
   | 'deleteWordRight'
+  | 'deleteWordPartLeft'
+  | 'deleteWordPartRight'
   | 'editor.action.commentLine'
   | 'editor.action.blockComment'
   | 'editor.action.indentLines'
@@ -45,6 +57,8 @@ type OffsetRange = {
   readonly start: number
   readonly end: number
 }
+
+type WordDeleteGranularity = 'word' | 'wordPart'
 
 type BlockCommentTokens = {
   readonly open: string
@@ -114,6 +128,8 @@ export function isEditorEditActionCommand(
   return (
     command === 'deleteWordLeft' ||
     command === 'deleteWordRight' ||
+    command === 'deleteWordPartLeft' ||
+    command === 'deleteWordPartRight' ||
     command === 'editor.action.commentLine' ||
     command === 'editor.action.blockComment' ||
     command === 'editor.action.indentLines' ||
@@ -142,8 +158,18 @@ export function editActionForCommand(
   selections: readonly ResolvedSelection[],
   options: EditorEditActionOptions = {},
 ): EditorEditActionResult {
-  if (command === 'deleteWordLeft') return deleteWordAction(text, selections, 'left')
-  if (command === 'deleteWordRight') return deleteWordAction(text, selections, 'right')
+  if (command === 'deleteWordLeft') {
+    return deleteWordAction(text, selections, 'left', 'word', options)
+  }
+  if (command === 'deleteWordRight') {
+    return deleteWordAction(text, selections, 'right', 'word', options)
+  }
+  if (command === 'deleteWordPartLeft') {
+    return deleteWordAction(text, selections, 'left', 'wordPart', options)
+  }
+  if (command === 'deleteWordPartRight') {
+    return deleteWordAction(text, selections, 'right', 'wordPart', options)
+  }
   if (command === 'editor.action.commentLine') return commentLineAction(text, selections, options)
   if (command === 'editor.action.blockComment') {
     return blockCommentAction(text, selections, options)
@@ -195,24 +221,28 @@ function deleteWordAction(
   text: string,
   selections: readonly ResolvedSelection[],
   direction: 'left' | 'right',
+  granularity: WordDeleteGranularity,
+  options: EditorEditActionOptions,
 ): EditorEditActionResult {
+  const separators = wordSeparatorsForLanguage(options.languageId)
   const ranges = selections
-    .map((selection) => wordDeleteRange(text, selection, direction))
+    .map((selection) => wordDeleteRange(text, selection, direction, granularity, separators))
     .filter((range) => range.start !== range.end)
   const merged = mergeOffsetRanges(ranges)
   const edits = merged.map((range) => rangeToEdit(range, ''))
   const collapsedSelections = collapseSelectionsAfterRanges(merged)
+  const scope = granularity === 'wordPart' ? 'WordPart' : 'Word'
 
   return {
     edits,
     selections: collapsedSelections,
     revealOffset: collapsedSelections[0]?.head,
-    timingName: direction === 'left' ? 'input.deleteWordLeft' : 'input.deleteWordRight',
+    timingName: `input.delete${scope}${direction === 'left' ? 'Left' : 'Right'}`,
   }
 }
 
 /**
- * Trims trailing spaces and tabs from every line, whole-document like VS Code's command.
+ * Trims trailing spaces and tabs from every line of the document, selection or not.
  *
  * One edit per affected line rather than one whole-document edit, so untouched lines keep their
  * piece-table sharing and every anchor outside the trimmed runs survives.
@@ -243,8 +273,7 @@ function sortLinesAction(
   const edits: TextEdit[] = []
 
   for (const group of rowGroupsForSelections(map, selections)) {
-    // A single-line selection has nothing to sort against; VS Code sorts the whole document then,
-    // but silently reordering a file the user did not select is worse than doing nothing.
+    // Silently reordering a file the user never selected is worse than leaving one line as it is.
     if (group.startRow === group.endRow) continue
 
     const rows: string[] = []
@@ -476,25 +505,59 @@ function indentLinesAction(
   return editActionResultFromEdits(selections, edits, timingName)
 }
 
+/**
+ * A word delete consumes the word the caret is against, or the line break when there is none.
+ *
+ * Word motion refuses to cross a line break, so at a line edge every scan reports the caret's own
+ * offset: the break is then the thing the caret is against, and the thing to take.
+ */
 function wordDeleteRange(
   text: string,
   selection: ResolvedSelection,
   direction: 'left' | 'right',
+  granularity: WordDeleteGranularity,
+  separators: string,
 ): OffsetRange {
   if (!selection.collapsed) {
     return { start: selection.startOffset, end: selection.endOffset }
   }
+
+  const head = selection.headOffset
+  const boundary = wordDeleteOffset(text, head, direction, granularity, separators)
   if (direction === 'left') {
-    return {
-      start: previousWordOffset(text, selection.headOffset),
-      end: selection.headOffset,
-    }
+    return { start: boundary === head ? previousCodePointOffset(text, head) : boundary, end: head }
   }
 
-  return {
-    start: selection.headOffset,
-    end: nextWordOffset(text, selection.headOffset),
+  return { start: head, end: boundary === head ? nextCodePointOffset(text, head) : boundary }
+}
+
+/** Bounding the subword scan by the word stops keeps a subword delete a shortening of the word. */
+function wordDeleteOffset(
+  text: string,
+  head: number,
+  direction: 'left' | 'right',
+  granularity: WordDeleteGranularity,
+  separators: string,
+): number {
+  if (direction === 'left') {
+    const wordStart = previousWordOffset(text, head, separators)
+    if (granularity === 'word') return wordStart
+
+    return Math.max(
+      wordStart,
+      previousWordPartOffset(text, head),
+      previousWordEndOffset(text, head, separators),
+    )
   }
+
+  const wordEnd = nextWordOffset(text, head, separators)
+  if (granularity === 'word') return wordEnd
+
+  return Math.min(
+    wordEnd,
+    nextWordPartOffset(text, head),
+    nextWordStartOffset(text, head, separators),
+  )
 }
 
 function createLineMap(text: string): LineMap {

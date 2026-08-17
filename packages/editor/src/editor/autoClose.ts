@@ -40,7 +40,8 @@ const PAIRS_BY_LANGUAGE: Record<string, readonly AutoClosingPair[]> = {
 }
 
 /**
- * Characters a pair may be auto-closed *before*. Mirrors VS Code's default `autoCloseBefore`.
+ * Characters a pair may be auto-closed *before*: whitespace and the closers of
+ * other pairs, so typing a quote mid-word does not wrap the rest of the word.
  *
  * The point is that `(` typed immediately before a word should not close: you are almost always
  * wrapping the word that follows, and an inserted `)` would land in the middle of it.

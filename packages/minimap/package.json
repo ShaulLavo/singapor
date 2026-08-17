@@ -24,8 +24,7 @@
   "scripts": {
     "build": "bun ../../scripts/build-package.ts",
     "bench:update": "bun bench/update.ts",
-    "test": "vitest run",
-    "test:browser": "vitest run --browser.enabled --browser.headless test/workerClient.browser.test.ts",
+    "test": "vitest run && vitest run --browser.enabled --browser.headless test/workerClient.browser.test.ts",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",
     "format": "oxfmt --write .",

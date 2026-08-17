@@ -226,6 +226,10 @@ export type EditorViewContributionContext = {
   ): void
   setScrollTop(scrollTop: number): void
   reserveOverlayWidth(side: EditorOverlaySide, width: number): void
+  // Width already claimed on that edge by other contributions, so an overlay
+  // that anchors itself to the edge can step clear of them instead of covering
+  // them. Changes are announced as a 'layout' update.
+  getReservedOverlayWidth?(side: EditorOverlaySide): number
   textOffsetFromPoint(clientX: number, clientY: number): number | null
   getRangeClientRect(start: number, end: number): DOMRect | null
   setRangeHighlight?(
@@ -245,6 +249,13 @@ export type EditorViewContributionUpdateKind =
   | 'layout'
   | 'clear'
 
+/**
+ * Contributions update from one snapshot inside a single render pass, so their reads and writes
+ * interleave with each other's. A measurement taken after anything in the pass has written to the
+ * DOM forces the browser to settle the layout that write dirtied, and the bill lands on whoever
+ * happens to measure next rather than on whoever wrote — so an update takes every measurement it
+ * needs first, into plain data, and writes only once the last of them is in hand.
+ */
 export type EditorViewContribution = EditorDisposable & {
   update(
     snapshot: EditorViewSnapshot,

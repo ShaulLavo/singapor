@@ -14,8 +14,8 @@ import {
   disposableOnce,
   editorBlockSurfaceAnchorRange,
   editorBlockSurfaceAnchorRow,
+  editorBlockSurfaceKey,
   editorBlockSurfaceLaneId,
-  editorBlockSurfaceMeasureKey,
   editorBlockSurfacePlacement,
   editorBlockSurfaceRowId,
   elementMeasuredEditorBlockSize,
@@ -115,11 +115,25 @@ export class EditorBlockSurfaceController {
   }
 
   private createEditorBlockProviderContext(): EditorBlockProviderContext {
+    const text = this.deferredFullText()
     return {
       documentId: this.options.getDocumentId(),
-      text: this.options.materializeFullText(),
+      get text() {
+        return text()
+      },
       lineCount: this.options.getLineCount(),
     }
+  }
+
+  /**
+   * The document string costs a walk of the whole buffer, and these contexts are
+   * built far more often than they are read from: providers re-resolve on every
+   * edit, surfaces re-mount on every recycle, and most of both anchor by row and
+   * never look at the text. Charge the walk to the first reader, once.
+   */
+  private deferredFullText(): () => string {
+    let text: string | null = null
+    return () => (text ??= this.options.materializeFullText())
   }
 
   private resolveEditorBlockRows(
@@ -221,10 +235,10 @@ export class EditorBlockSurfaceController {
     if (!surface) return
     if (!validEditorBlockId(block.id)) return
 
-    const measureKey = editorBlockSurfaceMeasureKey(providerIndex, block.id, slot)
+    const surfaceKey = editorBlockSurfaceKey(providerIndex, block.id, slot)
     const size = resolveEditorBlockSize(
       surface.height,
-      measureKey,
+      surfaceKey,
       'height',
       this.editorBlockMeasuredSizes,
     )
@@ -241,7 +255,12 @@ export class EditorBlockSurfaceController {
       placement: editorBlockSurfacePlacement(slot),
       heightRows: 1,
       heightPx: size.px,
+      // Two providers anchoring to the same row would otherwise be ordered by
+      // the lexical accident of their index inside the row id, which puts
+      // provider 10 ahead of provider 9.
+      ordinal: providerIndex,
       ...(size.measure ? { heightMeasured: true } : {}),
+      ...(surface.hosting === 'hoisted' ? { hoistKey: surfaceKey } : {}),
     })
   }
 
@@ -258,10 +277,10 @@ export class EditorBlockSurfaceController {
     if (!surface) return
     if (!validEditorBlockId(block.id)) return
 
-    const measureKey = editorBlockSurfaceMeasureKey(providerIndex, block.id, slot)
+    const surfaceKey = editorBlockSurfaceKey(providerIndex, block.id, slot)
     const size = resolveEditorBlockSize(
       surface.width,
-      measureKey,
+      surfaceKey,
       'width',
       this.editorBlockMeasuredSizes,
     )
@@ -311,12 +330,15 @@ export class EditorBlockSurfaceController {
     surface: ResolvedEditorBlockSurface | ResolvedEditorBlockLaneSurface,
     container: HTMLElement,
   ): EditorBlockMountContext {
+    const text = this.deferredFullText()
     return {
       blockId: surface.block.id,
       surface: surface.slot,
       anchor: surface.block.anchor,
       documentId: this.options.getDocumentId(),
-      text: this.options.materializeFullText(),
+      get text() {
+        return text()
+      },
       focusEditor: () => this.options.focusEditor(),
       setSelection: (anchor, head) => this.options.setSelection(anchor, head),
       requestMeasure: () => this.measureEditorBlockSurface(surface, container),

@@ -106,6 +106,7 @@ function editorBlockHorizontalSurface(
   return {
     height: surface.height,
     mount: createReactEditorBlockMount(block, surface, renderSurface),
+    ...(surface.hosting ? { hosting: surface.hosting } : {}),
   }
 }
 

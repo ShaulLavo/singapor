@@ -17,8 +17,13 @@ import {
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   type EditorPluginContext,
+  type EditorViewContributionContext,
 } from '@singapor/core/extensions'
-import { applyEditorTheme, type EditorTheme } from '@singapor/core/rendering'
+import {
+  applyEditorTheme,
+  type EditorBlockHorizontalSurface,
+  type EditorTheme,
+} from '@singapor/core/rendering'
 import {
   EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
@@ -90,6 +95,26 @@ describe('public API facade', () => {
     ]
 
     expect(modes).toHaveLength(5)
+  })
+
+  it('exports the hosting modes a block surface can declare', () => {
+    // Which one a surface picks decides whether its DOM survives scrolling, so
+    // a host chooses it and a mode dropped back out breaks the host's build.
+    const hosting: EditorBlockHorizontalSurface['hosting'][] = ['inline', 'hoisted']
+
+    expect(hosting).toHaveLength(2)
+  })
+
+  it('exports the overlay reservation a view contribution reads its inset from', () => {
+    // Plugins outside this package position themselves against the edge other
+    // overlays already claimed, so both the accessor and the sides it accepts
+    // are part of their build.
+    const reserved: NonNullable<EditorViewContributionContext['getReservedOverlayWidth']> = (
+      side,
+    ) => (side === 'right' ? 96 : 0)
+
+    expect(reserved('right')).toBe(96)
+    expect(reserved('left')).toBe(0)
   })
 
   it('exposes the pass and cursor-history methods hosts drive the editor through', () => {

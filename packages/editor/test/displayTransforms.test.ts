@@ -155,6 +155,26 @@ describe('display transform core', () => {
     ])
   })
 
+  it('breaks block row ties on ordinal before falling back to id', () => {
+    const text = 'a'
+    const rows = createDisplayRows({
+      text,
+      lineStarts: computeLineStarts(text),
+      visibleLineCount: 1,
+      bufferRowForVisibleRow: (row) => row,
+      blocks: [
+        { id: 'row-a', anchorBufferRow: 0, placement: 'before', heightRows: 1, ordinal: 20 },
+        { id: 'row-b', anchorBufferRow: 0, placement: 'before', heightRows: 1, ordinal: 10 },
+      ],
+    })
+
+    expect(rows.map((row) => (row.kind === 'block' ? row.id : row.text))).toEqual([
+      'row-b',
+      'row-a',
+      'a',
+    ])
+  })
+
   it('maps block rows back to nearby buffer rows', () => {
     const text = 'abc\ndef'
     const rows = createDisplayRows({

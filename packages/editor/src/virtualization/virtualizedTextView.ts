@@ -621,11 +621,16 @@ export class VirtualizedTextView {
 
   public reserveOverlayWidth(side: 'left' | 'right', width: number): boolean {
     const value = width > 0 && Number.isFinite(width) ? `${Math.ceil(width)}px` : ''
-    const property = side === 'left' ? 'paddingLeft' : 'paddingRight'
+    const property = overlayPaddingProperty(side)
     if (this.scrollElement.style[property] === value) return false
 
     this.scrollElement.style[property] = value
     return true
+  }
+
+  public reservedOverlayWidth(side: 'left' | 'right'): number {
+    const width = Number.parseFloat(this.scrollElement.style[overlayPaddingProperty(side)])
+    return Number.isFinite(width) ? width : 0
   }
 
   public scrollToRow(row: number): void {
@@ -1158,4 +1163,9 @@ function dirtyTokenProjectionStartRow(current: number | null, row: number): numb
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+// A reservation is stored as scroll-element padding and has no other record.
+function overlayPaddingProperty(side: 'left' | 'right'): 'paddingLeft' | 'paddingRight' {
+  return side === 'left' ? 'paddingLeft' : 'paddingRight'
 }

@@ -2042,6 +2042,7 @@ export class Editor {
       setSelections: (selections, timingName, revealOffset) =>
         this.inputSelection.applyFindSelections(selections, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
+      getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
       setScrollTop: (scrollTop) => this.setScrollTop(scrollTop),
       textOffsetFromPoint: (clientX, clientY) =>
         this.inputSelection.textOffsetFromPoint(clientX, clientY),

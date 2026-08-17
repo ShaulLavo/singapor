@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**29 / 99 findings complete.** Update this count when you check a box.
+**36 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 4 / 16 complete.
+Milestones: 5 / 16 complete.
 
 
 ---
@@ -268,7 +268,7 @@ Milestones: 4 / 16 complete.
 
 ---
 
-## Milestone 5 — Layout, scroll anchoring, and surface hosting
+## Milestone 5 — Layout, scroll anchoring, and surface hosting ✅
 
 `effort L` · `risk high` · 7 findings
 
@@ -276,20 +276,50 @@ Milestones: 4 / 16 complete.
 
 **Exit criteria.** Inserting or measuring a 100px block above the viewport, and folding a region above the viewport, leave the first visible row unchanged (browser test on fixedRowVirtualizer); a settling block re-sums the height index only from the changed row; hidden-character marker computation is a distinct pass from the DOM write and the plugin render contract is documented; block rows accept an ordinal and an incremental add/remove path that does not re-run every provider; an opt-in overlay-hosted block surface keeps focus, scroll position and IME state across scroll recycling; the find widget no longer underlaps the minimap and z-index values come from one documented scale.
 
-- [ ] **Preserve the visual anchor when content height changes above the viewport**  
+- [x] **Preserve the visual anchor when content height changes above the viewport**  
   `medium` `S` `missing` `decorations-widgets`
-- [ ] **Sparse, lazily-summed layout index instead of a dense per-line prefix array**  
+- [x] **Sparse, lazily-summed layout index instead of a dense per-line prefix array**  
   `medium` `M` `partial` `rendering`
-- [ ] **Measure-back-and-correct loop with scroll-position compensation for variable-height rows**  
+- [x] **Measure-back-and-correct loop with scroll-position compensation for variable-height rows**  
   `high` `M` `partial` `rendering`
-- [ ] **Type-enforced read/write phase separation (RenderingContext vs RestrictedRenderingContext)**  
+- [x] **Type-enforced read/write phase separation (RenderingContext vs RestrictedRenderingContext)**  
   `high` `L` `missing` `rendering`
-- [ ] **View zone knobs we lack: ordinal tiebreak, before-first-line, render-in-hidden-areas, margin twin, min scroll width, suppressMouseDown**  
+- [x] **View zone knobs we lack: ordinal tiebreak, before-first-line, render-in-hidden-areas, margin twin, min scroll width, suppressMouseDown**  
   `medium` `M` `partial` `decorations-widgets`
-- [ ] **ZoneWidget: view zone reserves whitespace, the DOM lives in a stable overlay widget driven by onDomNodeTop — our block-row DOM is destroyed on scroll recycle**  
+- [x] **ZoneWidget: view zone reserves whitespace, the DOM lives in a stable overlay widget driven by onDomNodeTop — our block-row DOM is destroyed on scroll recycle**  
   `high` `M` `partial` `decorations-widgets`
-- [ ] **Overlay widgets: declarative corner anchoring with stacking, and widget min-width feeding the editor's scroll width**  
+- [x] **Overlay widgets: declarative corner anchoring with stacking, and widget min-width feeding the editor's scroll width**  
   `medium` `M` `partial` `decorations-widgets`
+
+> **Deviations, recorded.** Skipped per the Verifiers: the RenderingContext/RestrictedRenderingContext
+> class hierarchy (rows are their own layout boundary here, so the two-pass split plus a documented
+> contract buys what the type split would); the render-into-flow-and-converge architecture (our
+> virtualizer already converges through the ResizeObserver path); the zero-per-line index
+> representation (`view.model.rows` is already dense, so only the suffix watermark applies); five of
+> the six view-zone knobs (only `ordinal` and the incremental add/remove path were worth it —
+> `suppressMouseDown` is moot, there is no mousedown handler on the block container); and declarative
+> corner anchoring with stackOrdinal (one find widget does not need a widget-position abstraction).
+>
+> Scroll anchoring landed in `fixedRowVirtualizer.updateOptions` and NOT in `blockSurfaceController`,
+> as the plan requires. The controller needed no change at all: `applyMeasuredEditorBlockSizes` only
+> rewrites heights on existing rows, so a settle lands in the equal-row-count branch. Adding
+> compensation there as the prose sketched would have double-applied the delta.
+>
+> **A real bug the review caught in this milestone's own work.** Anchoring gave up whenever the next
+> layout carried no height index, so withdrawing the last variable-height row above the viewport —
+> the case that needs it most — jumped the reader by that row's height. A layout with no index is a
+> uniform document, not an unanchorable one; it now anchors through the base-height arithmetic.
+>
+> **A limit that cannot be fixed at this layer.** Row heights are the only evidence the virtualizer
+> has, so a run of rows identical in height to the ones it displaced is invisible: prepending five
+> plain lines to a document of plain lines reads exactly like appending five to the end, and the
+> anchor stays put. Folds of uniform text above the viewport are unanchored for the same reason.
+> Distinguishing them needs the caller to say where it edited. Stated in the source at
+> `anchorRowInNextLayout` so a reader does not assume it is covered.
+>
+> **Ships without an in-repo consumer.** `hosting: 'hoisted'` on a block surface is covered end to
+> end — a surface keeps focus, draft text and scroll position across scroll recycling and across a
+> provider re-resolution — but nothing in this repo or its example app sets it.
 
 
 ---

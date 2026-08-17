@@ -1518,6 +1518,32 @@ describe('Editor', () => {
       expect(lineStartScans).toBe(0)
     })
 
+    it('reports overlay reservations back to view contributions per side', () => {
+      let contributionContext: EditorViewContributionContext | null = null
+      const plugin: EditorPlugin = {
+        activate: (context) =>
+          context.registerViewContribution({
+            createContribution: (context) => {
+              contributionContext = context
+              return {
+                update: () => undefined,
+                dispose: () => undefined,
+              }
+            },
+          }),
+      }
+      editor.dispose()
+      editor = new Editor(container, { plugins: [plugin] })
+      const context = requireViewContributionContext(contributionContext)
+
+      expect(context.getReservedOverlayWidth?.('right')).toBe(0)
+
+      context.reserveOverlayWidth('right', 96)
+
+      expect(context.getReservedOverlayWidth?.('right')).toBe(96)
+      expect(context.getReservedOverlayWidth?.('left')).toBe(0)
+    })
+
     it('skips layout updates for unchanged overlay reservations', () => {
       const events: EditorViewContributionUpdateKind[] = []
       let contributionContext: EditorViewContributionContext | null = null

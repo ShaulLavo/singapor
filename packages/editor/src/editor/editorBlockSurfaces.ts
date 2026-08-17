@@ -58,7 +58,12 @@ export function editorBlockSurfaceLaneId(
   return `${revision}:${providerIndex}:${blockId}:${slot}`
 }
 
-export function editorBlockSurfaceMeasureKey(
+/**
+ * Identifies a surface independently of the resolution that produced it, unlike
+ * the row and lane ids. Anything that has to survive re-resolution — a cached
+ * measurement, a hoisted DOM host — is keyed by this.
+ */
+export function editorBlockSurfaceKey(
   providerIndex: number,
   blockId: string,
   slot: EditorBlockSurfaceSlot,

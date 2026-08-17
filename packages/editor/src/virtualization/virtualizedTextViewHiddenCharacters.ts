@@ -15,11 +15,13 @@ import { rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 
 type HiddenCharacterKind = 'space' | 'tab'
 
+/** Everything an element needs, so building one costs no measurement of any kind. */
 type HiddenCharacterMarker = {
   readonly kind: HiddenCharacterKind
   readonly offset: number
   readonly left: number
   readonly width: number
+  readonly glyph: string
 }
 
 /** Both -1 on a row with nothing but whitespace, which every index then falls outside. */
@@ -29,8 +31,8 @@ type NonWhitespaceBounds = {
 }
 
 /**
- * State every row in one pass shares. The dot glyph costs a style read to resolve, so it waits for
- * the first row that actually rebuilds — a pass that changes nothing must not touch the font.
+ * State every row in one pass shares. The dot glyph costs a measurement to resolve, so it waits for
+ * the first row that rebuilds its markers — a pass that changes nothing must not touch the font.
  */
 type HiddenCharacterPass = {
   readonly mode: HiddenCharactersMode
@@ -41,8 +43,15 @@ type HiddenCharacterPass = {
 type HiddenCharacterRowContext = {
   readonly view: VirtualizedTextViewInternal
   readonly row: MountedVirtualizedTextRow
-  readonly mode: HiddenCharactersMode
+  readonly pass: HiddenCharacterPass
   readonly bounds: NonWhitespaceBounds
+}
+
+/** Null markers mean the row's inputs are unchanged and what it already draws still stands. */
+type HiddenCharacterRowPlan = {
+  readonly row: MountedVirtualizedTextRow
+  readonly inputKey: string
+  readonly markers: readonly HiddenCharacterMarker[] | null
 }
 
 /**
@@ -75,33 +84,49 @@ export function normalizeHiddenCharactersMode(
   return DEFAULT_HIDDEN_CHARACTERS
 }
 
+/**
+ * Every row is measured before any row is drawn. Where a column sits is read out of the layout, and
+ * drawing into a row dirties that layout, so alternating the two per row makes each row pay to
+ * settle the one before it. Splitting them means the pass settles at most once.
+ */
 export function renderHiddenCharacters(view: VirtualizedTextViewInternal): void {
   const pass: HiddenCharacterPass = {
     mode: view.hiddenCharacters,
     selectionKey: hiddenCharacterSelectionKey(view),
     spaceGlyph: null,
   }
+  const plans: HiddenCharacterRowPlan[] = []
   for (const row of view.rowElements.values()) {
-    renderHiddenCharactersForRow(view, row, pass)
+    plans.push(planHiddenCharactersForRow(view, row, pass))
   }
+
+  for (const plan of plans) drawHiddenCharactersForRow(plan)
 }
 
-function renderHiddenCharactersForRow(
+function planHiddenCharactersForRow(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   pass: HiddenCharacterPass,
-): void {
-  const key = hiddenCharacterInputKey(row, pass)
+): HiddenCharacterRowPlan {
+  const inputKey = hiddenCharacterInputKey(row, pass)
   const previous = hiddenCharacterInputs.get(row.element)
-  if (previous?.key === key && previous.geometry === row.geometryCache) {
+  if (previous?.key === inputKey && previous.geometry === row.geometryCache) {
+    return { row, inputKey, markers: null }
+  }
+
+  return { row, inputKey, markers: hiddenCharacterMarkersForRow(view, row, pass) }
+}
+
+function drawHiddenCharactersForRow(plan: HiddenCharacterRowPlan): void {
+  const { row, markers } = plan
+  if (!markers) {
     if (row.hiddenCharactersKey.length > 0) attachHiddenCharacterLayer(row)
     return
   }
 
-  const markers = hiddenCharacterMarkersForRow(view, row, pass)
   if (markers.length === 0) {
     clearHiddenCharactersForRow(row)
-    rememberHiddenCharacterInputs(row, key)
+    rememberHiddenCharacterInputs(row, plan.inputKey)
     return
   }
 
@@ -109,11 +134,11 @@ function renderHiddenCharactersForRow(
   if (row.hiddenCharactersKey !== markerKey) {
     setHiddenCharactersKey(row, markerKey)
     row.hiddenCharactersLayerElement.replaceChildren(
-      ...markers.map((marker) => createHiddenCharacterMarker(view, row, pass, marker)),
+      ...markers.map((marker) => createHiddenCharacterMarker(row, marker)),
     )
   }
 
-  rememberHiddenCharacterInputs(row, key)
+  rememberHiddenCharacterInputs(row, plan.inputKey)
   attachHiddenCharacterLayer(row)
 }
 
@@ -160,7 +185,7 @@ function hiddenCharacterMarkersForRow(
   const context: HiddenCharacterRowContext = {
     view,
     row,
-    mode: pass.mode,
+    pass,
     bounds: nonWhitespaceBounds(row.text),
   }
   const markers: HiddenCharacterMarker[] = []
@@ -202,6 +227,7 @@ function appendHiddenCharacterMarker(
     offset,
     left: Math.min(left, right),
     width: Math.abs(right - left),
+    glyph: hiddenCharacterGlyph(context, kind),
   })
 }
 
@@ -217,7 +243,7 @@ function shouldShowHiddenCharacter(
   localIndex: number,
   offset: number,
 ): boolean {
-  const { mode } = context
+  const { mode } = context.pass
   if (mode === 'show') return true
   // A tab is an indentation decision wherever it sits, so the quieting of interior whitespace does
   // not extend to it.
@@ -273,29 +299,27 @@ function hiddenCharacterMarkerKeyPart(marker: HiddenCharacterMarker): string {
 }
 
 function createHiddenCharacterMarker(
-  view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
-  pass: HiddenCharacterPass,
   marker: HiddenCharacterMarker,
 ): HTMLSpanElement {
   const element = row.element.ownerDocument.createElement('span')
   element.className = 'editor-virtualized-hidden-character-marker'
   element.dataset.editorHiddenCharacter = marker.kind
   element.dataset.editorHiddenCharacterOffset = String(marker.offset)
-  element.textContent = hiddenCharacterGlyph(view, pass, marker.kind)
+  element.textContent = marker.glyph
   setStyleValue(element, 'left', `${marker.left}px`)
   setStyleValue(element, 'width', `${marker.width}px`)
   return element
 }
 
 function hiddenCharacterGlyph(
-  view: VirtualizedTextViewInternal,
-  pass: HiddenCharacterPass,
+  context: HiddenCharacterRowContext,
   kind: HiddenCharacterKind,
 ): string {
   if (kind === 'tab') return TAB_GLYPH
 
-  pass.spaceGlyph ??= measureWhitespaceDotGlyph(view.scrollElement)
+  const { pass } = context
+  pass.spaceGlyph ??= measureWhitespaceDotGlyph(context.view.scrollElement)
   return pass.spaceGlyph
 }
 

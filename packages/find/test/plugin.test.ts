@@ -12,6 +12,7 @@ import {
   createEditorFindContributionProviders,
   createEditorFindPlugin,
   EDITOR_FIND_FEATURE,
+  type EditorFindContributionProviders,
 } from '../src'
 
 describe('createEditorFindPlugin', () => {
@@ -103,7 +104,99 @@ describe('createEditorFindPlugin', () => {
 
     viewContribution?.dispose()
   })
+
+  it('insets the widget past overlay width already reserved on its edge', () => {
+    const providers = createEditorFindContributionProviders()
+    const context = viewContext()
+    const viewContribution = providers.view.createContribution(context)
+
+    context.reserveOverlayWidth('right', 120)
+    openFindWidget(providers)
+
+    expect(findWidgetElement(context).style.marginRight).toBe('120px')
+
+    viewContribution?.dispose()
+  })
+
+  // A reservation staked mid-layout is never announced to the contributions
+  // that already ran in that pass, so no update call follows it here.
+  it('follows a reservation the host never announces', async () => {
+    const providers = createEditorFindContributionProviders()
+    const context = viewContext()
+    const viewContribution = providers.view.createContribution(context)
+    openFindWidget(providers)
+    viewContribution?.update(context.getSnapshot(), 'layout')
+
+    context.reserveOverlayWidth('right', 64)
+
+    await vi.waitFor(() => {
+      expect(findWidgetElement(context).style.marginRight).toBe('64px')
+    })
+
+    viewContribution?.dispose()
+  })
+
+  it('releases the scroll-surface watcher on dispose', () => {
+    const observers = trackMutationObservers()
+    try {
+      const providers = createEditorFindContributionProviders()
+      const viewContribution = providers.view.createContribution(viewContext())
+      openFindWidget(providers)
+      expect(observers.connected()).toBe(1)
+
+      viewContribution?.dispose()
+
+      expect(observers.connected()).toBe(0)
+    } finally {
+      observers.restore()
+    }
+  })
 })
+
+function trackMutationObservers(): { connected(): number; restore(): void } {
+  const original = globalThis.MutationObserver
+  let connected = 0
+  globalThis.MutationObserver = class extends original {
+    public observe(target: Node, options?: MutationObserverInit): void {
+      connected += 1
+      super.observe(target, options)
+    }
+
+    public disconnect(): void {
+      connected -= 1
+      super.disconnect()
+    }
+  }
+  return {
+    connected: () => connected,
+    restore: () => {
+      globalThis.MutationObserver = original
+    },
+  }
+}
+
+function openFindWidget(providers: EditorFindContributionProviders): void {
+  const features: { openFind(): boolean }[] = []
+  providers.capability.createContribution({
+    registerFeature: (_token, value) => {
+      features.push(value as { openFind(): boolean })
+      return { dispose: vi.fn() }
+    },
+  })
+  features[0]?.openFind()
+}
+
+// The host keeps a reservation as scroll-surface padding; mirroring that here
+// is what lets the widget's own observation run against the mock.
+function overlayPadding(side: 'left' | 'right'): 'paddingLeft' | 'paddingRight' {
+  return side === 'left' ? 'paddingLeft' : 'paddingRight'
+}
+
+function findWidgetElement(context: EditorViewContributionContext): HTMLElement {
+  const widget = context.container.querySelector<HTMLElement>('.editor-find-widget')
+  if (!widget) throw new Error('missing find widget')
+  return widget
+}
 
 function pluginContext(): EditorPluginContext {
   return {
@@ -143,7 +236,13 @@ function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext {
     setSelection: vi.fn(),
     setSelections: vi.fn(),
     setScrollTop: vi.fn(),
-    reserveOverlayWidth: vi.fn(),
+    reserveOverlayWidth: vi.fn<EditorViewContributionContext['reserveOverlayWidth']>(
+      (side, width) => {
+        scrollElement.style[overlayPadding(side)] = width > 0 ? `${Math.ceil(width)}px` : ''
+      },
+    ),
+    getReservedOverlayWidth: (side) =>
+      Number.parseFloat(scrollElement.style[overlayPadding(side)]) || 0,
     textOffsetFromPoint: vi.fn(() => null),
     getRangeClientRect: vi.fn(() => null),
     setRangeHighlight: vi.fn(),

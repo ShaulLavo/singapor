@@ -78,6 +78,7 @@ class EditorFindViewContribution implements EditorViewContribution {
   private readonly subscription: EditorDisposable
   private latestSnapshot: EditorViewSnapshot
   private widget: EditorFindWidget | null = null
+  private reservationObserver: MutationObserver | null = null
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -102,6 +103,8 @@ class EditorFindViewContribution implements EditorViewContribution {
 
   public dispose(): void {
     this.subscription.dispose()
+    this.reservationObserver?.disconnect()
+    this.reservationObserver = null
     this.widget?.dispose()
     this.widget = null
     this.hostRegistration.dispose()
@@ -142,7 +145,25 @@ class EditorFindViewContribution implements EditorViewContribution {
       this.context.scrollElement,
       this.createWidgetOptions(),
     )
+    this.observeReservedWidth()
+    this.syncTrailingInset()
     return this.widget
+  }
+
+  // A claim staked while a layout pass is already running raises a reentrant
+  // notification the host discards, so a widget that re-read the reservation on
+  // notification alone would keep a stale inset until some unrelated layout
+  // disturbed it. Watching the surface that carries the claim makes the inset
+  // independent of the order contributions happen to run in.
+  private observeReservedWidth(): void {
+    if (this.reservationObserver || typeof MutationObserver === 'undefined') return
+
+    this.reservationObserver = new MutationObserver(() => this.syncTrailingInset())
+    this.reservationObserver.observe(this.context.scrollElement, { attributeFilter: ['style'] })
+  }
+
+  private syncTrailingInset(): void {
+    this.widget?.setTrailingInset(this.context.getReservedOverlayWidth?.('right') ?? 0)
   }
 
   private createWidgetOptions(): EditorFindWidgetOptions {

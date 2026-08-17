@@ -48,6 +48,14 @@ export type EditorBlockHorizontalSurface = {
   readonly height: EditorBlockSize
   readonly width?: never
   readonly mount: EditorBlockMount
+  /**
+   * `'hoisted'` mounts the surface once and keeps its DOM for as long as the
+   * block exists, at the cost of a node that is never reclaimed while the
+   * anchor is scrolled away. Anything the user can lose — a focused field, an
+   * inner scroll offset, a playing video, an in-flight composition — needs it;
+   * a surface that redraws itself from its inputs does not.
+   */
+  readonly hosting?: 'inline' | 'hoisted'
 }
 
 export type EditorBlockVerticalSurface = {

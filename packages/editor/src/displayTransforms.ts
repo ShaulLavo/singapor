@@ -83,6 +83,7 @@ export type DisplayBlockRow = {
   readonly heightRows: number
   readonly heightPx?: number
   readonly heightMeasured?: boolean
+  readonly hoistKey?: string
   readonly startOffset: number
   readonly endOffset: number
   readonly text: string
@@ -115,6 +116,18 @@ export type BlockRow = {
   readonly heightPx?: number
   readonly heightMeasured?: boolean
   readonly text?: string
+  /**
+   * Breaks ties between blocks sharing an anchor row and placement. Without one
+   * the order falls back to `id`, which encodes who registered first rather
+   * than a decision either side made.
+   */
+  readonly ordinal?: number
+  /**
+   * Identity of the surface's DOM host, stable across re-resolutions. Set only
+   * for surfaces that must survive row recycling, where the host has to outlive
+   * both the mounted row and `id`, which is reissued on every resolve.
+   */
+  readonly hoistKey?: string
 }
 
 export type BlockLane = {
@@ -826,6 +839,7 @@ const appendBlockRowUnits = (rows: DisplayRow[], block: BlockRow, offset: number
     heightRows,
     ...(heightPx === undefined ? {} : { heightPx }),
     ...(block.heightMeasured === true ? { heightMeasured: true } : {}),
+    ...(block.hoistKey === undefined ? {} : { hoistKey: block.hoistKey }),
     startOffset: offset,
     endOffset: offset,
     text: block.text ?? '',
@@ -960,6 +974,7 @@ const normalizeBlockRows = (blocks: readonly BlockRow[]): readonly BlockRow[] =>
       return (
         left.anchorBufferRow - right.anchorBufferRow ||
         placementOrder(left.placement) - placementOrder(right.placement) ||
+        (left.ordinal ?? 0) - (right.ordinal ?? 0) ||
         left.id.localeCompare(right.id)
       )
     })

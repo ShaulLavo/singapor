@@ -1,3 +1,22 @@
+/* Stacking scale. Layers name a tier here instead of picking an integer that
+   beats whatever they happened to land next to, and the tiers are spaced so a
+   surface that has to sit between two of them can take an intermediate value
+   without renumbering the rest. Declared on the document root because plugin
+   overlays mount into the host container, outside the editor's own subtree.
+
+   Plugin stylesheets still hardcode theirs — 1 for indent guides and the split
+   handle, 4 for per-glyph and diff overlays, 5 for the minimap, 20 for the find
+   widget — so the two in-scroll tiers stay unspaced to fit between 1 and 4, and
+   the overlay tiers start above every one of them. Both can be spread out once
+   those stylesheets read from here too. */
+:root {
+  --editor-z-gutter: 2;
+  --editor-z-inline-surface: 3;
+  --editor-z-overlay-surface: 100;
+  --editor-z-overlay-widget: 200;
+  --editor-z-overlay-popup: 300;
+}
+
 .editor {
   --editor-background: #1e1e1e;
   --editor-foreground: #d4d4d4;
@@ -111,7 +130,7 @@
   pointer-events: none;
   position: sticky;
   width: var(--editor-gutter-width);
-  z-index: 2;
+  z-index: var(--editor-z-gutter);
 }
 
 .editor-virtualized-gutter-row {
@@ -194,7 +213,7 @@
   pointer-events: none;
   position: absolute;
   top: 0;
-  z-index: 3;
+  z-index: var(--editor-z-inline-surface);
 }
 
 .editor-virtualized-horizontal-block-surface {
@@ -358,7 +377,7 @@
   position: absolute;
   right: 0;
   top: 0;
-  z-index: 5;
+  z-index: var(--editor-z-overlay-surface);
 }
 
 .editor-merge-conflict-actions {
@@ -430,7 +449,7 @@
     transform 120ms ease;
   white-space: normal;
   width: max-content;
-  z-index: 10;
+  z-index: var(--editor-z-overlay-popup);
 }
 
 .editor-merge-conflict-action:hover::after,

@@ -11,6 +11,12 @@ import {
 // Counts the geometry lookups a render pass makes, which is the cost the marker gate exists to
 // keep off a row that has not changed.
 const geometry = vi.hoisted(() => ({ lookups: 0 }))
+// The order a render pass asks the layout questions in and answers them in, while recording is on.
+const renderPhases = vi.hoisted(() => ({ events: null as ('read' | 'write')[] | null }))
+// Asking for the glyph is a question about the font whether or not the answer is already known, and
+// a remembered answer reaches no probe — so the ask itself has to be what gets counted, or a
+// measurement moved into the drawing looks free.
+const glyphAsks = vi.hoisted(() => ({ count: 0 }))
 
 vi.mock('../src/virtualization/virtualizedTextViewGeometry', async (importOriginal) => {
   const actual =
@@ -19,12 +25,29 @@ vi.mock('../src/virtualization/virtualizedTextViewGeometry', async (importOrigin
     ...actual,
     offsetToX: (...args: Parameters<typeof actual.offsetToX>) => {
       geometry.lookups += 1
+      renderPhases.events?.push('read')
       return actual.offsetToX(...args)
     },
   }
 })
 
+vi.mock('../src/virtualization/browserMetrics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/virtualization/browserMetrics')>()
+  return {
+    ...actual,
+    measureWhitespaceDotGlyph: (...args: Parameters<typeof actual.measureWhitespaceDotGlyph>) => {
+      glyphAsks.count += 1
+      renderPhases.events?.push('read')
+      return actual.measureWhitespaceDotGlyph(...args)
+    },
+  }
+})
+
 const PROBE_CLASS = 'editor-virtualized-metric-probe'
+const LAYER_CLASS = 'editor-virtualized-hidden-character-layer'
+// Every way the markers reach the document: the layer into the row, the spans into the layer.
+const LAYER_MUTATIONS = ['appendChild', 'insertBefore', 'remove', 'replaceChildren'] as const
+const originalLayerMutations = new Map<string, PropertyDescriptor | undefined>()
 const highlightsMap = new Map<string, Highlight>()
 // Reading a probe is the layout the font measurement costs, so counting the reads is how a pass
 // that was supposed to leave the font alone is caught having asked for it.
@@ -49,12 +72,56 @@ function stubProbeMeasurement(): void {
     if (!this.classList.contains(PROBE_CLASS)) return originalGetBoundingClientRect.call(this)
 
     probeReads += 1
+    renderPhases.events?.push('read')
     if (!advanceOf) return originalGetBoundingClientRect.call(this)
 
     let width = 0
     for (const character of this.textContent ?? '') width += advanceOf(character)
     return { ...originalGetBoundingClientRect.call(this), width } as DOMRect
   }
+}
+
+function touchesMarkerLayer(nodes: readonly unknown[]): boolean {
+  return nodes.some((node) => node instanceof HTMLElement && node.classList.contains(LAYER_CLASS))
+}
+
+function stubLayerMutations(): void {
+  for (const name of LAYER_MUTATIONS) {
+    const original = HTMLElement.prototype[name] as (...args: unknown[]) => unknown
+    originalLayerMutations.set(name, Object.getOwnPropertyDescriptor(HTMLElement.prototype, name))
+    Object.defineProperty(HTMLElement.prototype, name, {
+      configurable: true,
+      writable: true,
+      value: function recordMutation(this: HTMLElement, ...args: unknown[]) {
+        if (renderPhases.events && touchesMarkerLayer([this, ...args])) {
+          renderPhases.events.push('write')
+        }
+
+        return original.apply(this, args)
+      },
+    })
+  }
+}
+
+function restoreLayerMutations(): void {
+  for (const [name, descriptor] of originalLayerMutations) {
+    if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+    else Reflect.deleteProperty(HTMLElement.prototype, name)
+  }
+
+  originalLayerMutations.clear()
+}
+
+function phasesDuring(render: () => void): readonly ('read' | 'write')[] {
+  const events: ('read' | 'write')[] = []
+  renderPhases.events = events
+  try {
+    render()
+  } finally {
+    renderPhases.events = null
+  }
+
+  return events
 }
 
 function mountView(options: VirtualizedTextViewOptions, text: string): VirtualizedTextView {
@@ -94,6 +161,12 @@ function probeReadsDuring(render: () => void): number {
   return probeReads - before
 }
 
+function glyphAsksDuring(render: () => void): number {
+  const before = glyphAsks.count
+  render()
+  return glyphAsks.count - before
+}
+
 function markerLefts(): string[] {
   return markers().map((marker) => marker.style.left)
 }
@@ -112,7 +185,9 @@ describe('hidden character markers', () => {
     globalThis.Highlight = MockHighlight
     advanceOf = null
     probeReads = 0
+    renderPhases.events = null
     stubProbeMeasurement()
+    stubLayerMutations()
     clearBrowserTextMetricsCache()
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -122,6 +197,8 @@ describe('hidden character markers', () => {
     for (const view of views) view.dispose()
     views = []
     container.remove()
+    renderPhases.events = null
+    restoreLayerMutations()
     HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
     clearBrowserTextMetricsCache()
     Reflect.deleteProperty(globalThis, 'Highlight')
@@ -139,6 +216,19 @@ describe('hidden character markers', () => {
 
     expect(firstShown).toBeGreaterThan(firstHidden)
     expect(settledShown).toBe(settledHidden)
+  })
+
+  // Where a column sits is a question about the settled layout, and every marker written into a row
+  // unsettles it again, so a pass that alternates the two makes the browser settle once per row.
+  it('measures every row before it draws into any of them', () => {
+    const indented = Array.from({ length: 6 }, () => '  ab  cd').join('\n')
+    const view = mountView({ hiddenCharacters: 'hidden' }, indented)
+
+    const phases = phasesDuring(() => view.setHiddenCharacters('show'))
+
+    expect(phases).toContain('read')
+    expect(phases).toContain('write')
+    expect(phases.lastIndexOf('read')).toBeLessThan(phases.indexOf('write'))
   })
 
   it('re-measures the row an edit moved', () => {
@@ -229,6 +319,18 @@ describe('hidden character markers', () => {
 
     expect(markers()).toHaveLength(1)
     expect(markers()[0]).toBe(before)
+  })
+
+  // Every space on screen is drawn with the one glyph, so the font has an answer for the pass rather
+  // than an answer for each marker, and asking again per marker re-enters the whole metric lookup.
+  it('asks the font for the space glyph once however many spaces the pass marks', () => {
+    const indented = Array.from({ length: 6 }, () => '  ab  cd').join('\n')
+    const view = mountView({ hiddenCharacters: 'hidden' }, indented)
+
+    const asks = glyphAsksDuring(() => view.setHiddenCharacters('show'))
+
+    expect(markers().length).toBeGreaterThan(20)
+    expect(asks).toBe(1)
   })
 
   it('leaves the font unread by a pass that rebuilds no row', () => {

@@ -89,6 +89,13 @@ export class EditorFindWidget {
     this.root.hidden = true
   }
 
+  // The stylesheet anchors the widget a fixed inset from the container's
+  // trailing edge, which is also where a minimap parks. Margin keeps that inset
+  // authoritative and shifts the whole widget inboard of the claimed strip.
+  public setTrailingInset(width: number): void {
+    this.root.style.marginRight = width > 0 ? `${Math.ceil(width)}px` : ''
+  }
+
   public update(state: EditorFindWidgetState): void {
     syncEditorThemeVariables(this.root, this.themeSource)
     if (this.findInput.value !== state.searchString) this.findInput.value = state.searchString
@@ -128,6 +135,10 @@ export class EditorFindWidget {
   private build(document: Document): void {
     this.root.className = 'editor-find-widget'
     this.root.hidden = true
+    // Layer from the editor's shared stacking scale so the widget keeps its
+    // place as other surfaces claim tiers; the literal is the standalone
+    // fallback for hosts that ship this stylesheet without the editor's.
+    this.root.style.zIndex = 'var(--editor-z-overlay-widget, 20)'
     this.findInput.className = 'editor-find-input'
     this.findInput.type = 'text'
     this.findInput.placeholder = 'Find'

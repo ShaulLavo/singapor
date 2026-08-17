@@ -272,5 +272,6 @@ export function editorThemeFromVscodeTheme(registration: VscodeThemeRegistration
     fg: registration.fg ?? registration.colors?.['editor.foreground'],
     colors: registration.colors,
     tokenColors: registration.tokenColors ?? registration.settings,
+    type: registration.type,
   })
 }

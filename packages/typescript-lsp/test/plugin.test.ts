@@ -175,7 +175,7 @@ describe('createTypeScriptLspPlugin', () => {
       'editor-test-typescript-lsp-error',
       [{ start: 22, end: 23 }],
       expect.objectContaining({
-        color: 'rgba(248, 113, 113, 1)',
+        color: 'var(--editor-lsp-diagnostic-error)',
         textDecoration: expect.stringContaining('wavy'),
       }),
     )
@@ -955,7 +955,7 @@ describe('createTypeScriptLspPlugin', () => {
       'editor-test-typescript-lsp-definition-link',
       [{ start: 15, end: 20 }],
       expect.objectContaining({
-        color: '#60a5fa',
+        color: 'var(--editor-lsp-definition-link)',
         textDecoration: expect.stringContaining('underline'),
       }),
     )

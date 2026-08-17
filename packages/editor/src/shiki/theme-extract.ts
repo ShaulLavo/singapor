@@ -1,5 +1,9 @@
 import type { EditorTheme } from '../theme'
-import { EDITOR_SHIKI_SYNTAX_SCOPE_MAPPINGS, type EditorShikiThemeSettingLike } from './theme'
+import {
+  EDITOR_SHIKI_SYNTAX_SCOPE_MAPPINGS,
+  type EditorShikiThemeColorMode,
+  type EditorShikiThemeSettingLike,
+} from './theme'
 
 export type ShikiThemeLike = {
   readonly bg?: string
@@ -7,6 +11,7 @@ export type ShikiThemeLike = {
   readonly colors?: Readonly<Record<string, string | undefined>>
   readonly tokenColors?: readonly EditorShikiThemeSettingLike[]
   readonly settings?: readonly EditorShikiThemeSettingLike[]
+  readonly type?: EditorShikiThemeColorMode
 }
 
 export function editorThemeFromShikiTheme(theme: ShikiThemeLike): EditorTheme {
@@ -15,6 +20,10 @@ export function editorThemeFromShikiTheme(theme: ShikiThemeLike): EditorTheme {
   const syntax = editorSyntaxThemeFromShikiTheme(theme)
 
   return {
+    // A theme that says which canvas it paints on has to keep saying it: the declared canvas is what
+    // lets the extracted theme override the viewer's own preference for every colour it leaves to a
+    // default, and those are the ones this extraction cannot fill in.
+    ...(theme.type ? { type: theme.type } : {}),
     backgroundColor,
     foregroundColor,
     gutterBackgroundColor: theme.colors?.['editorGutter.background'] ?? backgroundColor,

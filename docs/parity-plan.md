@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**65 / 99 findings complete.** Update this count when you check a box.
+**71 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 10 / 16 complete.
+Milestones: 11 / 16 complete.
 
 
 ---
@@ -603,7 +603,7 @@ Milestones: 10 / 16 complete.
 
 ---
 
-## Milestone 11 — Color registry, brackets, and auto-close
+## Milestone 11 — Color registry, brackets, and auto-close ✅
 
 `effort L` · `risk medium` · 6 findings
 
@@ -611,18 +611,49 @@ Milestones: 10 / 16 complete.
 
 **Exit criteria.** Colors are registered ids with per-theme-type defaults and Darken/Lighten/Transparent/OneOf derivations, written as generated CSS rules through the existing refcounted stylesheet rather than inline styles, with merge/equality respecting contributed ids and one plugin package migrated off hardcoded colors; scope resolution is a memoized trie with inheritance that reproduces current output for every scope the two tables covered; a quote typed inside a string or comment does not auto-close, surround works with multiple selections, renaming a JSX tag updates its partner in one undo unit, and guides use per-pair min indentation with bracket levels behind a capped, opt-in colorization.
 
-- [ ] **Extensible color registry with per-theme-type defaults and derived colors**  
+- [x] **Extensible color registry with per-theme-type defaults and derived colors**  
   `high` `M` `partial` `api-perf-infra`
-- [ ] **Theme scope matching should be a trie with inheritance, not exact-match plus first-segment fallback**  
+- [x] **Theme scope matching should be a trie with inheritance, not exact-match plus first-segment fallback**  
   `high` `M` `partial` `api-perf-infra`
-- [ ] **Auto-close gated on token type, with the 'neutral character' tokenizer probe for quotes**  
+- [x] **Auto-close gated on token type, with the 'neutral character' tokenizer probe for quotes**  
   `high` `M` `partial` `folding-brackets`
-- [ ] **Auto-closing: token-aware quote suppression via a 'neutral character' probe, and multi-cursor surround**  
+- [x] **Auto-closing: token-aware quote suppression via a 'neutral character' probe, and multi-cursor surround**  
   `medium` `M` `partial` `cursor-selection`
-- [ ] **Linked editing: mirrored ranges kept in sync with minimal prefix/suffix-trimmed edits**  
+- [x] **Linked editing: mirrored ranges kept in sync with minimal prefix/suffix-trimmed edits**  
   `high` `M` `missing` `folding-brackets`
-- [ ] **Bracket-pair guides and colorization derived from the AST, including min-indentation per pair**  
+- [x] **Bracket-pair guides and colorization derived from the AST, including min-indentation per pair**  
   `high` `L` `partial` `folding-brackets`
+
+> **The two auto-close findings are one mechanism and its consumer**, as the plan says; they were
+> implemented once, not twice. The token gate — tokenizing the line with a neutral character in the
+> typed character's place, so the verdict is about the document you are about to have rather than the
+> one you have — is what decides per selection whether a quote opens, closes, or wraps.
+>
+> **`wordPattern` came back with its reader.** It was deleted in the previous milestone for having
+> none; linked editing is it, and the field arrived with its consumer rather than ahead of it.
+>
+> **Deviations, recorded.** Author-supplied theme values stay element properties rather than moving
+> into the generated stylesheet: an inline value is the right precedence layer for a per-instance
+> override, since it must beat the generated defaults regardless of sheet order. No `description`
+> field on colour registrations and no plugin-context registration seam — both would have shipped
+> unread, and rule 7 now forbids that.
+>
+> **Three real bugs the review caught in this milestone's own work.** The colour defaults' polarity
+> was inverted: the shipped palette is unconditionally dark, but each registered colour emitted its
+> *light* value as the base rule and swapped to dark only under a dark preference, so an unconfigured
+> editor on a light-preference machine resolved every colour against the wrong theme type. Linked
+> editing mirrored insertions but not deletions, and since the re-scan requires both names to match,
+> a Backspace left a permanently mismatched pair that could never re-link. And the LSP colour
+> migration replaced the tests that pinned literal colours with assertions on the CSS *variable name*
+> — which cannot see what the variable resolves to, so every registered default could have been wrong
+> with the suite green.
+>
+> **A limitation recorded rather than papered over.** In a markup language an apostrophe in prose
+> reads as an unterminated string and suppresses auto-close for the rest of that line. The obvious
+> fix — treat an unpartnered quote as ordinary text — is wrong for code, where `const s = 'abc` is a
+> string being typed and the next quote should close it; three existing tests said so. Telling them
+> apart needs to know whether the offset sits in markup text content or in an attribute. The
+> constraint is stated on the function rather than left to be rediscovered.
 
 
 ---

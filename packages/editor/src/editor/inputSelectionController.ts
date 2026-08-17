@@ -3,6 +3,7 @@ import type {
   DocumentSessionChange,
   DocumentSessionSelectionRange,
 } from '../documentSession'
+import { previousGraphemeBoundary } from '../graphemes'
 import { normalizeLineEndings } from '../pieceTable/lineEndings'
 import { readPieceTableTextRange } from '../pieceTable/reads'
 import {
@@ -100,9 +101,19 @@ import {
   autoClosingPairForOpen,
   shouldAutoClose,
   shouldDeletePair,
+  shouldSurroundSelection,
   shouldTypeOverCloser,
+  type AutoCloseContext,
 } from './autoClose'
 import { AutoCloseStore, characterAt, characterBefore } from './autoCloseStore'
+import { editorLanguageConfiguration, type EditorAutoClosingPair } from './languageConfiguration'
+import {
+  LinkedEditingSession,
+  linkedEditingChange,
+  linkedEditingRangesAround,
+  referenceRangeFor,
+  type LinkedEditingRange,
+} from './linkedEditing'
 import { SnippetSession, type SnippetStopRange } from './snippetSession'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
@@ -188,6 +199,7 @@ const COLUMN_SELECTION_COMMANDS = new Set<EditorCommandId>([
 export class InputSelectionController {
   private readonly autoClose = new AutoCloseStore()
   private readonly snippet = new SnippetSession()
+  private readonly linkedEditing = new LinkedEditingSession()
   private occurrenceRun: OccurrenceRun | null = null
   private mouseSelectionDrag: MouseSelectionDrag | null = null
   private mouseTextMoveDrag: MouseTextMoveDrag | null = null
@@ -265,14 +277,16 @@ export class InputSelectionController {
   /**
    * Typing path for a single plain character, with auto-closing pairs applied.
    *
-   * Only a single collapsed caret takes the auto-close path. Several carets fall through to plain
-   * insertion: a batch would need one edit per caret, and two zero-width edits landing at the same
-   * offset pass batch validation but apply in an unspecified order.
+   * Wrapping takes every selection at once; auto-closing takes a single collapsed caret, and several
+   * carets fall through to plain insertion.
    */
   private applyTypedText(session: DocumentSession, text: string): DocumentSessionChange {
     // The keydown fallback turns Enter into '\n', so it arrives here rather than as a
     // beforeinput line break; both routes must indent identically.
     if (text === '\n') return this.applyLineBreak(session, text)
+
+    const mirrored = this.mirrorTypedText(session, text)
+    if (mirrored) return mirrored
 
     const decided = this.autoCloseChange(session, text)
     if (decided) return decided
@@ -283,6 +297,114 @@ export class InputSelectionController {
     this.autoClose.advance(change.snapshot)
     this.snippet.advance(change.snapshot)
     return change
+  }
+
+  /**
+   * Typed text carried into every other range that has to hold the same name as the one it lands in.
+   *
+   * Null for anything that is not a rename: a language in which nothing is mirrored, several
+   * cursors, an edit reaching outside the name — and a keystroke that ends the name, which dissolves
+   * the link and then types as usual.
+   */
+  private mirrorTypedText(session: DocumentSession, text: string): DocumentSessionChange | null {
+    if (text.length === 0) return null
+
+    return this.mirrorNameEdit(session, text, null)
+  }
+
+  /**
+   * The same rename carried into the ranges holding the name, for an edit that removes text rather
+   * than adding it. A deletion the partner never hears leaves the pair permanently mismatched, and
+   * a mismatched pair no longer scans as one, so it can never re-link either.
+   */
+  private mirrorBackspace(session: DocumentSession): DocumentSessionChange | null {
+    const snapshot = session.getSnapshot()
+    const selections = session.getSelections().selections
+    if (selections.length !== 1) return null
+
+    const only = selections[0]
+    if (!only) return null
+
+    const target = resolveSelection(snapshot, only)
+    if (!target.collapsed || target.startOffset === 0) return null
+
+    const from = previousGraphemeBoundary(
+      readPieceTableTextRange(snapshot, Math.max(0, target.startOffset - 8), target.startOffset),
+      Math.min(8, target.startOffset),
+    )
+    const start = target.startOffset - (Math.min(8, target.startOffset) - from)
+    return this.mirrorNameEdit(session, '', start)
+  }
+
+  private mirrorNameEdit(
+    session: DocumentSession,
+    text: string,
+    replaceFrom: number | null,
+  ): DocumentSessionChange | null {
+    const wordPattern = editorLanguageConfiguration(this.options.getLanguageId())?.wordPattern
+    if (!wordPattern) return null
+
+    const snapshot = session.getSnapshot()
+    const selections = session.getSelections().selections
+    if (selections.length !== 1) return null
+
+    const only = selections[0]
+    if (!only) return null
+
+    const target = resolveSelection(snapshot, only)
+    const start = replaceFrom ?? target.startOffset
+    const read = (from: number, to: number) => readPieceTableTextRange(snapshot, from, to)
+    const ranges = this.linkedEditingRanges(snapshot, read, target)
+    if (!ranges) return null
+
+    const reference = referenceRangeFor(ranges, start, target.endOffset)
+    if (!reference) return null
+
+    const mirrored = linkedEditingChange({
+      end: target.endOffset,
+      ranges,
+      read,
+      reference,
+      start,
+      text,
+      wordPattern,
+    })
+    if (!mirrored) {
+      this.linkedEditing.clear()
+      return null
+    }
+    // Nothing but the keystroke itself: the other ranges already read the way this one will, so the
+    // ordinary typing path is both shorter and better at coalescing undo.
+    if (mirrored.edits.length === 1) return null
+
+    const change = session.applyEdits(mirrored.edits, {
+      selections: [{ anchor: mirrored.caretOffset, head: mirrored.caretOffset }],
+    })
+    this.linkedEditing.advance(change.snapshot)
+    this.autoClose.advance(change.snapshot)
+    this.snippet.advance(change.snapshot)
+    this.markSessionSelectionForNextInput()
+    return change
+  }
+
+  /**
+   * The ranges a rename is running over: the tracked ones while the edit still falls inside one of
+   * them, and otherwise whatever a scan of the text around it turns up.
+   */
+  private linkedEditingRanges(
+    snapshot: PieceTableSnapshot,
+    read: (from: number, to: number) => string,
+    target: ResolvedSelection,
+  ): readonly LinkedEditingRange[] | null {
+    const tracked = this.linkedEditing.ranges(snapshot)
+    if (tracked && referenceRangeFor(tracked, target.startOffset, target.endOffset)) return tracked
+
+    this.linkedEditing.clear()
+    const scanned = linkedEditingRangesAround(read, snapshot.length, target.startOffset)
+    if (!scanned) return null
+
+    this.linkedEditing.start(snapshot, scanned)
+    return scanned
   }
 
   /**
@@ -397,14 +519,7 @@ export class InputSelectionController {
 
     const opening = autoClosingPairForOpen(languageId, text)
     if (!opening) return null
-    if (
-      !shouldAutoClose(opening, {
-        charAfter: characterAt(snapshot, caret),
-        charBefore: characterBefore(snapshot, caret),
-      })
-    ) {
-      return null
-    }
+    if (!shouldAutoClose(opening, this.autoCloseContext(snapshot, caret))) return null
 
     // One edit, not two: the renderer only takes its incremental path for a single-edit change.
     const change = session.applyEdits(
@@ -416,6 +531,19 @@ export class InputSelectionController {
     this.autoClose.track(change.snapshot, caret + opening.open.length, opening.close)
     this.markSessionSelectionForNextInput()
     return change
+  }
+
+  /** The line the caret stands on, split at the caret, read without materializing the document. */
+  private autoCloseContext(snapshot: PieceTableSnapshot, caret: number): AutoCloseContext {
+    const point = offsetToPoint(snapshot, caret)
+    const lineEnd = pointToOffset(snapshot, { row: point.row, column: LINE_END_COLUMN })
+
+    return {
+      languageId: this.options.getLanguageId(),
+      textAfter: caret >= lineEnd ? '' : readPieceTableTextRange(snapshot, caret, lineEnd),
+      textBefore:
+        point.column === 0 ? '' : readPieceTableTextRange(snapshot, caret - point.column, caret),
+    }
   }
 
   /** Steps the caret over a closer this editor inserted, without touching the text. */
@@ -461,41 +589,74 @@ export class InputSelectionController {
   }
 
   /**
-   * Typing an opener over a non-empty selection wraps it instead of replacing it.
+   * Typing an opener over non-empty selections wraps each of them instead of replacing them.
    *
-   * The two edits sit at different offsets, so they are safe as a batch — unlike a collapsed caret,
-   * where opener and closer would be two zero-width edits at one offset with no defined order.
+   * One batch, so several cursors wrapping is one undo step and one change for the view. Either every
+   * selection is wrapped or none is: a keystroke that wrapped one cursor and replaced the text under
+   * another would destroy text the user cannot see the reason for.
    */
   private surroundSelection(session: DocumentSession, text: string): DocumentSessionChange | null {
-    const opening = autoClosingPairForOpen(this.options.getLanguageId(), text)
+    const languageId = this.options.getLanguageId()
+    const opening = autoClosingPairForOpen(languageId, text)
     if (!opening) return null
 
     const snapshot = session.getSnapshot()
-    const selections = session.getSelections().selections
-    if (selections.length !== 1) return null
+    const selections = session
+      .getSelections()
+      .selections.map((selection) => resolveSelection(snapshot, selection))
+      .toSorted((left, right) => left.startOffset - right.startOffset)
+    if (selections.length === 0) return null
 
-    const only = selections[0]
-    if (!only) return null
+    const wraps = selections.every((selection) => {
+      if (selection.collapsed) return false
 
-    const resolved = resolveSelection(snapshot, only)
-    if (resolved.startOffset === resolved.endOffset) return null
+      return shouldSurroundSelection(opening, {
+        languageId,
+        selectedText: readPieceTableTextRange(snapshot, selection.startOffset, selection.endOffset),
+      })
+    })
+    if (!wraps) return null
 
-    const shift = opening.open.length
-    const start = resolved.startOffset + shift
-    const end = resolved.endOffset + shift
-    // Direction is preserved so a second wrap, or shift+arrow, continues from the same end.
-    const forward = resolved.headOffset >= resolved.anchorOffset
-    const change = session.applyEdits(
-      [
-        { from: resolved.startOffset, text: opening.open, to: resolved.startOffset },
-        { from: resolved.endOffset, text: opening.close, to: resolved.endOffset },
-      ],
-      { selections: [forward ? { anchor: start, head: end } : { anchor: end, head: start }] },
-    )
-    // The closer here is deliberate, not a speculative auto-insert: nothing to type over.
+    const change = session.applyEdits(this.surroundEdits(selections, opening), {
+      selections: selections.map((selection, index) =>
+        surroundedSelection(selection, opening, index),
+      ),
+    })
+    // The closers here are deliberate, not speculative auto-inserts: nothing to type over.
     this.autoClose.clear()
     this.markSessionSelectionForNextInput()
     return change
+  }
+
+  /**
+   * The insertions that wrap each selection, in document order.
+   *
+   * Two selections that meet at an offset put a closer and an opener in the same place, and two
+   * zero-width edits at one offset have no order between them — so they are handed over as the one
+   * insertion they are, which is also the only spelling that says which of them comes first.
+   */
+  private surroundEdits(
+    selections: readonly ResolvedSelection[],
+    opening: EditorAutoClosingPair,
+  ): readonly TextEdit[] {
+    const edits: TextEdit[] = []
+
+    for (const selection of selections) {
+      for (const insertion of [
+        { offset: selection.startOffset, text: opening.open },
+        { offset: selection.endOffset, text: opening.close },
+      ]) {
+        const previous = edits.at(-1)
+        if (previous && previous.from === insertion.offset) {
+          edits[edits.length - 1] = { ...previous, text: previous.text + insertion.text }
+          continue
+        }
+
+        edits.push({ from: insertion.offset, text: insertion.text, to: insertion.offset })
+      }
+    }
+
+    return edits
   }
 
   /** Begins tab-stop navigation for a snippet that was just inserted. */
@@ -547,7 +708,9 @@ export class InputSelectionController {
     const selectionChange = this.selectionChangeBeforeEdit()
     const change =
       direction === 'backward'
-        ? (this.deleteAutoClosedPair(session) ?? session.backspace(this.options.tabSize))
+        ? (this.deleteAutoClosedPair(session) ??
+          this.mirrorBackspace(session) ??
+          session.backspace(this.options.tabSize))
         : session.deleteSelection()
     this.options.applySessionChange(
       mergeChangeTimings(change, selectionChange),
@@ -2332,6 +2495,25 @@ export class InputSelectionController {
     if ((position & Node.DOCUMENT_POSITION_PRECEDING) !== 0) return this.text.length
     return null
   }
+}
+
+/**
+ * Where the wrapped text ends up, `index` counting the wraps ahead of it in document order.
+ *
+ * Each of those has already pushed this one along by a whole pair, and its own opener pushes it along
+ * by one more. The selection stops short of its own closer, so a second wrap nests inside the first
+ * instead of swallowing it, and keeps its direction so shift+arrow goes on from the same end.
+ */
+function surroundedSelection(
+  selection: ResolvedSelection,
+  opening: EditorAutoClosingPair,
+  index: number,
+): EditorSelectionRange {
+  const shift = index * (opening.open.length + opening.close.length) + opening.open.length
+  const start = selection.startOffset + shift
+  const end = selection.endOffset + shift
+
+  return selection.reversed ? { anchor: end, head: start } : { anchor: start, head: end }
 }
 
 function mouseSelectionTimingName(granularity: MouseSelectionGranularity): string {

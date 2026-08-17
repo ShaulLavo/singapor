@@ -88,7 +88,18 @@ export type {
   EditorLanguageConfiguration,
   EditorOnEnterRule,
 } from './public/extensions'
-export { applyEditorTheme, editorThemesEqual, mergeEditorThemes } from './public/rendering'
+export {
+  applyEditorTheme,
+  darkenEditorColor,
+  editorColorReference,
+  editorColorValue,
+  editorThemesEqual,
+  firstEditorColor,
+  lightenEditorColor,
+  mergeEditorThemes,
+  registerEditorColor,
+  transparentEditorColor,
+} from './public/rendering'
 export {
   createEditorSyntaxSession,
   createEmptySyntaxResult,
@@ -239,10 +250,15 @@ export type {
   EditorBlockSize,
   EditorBlockSurfaceSlot,
   EditorBlockVerticalSurface,
+  EditorColorDefaults,
+  EditorColorId,
+  EditorColorTransform,
+  EditorColorValue,
   EditorCursorLineHighlightOptions,
   EditorSyntaxTheme,
   EditorSyntaxThemeColor,
   EditorTheme,
+  EditorThemeType,
   FixedSize,
   HiddenCharactersMode,
   MaxSize,

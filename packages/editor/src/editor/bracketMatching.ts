@@ -23,11 +23,33 @@ const OPENING_FOR_CLOSING: Record<string, string | undefined> = {
  */
 const DEFAULT_SCAN_BUDGET = 2_000
 
+/**
+ * Nesting depth at which levels stop being reported. A file nested deeper than this was written by a
+ * program, and no reader can tell one depth from another down there, so the entries would be built
+ * and shipped for nobody.
+ */
+const DEFAULT_MAX_BRACKET_LEVEL = 200
+
 export type BracketMatch = {
   /** Text offset of the opening bracket. */
   readonly openOffset: number
   /** Text offset of the closing bracket. */
   readonly closeOffset: number
+}
+
+export type BracketLevel = {
+  /** Text offset of the bracket character. */
+  readonly offset: number
+  readonly char: string
+  /** Nesting depth of the pair this bracket belongs to, counted from 0 at the outermost pair. */
+  readonly level: number
+  /** A closer with no opener to close, so it heads no pair whatever depth it sits at. */
+  readonly unexpected: boolean
+}
+
+export type BracketLevelOptions = {
+  /** Deepest nesting a level is reported for; anything nested deeper is left out entirely. */
+  readonly maxLevel?: number
 }
 
 export function isOpeningBracket(char: string): boolean {
@@ -199,4 +221,68 @@ export function bracketJumpTargetOffset(
 
   const jumpingToClose = origin.index === match.openOffset
   return jumpingToClose ? match.closeOffset + 1 : match.openOffset + 1
+}
+
+/**
+ * Nesting level of every bracket in the list, paired with a stack for the same reason a caret match
+ * is. The worker's `depth` counts openers it never saw closed, so one stray `{` inflates the depth
+ * of every bracket after it for the rest of the file, and a mismatched closer is reported one level
+ * deeper than the opener it belongs to. A level that drifts is worse than no level: anything painting
+ * it would recolour the file below the caret while a pair is still half-typed.
+ *
+ * Unbalanced text resolves the way a reader resolves it — a closer takes the nearest opener it can
+ * legally close, which re-syncs the depth of everything after it rather than carrying the mistake
+ * forward. An opener whose closer never arrives still reports the level it was written at, because
+ * that is where it sits on screen; only a closer with nothing to close is called out.
+ */
+export function collectBracketLevels(
+  brackets: readonly BracketInfo[],
+  options: BracketLevelOptions = {},
+): readonly BracketLevel[] {
+  const maxLevel = options.maxLevel ?? DEFAULT_MAX_BRACKET_LEVEL
+  const levels: BracketLevel[] = []
+  const open: string[] = []
+
+  for (const bracket of brackets) {
+    if (isOpeningBracket(bracket.char)) {
+      appendBracketLevel(levels, bracket, open.length, false, maxLevel)
+      open.push(bracket.char)
+      continue
+    }
+    if (!isClosingBracket(bracket.char)) continue
+
+    const level = openerIndexForCloser(open, bracket.char)
+    if (level === -1) {
+      appendBracketLevel(levels, bracket, open.length, true, maxLevel)
+      continue
+    }
+
+    // Truncating to the matched opener drops the openers it was hiding: those are the ones still
+    // half-written, and leaving them on the stack is what would shift every level after them.
+    open.length = level
+    appendBracketLevel(levels, bracket, level, false, maxLevel)
+  }
+
+  return levels
+}
+
+function appendBracketLevel(
+  levels: BracketLevel[],
+  bracket: BracketInfo,
+  level: number,
+  unexpected: boolean,
+  maxLevel: number,
+): void {
+  if (level >= maxLevel) return
+
+  levels.push({ offset: bracket.index, char: bracket.char, level, unexpected })
+}
+
+function openerIndexForCloser(open: readonly string[], char: string): number {
+  for (let index = open.length - 1; index >= 0; index -= 1) {
+    const opener = open[index]
+    if (opener && CLOSING_FOR_OPENING[opener] === char) return index
+  }
+
+  return -1
 }

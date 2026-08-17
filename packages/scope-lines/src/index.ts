@@ -12,6 +12,8 @@ import { createStringTextSnapshot } from '@singapor/core/document'
 import type { DocumentSessionChange } from '@singapor/core/document'
 import './style.css'
 
+export { createBracketColorsPlugin } from './bracketColors'
+export type { BracketColorsPluginOptions } from './bracketColors'
 export { createStickyScrollPlugin } from './stickyScroll'
 export type { StickyScrollPluginOptions } from './stickyScroll'
 
@@ -76,6 +78,9 @@ type VisibleTextRowBounds = {
 }
 
 const DEFAULT_MIN_LINE_SPAN = 1
+// The body is only sampled this far in. Every scope on screen is measured on every frame that moves
+// one of them, so a file-length scope must not cost a file-length scan; the first lines of a block
+// are also where its indentation is decided, and a later outlier is not worth a frame to find.
 const BODY_INDENT_PROBE_LINES = 24
 const SCOPE_LINE_COLOR_COUNT = 6
 
@@ -364,7 +369,7 @@ function scopeGuidePlacement(
 ): ScopeGuidePlacement {
   const snapshot = context.snapshot
   const startIndent = lineIndentColumn(context, marker.startRow)
-  const bodyIndent = firstBodyIndentColumn(context, marker)
+  const bodyIndent = minimumBodyIndentColumn(context, marker)
   if (bodyIndent === null) return placementFromIndent(startIndent, startIndent, snapshot.tabSize)
   if (bodyIndent <= startIndent) {
     return placementFromIndent(startIndent, startIndent, snapshot.tabSize)
@@ -388,17 +393,30 @@ function indentLevelForColumn(column: number, tabSize: number): number {
   return Math.max(0, Math.floor(column / Math.max(1, tabSize)))
 }
 
-function firstBodyIndentColumn(
+/**
+ * Shallowest indentation any line of the body is written at, which is the only column the whole
+ * guide can sit left of. Reading the first line instead puts the guide inside the code of every
+ * block that opens with a deeper line — a wrapped argument list, a chained call, a `case` label
+ * whose statements are outdented — and a guide drawn through text reads as a rendering fault.
+ *
+ * The closing row is excluded because the guide does not span it, and it is written at the opener's
+ * own indentation, which would drag the minimum back to where the opener sits every time.
+ */
+function minimumBodyIndentColumn(
   context: ScopeLinesRenderContext,
   marker: VirtualizedFoldMarker,
 ): number | null {
-  const probeEnd = Math.min(marker.endRow, marker.startRow + BODY_INDENT_PROBE_LINES)
+  const probeEnd = Math.min(marker.endRow - 1, marker.startRow + BODY_INDENT_PROBE_LINES)
+  let minimum: number | null = null
+
   for (let row = marker.startRow + 1; row <= probeEnd; row += 1) {
-    const text = lineText(context, row)
-    if (isBlankLine(text)) continue
-    return indentColumnForRow(context, row)
+    if (isBlankLine(lineText(context, row))) continue
+
+    const column = indentColumnForRow(context, row)
+    if (minimum === null || column < minimum) minimum = column
   }
-  return null
+
+  return minimum
 }
 
 function lineIndentColumn(context: ScopeLinesRenderContext, row: number): number {

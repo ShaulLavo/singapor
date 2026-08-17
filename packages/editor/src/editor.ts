@@ -2,12 +2,13 @@ import './style.css'
 
 export { createBracketMatchPlugin, EDITOR_BRACKET_MATCH_PLUGIN_ID } from './bracketMatchPlugin'
 export type { EditorBracketMatchPluginOptions } from './bracketMatchPlugin'
-export { bracketJumpTargetOffset, findBracketMatchAtCaret } from './editor/bracketMatching'
-export type { BracketMatch } from './editor/bracketMatching'
 export {
-  createDocumentLinkPlugin,
-  EDITOR_DOCUMENT_LINK_PLUGIN_ID,
-} from './documentLinkPlugin'
+  bracketJumpTargetOffset,
+  collectBracketLevels,
+  findBracketMatchAtCaret,
+} from './editor/bracketMatching'
+export type { BracketLevel, BracketLevelOptions, BracketMatch } from './editor/bracketMatching'
+export { createDocumentLinkPlugin, EDITOR_DOCUMENT_LINK_PLUGIN_ID } from './documentLinkPlugin'
 export type { EditorDocumentLinkPluginOptions } from './documentLinkPlugin'
 export {
   createOccurrenceHighlightPlugin,

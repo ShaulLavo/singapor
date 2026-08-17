@@ -12,7 +12,7 @@ import {
   summarizeDiagnostics,
   type LanguageServerDiagnosticSeverity,
 } from './diagnostics'
-import { DIAGNOSTIC_STYLES } from './plugin.styles'
+import { DIAGNOSTIC_MARKER_COLORS, DIAGNOSTIC_STYLES } from './plugin.styles'
 import type { OffsetRange } from './definitionNavigation'
 
 const LSP_DIAGNOSTIC_ERROR = 1
@@ -26,13 +26,6 @@ const DIAGNOSTIC_SEVERITIES: readonly LanguageServerDiagnosticSeverity[] = [
   'information',
   'hint',
 ]
-
-const DIAGNOSTIC_MINIMAP_COLORS: Record<LanguageServerDiagnosticSeverity, string> = {
-  error: 'rgba(239, 68, 68, 1)',
-  warning: 'rgba(245, 158, 11, 0.95)',
-  information: 'rgba(59, 130, 246, 0.9)',
-  hint: 'rgba(148, 163, 184, 0.85)',
-}
 
 const DIAGNOSTIC_MINIMAP_Z_INDEX: Record<LanguageServerDiagnosticSeverity, number> = {
   error: 40,
@@ -178,7 +171,7 @@ function diagnosticMinimapDecoration(
       startColumn: 1,
       endLineNumber,
       endColumn: 1,
-      color: DIAGNOSTIC_MINIMAP_COLORS[severity],
+      color: DIAGNOSTIC_MARKER_COLORS[severity],
       position: 'inline',
       zIndex: DIAGNOSTIC_MINIMAP_Z_INDEX[severity],
     },

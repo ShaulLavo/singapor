@@ -1,4 +1,22 @@
-export { applyEditorTheme, editorThemesEqual, mergeEditorThemes } from '../theme'
+export {
+  applyEditorTheme,
+  darkenEditorColor,
+  editorColorReference,
+  editorColorValue,
+  editorThemesEqual,
+  firstEditorColor,
+  lightenEditorColor,
+  mergeEditorThemes,
+  registerEditorColor,
+  transparentEditorColor,
+} from '../theme'
+export type {
+  EditorColorDefaults,
+  EditorColorId,
+  EditorColorTransform,
+  EditorColorValue,
+  EditorThemeType,
+} from '../theme'
 export {
   createInlineMap,
   inlineReplacementsForBufferRow,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { bracketJumpTargetOffset, findBracketMatchAtCaret } from '../src/editor/bracketMatching'
+import {
+  bracketJumpTargetOffset,
+  collectBracketLevels,
+  findBracketMatchAtCaret,
+} from '../src/editor/bracketMatching'
 import type { BracketInfo } from '../src/syntax/session'
 
 /**
@@ -130,5 +134,67 @@ describe('bracketJumpTargetOffset', () => {
 
   it('returns null when there is nothing to jump to', () => {
     expect(bracketJumpTargetOffset(bracketsFor('fn(a'), 3)).toBeNull()
+  })
+})
+
+describe('collectBracketLevels', () => {
+  it('numbers nesting from zero at the outermost pair', () => {
+    const text = '{ a([1, 2]) }'
+
+    expect(collectBracketLevels(bracketsFor(text))).toEqual([
+      { char: '{', level: 0, offset: 0, unexpected: false },
+      { char: '(', level: 1, offset: 3, unexpected: false },
+      { char: '[', level: 2, offset: 4, unexpected: false },
+      { char: ']', level: 2, offset: 9, unexpected: false },
+      { char: ')', level: 1, offset: 10, unexpected: false },
+      { char: '}', level: 0, offset: 12, unexpected: false },
+    ])
+  })
+
+  // The worker's depth field never pops the unclosed `{`, so it reports the closer of the outer pair
+  // one level deeper than its opener and shifts the following pair down by two.
+  it('re-syncs levels after an unclosed bracket instead of carrying the drift forward', () => {
+    const text = '[ { ] [ ]'
+    const brackets = bracketsFor(text)
+
+    expect(brackets.map((bracket) => bracket.depth - 1)).toEqual([0, 1, 1, 2, 2])
+    expect(collectBracketLevels(brackets).map((bracket) => bracket.level)).toEqual([0, 1, 0, 0, 0])
+  })
+
+  it('keeps an unclosed opener at the level it was written at', () => {
+    const levels = collectBracketLevels(bracketsFor('fn(a'))
+
+    expect(levels).toEqual([{ char: '(', level: 0, offset: 2, unexpected: false }])
+  })
+
+  it('flags a closer with nothing to close', () => {
+    const levels = collectBracketLevels(bracketsFor('a) fn(b)'))
+
+    expect(levels).toEqual([
+      { char: ')', level: 0, offset: 1, unexpected: true },
+      { char: '(', level: 0, offset: 5, unexpected: false },
+      { char: ')', level: 0, offset: 7, unexpected: false },
+    ])
+  })
+
+  it('reports nothing below the level cap', () => {
+    const text = '{ [ ( ) ] }'
+    const levels = collectBracketLevels(bracketsFor(text), { maxLevel: 2 })
+
+    expect(levels.map((bracket) => bracket.offset)).toEqual([0, 2, 8, 10])
+  })
+
+  it('pairs across a bracket type the cap dropped', () => {
+    const text = '{ [ ( ) ] }'
+    const levels = collectBracketLevels(bracketsFor(text), { maxLevel: 1 })
+
+    expect(levels).toEqual([
+      { char: '{', level: 0, offset: 0, unexpected: false },
+      { char: '}', level: 0, offset: 10, unexpected: false },
+    ])
+  })
+
+  it('returns nothing for an empty bracket list', () => {
+    expect(collectBracketLevels([])).toEqual([])
   })
 })

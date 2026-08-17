@@ -127,6 +127,14 @@ export type EditorLanguageConfiguration = {
    * off a leader the user meant to keep.
    */
   readonly listMarkers?: boolean
+  /**
+   * What one word looks like in this language, for a feature that has to decide whether the text it
+   * is tracking is still the single word it began as.
+   *
+   * Populated where a name is written twice over and has to stay one name; a language in which
+   * nothing is mirrored needs no answer, and leaving it out is what says so.
+   */
+  readonly wordPattern?: RegExp
 }
 
 export type OnEnterContext = {
@@ -223,6 +231,12 @@ const OPEN_TAG_BEFORE =
 
 const CLOSE_TAG_AFTER = /^\s*<\/[A-Za-z][\w.:-]*\s*>/
 
+/**
+ * A tag name, which is wider than an identifier: the namespace colons, the custom-element hyphens
+ * and the member dots a tag may carry are all part of the one name a rename is renaming.
+ */
+const TAG_NAME_PATTERN = /[A-Za-z_$][\w.:$-]*/
+
 const TAG_ON_ENTER_RULES: readonly EditorOnEnterRule[] = [
   {
     action: { indentAction: 'indentOutdent' },
@@ -293,6 +307,7 @@ const CODE: EditorLanguageConfiguration = {
 const CODE_WITH_TAGS: EditorLanguageConfiguration = {
   ...CODE,
   onEnterRules: [...BLOCK_COMMENT_ON_ENTER_RULES, ...TAG_ON_ENTER_RULES],
+  wordPattern: TAG_NAME_PATTERN,
 }
 
 const JSON_LIKE: EditorLanguageConfiguration = {
@@ -324,6 +339,7 @@ const HTML: EditorLanguageConfiguration = {
   comments: HTML_COMMENTS,
   folding: TAG_MARKED_FOLDING,
   onEnterRules: TAG_ON_ENTER_RULES,
+  wordPattern: TAG_NAME_PATTERN,
 }
 
 const MARKDOWN: EditorLanguageConfiguration = {

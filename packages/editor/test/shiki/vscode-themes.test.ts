@@ -67,6 +67,9 @@ describe('editorThemeFromVscodeTheme', () => {
       ],
     })
 
+    // The registration already knows which palette it is; dropping it would make
+    // every registered colour resolve against the wrong theme type.
+    expect(theme.type).toBe('dark')
     expect(theme.backgroundColor).toBe('#101010')
     expect(theme.foregroundColor).toBe('#d0d0d0')
     expect(theme.gutterBackgroundColor).toBe('#181818')

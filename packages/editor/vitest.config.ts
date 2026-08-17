@@ -13,13 +13,24 @@ export default defineConfig({
       {
         test: {
           name: 'dom',
+          environment: 'happy-dom',
+          include: ['test/**/*.test.ts'],
+          exclude: ['test/**/*.browser.test.ts'],
+        },
+      },
+      {
+        // Geometry that only a real engine can answer: caret rects, hit tests
+        // and measured advances under a CSS transform. happy-dom reports every
+        // rect empty, so these assertions are meaningless anywhere else.
+        test: {
+          name: 'browser',
           browser: {
+            enabled: true,
             headless: true,
             provider: playwright(),
             instances: [{ browser: 'chromium' }],
           },
-          environment: 'happy-dom',
-          include: ['test/**/*.test.ts'],
+          include: ['test/**/*.browser.test.ts'],
         },
       },
     ],

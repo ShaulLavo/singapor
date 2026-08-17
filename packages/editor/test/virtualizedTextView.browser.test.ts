@@ -205,7 +205,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
       view.setTokens(tokens)
 
       const rowOne = view.getState().mountedRows.find((row) => row.index === 1)!
-      const previous = nativeTokenRangeForNode('native-token-test-token-0', rowOne.textNode)
+      const previous = nativeTokenRangeForNode(rowOne.textNode)
       expect(previous).toBeDefined()
 
       const edit = { from: 1, to: 1, text: 'X' }
@@ -215,19 +215,32 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
       view.setTokens(tokens)
       text = nextText
 
-      const next = nativeTokenRangeForNode('native-token-test-token-0', rowOne.textNode)
-      expect(next).toBeDefined()
-      expect(next).not.toBe(previous)
+      // The edit is on the row above, so this row's own text and the offsets
+      // into it are untouched — what must survive is that its token still
+      // covers exactly the characters it did, against the node it did.
+      const next = nativeTokenRangeForNode(rowOne.textNode)
       expect(previous!.startOffset).toBe(0)
+      expect(next).toBeDefined()
+      expect(next!.startContainer).toBe(rowOne.textNode)
       expect(next!.startOffset).toBe(0)
       expect(next!.endOffset).toBe(2)
+      expect(rowOne.textNode.data).toBe('bb')
+      expect(text).toBe('aXa\nbb\ncc')
     })
   },
 )
 
-function nativeTokenRangeForNode(name: string, node: Text): AbstractRange | undefined {
-  const highlight = CSS.highlights.get(name)
-  return [...(highlight ?? [])].find((range) => range.startContainer === node)
+// Token highlights are pooled across every mounted view rather than named per
+// view, so the range for a row has to be looked up by the node it covers.
+function nativeTokenRangeForNode(node: Text): AbstractRange | undefined {
+  for (const [name, highlight] of CSS.highlights.entries()) {
+    if (!name.startsWith('editor-shared-token-')) continue
+
+    const range = [...highlight].find((entry) => entry.startContainer === node)
+    if (range) return range
+  }
+
+  return undefined
 }
 
 function withThrowingNativeCaretApis(document: Document, callback: () => void): void {

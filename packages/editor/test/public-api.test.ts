@@ -171,9 +171,24 @@ describe('public API facade', () => {
       'cursorColumnSelectDown',
       'cursorColumnSelectPageUp',
       'cursorColumnSelectPageDown',
+      'editor.fold',
+      'editor.unfold',
+      'editor.foldRecursively',
+      'editor.unfoldRecursively',
+      'editor.foldAll',
+      'editor.unfoldAll',
+      'editor.foldLevel1',
+      'editor.foldLevel2',
+      'editor.foldLevel3',
+      'editor.foldLevel4',
+      'editor.foldLevel5',
+      'editor.foldLevel6',
+      'editor.foldLevel7',
+      'editor.createFoldingRangeFromSelection',
+      'editor.removeManualFoldingRanges',
     ]
 
-    expect(commands).toHaveLength(8)
+    expect(commands).toHaveLength(23)
   })
 
   it('exports the hosting modes a block surface can declare', () => {

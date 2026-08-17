@@ -12,6 +12,9 @@ import { createStringTextSnapshot } from '@singapor/core/document'
 import type { DocumentSessionChange } from '@singapor/core/document'
 import './style.css'
 
+export { createStickyScrollPlugin } from './stickyScroll'
+export type { StickyScrollPluginOptions } from './stickyScroll'
+
 export type ScopeLinesPluginOptions = {
   readonly enabled?: boolean
   readonly className?: string

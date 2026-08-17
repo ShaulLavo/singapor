@@ -5,11 +5,11 @@ import {
 } from '../documentSession'
 import {
   foldRangesEqual,
-  projectSyntaxFoldsThroughLineEdit,
+  projectSyntaxFoldsThroughEdit,
   rejectCrossingFoldRanges,
   type FoldRangeRejection,
-  type SyntaxFoldProjection,
 } from './folds'
+import { fallbackFoldRanges } from './foldRanges'
 import { EditorFoldState } from './foldState'
 import { EditorKeymapController } from './keymap'
 import { EditorBlockSurfaceController } from './blockSurfaceController'
@@ -49,7 +49,18 @@ import {
 import { EditorDocumentController } from './documentController'
 import { removeArrayItem, type SessionChangeOptions } from './editorUtils'
 import { EDITOR_FIND_FEATURE, type EditorFindFeature } from './findFeature'
-import { foldCandidateAtLocation, type FoldOperation } from './foldOperations'
+import {
+  foldCandidateAtLocation,
+  foldRangesOutsideSpans,
+  manualFoldRangesForSpans,
+  nestableFoldRanges,
+  planFoldCommand,
+  type EditorFoldCommandId,
+  type EditorFoldPlanCommandId,
+  type FoldCommandLocation,
+  type FoldOperation,
+  type ManualFoldSpan,
+} from './foldOperations'
 import {
   groupedRangeDecorations,
   rangeDecorationsWithProjectionStacking,
@@ -78,7 +89,8 @@ import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
 import type { EditorInlineReplacementProvider } from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
 import type { BlockLane, BlockRow, InjectedTextRow } from '../displayTransforms'
-import { offsetToPoint } from '../pieceTable/positions'
+import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
 import {
   EditorPluginHost,
   type EditorCapabilityContribution,
@@ -163,6 +175,8 @@ const VISIBLE_SYNTAX_MAX_LEAD_CHARS = 750_000
 const VISIBLE_SYNTAX_SCROLL_DELAY_MS = 16
 const BACKGROUND_SYNTAX_WARM_DELAY_MS = 80
 const SYNTAX_FOLD_PROJECTION_OWNER = 'editor.folds.syntax'
+const FALLBACK_FOLD_PROJECTION_OWNER = 'editor.folds.fallback'
+const MANUAL_FOLD_PROJECTION_OWNER = 'editor.folds.manual'
 const DIRECT_RANGE_DECORATION_OWNER = 'editor.rangeDecorations.direct'
 const DIRECT_ROW_DECORATION_OWNER = 'editor.rowDecorations.direct'
 const FEATURE_ROW_DECORATION_OWNER_PREFIX = 'editor.rowDecorations.feature:'
@@ -271,6 +285,13 @@ export class Editor {
   private sessionChangeVersion = 0
   private inlineReplacementProvider: EditorInlineReplacementProvider | null = null
   private syntaxCaptures: readonly EditorSyntaxCapture[] = []
+  /**
+   * Regions the user drew rather than any provider describing them. They are held here and merged in
+   * at the fan-in instead of being registered as a contribution, because the contribution set is
+   * refused whole when two of its ranges cross, and a hand-drawn region cannot promise anything about
+   * ranges a provider has not produced yet.
+   */
+  private manualFolds: readonly FoldRange[] = []
   private blockSurfaces!: EditorBlockSurfaceController
   private readonly syntax: EditorSyntaxController
   private readonly inputSelection: InputSelectionController
@@ -335,6 +356,10 @@ export class Editor {
   private get textVersion(): number {
     return this.document.textVersion
   }
+
+  // Set once a parse has described a fold for this document, and never for a language whose grammar
+  // ships no fold query. Cleared with the document rather than with the parse.
+  private grammarDescribedFolds = false
 
   private get syntaxStatus(): EditorSyntaxStatus {
     return this.syntax.status
@@ -446,6 +471,7 @@ export class Editor {
       indent: (direction, context) => this.inputSelection.applyIndentCommand(direction, context),
       editAction: (command, context) =>
         this.inputSelection.applyEditActionCommand(command, context),
+      fold: (command) => this.applyFoldCommand(command),
       selectAll: (context) => this.inputSelection.applySelectAllCommand(context),
       smartSelect: (direction) => this.selectionRanges.apply(direction),
       addNextOccurrence: (context) => this.inputSelection.applyAddNextOccurrenceCommand(context),
@@ -546,6 +572,7 @@ export class Editor {
     this.syncEditorBlocks()
     this.syncInjectedTextRows()
     this.setTokens([])
+    this.dropManualFolds()
     this.clearSyntaxFolds()
     this.applyRangeDecorations()
     this.notifyViewContributions('content', null)
@@ -658,6 +685,7 @@ export class Editor {
 
   setSyntaxFolds(folds: readonly FoldRange[]): void {
     this.runInOperation(() => {
+      if (folds.length > 0) this.grammarDescribedFolds = true
       this.setSyntaxFoldProjection(folds)
       this.syncFoldStateFromProjections()
     })
@@ -1840,12 +1868,94 @@ export class Editor {
     return this.displayProjections.get('folds', SYNTAX_FOLD_PROJECTION_OWNER)?.value ?? []
   }
 
+  /**
+   * Hand-drawn regions join the contributed ones here, and only the ones that still take a place in
+   * the nesting: a provider is free to describe a block that half-overlaps one the user drew, and
+   * when it does, the drawn region sits out rather than leaving the set with a range that has no
+   * level. Its collapse outlives the eclipse, so the region comes back folded when the parse moves on.
+   */
   private foldProjections(): readonly EditorDisplayProjection<'folds'>[] {
-    return this.displayProjections.values('folds')
+    const contributed = this.displayProjections.values('folds')
+    if (this.manualFolds.length === 0) return contributed
+
+    const contributedFolds = contributed.flatMap((projection) => [...projection.value])
+    const manualFolds = nestableFoldRanges(this.manualFolds, contributedFolds)
+    if (manualFolds.length === 0) return contributed
+
+    return [
+      ...contributed,
+      {
+        kind: 'folds',
+        owner: MANUAL_FOLD_PROJECTION_OWNER,
+        source: this.currentDisplayProjectionSource(),
+        invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+        layer: 0,
+        priority: 2,
+        disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+        value: manualFolds,
+      },
+    ]
   }
 
   private syncFoldStateFromProjections(): void {
+    this.syncFallbackFoldProjection()
     this.foldState.setFoldProjections(this.foldProjections())
+  }
+
+  /**
+   * The indentation walk reads the whole document, which is not a cost a keystroke can carry, and
+   * the rows it describes are wanted by the next frame rather than by the edit. So an edit adopts
+   * whatever parsed folds it has synchronously and lets the walk catch up.
+   */
+  private scheduleFallbackFoldProjection(): void {
+    this.foldState.setFoldProjections(this.foldProjections())
+    this.secondaryWork.schedule({
+      key: 'editor.fallbackFolds',
+      delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
+      maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
+      run: () => this.runInOperation(() => this.syncFoldStateFromProjections()),
+    })
+  }
+
+  /**
+   * Keeps a fold model in place for documents the grammar cannot describe, so that folding, and
+   * everything downstream that reads enclosing scopes, is never a property of which languages we
+   * happen to ship a parser for.
+   *
+   * A grammar that has described folds displaces this entirely, including over the stretches where it
+   * currently describes none: letting indentation answer there would contribute a second version of
+   * blocks the grammar already describes, which the fan-in refuses as crossing anyway. Merely having
+   * parsed is not that signal — fold queries ship for some languages and not others, and a grammar
+   * that was never asked for folds must not be read as having answered none.
+   */
+  private syncFallbackFoldProjection(): void {
+    if (this.grammarDescribedFolds || this.syntaxFoldProjection().length > 0) {
+      this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
+      return
+    }
+
+    const folds = measureEditorPerformance('editor.fallbackFoldRanges', () =>
+      fallbackFoldRanges({
+        text: this.materializeFullText(),
+        languageId: this.languageId,
+        tabSize: this.tabSize,
+      }),
+    )
+    if (folds.length === 0) {
+      this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
+      return
+    }
+
+    this.displayProjections.set({
+      kind: 'folds',
+      owner: FALLBACK_FOLD_PROJECTION_OWNER,
+      source: this.currentDisplayProjectionSource(),
+      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+      layer: 0,
+      priority: 1,
+      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+      value: folds,
+    })
   }
 
   private handleInjectedTextRowProvidersChanged(): void {
@@ -2659,7 +2769,7 @@ export class Editor {
       const syntaxFolds = this.syntaxFoldProjection()
       const foldProjection = measureEditorPerformance(
         'editor.projectSyntaxFolds',
-        () => projectSyntaxFoldsThroughLineEdit(syntaxFolds, edit, previousTextSnapshot),
+        () => projectSyntaxFoldsThroughEdit(syntaxFolds, edit, previousTextSnapshot),
         () => ({ foldCount: syntaxFolds.length }),
       )
       const projectedTokens = measureEditorPerformance(
@@ -2672,21 +2782,33 @@ export class Editor {
         previousTextSnapshot,
         this.view.getLineStartsView(),
       )
+      const manualFolds = projectSyntaxFoldsThroughEdit(
+        this.manualFolds,
+        edit,
+        previousTextSnapshot,
+      )
       this.applyEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
+      // No reparse ever restates a hand-drawn region, so this is the only thing keeping one on the
+      // rows it was drawn over.
+      if (manualFolds) this.manualFolds = manualFolds
       this.applySyntaxFoldProjection(foldProjection)
       if (rowDecorationsProjected) this.view.setRowDecorations(this.composedRowDecorations())
       return
     }
 
+    this.dropManualFolds()
     this.clearSyntaxFolds()
     this.setDocument({ text: change.textSnapshot.materializeFullText(), tokens: [] })
   }
 
-  private applySyntaxFoldProjection(projection: SyntaxFoldProjection | null): void {
-    if (!projection) return
+  /**
+   * Null means the edit moved no parsed boundary, which still leaves the indentation fallback to
+   * recompute: the rows it describes come from the text itself, not from the parse.
+   */
+  private applySyntaxFoldProjection(folds: readonly FoldRange[] | null): void {
+    if (folds) this.setSyntaxFoldProjection(folds)
 
-    this.setSyntaxFoldProjection(projection.folds)
-    this.foldState.applyProjectedEdit(projection, this.foldProjections())
+    this.scheduleFallbackFoldProjection()
   }
 
   private logSessionChange(change: DocumentSessionChange, timingName: string): void {
@@ -2825,6 +2947,129 @@ export class Editor {
     })
   }
 
+  private applyFoldCommand(command: EditorFoldCommandId): boolean {
+    if (command === 'editor.foldAll') return this.foldAll()
+    if (command === 'editor.unfoldAll') return this.unfoldAll()
+    if (command === 'editor.createFoldingRangeFromSelection') return this.createManualFolds()
+    if (command === 'editor.removeManualFoldingRanges') return this.removeManualFolds()
+
+    return this.applyFoldPlan(command)
+  }
+
+  private applyFoldPlan(command: EditorFoldPlanCommandId): boolean {
+    const locations = this.foldCommandLocations()
+    if (locations.length === 0) return false
+
+    const plan = planFoldCommand(command, {
+      folds: this.foldState.folds,
+      locations,
+      isCollapsed: (fold) => this.foldState.isCollapsed(fold),
+    })
+    let changed = false
+    for (const fold of plan.collapse) changed = this.foldState.fold(fold) || changed
+    for (const fold of plan.expand) changed = this.foldState.unfold(fold) || changed
+    if (!changed) return false
+
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.fold.command',
+      level: 'info',
+      fold: {
+        collapsedCount: this.foldState.collapsedFoldCount,
+        command,
+        foldCount: plan.collapse.length + plan.expand.length,
+      },
+    })
+    return true
+  }
+
+  /**
+   * The caret goes to the head row of each region drawn, which stays visible when the region folds.
+   * Left where the gesture ended it would be inside rows the fold hides, and a caret in hidden rows
+   * is what unfolds them again — the fold would come back open the moment it was made.
+   */
+  private createManualFolds(): boolean {
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot) return false
+
+    const created = manualFoldRangesForSpans(
+      this.selectionFoldSpans(snapshot),
+      this.foldState.folds,
+    )
+    if (created.length === 0) return false
+
+    const carets = created.map((fold) =>
+      pointToOffset(snapshot, { row: fold.startLine, column: 0 }),
+    )
+    this.inputSelection.applyFindSelections(
+      carets.map((offset) => ({ anchor: offset, head: offset })),
+      'editor.fold.manual',
+      carets[0],
+    )
+    this.manualFolds = [...this.manualFolds, ...created]
+    this.syncFoldStateFromProjections()
+    for (const fold of created) this.foldState.fold(fold)
+
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.fold.manual.created',
+      level: 'info',
+      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: created.length },
+    })
+    return true
+  }
+
+  private removeManualFolds(): boolean {
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot || this.manualFolds.length === 0) return false
+
+    const kept = foldRangesOutsideSpans(this.manualFolds, this.selectionFoldSpans(snapshot))
+    if (kept.length === this.manualFolds.length) return false
+
+    const removedCount = this.manualFolds.length - kept.length
+    this.manualFolds = kept
+    this.syncFoldStateFromProjections()
+
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.fold.manual.removed',
+      level: 'info',
+      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: removedCount },
+    })
+    return true
+  }
+
+  /** Text this editor did not arrive at one edit at a time is text those regions no longer describe. */
+  private dropManualFolds(): void {
+    this.manualFolds = []
+  }
+
+  private foldCommandLocations(): readonly FoldCommandLocation[] {
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot) return []
+
+    return this.inputSelection.resolveViewSelections().map((selection) => ({
+      offset: selection.headOffset,
+      row: offsetToPoint(snapshot, selection.headOffset).row,
+    }))
+  }
+
+  private selectionFoldSpans(snapshot: PieceTableSnapshot): readonly ManualFoldSpan[] {
+    return this.inputSelection.resolveViewSelections().map((selection) => {
+      const startRow = offsetToPoint(snapshot, selection.startOffset).row
+      const end = offsetToPoint(snapshot, selection.endOffset)
+      // A selection stopping at the head of a row has not taken any of that row's text with it.
+      const endRow = end.column === 0 ? Math.max(startRow, end.row - 1) : end.row
+
+      return {
+        startRow,
+        endRow,
+        startIndex: rowEndOffset(snapshot, startRow),
+        endIndex: rowEndOffset(snapshot, endRow),
+      }
+    })
+  }
+
   private applyFoldOperation(operation: FoldOperation, offset?: number): boolean {
     const location = this.foldLocation(offset)
     if (!location) return false
@@ -2880,8 +3125,12 @@ export class Editor {
   }
 
   private clearSyntaxFolds(): void {
+    this.grammarDescribedFolds = false
     this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
     this.foldState.clear()
+    // Losing the parse is precisely when the fallback has something to say, and this runs on every
+    // freshly opened document — where it is the only thing that will speak until a parse lands.
+    this.syncFoldStateFromProjections()
   }
 
   private applyResolvedTheme(): void {
@@ -2997,6 +3246,14 @@ function summarizeTextEdits(edits: readonly TextEdit[]): readonly Record<string,
     removedLength: edit.to - edit.from,
     to: edit.to,
   }))
+}
+
+/**
+ * Where a row's text ends. A fold starting here keeps its own row on screen and hides the rest, which
+ * is what a region drawn over whole rows means.
+ */
+function rowEndOffset(snapshot: PieceTableSnapshot, row: number): number {
+  return pointToOffset(snapshot, { row, column: Number.MAX_SAFE_INTEGER })
 }
 
 function foldLogContext(fold: FoldRange | VirtualizedFoldMarker): Record<string, unknown> {

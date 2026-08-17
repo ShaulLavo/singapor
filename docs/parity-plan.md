@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**55 / 99 findings complete.** Update this count when you check a box.
+**60 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 8 / 16 complete.
+Milestones: 9 / 16 complete.
 
 
 ---
@@ -491,7 +491,7 @@ Milestones: 8 / 16 complete.
 
 ---
 
-## Milestone 9 — Folding model and sticky scroll
+## Milestone 9 — Folding model and sticky scroll ✅
 
 `effort L` · `risk medium` · 5 findings
 
@@ -499,16 +499,49 @@ Milestones: 8 / 16 complete.
 
 **Exit criteria.** A failing-first test proving collapse survives an edit above the fold now passes, and the offset-keyed remap machinery is deleted; an unparsed file folds by indentation with #region markers honoured, and the syntax provider taking over does not drop collapse state; the caret landing in hidden lines unfolds and selections clamp across them; foldAll/foldLevel N/foldRecursively/manual-fold commands and keybindings exist with a single nesting representation; the sticky header renders enclosing scopes through the normal row path in a sticky layer, pushes out correctly, and respects the minimap's reserved width.
 
-- [ ] **Fold collapse state is keyed by content offsets, so any earlier edit silently expands folds**  
+- [x] **Fold collapse state is keyed by content offsets, so any earlier edit silently expands folds**  
   `high` `M` `missing` `folding-brackets`
-- [ ] **Two range providers (syntax + indentation fallback), with #region markers and off-side rule**  
+- [x] **Two range providers (syntax + indentation fallback), with #region markers and off-side rule**  
   `high` `M` `missing` `folding-brackets`
-- [ ] **Auto-unfold when the caret lands inside hidden lines, and selection clamping across them**  
+- [~] **Auto-unfold when the caret lands inside hidden lines, and selection clamping across them**  
   `high` `S` `partial` `folding-brackets`
-- [ ] **Fold by level, fold recursively, fold all regions, manual folds from selection**  
+- [x] **Fold by level, fold recursively, fold all regions, manual folds from selection**  
   `medium` `M` `missing` `folding-brackets`
-- [ ] **Sticky scroll: enclosing-scope header from the fold/outline model, with a push-out transition**  
+- [x] **Sticky scroll: enclosing-scope header from the fold/outline model, with a push-out transition**  
   `high` `L` `missing` `rendering`
+
+> **`[~]` reason (auto-unfold).** The clamping half landed — a caret that would sit in hidden rows is
+> retargeted to the row the reader can see, and a selection spanning a collapsed region no longer
+> silently carries its hidden text into a copy or a delete. The unfold half did not: a find hit or a
+> go-to-definition inside a collapsed region retargets rather than opening it. The finding's Verifier
+> licensed deferring that half, and it is a behaviour change to reveal, not a missing primitive — the
+> fold state and commands to do it are all in place.
+>
+> **The collapse-identity rule, and why it is not the reference's.** The reference inherits a collapse
+> only when the line span is unchanged, because it resolves one provider hierarchy before matching.
+> We have two providers that legitimately describe the same region differently — indentation stops at
+> the last indented row, a grammar carries on to the closing delimiter — so an exact span match drops
+> the collapse on exactly the handover this milestone's exit criterion names. A range inherits when one
+> extent nests inside the other; where several open on the same row the nearest wins, and the claim is
+> two-way so two regions on one header row cannot steal each other's.
+>
+> **Deviations, recorded.** The `EditorFoldRangeProvider` plugin seam was built and then **deleted**:
+> the seam is synchronous and whole-document, while the grammar's folds are asynchronous and
+> range-scoped, and the seam is consulted only while the grammar is silent — so no producer outside
+> the editor's own indentation walk could ever feed it, and its only consumer was its own test. The
+> two providers the finding asks for are the syntax provider and the built-in indentation walk. If a
+> host ever needs to contribute folds, the shape that works is push-based, like `setSyntaxFolds`.
+>
+> **Two real bugs the review caught.** A caret at the last column of a region's last row read as
+> outside it, so the fold command silently did nothing there. And the indentation fallback stood down
+> whenever the parse had merely *settled* — but fold queries ship per language, so css, html and json
+> parsed to ready with zero folds and got no folds at all. The fallback now stands down only once a
+> grammar has actually described a fold.
+>
+> **A cost this milestone introduced and then moved.** The indentation walk reads the whole document,
+> and it was running inside the edit path — an O(document) materialization per keystroke, which the
+> solid binding's own test caught. It is now deferred behind the same debounce-with-a-ceiling the
+> syntax refresh uses, so a region a keystroke creates appears on the following frame.
 
 
 ---

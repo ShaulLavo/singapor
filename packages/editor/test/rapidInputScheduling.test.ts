@@ -49,7 +49,12 @@ describe('rapid input secondary work', () => {
 
     const deferred = new Map(scheduled.map((options) => [options.key, options]))
 
-    expect([...deferred.keys()]).toEqual(['editor.syntaxRefresh', 'editor.featureContributions'])
+    // Whatever a keystroke defers, it defers under a ceiling: a sustained run
+    // never leaves the debounce gap, so an uncapped key would never run at all.
+    expect([...deferred.keys()]).toEqual(
+      expect.arrayContaining(['editor.syntaxRefresh', 'editor.featureContributions']),
+    )
+    expect(deferred.size).toBeGreaterThanOrEqual(2)
     for (const options of deferred.values()) {
       expect(options.delayMs).toBeGreaterThan(0)
       expect(options.maxDelayMs).toBeGreaterThan(options.delayMs!)

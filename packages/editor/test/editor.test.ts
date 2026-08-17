@@ -618,6 +618,43 @@ function foldToggle(): HTMLButtonElement {
   ) as HTMLButtonElement
 }
 
+const COLLAPSED_BLOCK_TEXT = 'if (x) {\n  y();\n  y2();\n}\nz();'
+const COLLAPSED_BLOCK_HEADER_END = COLLAPSED_BLOCK_TEXT.indexOf('\n')
+const COLLAPSED_BLOCK_HIDDEN_OFFSET = COLLAPSED_BLOCK_TEXT.indexOf('y2();')
+const COLLAPSED_BLOCK_NEXT_ROW = COLLAPSED_BLOCK_TEXT.indexOf('z();')
+
+/**
+ * Opens a document whose whole `if` block is one collapsed region, so only its header row and the
+ * `z();` after it are on screen and every offset in between addresses a row that is drawn nowhere.
+ */
+async function openCollapsedBlock(editor: Editor): Promise<void> {
+  setEditorSyntaxSessionFactory(() =>
+    createMockSyntaxSession({
+      refresh: async () =>
+        createSyntaxResult(
+          [],
+          [
+            {
+              startIndex: 0,
+              endIndex: COLLAPSED_BLOCK_TEXT.indexOf('\nz();'),
+              startLine: 0,
+              endLine: 3,
+              type: 'statement_block',
+              languageId: 'typescript',
+            },
+          ],
+        ),
+    }),
+  )
+  editor.openDocument({
+    documentId: 'main.ts',
+    languageId: 'typescript',
+    text: COLLAPSED_BLOCK_TEXT,
+  })
+  await flushMicrotasks()
+  editor.fold(0)
+}
+
 function mockEditorViewport(
   element: HTMLElement,
   width: number,
@@ -6372,6 +6409,86 @@ describe('Editor', () => {
           ?.closest("[data-editor-gutter-contribution='fold-gutter']")
           ?.previousElementSibling?.classList.contains('editor-virtualized-line-number'),
       ).toBe(true)
+    })
+
+    it('steps the caret past a collapsed region instead of into the rows it hides', async () => {
+      await openCollapsedBlock(editor)
+      editor.setSelection(COLLAPSED_BLOCK_HEADER_END)
+
+      dispatchEditorKey('ArrowRight')
+
+      expect(rowsContainingText('  y2();')).toHaveLength(0)
+      expect(editor.getState().cursor).toEqual({ row: 4, column: 0 })
+      editorRoot().dispatchEvent(createInsertEvent('Q'))
+      expect(rowsContainingText('Qz();')).toHaveLength(1)
+    })
+
+    it('steps back onto the fold header instead of the last row it hides', async () => {
+      await openCollapsedBlock(editor)
+      editor.setSelection(COLLAPSED_BLOCK_NEXT_ROW)
+
+      dispatchEditorKey('ArrowLeft')
+
+      expect(editor.getState().cursor).toEqual({ row: 0, column: COLLAPSED_BLOCK_HEADER_END })
+      editorRoot().dispatchEvent(createInsertEvent('Q'))
+      expect(rowsContainingText('if (x) {Q')).toHaveLength(1)
+    })
+
+    it('lets the caret a fold closed over leave the region on the next key', async () => {
+      await openCollapsedBlock(editor)
+      editor.unfoldAll()
+      editor.setSelection(COLLAPSED_BLOCK_HIDDEN_OFFSET)
+      editor.fold(0)
+
+      dispatchEditorKey('ArrowRight')
+      editorRoot().dispatchEvent(createInsertEvent('Q'))
+
+      expect(editor.materializeFullText()).toContain('\nQz();')
+      expect(rowsContainingText('Qz();')).toHaveLength(1)
+    })
+
+    it('pulls a caret set inside a collapsed region onto its header row', async () => {
+      await openCollapsedBlock(editor)
+
+      editor.setSelection(COLLAPSED_BLOCK_HIDDEN_OFFSET)
+
+      expect(editor.getState().cursor).toEqual({ row: 0, column: COLLAPSED_BLOCK_HEADER_END })
+      editorRoot().dispatchEvent(createInsertEvent('Q'))
+      expect(rowsContainingText('if (x) {Q')).toHaveLength(1)
+      expect(editor.materializeFullText()).toContain('if (x) {Q\n  y();')
+    })
+
+    it('leaves a find match inside a collapsed region addressable by find itself', async () => {
+      const session = createDocumentSession(COLLAPSED_BLOCK_TEXT)
+      await openCollapsedBlock(editor)
+      editor.attachSession(session)
+      expect(editor.fold(0)).toBe(true)
+      expect(rowsContainingText('  y2();')).toHaveLength(0)
+
+      dispatchEditorKey('f', primaryModifier())
+      const findInput = container.querySelector('.editor-find-input') as HTMLInputElement
+      findInput.value = 'y'
+      findInput.dispatchEvent(new Event('input', { bubbles: true }))
+
+      const firstMatch = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      )
+      expect({ start: firstMatch.startOffset, end: firstMatch.endOffset }).toEqual({
+        start: 11,
+        end: 12,
+      })
+
+      expect(editor.findNext()).toBe(true)
+
+      const secondMatch = resolveSelection(
+        session.getSnapshot(),
+        session.getSelections().selections[0]!,
+      )
+      expect({ start: secondMatch.startOffset, end: secondMatch.endOffset }).toEqual({
+        start: 18,
+        end: 19,
+      })
     })
 
     it('refreshes syntax after edits', async () => {

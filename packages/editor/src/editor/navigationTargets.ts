@@ -33,11 +33,15 @@ type VisualColumnView = {
   readonly visualColumnForOffset: (offset: number) => number
 }
 
-type NavigationTargetView = VisualColumnView & {
+type LineBoundaryView = {
   readonly offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => number
-  readonly offsetByDisplayRows: (offset: number, rowDelta: number, goalColumn: number) => number
-  readonly pageRowDelta: () => number
 }
+
+type NavigationTargetView = VisualColumnView &
+  LineBoundaryView & {
+    readonly offsetByDisplayRows: (offset: number, rowDelta: number, goalColumn: number) => number
+    readonly pageRowDelta: () => number
+  }
 
 type NavigationTargetContext = {
   readonly command: EditorCommandId
@@ -80,6 +84,43 @@ export function createNavigationLineReader(
 export function navigationTargetForCommand(
   context: NavigationTargetContext,
 ): NavigationTarget | null {
+  const target = commandNavigationTarget(context)
+  if (!target) return null
+
+  return renderedRowTarget(context, target)
+}
+
+/**
+ * Pulls an offset back onto a row that is drawn.
+ *
+ * The rows a collapsed region swallowed are drawn nowhere, so the row that answers for an offset on
+ * one of them is the region's header, and it ends before that offset does. A caret left beyond that
+ * end draws on the header while addressing text no row shows: it reads as a caret that refused to
+ * move, and the next keystroke edits where the user cannot watch it happen.
+ */
+export function renderedRowCaretOffset(view: LineBoundaryView, offset: number): number {
+  const rowEnd = view.offsetAtLineBoundary(offset, 'end')
+  return rowEnd < offset ? rowEnd : offset
+}
+
+/**
+ * A move heading forward crosses the whole region rather than stopping on its header, so holding the
+ * key keeps making progress through the file. Everything else — and a forward move with no row left
+ * beyond the region — settles onto the header, the last row the caret was visibly on.
+ */
+function renderedRowTarget(
+  context: NavigationTargetContext,
+  target: NavigationTarget,
+): NavigationTarget {
+  const rendered = renderedRowCaretOffset(context.view, target.offset)
+  if (rendered === target.offset) return target
+  if (target.offset <= context.resolved.headOffset) return { ...target, offset: rendered }
+
+  const beyondRegion = context.view.offsetByDisplayRows(target.offset, 1, 0)
+  return { ...target, offset: beyondRegion > target.offset ? beyondRegion : rendered }
+}
+
+function commandNavigationTarget(context: NavigationTargetContext): NavigationTarget | null {
   const { command, resolved } = context
   if (command === 'cursorLeft') return horizontalTarget(context, 'left', false)
   if (command === 'cursorRight') return horizontalTarget(context, 'right', false)

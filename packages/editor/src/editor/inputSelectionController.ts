@@ -50,6 +50,7 @@ import {
 import {
   createNavigationLineReader,
   navigationTargetForCommand,
+  renderedRowCaretOffset,
   verticalMoveGoal,
   type NavigationLine,
 } from './navigationTargets'
@@ -764,7 +765,13 @@ export class InputSelectionController {
     if (!session) return
 
     const start = nowMs()
-    const change = session.setSelection(anchorOffset, headOffset)
+    // A caret carries no range of its own, so it is the landing that can be pulled onto the header
+    // of a collapsed region instead of into the rows it hides. A range is left exactly where it was
+    // asked for: the feature that built it addresses its own text through it, and find in particular
+    // recognizes the match it is sitting on by the selection it left behind.
+    const caret =
+      anchorOffset === headOffset ? renderedRowCaretOffset(this.options.view, headOffset) : null
+    const change = session.setSelection(caret ?? anchorOffset, caret ?? headOffset)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.options.applySessionChange(change, timingName, start, {

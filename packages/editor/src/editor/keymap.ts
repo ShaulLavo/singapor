@@ -6,7 +6,7 @@ import {
   type RawHotkey,
   type RegisterableHotkey,
 } from '@tanstack/hotkeys'
-import type { EditorCommandContext, EditorCommandId } from './commands'
+import { EDITOR_FOLD_LEVELS, type EditorCommandContext, type EditorCommandId } from './commands'
 
 type EditorPlatform = ReturnType<typeof detectPlatform>
 type EditorKeymapSignature = readonly string[]
@@ -23,6 +23,7 @@ export type EditorCommandPack =
   | 'text-editing'
   | 'advanced-editing'
   | 'multi-cursor'
+  | 'folding'
   | 'lsp-navigation'
 
 export type EditorKeymapLayerSource = 'core' | 'plugin' | 'app' | 'user'
@@ -204,6 +205,7 @@ export const defaultEditorCommandPacks = [
   'text-editing',
   'advanced-editing',
   'multi-cursor',
+  'folding',
   'lsp-navigation',
 ] as const satisfies readonly EditorCommandPack[]
 
@@ -212,6 +214,8 @@ export const readonlySafeEditorCommandPacks = [
   'selection',
   'clipboard',
   'find',
+  // Folding writes nothing back to the document, so a reader of one keeps every one of these keys.
+  'folding',
 ] as const satisfies readonly EditorCommandPack[]
 
 export function defaultEditorKeymapLayers(
@@ -282,6 +286,7 @@ export function editorCommandPackForCommand(command: EditorCommandId): EditorCom
   if (TEXT_EDITING_COMMANDS.has(command)) return 'text-editing'
   if (ADVANCED_EDITING_COMMANDS.has(command)) return 'advanced-editing'
   if (MULTI_CURSOR_COMMANDS.has(command)) return 'multi-cursor'
+  if (FOLDING_COMMANDS.has(command)) return 'folding'
   if (LSP_NAVIGATION_COMMANDS.has(command)) return 'lsp-navigation'
 
   return null
@@ -297,6 +302,7 @@ function editorKeyBindingsForCommandPack(
   if (pack === 'text-editing') return textEditingBindings(platform)
   if (pack === 'advanced-editing') return advancedEditingBindings(platform)
   if (pack === 'multi-cursor') return multiCursorEditingBindings(platform)
+  if (pack === 'folding') return foldingBindings(platform)
   if (pack === 'lsp-navigation') return lspNavigationBindings()
 
   return []
@@ -414,6 +420,18 @@ const MULTI_CURSOR_COMMANDS = new Set<EditorCommandId>([
   'editor.action.moveSelectionToNextFindMatch',
 ])
 
+const FOLDING_COMMANDS = new Set<EditorCommandId>([
+  'editor.fold',
+  'editor.unfold',
+  'editor.foldRecursively',
+  'editor.unfoldRecursively',
+  'editor.foldAll',
+  'editor.unfoldAll',
+  'editor.createFoldingRangeFromSelection',
+  'editor.removeManualFoldingRanges',
+  ...EDITOR_FOLD_LEVELS.map((level) => `editor.foldLevel${level}` as const),
+])
+
 const LSP_NAVIGATION_COMMANDS = new Set<EditorCommandId>([
   'goToDefinition',
   'editor.action.goToDefinition',
@@ -511,6 +529,41 @@ function multiCursorEditingBindings(platform: EditorPlatform): readonly EditorKe
 
 function lspNavigationBindings(): readonly EditorKeyBinding[] {
   return [{ hotkey: key('F12'), command: 'goToDefinition' }]
+}
+
+/**
+ * Three keys carry the whole family, so none of it has to be remembered on its own.
+ *
+ * The brackets take the region at the caret, closing and opening the way the indent chords on those
+ * same two keys already push; the digits take the document a depth at a time, with zero standing for
+ * every depth at once; the comma is the region the user draws. Adding the third modifier asks for the
+ * variant of the chord it extends: for a bracket, which already spells a direction, the whole subtree
+ * instead of one region; for the two keys that spell none, the opposite action. Only the brackets
+ * differ by platform, because on mac the primary modifier with shift and a bracket is how the browser
+ * around us switches tabs.
+ */
+function foldingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  const plain = { mod: true, alt: true }
+  const bracket = platform === 'mac' ? plain : { mod: true, shift: true }
+  const variant = { mod: true, alt: true, shift: true }
+  const levelBindings = EDITOR_FOLD_LEVELS.map(
+    (level): EditorKeyBinding => ({
+      hotkey: key(String(level), plain),
+      command: `editor.foldLevel${level}`,
+    }),
+  )
+
+  return [
+    { hotkey: key('[', bracket), command: 'editor.fold' },
+    { hotkey: key(']', bracket), command: 'editor.unfold' },
+    { hotkey: key('[', variant), command: 'editor.foldRecursively' },
+    { hotkey: key(']', variant), command: 'editor.unfoldRecursively' },
+    { hotkey: key('0', plain), command: 'editor.foldAll' },
+    { hotkey: key('0', variant), command: 'editor.unfoldAll' },
+    ...levelBindings,
+    { hotkey: key(',', plain), command: 'editor.createFoldingRangeFromSelection' },
+    { hotkey: key(',', variant), command: 'editor.removeManualFoldingRanges' },
+  ]
 }
 
 function multiCursorBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {

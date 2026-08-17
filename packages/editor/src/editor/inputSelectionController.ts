@@ -1,11 +1,17 @@
-import type { DocumentSession, DocumentSessionChange } from '../documentSession'
+import type {
+  DocumentSession,
+  DocumentSessionChange,
+  DocumentSessionSelectionRange,
+} from '../documentSession'
 import { normalizeLineEndings } from '../pieceTable/lineEndings'
 import { readPieceTableTextRange } from '../pieceTable/reads'
 import {
   SelectionGoal,
+  lastAddedSelectionIndex,
   resolveSelection,
   type ResolvedSelection,
   type SelectionGoal as SelectionGoalValue,
+  type SelectionSet,
 } from '../selections'
 import { clamp } from '../style-utils'
 import type { TextEdit } from '../tokens'
@@ -16,6 +22,11 @@ import type {
   EditorViewContributionUpdateKind,
 } from '../plugins'
 import type { EditorSyntaxLanguageId } from '../syntax/session'
+import {
+  readClipboardMetadata,
+  writeClipboardPayload,
+  type ClipboardMetadata,
+} from './clipboardMetadata'
 import { childContainingNode, childNodeIndex, elementBoundaryToTextOffset } from './domBoundary'
 import { editActionForCommand, type EditorEditActionCommandId } from './editActions'
 import {
@@ -28,8 +39,13 @@ import { keyboardFallbackText } from './input'
 import {
   cancelFrame,
   mouseSelectionAutoScrollDelta,
+  mouseSelectionEnds,
+  mouseTextMove,
   requestFrame,
   type MouseSelectionDrag,
+  type MouseSelectionEnds,
+  type MouseSelectionGranularity,
+  type MouseTextMoveDrag,
 } from './mouseSelection'
 import {
   createNavigationLineReader,
@@ -39,15 +55,18 @@ import {
 } from './navigationTargets'
 import {
   findAllExactOccurrences,
-  findNextExactOccurrence,
   findNextExactOccurrenceFromRange,
-  getOccurrenceQuery,
   occurrenceQueryForSelection,
   occurrenceSelectTimingName,
   type OccurrenceQuery,
   type OccurrenceSelectionChange,
 } from './occurrences'
-import { wordRangeAtOffset, wordSeparatorsForLanguage } from '../textRanges'
+import { wordRangeAtOffset, wordSeparatorsForLanguage, type TextOffsetRange } from '../textRanges'
+import {
+  bufferColumnToVisualColumn,
+  visualColumnLength,
+  visualColumnToBufferColumn,
+} from '../displayTransforms'
 import { appendTiming, eventStartMs, mergeChangeTimings, nowMs } from './timing'
 import { measureEditorPerformance } from './performanceDiagnostics'
 import {
@@ -74,8 +93,8 @@ import {
 } from './autoClose'
 import { AutoCloseStore, characterAt, characterBefore } from './autoCloseStore'
 import { SnippetSession, type SnippetStopRange } from './snippetSession'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
-import { offsetToPoint } from '../pieceTable/positions'
+import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
 import { lineBreakIndent } from './indentation'
 
 export type InputSelectionControllerOptions = {
@@ -101,10 +120,64 @@ export type InputSelectionControllerOptions = {
   ): void
 }
 
+// A run of occurrence presses owns its search settings, so that widening one to whole words never
+// reaches the find widget's own toggles. The selection set it produced identifies it: selection
+// sets are replaced wholesale, so anything the user does in between hands back a different one and
+// the next press starts a fresh run from whatever is selected then.
+type OccurrenceRun = {
+  readonly selections: SelectionSet<PieceTableAnchor>
+  readonly wholeWord: boolean
+}
+
+/** What a copy or a cut hands to the clipboard: the text, plus how it was assembled. */
+type ClipboardPayload = {
+  readonly metadata: ClipboardMetadata
+  readonly text: string
+}
+
+/**
+ * A box selection, held as the two corners it spans rather than as the cursors it produces: the
+ * cursors are derived again on every change, which is what lets the rectangle be pushed past the
+ * end of a short line and pick that line up again on the way back.
+ */
+type ColumnSelectionRectangle = {
+  // The text the columns were measured against. Any edit leaves them describing characters that
+  // have since moved, so identity here is what expires the rectangle.
+  readonly snapshot: PieceTableSnapshot
+  readonly fromRow: number
+  readonly fromColumn: number
+  readonly toRow: number
+  readonly toColumn: number
+}
+
+/** A rectangle the next gesture may still continue, with what the last one already worked out. */
+type ColumnSelectionRun = {
+  readonly rectangle: ColumnSelectionRectangle
+  // The cursors the rectangle put down. Selection sets are replaced wholesale, so anything that
+  // moves the caret in between hands back a different one and the abandoned box cannot resume.
+  readonly selections: SelectionSet<PieceTableAnchor>
+  // How far right the rectangle can go: the widest of the rows it covers, measured on the same
+  // walk that placed the cursors, so holding the chord never re-reads those rows.
+  readonly widestColumn: number
+}
+
+const COLUMN_SELECTION_COMMANDS = new Set<EditorCommandId>([
+  'cursorColumnSelectLeft',
+  'cursorColumnSelectRight',
+  'cursorColumnSelectUp',
+  'cursorColumnSelectDown',
+  'cursorColumnSelectPageUp',
+  'cursorColumnSelectPageDown',
+])
+
 export class InputSelectionController {
   private readonly autoClose = new AutoCloseStore()
   private readonly snippet = new SnippetSession()
+  private occurrenceRun: OccurrenceRun | null = null
   private mouseSelectionDrag: MouseSelectionDrag | null = null
+  private mouseTextMoveDrag: MouseTextMoveDrag | null = null
+  private mouseSelectionAnchor: TextOffsetRange | null = null
+  private columnSelection: ColumnSelectionRun | null = null
   private mouseSelectionAutoScrollFrame = 0
   private inputState: EditorInputState = createEditorInputState()
   private nativeInputHandlersInstalled = false
@@ -116,6 +189,9 @@ export class InputSelectionController {
     el.addEventListener('mousedown', this.handleMouseDown)
     el.addEventListener('beforeinput', this.handleBeforeInput)
     el.addEventListener('copy', this.handleCopy)
+    el.addEventListener('cut', this.handleCut)
+    el.addEventListener('dragover', this.handleDragOver)
+    el.addEventListener('dragleave', this.handleDragLeave)
     el.addEventListener('drop', this.handleDrop)
     el.addEventListener('paste', this.handlePaste)
     el.addEventListener('keydown', this.handleKeyDown)
@@ -134,6 +210,9 @@ export class InputSelectionController {
     el.removeEventListener('mousedown', this.handleMouseDown)
     el.removeEventListener('beforeinput', this.handleBeforeInput)
     el.removeEventListener('copy', this.handleCopy)
+    el.removeEventListener('cut', this.handleCut)
+    el.removeEventListener('dragover', this.handleDragOver)
+    el.removeEventListener('dragleave', this.handleDragLeave)
     el.removeEventListener('drop', this.handleDrop)
     el.removeEventListener('paste', this.handlePaste)
     el.removeEventListener('keydown', this.handleKeyDown)
@@ -144,6 +223,7 @@ export class InputSelectionController {
     el.removeEventListener('mouseup', this.syncSessionSelectionFromDom)
     el.ownerDocument.removeEventListener('selectionchange', this.syncCustomSelectionFromDom)
     this.stopMouseSelectionDrag()
+    this.stopMouseTextMoveDrag()
   }
 
   syncNativeInputHandlers(editable: boolean): void {
@@ -492,13 +572,23 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return false
 
-    const start = context.event ? eventStartMs(context.event) : nowMs()
-    const change = session.clearSecondarySelections()
-    if (change.kind === 'none') return false
+    const resolved = this.resolvedSelections()
+    if (resolved.length <= 1) return false
 
+    // Dropping the extras leaves the user at the cursor they last reached for — the one the editor
+    // scrolled to when it was added. Keeping whichever cursor sorts first instead would throw the
+    // caret to the top of the run they just built.
+    const kept = resolved[lastAddedSelectionIndex(session.getSelections())] ?? resolved[0]
+    if (!kept) return false
+
+    const start = context.event ? eventStartMs(context.event) : nowMs()
+    const change = session.setSelections([
+      { anchor: kept.anchorOffset, goal: kept.goal, head: kept.headOffset },
+    ])
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.options.applySessionChange(change, 'input.clearSecondarySelections', start, {
+      revealOffset: kept.headOffset,
       syncDomSelection: false,
     })
     return true
@@ -621,6 +711,9 @@ export class InputSelectionController {
   applyNavigationCommand(command: EditorCommandId, context: EditorCommandContext): boolean {
     const session = this.session
     if (!session) return false
+    if (COLUMN_SELECTION_COMMANDS.has(command)) {
+      return this.applyColumnSelectionCommand(command, context)
+    }
 
     const snapshot = session.getSnapshot()
     const resolvedSelections = session
@@ -913,13 +1006,19 @@ export class InputSelectionController {
     const offset = this.textOffsetFromMouseEvent(event)
     if (offset === null) return
 
+    // Alt on its own already means "another cursor here", so the rectangle takes the pair.
+    if (event.altKey && event.shiftKey) {
+      this.startMouseSelectionDrag(event, offset, 'column')
+      return
+    }
+
     if (event.detail === 3) {
-      this.selectLineAtOffset(event, offset)
+      this.startMouseSelectionDrag(event, offset, 'line')
       return
     }
 
     if (event.detail === 2) {
-      this.selectWordAtOffset(event, offset)
+      this.startMouseSelectionDrag(event, offset, 'word')
       return
     }
 
@@ -928,7 +1027,9 @@ export class InputSelectionController {
       return
     }
 
-    this.startMouseSelectionDrag(event, offset)
+    if (this.startMouseTextMoveDrag(event, offset)) return
+
+    this.startMouseSelectionDrag(event, offset, 'char')
   }
 
   private addCursorAtOffset(event: MouseEvent, offset: number): void {
@@ -947,22 +1048,299 @@ export class InputSelectionController {
     })
   }
 
-  private startMouseSelectionDrag(event: MouseEvent, offset: number): void {
+  /**
+   * Arms a drag over the pressed point.
+   *
+   * Shift keeps the anchor the previous press laid down instead of laying down a new one, which is
+   * the whole of extending by click: only the head moves, and a run begun on a word or a line goes
+   * on selecting whole words or lines in either direction.
+   */
+  private startMouseSelectionDrag(
+    event: MouseEvent,
+    offset: number,
+    granularity: MouseSelectionGranularity,
+  ): void {
+    const session = this.session
+    if (!session) return
     if (event.button !== 0) return
-    if (event.detail !== 1) return
 
+    const head = this.offsetRangeAt(offset, granularity)
+    const anchor = event.shiftKey ? this.mouseSelectionExtendAnchor() : head
+    if (!anchor) return
+
+    const start = eventStartMs(event)
     event.preventDefault()
     this.options.view.focusInput()
+    this.mouseSelectionAnchor = anchor
     this.mouseSelectionDrag = {
-      anchorOffset: offset,
+      anchor,
+      granularity,
       headOffset: offset,
       clientX: event.clientX,
       clientY: event.clientY,
     }
-    this.syncCustomSelectionHighlight(offset, offset)
     this.transitionInputState({ type: 'mouse-selection-start' })
     this.options.el.ownerDocument.addEventListener('mousemove', this.updateMouseSelectionDrag)
     this.options.el.ownerDocument.addEventListener('mouseup', this.finishMouseSelectionDrag)
+    if (granularity === 'column') {
+      this.startColumnSelection(session, offset, start)
+      return
+    }
+
+    // A press that only drops the caret somewhere has nothing to show until it moves or lifts, and
+    // committing here would spend a selection change on every click.
+    if (granularity === 'char' && !event.shiftKey) {
+      this.syncCustomSelectionHighlight(offset, offset)
+      return
+    }
+
+    this.applyMouseSelection(
+      session,
+      mouseSelectionEnds(anchor, head),
+      mouseSelectionTimingName(granularity),
+      start,
+    )
+  }
+
+  private offsetRangeAt(offset: number, granularity: MouseSelectionGranularity): TextOffsetRange {
+    if (granularity === 'char' || granularity === 'column') return { start: offset, end: offset }
+
+    const line = this.readLineAt(offset)
+    if (!line) return { start: offset, end: offset }
+    if (granularity === 'line') return { start: line.start, end: line.start + line.text.length }
+
+    const word = wordRangeAtOffset(line.text, offset - line.start)
+    return { start: line.start + word.start, end: line.start + word.end }
+  }
+
+  /**
+   * What a shift-click pivots on. The range the last press anchored to holds only while the live
+   * selection is still anchored there: Select All or a Shift+Arrow run has re-anchored it since and
+   * owes that press nothing, so extending falls back to the end the selection is anchored by —
+   * never the end the caret happens to sit at.
+   */
+  private mouseSelectionExtendAnchor(): TextOffsetRange | null {
+    const primary = this.primaryResolvedSelection()
+    if (!primary) return null
+
+    const remembered = this.mouseSelectionAnchor
+    if (
+      remembered &&
+      (primary.anchorOffset === remembered.start || primary.anchorOffset === remembered.end)
+    ) {
+      return remembered
+    }
+
+    return { start: primary.anchorOffset, end: primary.anchorOffset }
+  }
+
+  private applyMouseSelection(
+    session: DocumentSession,
+    ends: MouseSelectionEnds,
+    timingName: string,
+    start: number,
+  ): void {
+    const change = session.setSelection(ends.anchorOffset, ends.headOffset)
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
+    this.markSessionSelectionForNextInput()
+    this.options.applySessionChange(change, timingName, start, { syncDomSelection: false })
+  }
+
+  private startColumnSelection(session: DocumentSession, offset: number, start: number): void {
+    // A press lays down a rectangle of its own rather than continuing the one the keyboard was
+    // pushing around: it is anchored where the caret already is and spans out to the pointer.
+    this.columnSelection = null
+    this.commitColumnSelection(session, offset, start)
+  }
+
+  private updateColumnSelection(session: DocumentSession, offset: number): void {
+    const rectangle = this.columnSelectionTo(session, offset)
+    if (!rectangle) return
+    if (!this.setColumnSelection(session, rectangle)) return
+
+    this.options.notifyViewContributions('selection', null)
+  }
+
+  private commitColumnSelection(session: DocumentSession, offset: number, start: number): void {
+    const rectangle = this.columnSelectionTo(session, offset)
+    if (!rectangle) return
+
+    const applied = this.setColumnSelection(session, rectangle)
+    if (!applied) return
+
+    // No reveal: the corner the pointer is holding is already the part of the document the user is
+    // looking at, and scrolling to it would drag the text out from under the drag.
+    this.options.applySessionChange(applied.change, 'input.columnSelection', start, {
+      syncDomSelection: false,
+    })
+  }
+
+  private applyColumnSelectionCommand(
+    command: EditorCommandId,
+    context: EditorCommandContext,
+  ): boolean {
+    const session = this.session
+    if (!session) return false
+
+    const rectangle = this.columnSelectionRectangle(session)
+    if (!rectangle) return false
+
+    const applied = this.setColumnSelection(
+      session,
+      this.movedColumnSelection(session, command, rectangle),
+    )
+    if (!applied) return false
+
+    const start = context.event ? eventStartMs(context.event) : nowMs()
+    this.options.applySessionChange(applied.change, 'input.columnSelection', start, {
+      revealOffset: applied.revealOffset,
+      syncDomSelection: false,
+    })
+    return true
+  }
+
+  /** Only the moving corner ever changes; the anchored one is what the rectangle is measured from. */
+  private movedColumnSelection(
+    session: DocumentSession,
+    command: EditorCommandId,
+    rectangle: ColumnSelectionRectangle,
+  ): ColumnSelectionRectangle {
+    if (command === 'cursorColumnSelectLeft') {
+      return { ...rectangle, toColumn: Math.max(0, rectangle.toColumn - 1) }
+    }
+
+    if (command === 'cursorColumnSelectRight') {
+      // The widest line in the band, so the rectangle can be pushed past the end of the short ones
+      // but never off into a column no line in it reaches.
+      const limit = this.columnSelectionWidestColumn(session, rectangle)
+      return { ...rectangle, toColumn: Math.min(rectangle.toColumn + 1, limit) }
+    }
+
+    const rows = columnSelectionRowDelta(command, this.options.view.pageRowDelta())
+    const snapshot = session.getSnapshot()
+    const lastRow = offsetToPoint(snapshot, snapshot.length).row
+    return { ...rectangle, toRow: clamp(rectangle.toRow + rows, 0, lastRow) }
+  }
+
+  private setColumnSelection(
+    session: DocumentSession,
+    rectangle: ColumnSelectionRectangle,
+  ): { readonly change: DocumentSessionChange; readonly revealOffset: number } | null {
+    const { ranges, widestColumn } = this.columnSelectionRanges(session, rectangle)
+    // The anchored row is measured from a real position on itself, so it is always inside the band
+    // and always contributes: no gesture can empty this, and the guard is here for the index type.
+    const moving = ranges.at(-1)
+    if (!moving) return null
+
+    const change = session.setSelections(ranges)
+    this.columnSelection = { rectangle, selections: session.getSelections(), widestColumn }
+    this.syncSessionSelectionHighlight()
+    this.markSessionSelectionForNextInput()
+    return { change, revealOffset: moving.head ?? moving.anchor }
+  }
+
+  /**
+   * One cursor per row the rectangle covers, walked from its anchored corner to its moving one,
+   * with the widest of those rows picked up on the way: both readings need every line's text, and
+   * the rows can number in the thousands while the chord is held down.
+   */
+  private columnSelectionRanges(
+    session: DocumentSession,
+    rectangle: ColumnSelectionRectangle,
+  ): {
+    readonly ranges: readonly DocumentSessionSelectionRange[]
+    readonly widestColumn: number
+  } {
+    const snapshot = session.getSnapshot()
+    const readLine = createNavigationLineReader(snapshot, session.getTextSnapshot())
+    const tabSize = this.options.tabSize
+    const step = rectangle.toRow < rectangle.fromRow ? -1 : 1
+    const rows = Math.abs(rectangle.toRow - rectangle.fromRow) + 1
+    const ranges: DocumentSessionSelectionRange[] = []
+    let widestColumn = 0
+
+    for (let index = 0; index < rows; index += 1) {
+      const row = rectangle.fromRow + step * index
+      const line = readLine(pointToOffset(snapshot, { row, column: 0 }))
+      widestColumn = Math.max(widestColumn, visualColumnLength(line.text, tabSize))
+
+      const fromColumn = visualColumnToBufferColumn(
+        line.text,
+        rectangle.fromColumn,
+        'nearest',
+        tabSize,
+      )
+      const toColumn = visualColumnToBufferColumn(line.text, rectangle.toColumn, 'nearest', tabSize)
+      const covers = columnBandCoversLine(
+        rectangle,
+        bufferColumnToVisualColumn(line.text, fromColumn, tabSize),
+        bufferColumnToVisualColumn(line.text, toColumn, tabSize),
+      )
+      // A line that stops short of the band contributes no cursor at all. Clamping it to its own
+      // end instead would put a caret outside the rectangle, editing text it never covered.
+      if (!covers) continue
+
+      ranges.push({ anchor: line.start + fromColumn, head: line.start + toColumn })
+    }
+
+    return { ranges, widestColumn }
+  }
+
+  private columnSelectionWidestColumn(
+    session: DocumentSession,
+    rectangle: ColumnSelectionRectangle,
+  ): number {
+    // A rectangle that is still the stored one covers the rows the stored width was measured over.
+    const run = this.columnSelection
+    if (run?.rectangle === rectangle) return run.widestColumn
+
+    return this.columnSelectionRanges(session, rectangle).widestColumn
+  }
+
+  private columnSelectionTo(
+    session: DocumentSession,
+    offset: number,
+  ): ColumnSelectionRectangle | null {
+    const rectangle = this.columnSelectionRectangle(session)
+    if (!rectangle) return null
+
+    const to = this.columnSelectionCorner(session, offset)
+    return { ...rectangle, toRow: to.row, toColumn: to.column }
+  }
+
+  /** The rectangle the next column gesture continues, or one synthesised from the caret. */
+  private columnSelectionRectangle(session: DocumentSession): ColumnSelectionRectangle | null {
+    const snapshot = session.getSnapshot()
+    const run = this.columnSelection
+    if (run?.rectangle.snapshot === snapshot && run.selections === session.getSelections()) {
+      return run.rectangle
+    }
+
+    this.columnSelection = null
+    const primary = this.primaryResolvedSelection()
+    if (!primary) return null
+
+    const from = this.columnSelectionCorner(session, primary.anchorOffset)
+    const to = this.columnSelectionCorner(session, primary.headOffset)
+    return {
+      snapshot,
+      fromRow: from.row,
+      fromColumn: from.column,
+      toRow: to.row,
+      toColumn: to.column,
+    }
+  }
+
+  private columnSelectionCorner(
+    session: DocumentSession,
+    offset: number,
+  ): { readonly row: number; readonly column: number } {
+    const point = offsetToPoint(session.getSnapshot(), offset)
+    const line = this.readLineAt(offset)
+    return {
+      row: point.row,
+      column: bufferColumnToVisualColumn(line?.text ?? '', point.column, this.options.tabSize),
+    }
   }
 
   private updateMouseSelectionDrag = (event: MouseEvent): void => {
@@ -984,18 +1362,141 @@ export class InputSelectionController {
       return
     }
 
-    drag.clientX = event.clientX
-    drag.clientY = event.clientY
-    const offset = this.mouseSelectionOffsetFromPoint(drag.clientX, drag.clientY)
+    // A release can arrive from over the gutter, a scrollbar, or past the last line, where a hit
+    // test answers with an offset the pointer never visited.
+    const { anchor, granularity, headOffset } = drag
     event.preventDefault()
     this.stopMouseSelectionDrag('finish')
 
     const start = nowMs()
-    const change = session.setSelection(drag.anchorOffset, offset)
-    const syncDomSelection = drag.anchorOffset === offset
-    this.syncCustomSelectionHighlight(drag.anchorOffset, offset)
+    if (granularity === 'column') {
+      this.commitColumnSelection(session, headOffset, start)
+      return
+    }
+
+    const ends = mouseSelectionEnds(anchor, this.offsetRangeAt(headOffset, granularity))
+    const change = session.setSelection(ends.anchorOffset, ends.headOffset)
+    const syncDomSelection = ends.anchorOffset === ends.headOffset
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
     this.markSessionSelectionForNextInput()
     this.options.applySessionChange(change, 'input.selection', start, { syncDomSelection })
+  }
+
+  /**
+   * Takes a press that landed inside the selection, so that dragging carries the selected text
+   * instead of throwing the selection away and starting a new one.
+   *
+   * Only the interior counts: a press on either edge is how a selection is grown by dragging, and
+   * text that is only one character wide has no interior to grab. Several cursors have no one run to
+   * carry, and a read-only document cannot take the text back out again.
+   */
+  private startMouseTextMoveDrag(event: MouseEvent, offset: number): boolean {
+    if (event.button !== 0) return false
+    if (event.detail !== 1) return false
+    if (event.shiftKey) return false
+    if (!this.options.canEditDocument()) return false
+
+    const resolved = this.resolvedSelections()
+    const primary = resolved.length === 1 ? resolved[0] : undefined
+    if (!primary) return false
+    if (offset <= primary.startOffset || offset >= primary.endOffset) return false
+
+    event.preventDefault()
+    this.options.view.focusInput()
+    this.mouseTextMoveDrag = {
+      dropOffset: null,
+      moved: false,
+      pressOffset: offset,
+      source: { start: primary.startOffset, end: primary.endOffset },
+    }
+    this.transitionInputState({ type: 'mouse-selection-start' })
+    this.options.el.ownerDocument.addEventListener('mousemove', this.updateMouseTextMoveDrag)
+    this.options.el.ownerDocument.addEventListener('mouseup', this.finishMouseTextMoveDrag)
+    return true
+  }
+
+  private updateMouseTextMoveDrag = (event: MouseEvent): void => {
+    const drag = this.mouseTextMoveDrag
+    if (!drag) return
+
+    event.preventDefault()
+    const offset = this.textOffsetFromPoint(event.clientX, event.clientY)
+    if (offset === null) return
+
+    drag.moved = drag.moved || offset !== drag.pressOffset
+    drag.dropOffset = offset > drag.source.start && offset < drag.source.end ? null : offset
+    this.showTextMoveDropCaret(drag)
+  }
+
+  private finishMouseTextMoveDrag = (event: MouseEvent): void => {
+    const drag = this.mouseTextMoveDrag
+    const session = this.session
+    if (!drag || !session) {
+      this.stopMouseTextMoveDrag()
+      return
+    }
+
+    event.preventDefault()
+    this.stopMouseTextMoveDrag()
+    const start = eventStartMs(event)
+    if (!drag.moved) {
+      this.collapseSelectionToOffset(session, drag.pressOffset, start)
+      return
+    }
+
+    // The modifier is read here rather than at the press, because it can be taken up or let go at
+    // any point while the text is in flight and what it says at the release is the user's answer.
+    const move =
+      drag.dropOffset === null
+        ? null
+        : mouseTextMove(
+            drag.source,
+            readPieceTableTextRange(session.getSnapshot(), drag.source.start, drag.source.end),
+            drag.dropOffset,
+            event.altKey || event.ctrlKey,
+          )
+    if (!move) {
+      this.syncSessionSelectionHighlight()
+      return
+    }
+
+    const change = session.applyEdits(move.edits, {
+      selections: [{ anchor: move.selection.start, head: move.selection.end }],
+    })
+    this.syncCustomSelectionHighlight(move.selection.start, move.selection.end)
+    this.markSessionSelectionForNextInput()
+    this.options.applySessionChange(change, 'input.dragText', start, {
+      revealOffset: move.selection.end,
+      syncDomSelection: false,
+    })
+  }
+
+  private showTextMoveDropCaret(drag: MouseTextMoveDrag): void {
+    // With nowhere to drop, the selection comes back: the run is still where it was, and a caret
+    // sitting inside it would claim otherwise.
+    if (drag.dropOffset === null) {
+      this.syncSessionSelectionHighlight()
+      return
+    }
+
+    this.syncCustomSelectionHighlight(drag.dropOffset, drag.dropOffset)
+  }
+
+  private collapseSelectionToOffset(session: DocumentSession, offset: number, start: number): void {
+    const change = session.setSelection(offset)
+    this.syncCustomSelectionHighlight(offset, offset)
+    this.markSessionSelectionForNextInput()
+    this.options.applySessionChange(change, 'input.selection', start, { syncDomSelection: true })
+  }
+
+  private stopMouseTextMoveDrag(): void {
+    const hadDrag = this.mouseTextMoveDrag !== null
+    this.mouseTextMoveDrag = null
+    this.options.el.ownerDocument.removeEventListener('mousemove', this.updateMouseTextMoveDrag)
+    this.options.el.ownerDocument.removeEventListener('mouseup', this.finishMouseTextMoveDrag)
+    if (!hadDrag) return
+
+    this.transitionInputState({ type: 'mouse-selection-finish' })
   }
 
   private stopMouseSelectionDrag(reason: 'cancel' | 'finish' = 'cancel'): void {
@@ -1018,10 +1519,16 @@ export class InputSelectionController {
 
     const offset = this.mouseSelectionOffsetFromPoint(drag.clientX, drag.clientY)
     drag.headOffset = offset
-    this.syncCustomSelectionHighlight(drag.anchorOffset, offset)
-    session.setSelection(drag.anchorOffset, offset)
+    if (drag.granularity === 'column') {
+      this.updateColumnSelection(session, offset)
+      return
+    }
+
+    const ends = mouseSelectionEnds(drag.anchor, this.offsetRangeAt(offset, drag.granularity))
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
+    session.setSelection(ends.anchorOffset, ends.headOffset)
     this.options.notifyViewContributions('selection', null)
-    if (drag.anchorOffset === offset) {
+    if (ends.anchorOffset === ends.headOffset) {
       this.markDomSelectionForNextInput()
       return
     }
@@ -1103,52 +1610,11 @@ export class InputSelectionController {
     this.options.applySessionChange(change, timingName, start, { syncDomSelection: false })
   }
 
-  private selectLineAtOffset(event: MouseEvent, offset: number): void {
-    const line = this.readLineAt(offset)
-    if (!line) return
-
-    this.selectRange(
-      event,
-      { start: line.start, end: line.start + line.text.length },
-      'input.tripleClick',
-    )
-  }
-
-  private selectWordAtOffset(event: MouseEvent, offset: number): void {
-    const line = this.readLineAt(offset)
-    if (!line) return
-
-    const range = wordRangeAtOffset(line.text, offset - line.start)
-    if (range.start === range.end) return
-
-    this.selectRange(
-      event,
-      { start: line.start + range.start, end: line.start + range.end },
-      'input.doubleClick',
-    )
-  }
-
   private readLineAt(offset: number): NavigationLine | null {
     const session = this.session
     if (!session) return null
 
     return createNavigationLineReader(session.getSnapshot(), session.getTextSnapshot())(offset)
-  }
-
-  private selectRange(
-    event: MouseEvent,
-    range: { readonly start: number; readonly end: number },
-    timingName: string,
-  ): void {
-    const session = this.session
-    if (!session) return
-
-    const start = eventStartMs(event)
-    event.preventDefault()
-    const change = session.setSelection(range.start, range.end)
-    this.syncCustomSelectionHighlight(range.start, range.end)
-    this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, timingName, start, { syncDomSelection: false })
   }
 
   private handleBeforeInput = (event: InputEvent): void => {
@@ -1201,17 +1667,51 @@ export class InputSelectionController {
     const text = normalizeLineEndings(event.clipboardData?.getData('text/plain') ?? '')
     if (text.length === 0) return
 
+    // Looked up under the folded text, because that is the form the payload was written in.
+    const metadata = readClipboardMetadata(event.clipboardData ?? null, text)
     this.cancelPendingKeyboardTextFallback()
     this.transitionInputState({ text, type: 'paste-pending' })
     const start = eventStartMs(event)
     const selectionChange = this.selectionChangeBeforeEdit()
     event.preventDefault()
-    const change = mergeChangeTimings(applyPasteText(session, text), selectionChange)
+    const change = mergeChangeTimings(this.applyPaste(session, text, metadata), selectionChange)
     this.transitionInputState({ type: 'transaction-committed' })
     this.options.applySessionChange(change, 'input.paste', start, {
       revealBlock: pasteRevealBlock(text),
       revealOffset: this.primarySelectionHeadOffset(change),
     })
+  }
+
+  /**
+   * Claims a drag while it is over the text.
+   *
+   * A browser delivers a drop only to an element that has claimed the drag on its way past, and
+   * nothing here is natively a drop target — so without this the handler below never runs at all,
+   * and the pointer reads as "no drop" the whole way across the editor. A document that cannot be
+   * edited leaves the drag unclaimed rather than accepting one it would then have to discard.
+   */
+  private handleDragOver = (event: DragEvent): void => {
+    if (!this.session) return
+    if (!this.options.canEditDocument()) return
+
+    event.preventDefault()
+    // Text arriving from outside brings no cursor of its own, so the editor lends it one: without a
+    // mark on the spot the pointer has picked out, a drop is aimed by guesswork.
+    const offset = this.textOffsetFromPoint(event.clientX, event.clientY)
+    if (offset !== null) this.syncCustomSelectionHighlight(offset, offset)
+    // Never `move`: the text belongs to whatever the drag came from, and telling that source to take
+    // it away is a deletion in a document this editor does not own.
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  }
+
+  /** Gives the caret back to the selection once a drag the editor was aiming for goes elsewhere. */
+  private handleDragLeave = (event: DragEvent): void => {
+    if (!this.session) return
+    // Crossing between the rows inside the editor leaves each of them in turn, and the drag has not
+    // gone anywhere.
+    if (event.relatedTarget instanceof Node && this.options.el.contains(event.relatedTarget)) return
+
+    this.syncSessionSelectionHighlight()
   }
 
   private handleDrop = (event: DragEvent): void => {
@@ -1222,7 +1722,7 @@ export class InputSelectionController {
     event.preventDefault()
     if (!this.options.canEditDocument()) return
 
-    // Folded for the same reason as the pasted payload above.
+    // Normalized for the same reason as the pasted payload above.
     const text = normalizeLineEndings(dropPlainText(event))
     if (text.length === 0) return
 
@@ -1243,12 +1743,104 @@ export class InputSelectionController {
   }
 
   private handleCopy = (event: ClipboardEvent): void => {
-    const text = this.selectedTextForClipboard()
-    if (text === null) return
+    const payload = this.clipboardPayload()
+    if (!payload) return
     if (!event.clipboardData) return
 
-    event.clipboardData.setData('text/plain', text)
+    writeClipboardPayload(event.clipboardData, payload.text, payload.metadata)
     event.preventDefault()
+  }
+
+  /**
+   * Cut, which the browser cannot do for us: the element the keystroke lands on holds no document
+   * text, so the native gesture has nothing to take away and nothing to remove.
+   */
+  private handleCut = (event: ClipboardEvent): void => {
+    const session = this.session
+    if (!session) return
+    if (!event.clipboardData) return
+    if (!this.options.canEditDocument()) return
+
+    const start = eventStartMs(event)
+    const selectionChange = this.selectionChangeBeforeEdit()
+    const payload = this.clipboardPayload()
+    if (!payload) return
+
+    writeClipboardPayload(event.clipboardData, payload.text, payload.metadata)
+    event.preventDefault()
+    const change = payload.metadata.pasteOnNewLine
+      ? this.deleteCaretLines(session)
+      : session.deleteSelection()
+    this.options.applySessionChange(mergeChangeTimings(change, selectionChange), 'input.cut', start)
+  }
+
+  /** Removal half of a cut that took whole lines, including the line-joining terminators. */
+  private deleteCaretLines(session: DocumentSession): DocumentSessionChange {
+    const action = editActionForCommand(
+      'editor.action.deleteLines',
+      session.materializeFullText(),
+      this.resolvedSelections(),
+      { languageId: this.options.getLanguageId(), tabSize: this.options.tabSize },
+    )
+    return session.applyEdits(action.edits, { selections: action.selections })
+  }
+
+  private applyPaste(
+    session: DocumentSession,
+    text: string,
+    metadata: ClipboardMetadata | null,
+  ): DocumentSessionChange {
+    const resolved = this.resolvedSelections()
+    if (metadata?.pasteOnNewLine && resolved.every((selection) => selection.collapsed)) {
+      return this.applyLinePaste(session, text, resolved)
+    }
+    // Cursor i takes fragment i only while the counts still line up. Under any other count the
+    // fragments no longer describe these cursors, and handing them out anyway would scatter the
+    // payload; the whole text at every cursor is then the only honest reading of it.
+    if (metadata && resolved.length > 1 && metadata.perSelection.length === resolved.length) {
+      return this.applyDistributedPaste(session, metadata.perSelection, resolved)
+    }
+
+    return applyPasteText(session, text)
+  }
+
+  /**
+   * A payload copied off carets is a set of lines, so it lands as lines: at the start of the line
+   * each caret is on rather than splicing itself into the middle of whatever word the caret is in.
+   */
+  private applyLinePaste(
+    session: DocumentSession,
+    text: string,
+    resolved: readonly ResolvedSelection[],
+  ): DocumentSessionChange {
+    const starts = this.caretLines(resolved).map((line) => line.start)
+    const edits = starts.map((start) => ({ from: start, text, to: start }))
+    const selections = starts.map((start, index) => {
+      const caret = start + text.length * (index + 1)
+      return { anchor: caret, head: caret }
+    })
+    return applyPasteEdits(session, edits, selections)
+  }
+
+  private applyDistributedPaste(
+    session: DocumentSession,
+    texts: readonly string[],
+    resolved: readonly ResolvedSelection[],
+  ): DocumentSessionChange {
+    const edits: TextEdit[] = []
+    const selections: { readonly anchor: number; readonly head: number }[] = []
+    // Every edit is expressed against the document as it stands now, but the carets left behind are
+    // read back off the document the batch produces, so they carry what the earlier ones shifted.
+    let shift = 0
+    for (const [index, selection] of resolved.entries()) {
+      const fragment = texts[index] ?? ''
+      edits.push({ from: selection.startOffset, text: fragment, to: selection.endOffset })
+      const caret = selection.startOffset + shift + fragment.length
+      selections.push({ anchor: caret, head: caret })
+      shift += fragment.length - (selection.endOffset - selection.startOffset)
+    }
+
+    return applyPasteEdits(session, edits, selections)
   }
 
   private handleKeyDown = (event: KeyboardEvent): void => {
@@ -1415,23 +2007,67 @@ export class InputSelectionController {
       .selections.map((selection) => resolveSelection(snapshot, selection))
   }
 
+  /** The cursor a gesture that ends up with one selection continues from. */
+  private primaryResolvedSelection(): ResolvedSelection | null {
+    const session = this.session
+    if (!session) return null
+
+    const resolved = this.resolvedSelections()
+    return resolved[lastAddedSelectionIndex(session.getSelections())] ?? resolved[0] ?? null
+  }
+
   private addNextExactOccurrence(): OccurrenceSelectionChange | null {
     const session = this.session
     if (!session) return null
 
-    const text = session.materializeFullText()
+    const selections = session.getSelections()
     const resolved = this.resolvedSelections()
-    const primary = resolved[0]
-    if (!primary) return null
+    const source = resolved[lastAddedSelectionIndex(selections)] ?? resolved.at(-1)
+    if (!source) return null
 
-    if (resolved.length === 1 && primary.collapsed) {
-      return this.selectCurrentWordForOccurrence(text, primary)
+    // A run started on a bare caret is a rename in the making, and the word the caret sat in is the
+    // whole of what the user meant: without the boundaries, `id` also claims the `id` inside
+    // `width` and `hidden`, and the next keystroke overwrites them all.
+    const wholeWord =
+      this.occurrenceRunFor(selections)?.wholeWord ?? (resolved.length === 1 && source.collapsed)
+    const result = this.nextExactOccurrence(session, resolved, source, wholeWord)
+    if (!result) return null
+
+    this.occurrenceRun = { selections: session.getSelections(), wholeWord }
+    return result
+  }
+
+  private occurrenceRunFor(selections: SelectionSet<PieceTableAnchor>): OccurrenceRun | null {
+    const run = this.occurrenceRun
+    if (!run || run.selections !== selections) return null
+    return run
+  }
+
+  private nextExactOccurrence(
+    session: DocumentSession,
+    resolved: readonly ResolvedSelection[],
+    source: ResolvedSelection,
+    wholeWord: boolean,
+  ): OccurrenceSelectionChange | null {
+    const text = session.materializeFullText()
+    if (resolved.length === 1 && source.collapsed) {
+      return this.selectCurrentWordForOccurrence(text, source)
     }
 
-    const query = getOccurrenceQuery(text, resolved)
+    const query = occurrenceQueryForSelection(text, source)
     if (!query) return null
 
-    const range = findNextExactOccurrence(text, query, resolved)
+    const selected = resolved.map((selection) => ({
+      start: selection.startOffset,
+      end: selection.endOffset,
+    }))
+    const range = findNextExactOccurrenceFromRange(
+      text,
+      query.query,
+      selected,
+      query.range,
+      wholeWord,
+    )
     if (!range) return null
 
     const selections = [
@@ -1473,21 +2109,41 @@ export class InputSelectionController {
     }
   }
 
-  private selectedTextForClipboard(): string | null {
+  private clipboardPayload(): ClipboardPayload | null {
     const session = this.session
     if (!session) return null
 
     const snapshot = session.getSnapshot()
-    const texts = session
-      .getSelections()
-      .selections.map((selection) => resolveSelection(snapshot, selection))
-      .filter((selection) => !selection.collapsed)
-      .map((selection) =>
+    const resolved = this.resolvedSelections()
+    const selected = resolved.filter((selection) => !selection.collapsed)
+    if (selected.length > 0) {
+      const perSelection = selected.map((selection) =>
         readPieceTableTextRange(snapshot, selection.startOffset, selection.endOffset),
       )
-    if (texts.length === 0) return null
+      return { metadata: { perSelection, pasteOnNewLine: false }, text: perSelection.join('\n') }
+    }
 
-    return texts.join('\n')
+    // A caret that selects nothing is pointing at its line, so that is what it takes. The
+    // terminator travels with it: it is what makes the payload a line rather than a run of
+    // characters, both to the next paste and to any other application it is handed to.
+    const perSelection = this.caretLines(resolved).map((line) => `${line.text}\n`)
+    if (perSelection.length === 0) return null
+
+    return { metadata: { perSelection, pasteOnNewLine: true }, text: perSelection.join('') }
+  }
+
+  /** The lines the carets are on, in document order; two carets on one line answer for it once. */
+  private caretLines(resolved: readonly ResolvedSelection[]): readonly NavigationLine[] {
+    const lines: NavigationLine[] = []
+    for (const selection of resolved) {
+      const line = this.readLineAt(selection.headOffset)
+      if (!line) continue
+      if (lines.at(-1)?.start === line.start) continue
+
+      lines.push(line)
+    }
+
+    return lines
   }
 
   private primarySelectionHeadOffset(change: DocumentSessionChange): number | undefined {
@@ -1612,6 +2268,39 @@ export class InputSelectionController {
   }
 }
 
+function mouseSelectionTimingName(granularity: MouseSelectionGranularity): string {
+  if (granularity === 'line') return 'input.tripleClick'
+  if (granularity === 'word') return 'input.doubleClick'
+  return 'input.selection'
+}
+
+/**
+ * Whether any of a line falls inside the rectangle's band of columns, given where the band's two
+ * edges land once that line's tabs have been accounted for.
+ */
+function columnBandCoversLine(
+  rectangle: ColumnSelectionRectangle,
+  fromColumn: number,
+  toColumn: number,
+): boolean {
+  if (rectangle.fromColumn < rectangle.toColumn) {
+    return fromColumn <= rectangle.toColumn && toColumn >= rectangle.fromColumn
+  }
+  if (rectangle.fromColumn > rectangle.toColumn) {
+    return toColumn <= rectangle.fromColumn && fromColumn >= rectangle.toColumn
+  }
+
+  // A band with no width is a click, not a drag, and every line it passes through takes a caret.
+  return true
+}
+
+function columnSelectionRowDelta(command: EditorCommandId, pageRows: number): number {
+  if (command === 'cursorColumnSelectUp') return -1
+  if (command === 'cursorColumnSelectDown') return 1
+  if (command === 'cursorColumnSelectPageUp') return -pageRows
+  return pageRows
+}
+
 function pasteRevealBlock(text: string): SessionChangeOptions['revealBlock'] {
   if (text.includes('\n') || text.includes('\r')) return 'end'
   return 'nearest'
@@ -1620,6 +2309,17 @@ function pasteRevealBlock(text: string): SessionChangeOptions['revealBlock'] {
 function applyPasteText(session: DocumentSession, text: string): DocumentSessionChange {
   session.breakTypingRun()
   const change = session.applyText(text)
+  session.breakTypingRun()
+  return change
+}
+
+function applyPasteEdits(
+  session: DocumentSession,
+  edits: readonly TextEdit[],
+  selections: readonly { readonly anchor: number; readonly head: number }[],
+): DocumentSessionChange {
+  session.breakTypingRun()
+  const change = session.applyEdits(edits, { selections })
   session.breakTypingRun()
   return change
 }

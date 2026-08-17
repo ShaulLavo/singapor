@@ -335,6 +335,8 @@ const NAVIGATION_COMMANDS = new Set<EditorCommandId>([
 
 const SELECTION_COMMANDS = new Set<EditorCommandId>([
   'selectAll',
+  'editor.action.smartSelect.expand',
+  'editor.action.smartSelect.shrink',
   'selectLeft',
   'selectRight',
   'selectUp',
@@ -349,6 +351,12 @@ const SELECTION_COMMANDS = new Set<EditorCommandId>([
   'selectPageDown',
   'selectDocumentStart',
   'selectDocumentEnd',
+  'cursorColumnSelectLeft',
+  'cursorColumnSelectRight',
+  'cursorColumnSelectUp',
+  'cursorColumnSelectDown',
+  'cursorColumnSelectPageUp',
+  'cursorColumnSelectPageDown',
 ])
 
 const FIND_COMMANDS = new Set<EditorCommandId>([
@@ -565,8 +573,47 @@ function verticalNavigationBindings(platform: EditorPlatform): readonly EditorKe
 function selectionBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   return [
     { hotkey: key('A', { mod: true }), command: 'selectAll' },
+    ...smartSelectBindings(platform),
     ...horizontalSelectionBindings(platform),
     ...verticalSelectionBindings(platform),
+    ...columnSelectionBindings(platform),
+  ]
+}
+
+/**
+ * Where the rectangle's moving corner can be pushed from the keyboard.
+ *
+ * Every chord wants the pair the mouse draws the box with plus the primary modifier, which the page
+ * keys get everywhere. The arrows cannot always have it: where the primary modifier collapses onto
+ * ctrl that pair is already subword selection, so the horizontal axis drops to alt alone, and on
+ * linux the vertical pair is already line copying, so it drops to the primary modifier alone. Each
+ * axis keeps a chord on every platform because a rectangle only a mouse can start does not exist
+ * for someone working from the keyboard.
+ */
+function columnSelectionBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  const box = { mod: true, alt: true, shift: true }
+  const horizontal = platform === 'mac' ? box : { alt: true }
+  const vertical = platform === 'linux' ? { mod: true } : box
+
+  return [
+    { hotkey: key('ArrowLeft', horizontal), command: 'cursorColumnSelectLeft' },
+    { hotkey: key('ArrowRight', horizontal), command: 'cursorColumnSelectRight' },
+    { hotkey: key('ArrowUp', vertical), command: 'cursorColumnSelectUp' },
+    { hotkey: key('ArrowDown', vertical), command: 'cursorColumnSelectDown' },
+    { hotkey: key('PageUp', box), command: 'cursorColumnSelectPageUp' },
+    { hotkey: key('PageDown', box), command: 'cursorColumnSelectPageDown' },
+  ]
+}
+
+function smartSelectBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  // Alt+Shift is the free pair everywhere except mac, where alt is already the word modifier and
+  // taking it would shadow word selection.
+  const modifier =
+    platform === 'mac' ? { mod: true, ctrl: true, shift: true } : { alt: true, shift: true }
+
+  return [
+    { hotkey: key('ArrowRight', modifier), command: 'editor.action.smartSelect.expand' },
+    { hotkey: key('ArrowLeft', modifier), command: 'editor.action.smartSelect.shrink' },
   ]
 }
 

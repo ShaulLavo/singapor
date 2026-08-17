@@ -41,7 +41,7 @@ import {
 import { createEmptySyntaxResult, treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
 import { EditorPluginHost } from '@singapor/core/testing'
 import { debugPieceTable } from '@singapor/core/debug'
-import { VirtualizedTextView } from '@singapor/core/internal'
+import { createSelectionSet, type SelectionSet, VirtualizedTextView } from '@singapor/core/internal'
 import {
   createMergeConflictDocumentText,
   EDITOR_MERGE_CONFLICT_FEATURE,
@@ -49,6 +49,11 @@ import {
   type EditorState,
   type MergeConflictRegion,
 } from '@singapor/core'
+
+/** The keys a consumer cannot leave out, so that a field turning optional shows up as a break. */
+type RequiredFields<T> = {
+  [K in keyof T]-?: object extends Pick<T, K> ? never : K
+}[keyof T]
 
 describe('public API facade', () => {
   it('exports reviewed root entrypoints without internal debug surfaces', () => {
@@ -138,6 +143,37 @@ describe('public API facade', () => {
     expect(nextWordOffset('a-b c', 0, '')).toBe(4)
     expect(nextWordOffset('a\nb', 1)).toBe(1)
     expect(previousWordOffset('a\nb', 2)).toBe(2)
+  })
+
+  it('exports every field a selection set a workspace package hands back must carry', () => {
+    // @singapor/tree-sitter builds whole sets and returns them for the editor to adopt, so a field
+    // that is not optional here is one its own build has to fill in.
+    const required: RequiredFields<SelectionSet<number>>[] = [
+      'selections',
+      'lastAddedIndex',
+      'normalized',
+    ]
+    const built = createSelectionSet([])
+
+    expect(required).toHaveLength(3)
+    expect(built.lastAddedIndex).toBe(0)
+  })
+
+  it('exports the command ids a keymap can bind', () => {
+    // Hosts bind their own keys to these and switch over the union exhaustively, so an id renamed
+    // or dropped is a break in their build rather than in anything here.
+    const commands: core.EditorCommandId[] = [
+      'editor.action.smartSelect.expand',
+      'editor.action.smartSelect.shrink',
+      'cursorColumnSelectLeft',
+      'cursorColumnSelectRight',
+      'cursorColumnSelectUp',
+      'cursorColumnSelectDown',
+      'cursorColumnSelectPageUp',
+      'cursorColumnSelectPageDown',
+    ]
+
+    expect(commands).toHaveLength(8)
   })
 
   it('exports the hosting modes a block surface can declare', () => {

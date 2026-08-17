@@ -9,6 +9,7 @@ export type EditorCommandRouterHandlers = {
   indent(direction: 'indent' | 'outdent', context: EditorCommandContext): boolean
   editAction(command: EditorEditActionCommandId, context: EditorCommandContext): boolean
   selectAll(context: EditorCommandContext): boolean
+  smartSelect(direction: 'expand' | 'shrink', context: EditorCommandContext): boolean
   addNextOccurrence(context: EditorCommandContext): boolean
   clearSecondarySelections(context: EditorCommandContext): boolean
   insertCursor(direction: 'above' | 'below', context: EditorCommandContext): boolean
@@ -41,6 +42,12 @@ export class EditorCommandRouter {
     if (command === 'cursorUndo') return this.handlers.cursorHistory('undo', context)
     if (command === 'cursorRedo') return this.handlers.cursorHistory('redo', context)
     if (command === 'selectAll') return this.handlers.selectAll(context)
+    if (command === 'editor.action.smartSelect.expand') {
+      return this.handlers.smartSelect('expand', context)
+    }
+    if (command === 'editor.action.smartSelect.shrink') {
+      return this.handlers.smartSelect('shrink', context)
+    }
     if (command === 'addNextOccurrence') return this.handlers.addNextOccurrence(context)
     if (command === 'clearSecondarySelections') {
       return this.handlers.clearSecondarySelections(context)

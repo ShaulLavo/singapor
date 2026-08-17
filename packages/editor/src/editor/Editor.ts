@@ -24,6 +24,7 @@ import { measureEditorPerformance } from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
 import { EditorCommandRouter } from './commandRouter'
+import { SelectionRangeStore } from './selectionRanges'
 import { EditorDecorationStore } from './decorationStore'
 import { EditorOperation, type EditorOperationFlush } from './operation'
 import { CursorHistory, sameCursorSelections, type CursorHistoryEntry } from './cursorHistory'
@@ -273,6 +274,7 @@ export class Editor {
   private blockSurfaces!: EditorBlockSurfaceController
   private readonly syntax: EditorSyntaxController
   private readonly inputSelection: InputSelectionController
+  private readonly selectionRanges: SelectionRangeStore
   private configuredTheme: EditorTheme | null = null
   private appliedRangeDecorationNames: readonly string[] = []
   private appliedInjectedTextRows: readonly InjectedTextRow[] = []
@@ -429,6 +431,14 @@ export class Editor {
       notifyChangeWithTiming: (change) => this.notifyChangeWithTiming(change),
       notifyViewContributions: (kind, change) => this.notifyViewContributions(kind, change),
     })
+    this.selectionRanges = new SelectionRangeStore({
+      getSession: () => this.session,
+      getLanguageId: () => this.languageId,
+      getSyntaxFolds: () => this.syntaxFoldProjection(),
+      getProviders: () => this.pluginHost.getSelectionRangeProviders(),
+      setSelections: (selections, timingName, revealOffset) =>
+        this.inputSelection.applyFindSelections(selections, timingName, revealOffset),
+    })
     this.commandRouter = new EditorCommandRouter({
       history: (command, context) => this.inputSelection.applyHistoryCommand(command, context),
       cursorHistory: (command) => this.applyCursorHistory(command),
@@ -437,6 +447,7 @@ export class Editor {
       editAction: (command, context) =>
         this.inputSelection.applyEditActionCommand(command, context),
       selectAll: (context) => this.inputSelection.applySelectAllCommand(context),
+      smartSelect: (direction) => this.selectionRanges.apply(direction),
       addNextOccurrence: (context) => this.inputSelection.applyAddNextOccurrenceCommand(context),
       clearSecondarySelections: (context) =>
         this.inputSelection.applyClearSecondarySelections(context),

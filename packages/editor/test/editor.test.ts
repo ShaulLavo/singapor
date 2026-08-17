@@ -5,13 +5,19 @@ import { createFoldGutterPlugin, createLineGutterPlugin } from '../../gutters/sr
 import {
   createEditorLoggingPlugin,
   createMergeConflictPlugin,
+  defaultEditorKeyBindings,
   Editor,
+  type EditorCommandId,
   type EditorDecorationContributionContext,
   type EditorKeymapOptions,
   type EditorLogEvent,
   type EditorState,
 } from '../src/editor'
-import { createDocumentSession, type DocumentSessionChange } from '../src/public/document'
+import {
+  createDocumentSession,
+  type DocumentSessionChange,
+  type DocumentTextSnapshot,
+} from '../src/public/document'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxRange,
@@ -412,6 +418,32 @@ function createDropEvent(text: string, init: MouseEventInit = {}): DragEvent {
   return event
 }
 
+function createDragOverEvent(init: MouseEventInit = {}): DragEvent {
+  const event = new MouseEvent('dragover', {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  }) as DragEvent
+  Object.defineProperty(event, 'dataTransfer', {
+    configurable: true,
+    value: { dropEffect: 'none' },
+  })
+  return event
+}
+
+function createDragLeaveEvent(relatedTarget: EventTarget | null): DragEvent {
+  return new MouseEvent('dragleave', {
+    bubbles: true,
+    cancelable: true,
+    relatedTarget,
+  }) as DragEvent
+}
+
+/** Where the editor is drawing the caret, which is how a drop target shows itself. */
+function caretTransform(): string {
+  return (document.querySelector('.editor-virtualized-caret') as HTMLElement).style.transform
+}
+
 function createCompositionEvent(type: string, data = ''): CompositionEvent {
   const event = new Event(type, { bubbles: true }) as CompositionEvent
   Object.defineProperty(event, 'data', { configurable: true, value: data })
@@ -455,12 +487,76 @@ function spyOnNativeSelection() {
   }
 }
 
+function pressMouse(init: MouseEventInit): MouseEvent {
+  const event = new MouseEvent('mousedown', {
+    bubbles: true,
+    cancelable: true,
+    detail: 1,
+    ...init,
+  })
+  editorRoot().dispatchEvent(event)
+  return event
+}
+
+function moveMouse(init: MouseEventInit): void {
+  document.dispatchEvent(new MouseEvent('mousemove', { cancelable: true, ...init }))
+}
+
+function releaseMouse(init: MouseEventInit): void {
+  document.dispatchEvent(new MouseEvent('mouseup', { cancelable: true, ...init }))
+}
+
 function primaryModifier(): KeyboardEventInit {
   return detectPlatform() === 'mac' ? { metaKey: true } : { ctrlKey: true }
 }
 
 function wordNavigationModifier(): KeyboardEventInit {
   return detectPlatform() === 'mac' ? { altKey: true } : { ctrlKey: true }
+}
+
+/**
+ * Presses whichever chord the default keymap ships for a command on the platform under test.
+ *
+ * Reaching a command any other way would still pass on a platform where nothing is bound to it,
+ * which is the failure these commands have to be held to.
+ */
+function dispatchDefaultKey(command: EditorCommandId): KeyboardEvent {
+  const platform = detectPlatform()
+  const hotkey = defaultEditorKeyBindings(platform).find(
+    (binding) => binding.command === command,
+  )?.hotkey
+  if (hotkey === undefined || typeof hotkey === 'string') {
+    throw new Error(`${command} has no default chord on ${platform}`)
+  }
+
+  return dispatchEditorKey(hotkey.key, {
+    altKey: hotkey.alt === true,
+    ctrlKey: hotkey.ctrl === true || (hotkey.mod === true && platform !== 'mac'),
+    metaKey: hotkey.meta === true || (hotkey.mod === true && platform === 'mac'),
+    shiftKey: hotkey.shift === true,
+  })
+}
+
+/**
+ * Reports every line read taken through a snapshot.
+ *
+ * A line reader serves repeats of its last line from memory, so one call per row is what a single
+ * walk over a band of rows costs, and anything above that is a walk that happened twice.
+ */
+function countingTextSnapshot(
+  textSnapshot: DocumentTextSnapshot,
+  onRead: () => void,
+): DocumentTextSnapshot {
+  return {
+    forEachTextChunk: (visit) => textSnapshot.forEachTextChunk(visit),
+    length: textSnapshot.length,
+    materializeFullText: () => textSnapshot.materializeFullText(),
+    readRange: (start, end) => {
+      onRead()
+      return textSnapshot.readRange(start, end)
+    },
+    snapshot: textSnapshot.snapshot,
+  }
 }
 
 function resolvedSelectionRanges(session: ReturnType<typeof createDocumentSession>): readonly {
@@ -2985,15 +3081,16 @@ describe('Editor', () => {
       expect(copy.event.defaultPrevented).toBe(true)
     })
 
-    it('does not intercept copy for collapsed selections', () => {
-      const session = createDocumentSession('abc')
+    it('copies the caret line for collapsed selections', () => {
+      const session = createDocumentSession('abc\ndef')
+      session.setSelection(5)
       editor.attachSession(session)
 
       const copy = createCopyEvent()
       editorRoot().dispatchEvent(copy.event)
 
-      expect(copy.formatCount()).toBe(0)
-      expect(copy.event.defaultPrevented).toBe(false)
+      expect(copy.materializeFullText()).toBe('def\n')
+      expect(copy.event.defaultPrevented).toBe(true)
     })
 
     it('copies the full document after Mod+A', () => {
@@ -3073,6 +3170,29 @@ describe('Editor', () => {
 
       editor.dispatchCommand('undo')
       expect(editor.materializeFullText()).toBe('')
+    })
+
+    it('claims a drag crossing the text so the browser delivers its drop', () => {
+      const session = createDocumentSession('abcd')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 120, 40)
+
+      const dragOver = createDragOverEvent({ clientX: 20, clientY: 10 })
+      editorRoot().dispatchEvent(dragOver)
+
+      expect(dragOver.defaultPrevented).toBe(true)
+      expect(dragOver.dataTransfer?.dropEffect).toBe('copy')
+    })
+
+    it('leaves a drag over a readonly document unclaimed', () => {
+      editor.dispose()
+      editor = new Editor(container, { defaultText: 'abcd', editability: 'readonly' })
+      mockEditorViewport(editorRoot(), 120, 40)
+
+      const dragOver = createDragOverEvent({ clientX: 20, clientY: 10 })
+      editorRoot().dispatchEvent(dragOver)
+
+      expect(dragOver.defaultPrevented).toBe(false)
     })
 
     it('inserts dropped plain text at the hit-tested offset', () => {
@@ -3516,6 +3636,29 @@ describe('Editor', () => {
       expect(container.querySelectorAll('.editor-virtualized-caret:not([hidden])')).toHaveLength(1)
     })
 
+    it('leaves Escape on the cursor that was added last', () => {
+      const session = createDocumentSession('abc\ndef\nghi')
+      session.setSelection(5)
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 80, 60)
+
+      expect(editor.dispatchCommand('editor.action.insertCursorBelow')).toBe(true)
+      dispatchEditorKey('Escape')
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 9, head: 9, start: 9, end: 9 }])
+    })
+
+    it('keeps extending in the same direction after two cursors collide', () => {
+      const session = createDocumentSession('abcdef')
+      session.setSelection(3)
+      session.addSelection(5, 2)
+      editor.attachSession(session)
+
+      dispatchEditorKey('ArrowRight', { shiftKey: true })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 5, head: 3, start: 3, end: 5 }])
+    })
+
     it('inserts cursors above and below through explicit editor commands', () => {
       const belowSession = createDocumentSession('abc\ndef\nghi')
       belowSession.setSelection(5)
@@ -3582,6 +3725,80 @@ describe('Editor', () => {
         { start: 8, end: 11 },
       ])
       expect(container.querySelectorAll('.editor-virtualized-caret')).toHaveLength(2)
+    })
+
+    it('keeps Mod+D on an adjacent repeat as its own cursor', () => {
+      const session = createDocumentSession('abab')
+      session.setSelection(0, 2)
+      editor.attachSession(session)
+
+      dispatchEditorKey('d', primaryModifier())
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 0, head: 2, start: 0, end: 2 },
+        { anchor: 2, head: 4, start: 2, end: 4 },
+      ])
+
+      editorRoot().dispatchEvent(createInsertEvent('X'))
+      expect(editor.materializeFullText()).toBe('XX')
+    })
+
+    it('skips occurrences inside longer words when Mod+D starts from a caret', () => {
+      const session = createDocumentSession('id width id')
+      session.setSelection(1)
+      editor.attachSession(session)
+
+      dispatchEditorKey('d', primaryModifier())
+      dispatchEditorKey('d', primaryModifier())
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 0, head: 2, start: 0, end: 2 },
+        { anchor: 9, head: 11, start: 9, end: 11 },
+      ])
+    })
+
+    it('matches the selected text exactly when Mod+D starts from a selection', () => {
+      const session = createDocumentSession('id width id')
+      session.setSelection(0, 2)
+      editor.attachSession(session)
+
+      dispatchEditorKey('d', primaryModifier())
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 0, head: 2, start: 0, end: 2 },
+        { anchor: 4, head: 6, start: 4, end: 6 },
+      ])
+    })
+
+    it('continues Mod+D from the cursor added last, not the first selection', () => {
+      const session = createDocumentSession('foo bar foo bar')
+      session.setSelection(0, 3)
+      editor.attachSession(session)
+
+      dispatchEditorKey('d', primaryModifier())
+      session.addSelection(5)
+
+      dispatchEditorKey('d', primaryModifier())
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 0, head: 3, start: 0, end: 3 },
+        { anchor: 5, head: 5, start: 5, end: 5 },
+        { anchor: 8, head: 11, start: 8, end: 11 },
+        { anchor: 12, head: 15, start: 12, end: 15 },
+      ])
+    })
+
+    it('keeps the Mod+D whole-word run out of the find widget', () => {
+      const session = createDocumentSession('id width id')
+      session.setSelection(1)
+      editor.attachSession(session)
+
+      dispatchEditorKey('d', primaryModifier())
+      dispatchEditorKey('d', primaryModifier())
+      dispatchEditorKey('f', primaryModifier())
+
+      const toggles = container.querySelectorAll('.editor-find-input-controls .editor-find-button')
+      expect(toggles[1]?.getAttribute('aria-pressed')).toBe('false')
     })
 
     it('selects all exact occurrences with VS Code occurrence command ids', () => {
@@ -4351,6 +4568,502 @@ describe('Editor', () => {
 
       expect(session.materializeFullText()).toBe('alpha X')
       expect(editorRoot().textContent).toBe('alpha X')
+    })
+
+    it('extends the selection from the previous press on a shift click', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 16, clientY: 10 })
+      releaseMouse({ clientX: 16, clientY: 10 })
+      const shiftClick = pressMouse({ clientX: 56, clientY: 10, shiftKey: true })
+
+      expect(shiftClick.defaultPrevented).toBe(true)
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 2, head: 7, start: 2, end: 7 }])
+    })
+
+    it('extends a select-all from its own anchor rather than the click before it', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 16, clientY: 10 })
+      releaseMouse({ clientX: 16, clientY: 10 })
+      dispatchEditorKey('a', primaryModifier())
+      pressMouse({ clientX: 40, clientY: 10, shiftKey: true })
+      releaseMouse({ clientX: 40, clientY: 10 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 0, head: 5, start: 0, end: 5 }])
+    })
+
+    it('extends a shift arrow selection from its anchor, not its head', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 40, clientY: 10 })
+      releaseMouse({ clientX: 40, clientY: 10 })
+      dispatchEditorKey('ArrowLeft')
+      dispatchEditorKey('ArrowLeft')
+      dispatchEditorKey('ArrowLeft', { shiftKey: true })
+      dispatchEditorKey('ArrowLeft', { shiftKey: true })
+      dispatchEditorKey('ArrowLeft', { shiftKey: true })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 3, head: 0, start: 0, end: 3 }])
+
+      pressMouse({ clientX: 56, clientY: 10, shiftKey: true })
+      releaseMouse({ clientX: 56, clientY: 10 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 3, head: 7, start: 3, end: 7 }])
+    })
+
+    it('keeps a double-clicked word selected when a shift click lands on its first character', () => {
+      const session = createDocumentSession('alpha bravo charlie')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 64, clientY: 10, detail: 2 })
+      releaseMouse({ clientX: 64, clientY: 10 })
+      pressMouse({ clientX: 48, clientY: 10, shiftKey: true })
+      releaseMouse({ clientX: 48, clientY: 10 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 11, head: 6, start: 6, end: 11 }])
+    })
+
+    it('keeps the dragged selection when the button comes up past the last line', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 16, clientY: 10 })
+      moveMouse({ clientX: 56, clientY: 10 })
+      releaseMouse({ clientX: 56, clientY: 400 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 2, head: 7, start: 2, end: 7 }])
+    })
+
+    it('carries the selected text to where a drag from inside it lets go', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 0, clientY: 10 })
+      releaseMouse({ clientX: 0, clientY: 10 })
+      const caretAtDropPoint = caretTransform()
+
+      pressMouse({ clientX: 48, clientY: 10 })
+      moveMouse({ clientX: 88, clientY: 10 })
+      releaseMouse({ clientX: 88, clientY: 10 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 6, head: 11, start: 6, end: 11 }])
+
+      pressMouse({ clientX: 64, clientY: 10 })
+      moveMouse({ clientX: 0, clientY: 10 })
+
+      expect(caretTransform()).toBe(caretAtDropPoint)
+      expect(session.materializeFullText()).toBe('alpha bravo')
+
+      releaseMouse({ clientX: 0, clientY: 10 })
+
+      expect(session.materializeFullText()).toBe('bravoalpha ')
+      expect(editorRoot().textContent).toBe('bravoalpha ')
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 0, head: 5, start: 0, end: 5 }])
+    })
+
+    it('leaves the original behind when the copy modifier is down at the release', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 48, clientY: 10 })
+      moveMouse({ clientX: 88, clientY: 10 })
+      releaseMouse({ clientX: 88, clientY: 10 })
+      pressMouse({ clientX: 64, clientY: 10 })
+      moveMouse({ clientX: 0, clientY: 10 })
+      releaseMouse({ altKey: true, clientX: 0, clientY: 10 })
+
+      expect(session.materializeFullText()).toBe('bravoalpha bravo')
+      expect(editorRoot().textContent).toBe('bravoalpha bravo')
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 0, head: 5, start: 0, end: 5 }])
+    })
+
+    it('places the caret where a click inside the selection landed', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 48, clientY: 10 })
+      moveMouse({ clientX: 88, clientY: 10 })
+      releaseMouse({ clientX: 88, clientY: 10 })
+      pressMouse({ clientX: 64, clientY: 10 })
+      releaseMouse({ clientX: 64, clientY: 10 })
+
+      expect(session.materializeFullText()).toBe('alpha bravo')
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 8, head: 8, start: 8, end: 8 }])
+    })
+
+    it('keeps the selection when a drag out of it comes back inside', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 48, clientY: 10 })
+      moveMouse({ clientX: 88, clientY: 10 })
+      releaseMouse({ clientX: 88, clientY: 10 })
+      pressMouse({ clientX: 64, clientY: 10 })
+      moveMouse({ clientX: 16, clientY: 10 })
+      moveMouse({ clientX: 72, clientY: 10 })
+      releaseMouse({ clientX: 72, clientY: 10 })
+
+      expect(session.materializeFullText()).toBe('alpha bravo')
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 6, head: 11, start: 6, end: 11 }])
+      expect(selectionRanges()).toHaveLength(1)
+    })
+
+    it('carries the selected text forward without following its own removal', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 0, clientY: 10 })
+      moveMouse({ clientX: 40, clientY: 10 })
+      releaseMouse({ clientX: 40, clientY: 10 })
+      pressMouse({ clientX: 16, clientY: 10 })
+      moveMouse({ clientX: 88, clientY: 10 })
+      releaseMouse({ clientX: 88, clientY: 10 })
+
+      expect(session.materializeFullText()).toBe(' bravoalpha')
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 6, head: 11, start: 6, end: 11 }])
+    })
+
+    it('starts a fresh selection when the press lands on the edge of one', () => {
+      const session = createDocumentSession('alpha bravo charlie')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 48, clientY: 10 })
+      moveMouse({ clientX: 88, clientY: 10 })
+      releaseMouse({ clientX: 88, clientY: 10 })
+      pressMouse({ clientX: 88, clientY: 10 })
+      moveMouse({ clientX: 152, clientY: 10 })
+      releaseMouse({ clientX: 152, clientY: 10 })
+
+      expect(session.materializeFullText()).toBe('alpha bravo charlie')
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 11, head: 19, start: 11, end: 19 },
+      ])
+    })
+
+    it('does not carry text out of a readonly document', () => {
+      editor.dispose()
+      editor = new Editor(container, { defaultText: 'alpha bravo', editability: 'readonly' })
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 48, clientY: 10 })
+      moveMouse({ clientX: 88, clientY: 10 })
+      releaseMouse({ clientX: 88, clientY: 10 })
+      pressMouse({ clientX: 64, clientY: 10 })
+      moveMouse({ clientX: 0, clientY: 10 })
+      releaseMouse({ clientX: 0, clientY: 10 })
+
+      expect(editor.materializeFullText()).toBe('alpha bravo')
+    })
+
+    it('marks the drop point with a caret while a drag from outside crosses the text', () => {
+      const session = createDocumentSession('alpha bravo')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 56, clientY: 10 })
+      releaseMouse({ clientX: 56, clientY: 10 })
+      const caretAtDropPoint = caretTransform()
+
+      pressMouse({ clientX: 0, clientY: 10 })
+      moveMouse({ clientX: 40, clientY: 10 })
+      releaseMouse({ clientX: 40, clientY: 10 })
+
+      expect(caretTransform()).not.toBe(caretAtDropPoint)
+
+      editorRoot().dispatchEvent(createDragOverEvent({ clientX: 56, clientY: 10 }))
+
+      expect(caretTransform()).toBe(caretAtDropPoint)
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 0, head: 5, start: 0, end: 5 }])
+
+      editorRoot().dispatchEvent(createDragLeaveEvent(rowTextNode().parentElement))
+
+      expect(caretTransform()).toBe(caretAtDropPoint)
+
+      editorRoot().dispatchEvent(createDragLeaveEvent(null))
+
+      expect(caretTransform()).not.toBe(caretAtDropPoint)
+      expect(selectionRanges()).toHaveLength(1)
+    })
+
+    it('selects whole words while dragging out of a double click', () => {
+      const session = createDocumentSession('alpha bravo charlie')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 64, clientY: 10, detail: 2 })
+      moveMouse({ clientX: 16, clientY: 10 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 11, head: 0, start: 0, end: 11 }])
+
+      releaseMouse({ clientX: 16, clientY: 10 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 11, head: 0, start: 0, end: 11 }])
+    })
+
+    it('selects whole lines while dragging out of a triple click', () => {
+      const session = createDocumentSession('one\ntwo\nthree')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 8, clientY: 30, detail: 3 })
+      moveMouse({ clientX: 8, clientY: 54 })
+      releaseMouse({ clientX: 8, clientY: 54 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 4, head: 13, start: 4, end: 13 }])
+    })
+
+    it('drags a column of cursors that skips lines ending before the rectangle', () => {
+      const session = createDocumentSession('alpha bravo\nxy\ngamma delta')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 32, clientY: 10 })
+      releaseMouse({ clientX: 32, clientY: 10 })
+      pressMouse({ altKey: true, clientX: 56, clientY: 10, shiftKey: true })
+      moveMouse({ clientX: 56, clientY: 58 })
+      releaseMouse({ clientX: 56, clientY: 58 })
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 4, head: 7, start: 4, end: 7 },
+        { anchor: 19, head: 22, start: 19, end: 22 },
+      ])
+    })
+
+    it('pushes the column rectangle with the keyboard chords', () => {
+      const session = createDocumentSession('alpha bravo\nxy\ngamma delta')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 32, clientY: 10 })
+      releaseMouse({ clientX: 32, clientY: 10 })
+
+      expect(dispatchDefaultKey('cursorColumnSelectDown').defaultPrevented).toBe(true)
+      expect(dispatchDefaultKey('cursorColumnSelectDown').defaultPrevented).toBe(true)
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 4, head: 4, start: 4, end: 4 },
+        { anchor: 14, head: 14, start: 14, end: 14 },
+        { anchor: 19, head: 19, start: 19, end: 19 },
+      ])
+
+      expect(dispatchDefaultKey('cursorColumnSelectRight').defaultPrevented).toBe(true)
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 4, head: 5, start: 4, end: 5 },
+        { anchor: 19, head: 20, start: 19, end: 20 },
+      ])
+    })
+
+    it('pulls the column rectangle back with the left and up chords', () => {
+      const session = createDocumentSession('alpha bravo\nkilo lima\nmike november')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 32, clientY: 10 })
+      releaseMouse({ clientX: 32, clientY: 10 })
+      dispatchDefaultKey('cursorColumnSelectDown')
+      dispatchDefaultKey('cursorColumnSelectDown')
+      dispatchDefaultKey('cursorColumnSelectRight')
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 4, head: 5, start: 4, end: 5 },
+        { anchor: 16, head: 17, start: 16, end: 17 },
+        { anchor: 26, head: 27, start: 26, end: 27 },
+      ])
+
+      expect(dispatchDefaultKey('cursorColumnSelectLeft').defaultPrevented).toBe(true)
+      expect(dispatchDefaultKey('cursorColumnSelectUp').defaultPrevented).toBe(true)
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 4, head: 4, start: 4, end: 4 },
+        { anchor: 16, head: 16, start: 16, end: 16 },
+      ])
+    })
+
+    it('moves the column rectangle a page at a time', () => {
+      const text = Array.from({ length: 20 }, (_value, row) => `line ${row % 10}0`).join('\n')
+      const lastRow = 19
+      const caret = lastRow * 8 + 4
+      const probe = createDocumentSession(text)
+      probe.setSelection(0)
+      mockEditorViewport(editorRoot(), 200, 200, 2_000)
+      editor.attachSession(probe)
+
+      // Whatever this viewport makes a page worth, taken off a plain page move so the rectangle can
+      // be held to the same distance in both directions.
+      dispatchEditorKey('PageDown')
+      const pageRows = editor.getState().cursor.row
+
+      const session = createDocumentSession(text)
+      session.setSelection(caret)
+      editor.attachSession(session)
+
+      expect(dispatchDefaultKey('cursorColumnSelectPageUp').defaultPrevented).toBe(true)
+      expect(resolvedSelectionRanges(session).map((range) => range.anchor)).toEqual(
+        Array.from(
+          { length: pageRows + 1 },
+          (_value, index) => (lastRow - pageRows + index) * 8 + 4,
+        ),
+      )
+
+      expect(dispatchDefaultKey('cursorColumnSelectPageDown').defaultPrevented).toBe(true)
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: caret, head: caret, start: caret, end: caret },
+      ])
+    })
+
+    it('stops the column rectangle at the widest line it covers', () => {
+      const session = createDocumentSession('alpha bravo\nxy')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 32, clientY: 10 })
+      releaseMouse({ clientX: 32, clientY: 10 })
+      dispatchDefaultKey('cursorColumnSelectRight')
+      dispatchDefaultKey('cursorColumnSelectDown')
+      for (let press = 0; press < 12; press += 1) dispatchDefaultKey('cursorColumnSelectRight')
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 4, head: 11, start: 4, end: 11 }])
+
+      // The columns the chord could not reach are not owed back on the way out.
+      dispatchDefaultKey('cursorColumnSelectLeft')
+
+      expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 4, head: 10, start: 4, end: 10 }])
+    })
+
+    it('grows a new column rectangle from a caret that has moved on', () => {
+      const session = createDocumentSession('alpha bravo\nkilo lima\nmike november')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 32, clientY: 10 })
+      releaseMouse({ clientX: 32, clientY: 10 })
+      dispatchDefaultKey('cursorColumnSelectDown')
+      dispatchDefaultKey('cursorDocumentEnd')
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 35, head: 35, start: 35, end: 35 },
+      ])
+
+      dispatchDefaultKey('cursorColumnSelectUp')
+
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 21, head: 21, start: 21, end: 21 },
+        { anchor: 35, head: 35, start: 35, end: 35 },
+      ])
+    })
+
+    it('anchors a fresh column rectangle where an alt-shift press lands', () => {
+      const session = createDocumentSession('alpha bravo\nkilo lima\nmike november')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 32, clientY: 10 })
+      releaseMouse({ clientX: 32, clientY: 10 })
+      dispatchDefaultKey('cursorColumnSelectDown')
+      dispatchDefaultKey('cursorColumnSelectDown')
+
+      pressMouse({ altKey: true, clientX: 64, clientY: 58, shiftKey: true })
+      releaseMouse({ clientX: 64, clientY: 58 })
+
+      const ranges = resolvedSelectionRanges(session)
+
+      // One row, the one the caret was left on: the three-row box the chords had grown is gone
+      // rather than being stretched out to the pointer.
+      expect(ranges).toHaveLength(1)
+      expect(ranges[0]?.anchor).toBe(26)
+      expect(ranges[0]?.head).toBeGreaterThan(26)
+    })
+
+    it('scrolls the corner the column rectangle is being pushed into view', () => {
+      const text = '0\n1\n2\n3\n4\n5'
+      const rows = 5
+      const probe = createDocumentSession(text)
+      probe.setSelection(0)
+      mockEditorViewport(editorRoot(), 80, 40)
+      editor.attachSession(probe)
+
+      // Where this viewport has to sit for the last row to be on screen, taken from a plain caret
+      // walk down to it: the anchored corner is on screen the whole way, so a reveal aimed there
+      // leaves the view somewhere short of this and never says so.
+      for (let press = 0; press < rows; press += 1) dispatchDefaultKey('cursorDown')
+      const scrollTopShowingLastRow = editorRoot().scrollTop
+      expect(scrollTopShowingLastRow).toBeGreaterThan(0)
+
+      const session = createDocumentSession(text)
+      session.setSelection(0)
+      editor.attachSession(session)
+
+      for (let press = 0; press < rows; press += 1) dispatchDefaultKey('cursorColumnSelectDown')
+
+      expect(resolvedSelectionRanges(session)).toHaveLength(rows + 1)
+      expect(editorRoot().scrollTop).toBe(scrollTopShowingLastRow)
+    })
+
+    it('reads the rows of a tall column rectangle once per chord', () => {
+      const rows = 200
+      const session = createDocumentSession(
+        Array.from({ length: rows }, () => 'alpha bravo').join('\n'),
+      )
+      session.setSelection(4)
+      mockEditorViewport(editorRoot(), 200, 200, 5_000)
+      editor.attachSession(session)
+
+      for (let press = 1; press < rows; press += 1) dispatchDefaultKey('cursorColumnSelectDown')
+      expect(resolvedSelectionRanges(session)).toHaveLength(rows)
+
+      let reads = 0
+      const getTextSnapshot = vi
+        .spyOn(session, 'getTextSnapshot')
+        .mockReturnValue(countingTextSnapshot(session.getTextSnapshot(), () => (reads += 1)))
+      try {
+        dispatchDefaultKey('cursorColumnSelectRight')
+      } finally {
+        getTextSnapshot.mockRestore()
+      }
+
+      // How far right the rectangle may go is read off the same walk that places the cursors: a
+      // second walk to work it out again would double every keypress on a tall box.
+      expect(reads).toBeLessThanOrEqual(rows)
+      expect(resolvedSelectionRanges(session)[0]).toEqual({ anchor: 4, head: 5, start: 4, end: 5 })
+    })
+
+    it('drops the column rectangle when the text under it changes', () => {
+      const session = createDocumentSession('alpha bravo\nkilo lima\nmike november')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 32, clientY: 10 })
+      releaseMouse({ clientX: 32, clientY: 10 })
+      expect(editor.dispatchCommand('cursorColumnSelectDown')).toBe(true)
+
+      editorRoot().dispatchEvent(
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: 'X',
+          inputType: 'insertText',
+        }),
+      )
+
+      expect(session.materializeFullText()).toBe('alphXa bravo\nkiloX lima\nmike november')
+      expect(editor.dispatchCommand('cursorColumnSelectDown')).toBe(true)
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 18, head: 18, start: 18, end: 18 },
+        { anchor: 29, head: 29, start: 29, end: 29 },
+      ])
     })
   })
 

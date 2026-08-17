@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { detectPlatform } from '@tanstack/hotkeys'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { Editor } from '../src/editor'
 import {
+  createDocumentSession,
   createPieceTableSnapshot,
   deleteFromPieceTable,
   materializePieceTableFullText,
 } from '../src/public/document'
+import { setHighlightRegistry } from '../src/public/testing'
 import {
   createAnchorSelection,
   createSelectionSet,
@@ -45,7 +49,7 @@ describe('selections', () => {
     })
   })
 
-  it('normalizes selections by sorting and merging touching or overlapping ranges', () => {
+  it('sorts selections and keeps non-empty ranges that only touch apart', () => {
     const snapshot = createPieceTableSnapshot('abcdef')
     const set = createSelectionSet([
       createAnchorSelection(snapshot, 4, 6, { id: 'b' }),
@@ -55,16 +59,63 @@ describe('selections', () => {
     const normalized = normalizeSelectionSet(snapshot, set)
 
     expect(normalized.normalized).toBe(true)
-    expect(normalized.selections).toHaveLength(1)
+    expect(
+      normalized.selections.map((selection) => resolveSelection(snapshot, selection)),
+    ).toMatchObject([
+      { id: 'a', startOffset: 1, endOffset: 3 },
+      { id: 'touching', startOffset: 3, endOffset: 4 },
+      { id: 'b', startOffset: 4, endOffset: 6 },
+    ])
+  })
 
-    const resolved = resolveSelection(snapshot, normalized.selections[0]!)
-    expect(resolved).toMatchObject({
-      id: 'a',
+  it('absorbs a collapsed cursor that touches its neighbour', () => {
+    const snapshot = createPieceTableSnapshot('abcdef')
+    const set = createSelectionSet([
+      createAnchorSelection(snapshot, 1, 3, { id: 'range' }),
+      createAnchorSelection(snapshot, 3, 3, { id: 'cursor' }),
+    ])
+    const normalized = normalizeSelectionSet(snapshot, set)
+
+    expect(normalized.selections).toHaveLength(1)
+    expect(resolveSelection(snapshot, normalized.selections[0]!)).toMatchObject({
       startOffset: 1,
-      endOffset: 6,
-      reversed: false,
-      goal: { kind: 'none' },
+      endOffset: 3,
     })
+  })
+
+  it('merges overlapping ranges behind the last-added direction and goal', () => {
+    const snapshot = createPieceTableSnapshot('abcdef')
+    const set = createSelectionSet([
+      createAnchorSelection(snapshot, 1, 4, { id: 'first' }),
+      createAnchorSelection(snapshot, 5, 2, { id: 'last', goal: SelectionGoal.horizontal(12) }),
+    ])
+    const normalized = normalizeSelectionSet(snapshot, set)
+
+    expect(normalized.selections).toHaveLength(1)
+    expect(normalized.lastAddedIndex).toBe(0)
+    expect(resolveSelection(snapshot, normalized.selections[0]!)).toMatchObject({
+      startOffset: 1,
+      endOffset: 5,
+      anchorOffset: 5,
+      headOffset: 1,
+      reversed: true,
+      goal: { kind: 'horizontal', x: 12 },
+    })
+  })
+
+  it('tracks the last-added selection across the sort', () => {
+    const snapshot = createPieceTableSnapshot('abcdef')
+    const before = createSelectionSet([
+      createAnchorSelection(snapshot, 4, 4, { id: 'existing' }),
+      createAnchorSelection(snapshot, 1, 1, { id: 'added' }),
+    ])
+    const after = createSelectionSet([
+      createAnchorSelection(snapshot, 1, 1, { id: 'existing' }),
+      createAnchorSelection(snapshot, 4, 4, { id: 'added' }),
+    ])
+
+    expect(normalizeSelectionSet(snapshot, before).lastAddedIndex).toBe(0)
+    expect(normalizeSelectionSet(snapshot, after).lastAddedIndex).toBe(1)
   })
 
   it('renormalizes stale normalized selections against a newer snapshot', () => {
@@ -78,8 +129,11 @@ describe('selections', () => {
 
     const result = applyTextToSelections(edited, normalized, 'X')
 
-    expect(materializePieceTableFullText(result.snapshot)).toBe('aX')
-    expect(result.edits).toEqual([{ from: 1, to: 3, text: 'X' }])
+    expect(materializePieceTableFullText(result.snapshot)).toBe('aXX')
+    expect(result.edits).toEqual([
+      { from: 1, to: 2, text: 'X' },
+      { from: 2, to: 3, text: 'X' },
+    ])
   })
 
   it('applies multi-selection text edits against the original snapshot', () => {
@@ -200,3 +254,174 @@ describe('selections', () => {
     expect(redone.selections.selections).toHaveLength(1)
   })
 })
+
+// Which cursor counts as the last-added one is only observable through the gestures that read it —
+// collapsing the run onto it and growing the run from it — so every case here goes through a
+// keystroke or a command rather than through the set.
+describe('the cursor a multi-cursor gesture continues from', () => {
+  let container: HTMLElement
+  let editor: Editor
+
+  beforeEach(() => {
+    // @ts-expect-error — happy-dom provides no Highlight constructor.
+    globalThis.Highlight = MockHighlight
+    setHighlightRegistry(mockRegistry)
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    editor = new Editor(container, { defaultText: '' })
+    editor.focus()
+  })
+
+  afterEach(() => {
+    editor.dispose()
+    container.remove()
+    setHighlightRegistry(undefined)
+  })
+
+  it('survives typing over every cursor in the run', () => {
+    const session = createDocumentSession('foo\nfoo\nfoo')
+    session.setSelection(4, 7)
+    editor.attachSession(session)
+
+    pressEditorKey('d', primaryModifier())
+    pressEditorKey('d', primaryModifier())
+    editorRoot().dispatchEvent(insertTextEvent('X'))
+    expect(editor.dispatchCommand('clearSecondarySelections')).toBe(true)
+
+    // The second Mod+D wrapped, so the cursor the user ended on is the one that sorts first, and
+    // the edit lays all three back down in that same order.
+    expect(editor.materializeFullText()).toBe('X\nX\nX')
+    expect(cursorRanges(session)).toEqual([{ anchor: 1, head: 1 }])
+  })
+
+  it('survives an edit the host makes underneath the run', () => {
+    const session = createDocumentSession('foo\nfoo\nfoo')
+    session.setSelection(1)
+    editor.attachSession(session)
+
+    pressEditorKey('d', primaryModifier())
+    pressEditorKey('d', primaryModifier())
+    editor.edit([{ from: 11, to: 11, text: '\nfoo' }])
+    expect(editor.dispatchCommand('clearSecondarySelections')).toBe(true)
+
+    expect(cursorRanges(session)).toEqual([{ anchor: 4, head: 7 }])
+  })
+
+  it('carries over to the survivor when two cursors collide', () => {
+    const session = createDocumentSession('abcdefghij')
+    session.setSelection(0)
+    session.addSelection(4)
+    session.addSelection(6)
+    editor.attachSession(session)
+
+    pressEditorKey('ArrowRight', { shiftKey: true })
+    pressEditorKey('ArrowRight', { shiftKey: true })
+    pressEditorKey('ArrowRight', { shiftKey: true })
+
+    expect(cursorRanges(session)).toEqual([
+      { anchor: 0, head: 3 },
+      { anchor: 4, head: 9 },
+    ])
+
+    expect(editor.dispatchCommand('clearSecondarySelections')).toBe(true)
+
+    expect(cursorRanges(session)).toEqual([{ anchor: 4, head: 9 }])
+  })
+
+  it('is scrolled back into view when the run collapses onto it', () => {
+    const rows = Array.from({ length: 60 }, (_, row) => `row ${row}`)
+    const session = createDocumentSession(rows.join('\n'))
+    session.setSelection(0)
+    session.addSelection(session.getSnapshot().length)
+    editor.attachSession(session)
+    mockEditorViewport(editorRoot(), 80, 40)
+    editorRoot().scrollTop = 0
+
+    expect(editor.dispatchCommand('clearSecondarySelections')).toBe(true)
+
+    expect(editorRoot().scrollTop).toBeGreaterThan(0)
+  })
+
+  it('stops matching whole words once the caret run it started from is over', () => {
+    const session = createDocumentSession('id hidden width')
+    session.setSelection(1)
+    editor.attachSession(session)
+
+    // Out of the word the first run selected, then over the fragment inside the next word.
+    pressEditorKey('d', primaryModifier())
+    pressEditorKey('ArrowRight')
+    pressEditorKey('ArrowRight')
+    pressEditorKey('ArrowRight')
+    pressEditorKey('ArrowRight', { shiftKey: true })
+    pressEditorKey('ArrowRight', { shiftKey: true })
+    pressEditorKey('d', primaryModifier())
+
+    // The fragment inside `hidden` is not a word the user picked out, so the next match is the
+    // fragment inside `width` rather than the standalone word the earlier run had wrapped back to.
+    expect(cursorRanges(session)).toEqual([
+      { anchor: 4, head: 6 },
+      { anchor: 11, head: 13 },
+    ])
+  })
+})
+
+// happy-dom doesn't provide the Highlight constructor, so we polyfill it.
+class MockHighlight extends Set<Range> {}
+
+const mockRegistry = {
+  set: () => undefined,
+  delete: () => true,
+}
+
+function editorRoot(): HTMLElement {
+  return document.querySelector('.editor-virtualized') as HTMLElement
+}
+
+function pressEditorKey(key: string, init: KeyboardEventInit = {}): void {
+  editorRoot().dispatchEvent(
+    new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, ...init }),
+  )
+}
+
+function insertTextEvent(data: string): InputEvent {
+  return new InputEvent('beforeinput', {
+    bubbles: true,
+    cancelable: true,
+    data,
+    inputType: 'insertText',
+  })
+}
+
+function primaryModifier(): KeyboardEventInit {
+  return detectPlatform() === 'mac' ? { metaKey: true } : { ctrlKey: true }
+}
+
+/** A viewport shorter than the document, so what the editor reveals has somewhere to scroll to. */
+function mockEditorViewport(element: HTMLElement, width: number, height: number): void {
+  Object.defineProperty(element, 'clientHeight', { configurable: true, value: height })
+  Object.defineProperty(element, 'scrollHeight', { configurable: true, value: 4000 })
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      bottom: height,
+      height,
+      left: 0,
+      right: width,
+      top: 0,
+      width,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }),
+  })
+}
+
+function cursorRanges(session: ReturnType<typeof createDocumentSession>): readonly {
+  readonly anchor: number
+  readonly head: number
+}[] {
+  return session.getSelections().selections.map((selection) => {
+    const resolved = resolveSelection(session.getSnapshot(), selection)
+    return { anchor: resolved.anchorOffset, head: resolved.headOffset }
+  })
+}

@@ -56,7 +56,6 @@ export {
   type TreeSitterSelectionCommandResult,
   type TreeSitterSelectionExpansionState,
 } from './structuralSelection'
-
 import type { EditorSyntaxProvider } from '@singapor/core/syntax'
 import type { EditorDisposable, EditorPlugin, EditorPluginContext } from '@singapor/core/extensions'
 import type {
@@ -68,6 +67,7 @@ import type {
 } from './treeSitter/registry'
 import { TreeSitterLanguageRegistry } from './treeSitter/registry'
 import { TreeSitterSyntaxSession } from './session'
+import { treeSitterSelectionRanges } from './structuralSelection'
 import { createTreeSitterWorkerBackend, type TreeSitterBackend } from './treeSitter/workerClient'
 
 export type TreeSitterSyntaxProviderOptions = {
@@ -93,7 +93,7 @@ type TreeSitterProviderRegistration = {
 }
 
 type TreeSitterContextReference = {
-  syntaxDisposable: EditorDisposable
+  contributions: readonly EditorDisposable[]
   references: number
 }
 
@@ -167,12 +167,31 @@ const retainSyntaxProvider = (
   }
 
   registration.contextReferences.set(context, {
-    syntaxDisposable: context.registerSyntaxProvider(registration.provider),
+    contributions: contributeToEditor(context, registration.provider),
     references: 1,
   })
   return {
     dispose: () => releaseSyntaxProvider(context, registration),
   }
+}
+
+const contributeToEditor = (
+  context: EditorPluginContext,
+  provider: TreeSitterSyntaxProvider,
+): readonly EditorDisposable[] => {
+  const contributions = [context.registerSyntaxProvider(provider)]
+
+  const selectionRanges = context.registerSelectionRangeProvider?.((selection) =>
+    treeSitterSelectionRanges(selection.folds),
+  )
+  if (selectionRanges) return [...contributions, selectionRanges]
+
+  context.log?.({
+    action: 'tree-sitter.selection_ranges.unsupported',
+    level: 'warn',
+    message: 'Editor does not support selection range providers; expand ignores the syntax tree.',
+  })
+  return contributions
 }
 
 const retainLanguage = (
@@ -203,7 +222,7 @@ const releaseSyntaxProvider = (
   reference.references -= 1
   if (reference.references > 0) return
 
-  reference.syntaxDisposable.dispose()
+  for (const contribution of reference.contributions.toReversed()) contribution.dispose()
   registration.contextReferences.delete(context)
 }
 

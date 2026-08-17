@@ -15,8 +15,10 @@ import {
   type EditorSyntaxProvider,
   type EditorSyntaxSession,
   type EditorSyntaxSessionOptions,
+  type FoldRange,
 } from './syntax/session'
 import type { InlineReplacementSpec } from './inlineMap'
+import type { TextOffsetRange } from './textRanges'
 import type { BrowserTextMetrics } from './virtualization/browserMetrics'
 import type { FixedRowVisibleRange } from './virtualization/fixedRowVirtualizer'
 import type {
@@ -463,6 +465,30 @@ export type EditorInlineReplacementProvider = (
   context: EditorInlineReplacementContext,
 ) => readonly InlineReplacementSpec[]
 
+export type EditorSelectionRangeContext = {
+  readonly text: string
+  readonly languageId: EditorSyntaxLanguageId | null
+  /** The caret the ladder is being built around; a provider that knows only a point uses this. */
+  readonly offset: number
+  readonly selection: TextOffsetRange
+  /**
+   * Enclosing constructs the last structural parse reported, so a grammar-backed provider answers
+   * from the parse the document already paid for instead of asking for one of its own.
+   */
+  readonly folds: readonly FoldRange[]
+}
+
+/**
+ * One source of candidate ranges around a caret, in no particular order.
+ *
+ * Ranking is deliberately not a provider's job: a source that knows about brackets cannot compare
+ * its ranges against one that knows about words, so each hands back a bucket and the expand/shrink
+ * ladder is the single place that turns the union into the sequence a reader walks up.
+ */
+export type EditorSelectionRangeProvider = (
+  context: EditorSelectionRangeContext,
+) => readonly TextOffsetRange[]
+
 export type EditorPluginContext = {
   log?(event: EditorLogInput): void
   registerLogger?(logger: EditorLogger): EditorDisposable
@@ -477,11 +503,13 @@ export type EditorPluginContext = {
   registerBlockProvider(provider: EditorBlockProvider): EditorDisposable
   registerInjectedTextRowProvider(provider: EditorInjectedTextRowProvider): EditorDisposable
   /**
-   * Optional so that adding it did not break every hand-written `EditorPluginContext` (test mocks,
-   * mostly). The plugin host always provides it; callers should treat a missing one as a host too old
-   * for the contribution and say so rather than silently skipping their own registration.
+   * Optional so that adding these did not break every hand-written `EditorPluginContext` (test
+   * mocks, mostly). The plugin host always provides them; callers should treat a missing one as a
+   * host too old for the contribution and say so rather than silently skipping their own
+   * registration.
    */
   registerInlineReplacementProvider?(provider: EditorInlineReplacementProvider): EditorDisposable
+  registerSelectionRangeProvider?(provider: EditorSelectionRangeProvider): EditorDisposable
 }
 
 export type EditorInternalPluginContext = EditorPluginContext & {
@@ -563,6 +591,7 @@ export class EditorPluginHost implements EditorDisposable {
   private readonly blockProviders: EditorBlockProvider[] = []
   private readonly injectedTextRowProviders: EditorInjectedTextRowProvider[] = []
   private readonly inlineReplacementProviders: EditorInlineReplacementProvider[] = []
+  private readonly selectionRangeProviders: EditorSelectionRangeProvider[] = []
   private readonly blockProviderInvalidationDisposables = new Map<
     EditorBlockProvider,
     MutableEditorDisposable
@@ -744,6 +773,10 @@ export class EditorPluginHost implements EditorDisposable {
     return this.inlineReplacementProviders
   }
 
+  public getSelectionRangeProviders(): readonly EditorSelectionRangeProvider[] {
+    return this.selectionRangeProviders
+  }
+
   public getInjectedTextRowProviders(): readonly EditorInjectedTextRowProvider[] {
     return this.injectedTextRowProviders
   }
@@ -825,6 +858,7 @@ export class EditorPluginHost implements EditorDisposable {
     this.injectedTextRowProviderInvalidationDisposables.clear()
     this.injectedTextRowProviders.length = 0
     this.inlineReplacementProviders.length = 0
+    this.selectionRangeProviders.length = 0
   }
 
   private ensurePluginActive(plugin: EditorPlugin): boolean {
@@ -1005,6 +1039,8 @@ export class EditorPluginHost implements EditorDisposable {
         this.ownRegistration(() => this.registerInjectedTextRowProvider(provider)),
       registerInlineReplacementProvider: (provider) =>
         this.ownRegistration(() => this.registerInlineReplacementProvider(provider)),
+      registerSelectionRangeProvider: (provider) =>
+        this.ownRegistration(() => this.registerSelectionRangeProvider(provider)),
     }
   }
 
@@ -1261,6 +1297,20 @@ export class EditorPluginHost implements EditorDisposable {
 
     this.inlineReplacementProviders.splice(index, 1)
     this.events.onInlineReplacementProvidersChanged?.()
+  }
+
+  // Read fresh on every expand, so a registration needs no invalidation event to take effect.
+  private registerSelectionRangeProvider(provider: EditorSelectionRangeProvider): EditorDisposable {
+    this.selectionRangeProviders.push(provider)
+
+    return disposableOnce(() => this.unregisterSelectionRangeProvider(provider))
+  }
+
+  private unregisterSelectionRangeProvider(provider: EditorSelectionRangeProvider): void {
+    const index = this.selectionRangeProviders.indexOf(provider)
+    if (index === -1) return
+
+    this.selectionRangeProviders.splice(index, 1)
   }
 
   private registerInjectedTextRowProvider(

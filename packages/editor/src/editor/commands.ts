@@ -26,6 +26,8 @@ export type EditorCommandId =
   | 'replaceAll'
   | 'selectAllMatches'
   | 'selectAll'
+  | 'editor.action.smartSelect.expand'
+  | 'editor.action.smartSelect.shrink'
   | 'addNextOccurrence'
   | 'clearSecondarySelections'
   | 'editor.action.insertCursorAbove'
@@ -92,6 +94,12 @@ export type EditorCommandId =
   | 'cursorDocumentEnd'
   | 'selectDocumentStart'
   | 'selectDocumentEnd'
+  | 'cursorColumnSelectLeft'
+  | 'cursorColumnSelectRight'
+  | 'cursorColumnSelectUp'
+  | 'cursorColumnSelectDown'
+  | 'cursorColumnSelectPageUp'
+  | 'cursorColumnSelectPageDown'
 
 export type EditorCommandContext = {
   readonly event?: KeyboardEvent

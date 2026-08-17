@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**47 / 99 findings complete.** Update this count when you check a box.
+**55 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 7 / 16 complete.
+Milestones: 8 / 16 complete.
 
 
 ---
@@ -437,7 +437,7 @@ Milestones: 7 / 16 complete.
 
 ---
 
-## Milestone 8 — Multi-cursor, mouse, and clipboard
+## Milestone 8 — Multi-cursor, mouse, and clipboard ✅
 
 `effort XL` · `risk high` · 8 findings
 
@@ -447,22 +447,46 @@ Milestones: 7 / 16 complete.
 
 > Ordering in this milestone rests partly on un-analyzed domains (input-a11y).
 
-- [ ] **Multi-cursor merge rules: touching vs overlapping, direction preservation, and last-added priority**  
+- [x] **Multi-cursor merge rules: touching vs overlapping, direction preservation, and last-added priority**  
   `high` `S` `partial` `cursor-selection`
-- [ ] **Cmd+D from a collapsed caret is whole-word and case-sensitive, and searches from the last-added selection**  
+- [x] **Cmd+D from a collapsed caret is whole-word and case-sensitive, and searches from the last-added selection**  
   `high` `S` `partial` `cursor-selection`
-- [ ] **Mouse dispatch matrix: shift-click extend, and word/line-granularity drag via a Range-valued anchor**  
+- [x] **Mouse dispatch matrix: shift-click extend, and word/line-granularity drag via a Range-valued anchor**  
   `high` `M` `missing` `cursor-selection`
-- [ ] **Column (box) selection: a persistent from/to visual-column rectangle, driven by mouse and keyboard**  
+- [x] **Column (box) selection: a persistent from/to visual-column rectangle, driven by mouse and keyboard**  
   `high` `L` `missing` `cursor-selection`
-- [ ] **Smart-select as a ranked ladder of ranges, not a single tree walk**  
+- [x] **Smart-select as a ranked ladder of ranges, not a single tree walk**  
   `medium` `M` `partial` `cursor-selection`
-- [ ] **Clipboard carries no editor metadata, so multi-cursor copy/paste degenerates into one blob**  
+- [x] **Clipboard carries no editor metadata, so multi-cursor copy/paste degenerates into one blob**  
   `high` `M` `missing` `input-a11y`
-- [ ] **No cut handler at all, and no empty-selection line copy/cut**  
+- [x] **No cut handler at all, and no empty-selection line copy/cut**  
   `high` `M` `missing` `input-a11y`
-- [ ] **Drag-and-drop of text is non-functional: no dragover, no dragstart, no move semantics**  
+- [x] **Drag-and-drop of text is non-functional: no dragover, no dragstart, no move semantics**  
   `high` `M` `partial` `input-a11y`
+
+> **Deviations, recorded.** No primary/creation-order cursor identity field: the array stays
+> document-ordered because the edit batch and its delta accumulation are derived from that order.
+> Instead `lastAddedIndex` is derived from the selection id sequence, which survives the rebuild —
+> the array position does not, and reading it there was a real bug this milestone introduced and then
+> fixed. `moveSelectionToNextFindMatch` and `selectHighlights`/`changeAll` still search without word
+> boundaries from a bare caret; same bug class, outside these findings. `dropEffect` stays `'copy'`
+> on the external drag path deliberately: that text belongs to a document this editor does not own,
+> and answering `'move'` asks the foreign source to delete it. Internal moves never reach HTML5
+> drag-and-drop at all.
+>
+> **The architecture gap the review caught.** Smart-select first shipped as two parallel
+> implementations: a new word/line ladder wired to the command, and the tree-sitter expansion —
+> rewritten in the same diff, with its own new test file — reachable by nothing. So expand in a file
+> with a grammar climbed the plain-text chain and never consulted the syntax tree. The provider bucket
+> is now a real registration seam on the plugin host, and the tree-sitter package contributes through
+> it; the ladder climbs syntax where a grammar exists and word/line where none does, with both paths
+> driven through the command id in tests.
+>
+> **Two more real bugs from the review.** A shift-click reused the remembered press anchor whenever
+> it merely lay inside the live selection, so click-at-2, Cmd+A, shift-click-at-5 gave `[2,5]` and
+> silently dropped two characters. And column selection had no keyboard route at all on linux — six
+> command ids, no binding — so its exit criterion was unreachable there; every platform now keeps a
+> chord on both axes.
 
 
 ---

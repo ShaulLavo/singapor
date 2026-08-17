@@ -15,6 +15,21 @@ export type {
 } from '../editor/decorationStore'
 export { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '../editor/findFeature'
 export type { EditorFindFeature } from '../editor/findFeature'
+export {
+  editorLanguageConfiguration,
+  registerEditorLanguageConfiguration,
+} from '../editor/languageConfiguration'
+export type {
+  EditorAutoClosingPair,
+  EditorBlockCommentTokens,
+  EditorBracketPair,
+  EditorCommentTokens,
+  EditorEnterAction,
+  EditorFoldingRules,
+  EditorIndentationRules,
+  EditorLanguageConfiguration,
+  EditorOnEnterRule,
+} from '../editor/languageConfiguration'
 export type {
   EditorCapabilityToken,
   EditorCapabilityContribution,

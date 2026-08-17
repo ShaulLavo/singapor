@@ -12,8 +12,14 @@ import {
   previousWordPartOffset,
   wordSeparatorsForLanguage,
 } from '../textRanges'
+import { injectedLanguageIdsAtOffset, type EditorSyntaxInjection } from '../syntax/session'
 import type { TextEdit } from '../tokens'
 import type { EditorCommandId } from './commands'
+import {
+  editorLanguageConfiguration,
+  type EditorBlockCommentTokens,
+  type EditorCommentTokens,
+} from './languageConfiguration'
 
 export type EditorEditActionCommandId =
   | 'deleteWordLeft'
@@ -49,8 +55,41 @@ export type EditorEditActionResult = {
 
 export type EditorEditActionOptions = {
   readonly languageId?: string | null
+  /**
+   * The stretches of the document written in some other language, as the parse already reports them.
+   *
+   * Without them a comment toggle answers for the file's extension everywhere, and a fenced block of
+   * TypeScript inside a markdown file gets its code buried in `<!--` and `-->`.
+   */
+  readonly injections?: readonly EditorSyntaxInjection[]
   readonly tabSize?: number
   readonly indentText?: string
+}
+
+/** One row's text, without its terminator, together with the offset the row starts at. */
+export type EditorDocumentLine = {
+  readonly start: number
+  readonly text: string
+}
+
+export type EditorListLineBreakOptions = {
+  readonly caretOffset: number
+  readonly caretRow: number
+  readonly languageId?: string | null
+  /**
+   * Reads one row, or returns null past the last one.
+   *
+   * A callback rather than the document text because renumbering stops at the first row that is not
+   * a list item, which is usually the next one: a line break must not pay for materializing the
+   * whole document to find that out.
+   */
+  readonly readLine: (row: number) => EditorDocumentLine | null
+}
+
+export type EditorListLineBreakResult = {
+  readonly edits: readonly TextEdit[]
+  /** Where the caret lands, which the edits no longer say once a marker has been removed. */
+  readonly caretOffset: number
 }
 
 type OffsetRange = {
@@ -59,16 +98,6 @@ type OffsetRange = {
 }
 
 type WordDeleteGranularity = 'word' | 'wordPart'
-
-type BlockCommentTokens = {
-  readonly open: string
-  readonly close: string
-}
-
-type CommentTokens = {
-  readonly line?: string
-  readonly block?: BlockCommentTokens
-}
 
 type BlockUncommentParts = {
   readonly open: OffsetRange
@@ -96,30 +125,16 @@ type LineSelectionDescriptor = {
   readonly head: RelativePoint
 }
 
-const DEFAULT_COMMENT_TOKENS: CommentTokens = {
+/**
+ * What a language nobody has described gets.
+ *
+ * Slash-slash is a guess, and a wrong one for a shell script. It is still the better answer than
+ * refusing to toggle at all: the wrong marker is visible immediately and one undo away, whereas a
+ * chord that silently does nothing reads as a broken editor.
+ */
+const DEFAULT_COMMENT_TOKENS: EditorCommentTokens = {
   line: '//',
   block: { open: '/*', close: '*/' },
-}
-
-const HTML_COMMENT_TOKENS: CommentTokens = {
-  block: { open: '<!--', close: '-->' },
-}
-
-const COMMENT_TOKENS_BY_LANGUAGE: Record<string, CommentTokens> = {
-  css: { block: { open: '/*', close: '*/' } },
-  html: HTML_COMMENT_TOKENS,
-  javascript: DEFAULT_COMMENT_TOKENS,
-  javascriptreact: DEFAULT_COMMENT_TOKENS,
-  json: DEFAULT_COMMENT_TOKENS,
-  jsonc: DEFAULT_COMMENT_TOKENS,
-  jsx: DEFAULT_COMMENT_TOKENS,
-  markdown: HTML_COMMENT_TOKENS,
-  md: HTML_COMMENT_TOKENS,
-  scss: DEFAULT_COMMENT_TOKENS,
-  ts: DEFAULT_COMMENT_TOKENS,
-  tsx: DEFAULT_COMMENT_TOKENS,
-  typescript: DEFAULT_COMMENT_TOKENS,
-  typescriptreact: DEFAULT_COMMENT_TOKENS,
 }
 
 export function isEditorEditActionCommand(
@@ -468,10 +483,10 @@ function commentLineAction(
   selections: readonly ResolvedSelection[],
   options: EditorEditActionOptions,
 ): EditorEditActionResult {
-  const tokens = commentTokensForLanguage(options.languageId)
+  const map = createLineMap(text)
+  const tokens = commentTokensAtCaret(map, selections, options)
   if (!tokens.line && tokens.block) return blockCommentLinesAction(text, selections, tokens.block)
 
-  const map = createLineMap(text)
   const rows = rowsForSelections(map, selections)
   const lineToken = tokens.line ?? DEFAULT_COMMENT_TOKENS.line!
   const edits = lineCommentEdits(map, rows, lineToken)
@@ -483,8 +498,9 @@ function blockCommentAction(
   selections: readonly ResolvedSelection[],
   options: EditorEditActionOptions,
 ): EditorEditActionResult {
-  const tokens = commentTokensForLanguage(options.languageId).block ?? DEFAULT_COMMENT_TOKENS.block!
   const map = createLineMap(text)
+  const tokens =
+    commentTokensAtCaret(map, selections, options).block ?? DEFAULT_COMMENT_TOKENS.block!
   const ranges = selections.map((selection) => blockCommentRangeForSelection(map, selection))
   return blockCommentRangesAction(text, selections, ranges, tokens, 'input.blockComment')
 }
@@ -503,6 +519,131 @@ function indentLinesAction(
       : outdentLineEdits(map, rows, normalizeTabSize(options.tabSize))
   const timingName = direction === 'indent' ? 'input.indentLines' : 'input.outdentLines'
   return editActionResultFromEdits(selections, edits, timingName)
+}
+
+/**
+ * A list item's leader: indentation, the marker, then the whitespace separating it from the text.
+ *
+ * The task box is tried ahead of the plain bullet, or a task item continues as a bare bullet and
+ * loses its box. A number needs that separating whitespace to be a marker at all — `1.5 kg` is a
+ * measurement and `1.` at the end of a line is the end of a sentence.
+ */
+const LIST_ITEM_LEADER = /^([ \t]*)(>[> \t]*|[*+-][ \t]+\[[ xX]\]|[*+-]|(\d+)([.)]))([ \t]+)/
+
+type ListItemLeader = {
+  readonly indent: string
+  readonly marker: string
+  /** The ordered number as written, or null for a bullet, task box or block quote. */
+  readonly number: string | null
+  readonly delimiter: string
+  readonly separator: string
+  /** Whether the row holds the leader and nothing else. */
+  readonly empty: boolean
+}
+
+/**
+ * What a line break does inside a list, or null when it does nothing special.
+ *
+ * Two behaviours, and the second is what makes the first bearable: Enter on an item carries the
+ * marker onto the next line, and Enter on an *empty* item takes the marker away instead, so the
+ * second press ends the list rather than laying down another marker nobody asked for.
+ *
+ * Only a collapsed caret gets here, and only one with something other than indentation in front of
+ * it: a caret sitting before the marker is pushing the item down, not starting a new one.
+ */
+export function listItemLineBreak(
+  options: EditorListLineBreakOptions,
+): EditorListLineBreakResult | null {
+  if (editorLanguageConfiguration(options.languageId)?.listMarkers !== true) return null
+
+  const line = options.readLine(options.caretRow)
+  if (!line) return null
+
+  const leader = listItemLeader(line.text)
+  if (!leader) return null
+  if (/^[ \t]*$/.test(line.text.slice(0, options.caretOffset - line.start))) return null
+
+  if (leader.empty) {
+    return {
+      caretOffset: line.start + 1,
+      edits: [{ from: line.start, text: '\n', to: line.start + line.text.length }],
+    }
+  }
+
+  const inserted = `\n${leader.indent}${continuedLeader(leader)}`
+  return {
+    caretOffset: options.caretOffset + inserted.length,
+    edits: [
+      { from: options.caretOffset, text: inserted, to: options.caretOffset },
+      ...renumberedItemEdits(options, leader),
+    ],
+  }
+}
+
+function listItemLeader(lineText: string): ListItemLeader | null {
+  const match = LIST_ITEM_LEADER.exec(lineText)
+  if (!match) return null
+
+  return {
+    delimiter: match[4] ?? '',
+    empty: match[0].length === lineText.length,
+    indent: match[1] ?? '',
+    marker: match[2] ?? '',
+    number: match[3] ?? null,
+    separator: match[5] ?? '',
+  }
+}
+
+/**
+ * The leader the next item gets.
+ *
+ * A number advances and everything else repeats verbatim, down to the width of the separator, so an
+ * item aligned by hand keeps its alignment. A ticked box comes back empty: the next thing you write
+ * down is not already done.
+ */
+function continuedLeader(leader: ListItemLeader): string {
+  const marker =
+    leader.number === null
+      ? leader.marker.replace(/\[[xX]\]/, '[ ]')
+      : `${Number.parseInt(leader.number, 10) + 1}${leader.delimiter}`
+
+  return `${marker}${leader.separator}`
+}
+
+/**
+ * Renumbering for the items that follow the one just inserted.
+ *
+ * Only items at the same indentation are in the same sequence: a deeper one is a sublist counting
+ * for itself and is stepped over, a shallower one is this list ending, and so is anything that is not
+ * a list item. A bullet at this level means the list changed kind, whose numbering is not ours.
+ */
+function renumberedItemEdits(
+  options: EditorListLineBreakOptions,
+  leader: ListItemLeader,
+): readonly TextEdit[] {
+  if (leader.number === null) return []
+
+  const edits: TextEdit[] = []
+  let expected = Number.parseInt(leader.number, 10) + 1
+
+  for (let row = options.caretRow + 1; ; row += 1) {
+    const line = options.readLine(row)
+    if (!line) break
+
+    const following = listItemLeader(line.text)
+    if (!following) break
+    if (following.indent.length > leader.indent.length) continue
+    if (following.indent.length < leader.indent.length) break
+    if (following.number === null) break
+
+    expected += 1
+    if (Number.parseInt(following.number, 10) === expected) continue
+
+    const from = line.start + following.indent.length
+    edits.push({ from, text: String(expected), to: from + following.number.length })
+  }
+
+  return edits
 }
 
 /**
@@ -642,10 +783,43 @@ function lineCommentEdits(
       .map((range) => rangeToEdit(range, ''))
   }
 
-  return rows.map((row) => {
-    const offset = firstNonWhitespaceOffset(map, row)
+  const targets = commentedRows(map, rows)
+  const column = sharedIndentationLength(map, targets)
+
+  return targets.map((row) => {
+    const offset = lineStart(map, row) + column
     return { from: offset, to: offset, text: `${lineToken} ` }
   })
+}
+
+/**
+ * The rows a marker is actually added to.
+ *
+ * A blank line has nothing to comment out, and a marker parked on it survives as trailing junk once
+ * the block is uncommented. Commenting a run that is *only* blank lines is still a request to comment
+ * something, though, so there the blank lines are the target rather than nothing at all.
+ */
+function commentedRows(map: LineMap, rows: readonly number[]): readonly number[] {
+  const contentRows = rows.filter((row) => !isBlankLine(map, row))
+
+  return contentRows.length === 0 ? rows : contentRows
+}
+
+/**
+ * One column for every marker in the block instead of each row's own indentation.
+ *
+ * Following the indentation staggers the markers with the code, which is exactly the shape the eye
+ * uses to read the block's structure, so the comment ends up competing with it. The shallowest row's
+ * indentation is the deepest column all of them can share.
+ */
+function sharedIndentationLength(map: LineMap, rows: readonly number[]): number {
+  let length = Number.MAX_SAFE_INTEGER
+
+  for (const row of rows) {
+    length = Math.min(length, firstNonWhitespaceOffset(map, row) - lineStart(map, row))
+  }
+
+  return length === Number.MAX_SAFE_INTEGER ? 0 : length
 }
 
 function shouldUncommentLineComments(
@@ -670,7 +844,7 @@ function lineCommentDeleteRange(map: LineMap, row: number, lineToken: string): O
 function blockCommentLinesAction(
   text: string,
   selections: readonly ResolvedSelection[],
-  tokens: BlockCommentTokens,
+  tokens: EditorBlockCommentTokens,
 ): EditorEditActionResult {
   const map = createLineMap(text)
   const ranges = rowsForSelections(map, selections).map((row) => lineContentRange(map, row))
@@ -687,7 +861,7 @@ function blockCommentRangesAction(
   text: string,
   selections: readonly ResolvedSelection[],
   ranges: readonly OffsetRange[],
-  tokens: BlockCommentTokens,
+  tokens: EditorBlockCommentTokens,
   timingName: string,
 ): EditorEditActionResult {
   const uncommentParts = ranges.map((range) => blockUncommentParts(text, range, tokens))
@@ -706,7 +880,7 @@ function shouldUncommentBlockRanges(parts: readonly (BlockUncommentParts | null)
 function commentBlockRangesAction(
   selections: readonly ResolvedSelection[],
   ranges: readonly OffsetRange[],
-  tokens: BlockCommentTokens,
+  tokens: EditorBlockCommentTokens,
   timingName: string,
 ): EditorEditActionResult {
   const edits = ranges.flatMap((range) => blockCommentEditsForRange(range, tokens))
@@ -743,7 +917,7 @@ function uncommentBlockRangesAction(
 
 function blockCommentEditsForRange(
   range: OffsetRange,
-  tokens: BlockCommentTokens,
+  tokens: EditorBlockCommentTokens,
 ): readonly TextEdit[] {
   const openText = blockCommentOpenText(tokens)
   const closeText = blockCommentCloseText(tokens)
@@ -760,7 +934,7 @@ function blockCommentEditsForRange(
 function blockUncommentParts(
   text: string,
   range: OffsetRange,
-  tokens: BlockCommentTokens,
+  tokens: EditorBlockCommentTokens,
 ): BlockUncommentParts | null {
   return (
     blockUncommentPartsInsideRange(text, range, tokens) ??
@@ -771,7 +945,7 @@ function blockUncommentParts(
 function blockUncommentPartsInsideRange(
   text: string,
   range: OffsetRange,
-  tokens: BlockCommentTokens,
+  tokens: EditorBlockCommentTokens,
 ): BlockUncommentParts | null {
   if (!text.startsWith(tokens.open, range.start)) return null
 
@@ -791,7 +965,7 @@ function blockUncommentPartsInsideRange(
 function blockUncommentPartsAroundRange(
   text: string,
   range: OffsetRange,
-  tokens: BlockCommentTokens,
+  tokens: EditorBlockCommentTokens,
 ): BlockUncommentParts | null {
   const openText = blockCommentOpenText(tokens)
   const closeText = blockCommentCloseText(tokens)
@@ -816,7 +990,7 @@ function blockCommentSelectionsAfterAdd(
   selections: readonly ResolvedSelection[],
   ranges: readonly OffsetRange[],
   edits: readonly TextEdit[],
-  tokens: BlockCommentTokens,
+  tokens: EditorBlockCommentTokens,
 ): readonly DocumentSessionEditSelection[] {
   const openLength = blockCommentOpenText(tokens).length
   return selections.map((selection, index) => {
@@ -866,12 +1040,12 @@ function lineContentRange(map: LineMap, row: number): OffsetRange {
   return { start: firstNonWhitespaceOffset(map, row), end: lineEnd(map, row) }
 }
 
-function blockCommentOpenText(tokens: BlockCommentTokens): string {
+function blockCommentOpenText(tokens: EditorBlockCommentTokens): string {
   if (tokens.open === '<!--') return '<!-- '
   return `${tokens.open} `
 }
 
-function blockCommentCloseText(tokens: BlockCommentTokens): string {
+function blockCommentCloseText(tokens: EditorBlockCommentTokens): string {
   if (tokens.close === '-->') return ' -->'
   return ` ${tokens.close}`
 }
@@ -1205,11 +1379,36 @@ function editDeltaBeforeOffset(edits: readonly TextEdit[], offset: number): numb
   return delta
 }
 
-function commentTokensForLanguage(languageId: string | null | undefined): CommentTokens {
-  if (!languageId) return DEFAULT_COMMENT_TOKENS
+/**
+ * The markers the primary caret's row takes.
+ *
+ * Read where the marker is going — the row's first non-blank character — rather than under the caret.
+ * A single line can start in one language and continue in another, and a marker only comments in the
+ * language it is written into: a `/*` opening a line of markup that merely embeds a CSS rule comments
+ * out nothing and breaks the markup instead.
+ *
+ * The innermost layer that has described its comments wins. A grammar can be injected without being a
+ * language anyone wrote rules for, and reaching for the fallback there would replace the host's
+ * correct markers with a guess.
+ */
+function commentTokensAtCaret(
+  map: LineMap,
+  selections: readonly ResolvedSelection[],
+  options: EditorEditActionOptions,
+): EditorCommentTokens {
+  const caretRow = rowAtOffset(map, selections[0]?.headOffset ?? 0)
+  const languageIds = injectedLanguageIdsAtOffset(
+    options.injections ?? [],
+    firstNonWhitespaceOffset(map, caretRow),
+    options.languageId ?? null,
+  )
 
-  const normalized = languageId.trim().toLowerCase()
-  return COMMENT_TOKENS_BY_LANGUAGE[normalized] ?? DEFAULT_COMMENT_TOKENS
+  for (const languageId of languageIds) {
+    const comments = editorLanguageConfiguration(languageId)?.comments
+    if (comments) return comments
+  }
+
+  return DEFAULT_COMMENT_TOKENS
 }
 
 function rowAtOffset(map: LineMap, offset: number): number {

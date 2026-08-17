@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**60 / 99 findings complete.** Update this count when you check a box.
+**65 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 9 / 16 complete.
+Milestones: 10 / 16 complete.
 
 
 ---
@@ -546,7 +546,7 @@ Milestones: 9 / 16 complete.
 
 ---
 
-## Milestone 10 — Language configuration and indentation
+## Milestone 10 — Language configuration and indentation ✅
 
 `effort L` · `risk medium` · 5 findings
 
@@ -556,16 +556,49 @@ Milestones: 9 / 16 complete.
 
 > Ordering in this milestone rests partly on un-analyzed domains (text-model).
 
-- [ ] **Language configuration as declarative data: onEnterRules and indentationRules**  
+- [x] **Language configuration as declarative data: onEnterRules and indentationRules**  
   `high` `M` `partial` `folding-brackets`
-- [ ] **Model-level indentation guessing (tabSize + insertSpaces) with an alignment-vs-indentation heuristic**  
+- [x] **Model-level indentation guessing (tabSize + insertSpaces) with an alignment-vs-indentation heuristic**  
   `medium` `S` `partial` `text-model`
-- [ ] **Reindent lines / reindent selection driven by indentation rules**  
+- [x] **Reindent lines / reindent selection driven by indentation rules**  
   `medium` `M` `missing` `folding-brackets`
-- [ ] **Continue-list on Enter, including empty-item termination and renumbering of following items**  
+- [x] **Continue-list on Enter, including empty-item termination and renumbering of following items**  
   `medium` `S` `missing` `folding-brackets`
-- [ ] **Comment tokens resolved at the caret's embedded language, plus insertion-point column normalization**  
+- [x] **Comment tokens resolved at the caret's embedded language, plus insertion-point column normalization**  
   `medium` `S` `partial` `folding-brackets`
+
+> **The consolidation actually happened, on the second pass.** The registry first landed beside the
+> two tables it was meant to absorb — and a new third one — so the module's own claim that a language
+> is "either described or not described" was false in this repo, and the tables disagreed: the folding
+> table knew python, yaml and yml, which the registry had no record of. There is now one table: 17 ids
+> over 8 shared records carrying pairs, comment tokens, onEnterRules, indentationRules, folding rules
+> and list markers. `FOLDING_RULES_BY_LANGUAGE` and `LIST_MARKER_LANGUAGES` are deleted. A side effect
+> worth naming: a comment toggle in Python now inserts `#` rather than the `//` fallback, because the
+> language finally has a record.
+>
+> **`wordPattern` was built and then deleted.** It was declared on the record, populated in four
+> languages, exported publicly, and read by nothing. Linked editing adds it back with its first reader.
+>
+> **Deviations, recorded.** The document-wide tabs-vs-spaces vote was deliberately NOT taken: the
+> Verifier judged our per-line rule better in a mixed file, so only tabSize is guessed from content,
+> with an explicit host setting still winning. `outdent` was dropped from the enter-action union —
+> nothing produces it, and it would have been exercised only by its own test.
+>
+> **Three real bugs the review caught in this milestone's own work.** Reindent's literal mask ended
+> every quoted run at the line break, so a multi-line template literal was left unmasked past its
+> first row and the braces inside the string drove the indentation of the rows it spans — reindent
+> rewrote the string's own contents. A run may now cross line breaks, falling back to the line break
+> only when nothing closes it, which is what keeps a stray apostrophe from swallowing the file.
+> Comment tokens were still taken from the document's language, so commenting inside a fenced
+> TypeScript block in markdown produced HTML comments; the syntax layer already reported the
+> injection and the controller was discarding it. And two reindent guards had tests that passed for
+> the wrong reason — a fixture that yields no edits under any rule set, and fixtures that all start
+> at column 0, which cannot tell "made self-consistent" from "moved to the margin".
+>
+> **`registerEditorLanguageConfiguration` has no in-repo producer** — every caller is a test. Unlike
+> the four seams before it this one is genuinely populated, by the built-in records in the same
+> module, so the extension point is real and exercised through the public entry point; there is simply
+> no second producer in this repo to point at.
 
 
 ---

@@ -3030,7 +3030,8 @@ describe('Editor', () => {
       editor.attachSession(session, { languageId: 'typescript' })
 
       expect(editor.dispatchCommand('editor.action.commentLine')).toBe(true)
-      expect(session.materializeFullText()).toBe('// const a = 1;\n  // const b = 2;\nconst c = 3;')
+      // Both markers land in the shallowest line's column, so the block reads as one comment.
+      expect(session.materializeFullText()).toBe('// const a = 1;\n//   const b = 2;\nconst c = 3;')
 
       expect(editor.dispatchCommand('editor.action.commentLine')).toBe(true)
       expect(session.materializeFullText()).toBe(text)

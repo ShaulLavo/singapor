@@ -21,14 +21,24 @@ import type {
   EditorSelectionRange,
   EditorViewContributionUpdateKind,
 } from '../plugins'
-import type { EditorSyntaxLanguageId } from '../syntax/session'
+import type { EditorSyntaxInjection, EditorSyntaxLanguageId } from '../syntax/session'
 import {
   readClipboardMetadata,
   writeClipboardPayload,
   type ClipboardMetadata,
 } from './clipboardMetadata'
+import {
+  documentSelectionEditForCommand,
+  isEditorDocumentSelectionEditCommand,
+  type EditorDocumentSelectionEditCommandId,
+} from './reindent'
 import { childContainingNode, childNodeIndex, elementBoundaryToTextOffset } from './domBoundary'
-import { editActionForCommand, type EditorEditActionCommandId } from './editActions'
+import {
+  editActionForCommand,
+  listItemLineBreak,
+  type EditorDocumentLine,
+  type EditorEditActionCommandId,
+} from './editActions'
 import {
   capitalize,
   eventTargetInsideBlockSurface,
@@ -104,6 +114,7 @@ export type InputSelectionControllerOptions = {
   readonly tabSize: number
   readonly view: VirtualizedTextView
   getLanguageId(): EditorSyntaxLanguageId | null
+  getSyntaxInjections(): readonly EditorSyntaxInjection[]
   getSession(): DocumentSession | null
   getSessionOptions(): EditorSessionOptions
   materializeFullText(): string
@@ -161,6 +172,9 @@ type ColumnSelectionRun = {
   // walk that placed the cursors, so holding the chord never re-reads those rows.
   readonly widestColumn: number
 }
+
+/** Any column past a row's end; `pointToOffset` clamps it back to that row's last character. */
+const LINE_END_COLUMN = Number.MAX_SAFE_INTEGER
 
 const COLUMN_SELECTION_COMMANDS = new Set<EditorCommandId>([
   'cursorColumnSelectLeft',
@@ -284,29 +298,61 @@ export class InputSelectionController {
     const caret = this.collapsedCaretOffset(session, snapshot)
     if (caret === null) return session.applyText(text)
 
-    const charBefore = characterBefore(snapshot, caret)
-    const charAfter = characterAt(snapshot, caret)
-    const pair =
-      charBefore === null ? null : autoClosingPairForOpen(this.options.getLanguageId(), charBefore)
+    const point = offsetToPoint(snapshot, caret)
+    // A list item's marker is a construct the indentation rules cannot see: they read the whitespace
+    // in front of the caret, and the marker is text.
+    const listBreak = listItemLineBreak({
+      caretOffset: caret,
+      caretRow: point.row,
+      languageId: this.options.getLanguageId(),
+      readLine: (row) => this.documentLine(snapshot, row),
+    })
+    if (listBreak) {
+      return this.applyLineBreakEdits(session, listBreak.edits, listBreak.caretOffset)
+    }
+
     const indent = lineBreakIndent({
-      afterOpener: pair !== null && !pair.quote,
-      betweenPair: pair !== null && !pair.quote && charAfter === pair.close,
-      charAfter,
-      charBefore,
+      languageId: this.options.getLanguageId(),
+      lineTextAfterCaret: readPieceTableTextRange(
+        snapshot,
+        caret,
+        pointToOffset(snapshot, { row: point.row, column: LINE_END_COLUMN }),
+      ),
       lineTextBeforeCaret: this.lineTextBeforeCaret(snapshot, caret),
+      previousLineText: point.row === 0 ? null : this.lineText(snapshot, point.row - 1),
       tabSize: this.options.tabSize,
     })
 
-    const change = session.applyEdits(
+    return this.applyLineBreakEdits(
+      session,
       [{ from: caret, text: indent.insert + indent.trailing, to: caret }],
-      {
-        selections: [{ anchor: caret + indent.insert.length, head: caret + indent.insert.length }],
-      },
+      caret + indent.insert.length,
     )
+  }
+
+  /** Commits a line break's edits, leaving the caret where the break decided it belongs. */
+  private applyLineBreakEdits(
+    session: DocumentSession,
+    edits: readonly TextEdit[],
+    caretOffset: number,
+  ): DocumentSessionChange {
+    const change = session.applyEdits(edits, {
+      selections: [{ anchor: caretOffset, head: caretOffset }],
+    })
     // The pair the caret was inside has been split across lines; its closer is no longer adjacent.
     this.autoClose.clear()
     this.markSessionSelectionForNextInput()
     return change
+  }
+
+  /** One row's text with the offset it starts at, or null past the last row. */
+  private documentLine(snapshot: PieceTableSnapshot, row: number): EditorDocumentLine | null {
+    if (row < 0 || row > offsetToPoint(snapshot, snapshot.length).row) return null
+
+    return {
+      start: pointToOffset(snapshot, { row, column: 0 }),
+      text: this.lineText(snapshot, row),
+    }
   }
 
   /** Current line's text up to the caret, read without materializing the document. */
@@ -315,6 +361,14 @@ export class InputSelectionController {
     if (point.column === 0) return ''
 
     return readPieceTableTextRange(snapshot, caret - point.column, caret)
+  }
+
+  /** One whole row's text, read without materializing the document. */
+  private lineText(snapshot: PieceTableSnapshot, row: number): string {
+    const start = pointToOffset(snapshot, { row, column: 0 })
+    const end = pointToOffset(snapshot, { row, column: LINE_END_COLUMN })
+
+    return start >= end ? '' : readPieceTableTextRange(snapshot, start, end)
   }
 
   /** The auto-close variant of a keystroke, or null when the keystroke is ordinary. */
@@ -526,7 +580,7 @@ export class InputSelectionController {
   }
 
   applyEditActionCommand(
-    command: EditorEditActionCommandId,
+    command: EditorEditActionCommandId | EditorDocumentSelectionEditCommandId,
     context: EditorCommandContext,
   ): boolean {
     const session = this.session
@@ -539,10 +593,15 @@ export class InputSelectionController {
     const selections = session
       .getSelections()
       .selections.map((selection) => resolveSelection(snapshot, selection))
-    const action = editActionForCommand(command, session.materializeFullText(), selections, {
+    const text = session.materializeFullText()
+    const editOptions = {
+      injections: this.options.getSyntaxInjections(),
       languageId: this.options.getLanguageId(),
       tabSize: this.options.tabSize,
-    })
+    }
+    const action = isEditorDocumentSelectionEditCommand(command)
+      ? documentSelectionEditForCommand(command, text, selections, editOptions)
+      : editActionForCommand(command, text, selections, editOptions)
     const change = session.applyEdits(action.edits, {
       selections: action.selections,
     })

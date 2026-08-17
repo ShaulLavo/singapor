@@ -17,12 +17,22 @@ import {
   createEditorCapabilityToken,
   EDITOR_FIND_FEATURE,
   EDITOR_FIND_FEATURE_ID,
+  type EditorAutoClosingPair,
+  type EditorBlockCommentTokens,
+  type EditorBracketPair,
+  type EditorCommentTokens,
   type EditorDecoration,
   EditorDecorationStore,
   type EditorDecorationRange,
   type EditorDecorationSpec,
   type EditorDecorationSurface,
+  type EditorEnterAction,
   type EditorFindFeature,
+  type EditorFoldingRules,
+  type EditorIndentationRules,
+  type EditorLanguageConfiguration,
+  editorLanguageConfiguration,
+  type EditorOnEnterRule,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   type EditorPluginContext,
@@ -101,6 +111,45 @@ describe('public API facade', () => {
     expect('defineLazyTextProperty' in core).toBe(false)
     expect('getPieceTableText' in core).toBe(false)
     expect('createAnchorSelection' in core).toBe(false)
+  })
+
+  it('exports the language configuration a host describes its own language with', () => {
+    // A host shipping a language we have no grammar for writes the whole record itself, so every part
+    // of it is in that host's build: the pairs, the comment tokens, the rules a line break consults
+    // and the shape its blocks fold by. Registering through the root and reading back through the
+    // category entrypoint also says the two doors reach one registry rather than a copy each.
+    const pair: EditorAutoClosingPair = { close: 'end', open: 'do', quote: false }
+    const brackets: EditorBracketPair[] = [{ close: 'end', open: 'do' }]
+    const block: EditorBlockCommentTokens = { open: '#[', close: ']#' }
+    const comments: EditorCommentTokens = { line: '#', block }
+    const action: EditorEnterAction = { appendText: '# ', indentAction: 'none' }
+    const onEnterRules: EditorOnEnterRule[] = [{ action, beforeText: /^\s*#/ }]
+    const indentationRules: EditorIndentationRules = {
+      decreaseIndentPattern: /^\s*end\b/,
+      increaseIndentPattern: /\bdo\s*$/,
+    }
+    const folding: EditorFoldingRules = {
+      offSide: true,
+      regionEnd: /^\s*#\s*endregion\b/,
+      regionStart: /^\s*#\s*region\b/,
+    }
+    const configuration: EditorLanguageConfiguration = {
+      autoClosingPairs: [pair],
+      brackets,
+      comments,
+      folding,
+      indentationRules,
+      listMarkers: true,
+      onEnterRules,
+    }
+    const rootConfiguration: core.EditorLanguageConfiguration = configuration
+
+    const registration = core.registerEditorLanguageConfiguration('fauxml', rootConfiguration)
+
+    expect(editorLanguageConfiguration('FauxML ')).toBe(configuration)
+    registration.dispose()
+
+    expect(editorLanguageConfiguration('fauxml')).toBeNull()
   })
 
   it('exports the option registry the framework bindings iterate', () => {

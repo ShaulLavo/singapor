@@ -11,6 +11,7 @@ import {
 } from './folds'
 import { fallbackFoldRanges } from './foldRanges'
 import { EditorFoldState } from './foldState'
+import { guessedTabSize } from './indentationGuess'
 import { EditorKeymapController } from './keymap'
 import { EditorBlockSurfaceController } from './blockSurfaceController'
 import { InputSelectionController } from './inputSelectionController'
@@ -300,7 +301,10 @@ export class Editor {
   private appliedRangeDecorationNames: readonly string[] = []
   private appliedInjectedTextRows: readonly InjectedTextRow[] = []
   private readonly lifecycleSummary = createEditorLifecycleSummary()
-  private readonly tabSize: number
+  /** The width a host named, which no document may contradict. */
+  private readonly configuredTabSize: number
+  /** The width in effect: the host's when it named one, otherwise the loaded document's own. */
+  private tabSize: number
   private operation: EditorOperation | null = null
   private readonly cursorHistory = new CursorHistory()
   private cursorHistorySession: DocumentSession | null = null
@@ -377,7 +381,8 @@ export class Editor {
     const mountStart = nowMs()
     this.container = container
     this.options = options
-    this.tabSize = normalizeTabSize(options.tabSize)
+    this.configuredTabSize = normalizeTabSize(options.tabSize)
+    this.tabSize = this.configuredTabSize
     this.configuredTheme = options.theme ?? null
     this.pluginHost = new EditorPluginHost(options.plugins)
     this.highlightPrefix = nextEditorHighlightPrefix()
@@ -441,12 +446,19 @@ export class Editor {
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
     })
+    // Read per press rather than copied: outdent, backspace-through-indentation and the indentation
+    // a line break copies all have to measure in the width the open document actually uses, and that
+    // is only known once one has been loaded.
+    const effectiveTabSize = (): number => this.tabSize
     this.inputSelection = new InputSelectionController({
       el: this.el,
       selectionSyncMode: normalizeEditorSelectionSyncMode(options.selectionSyncMode),
-      tabSize: this.tabSize,
+      get tabSize(): number {
+        return effectiveTabSize()
+      },
       view: this.view,
       getLanguageId: () => this.languageId,
+      getSyntaxInjections: () => this.syntax.injections,
       getSession: () => this.session,
       getSessionOptions: () => this.sessionOptions,
       materializeFullText: () => this.materializeFullText(),
@@ -1142,6 +1154,7 @@ export class Editor {
     })
     this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
+    this.adoptDocumentTabSize(attachment.fullText)
     this.setDocument({ text: attachment.fullText, tokens: [] })
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
@@ -1206,12 +1219,27 @@ export class Editor {
     })
     this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
+    this.adoptDocumentTabSize(attachment.fullText)
     this.setDocument({ text: attachment.fullText, tokens: [] })
     this.applyRangeDecorations()
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
     return attachment.documentVersion
+  }
+
+  /**
+   * Takes the newly loaded document's indentation width as the one in effect.
+   *
+   * A host that named a width has said something about intent that a file cannot argue with, so its
+   * value stands; a host that named none would otherwise have every editor measure every file in the
+   * same width, which is wrong for all but the files that happen to use it. The text is already
+   * materialized for the view here, so reading it costs one pass over what is in hand.
+   */
+  private adoptDocumentTabSize(text: string): void {
+    if (this.options.tabSize !== undefined) return
+
+    this.tabSize = guessedTabSize(text, this.configuredTabSize)
   }
 
   private initializeDefaultText(): void {
@@ -2360,7 +2388,10 @@ export class Editor {
       lineCount: viewState.lineCount,
       contentWidth: viewState.contentWidth,
       totalHeight: viewState.totalHeight,
-      tabSize: viewState.tabSize,
+      // The width in effect, not the one the view lays tab characters out on: contributions divide
+      // an indent column by this to get a nesting level, so a guide has to be drawn one per level
+      // the document actually writes.
+      tabSize: this.tabSize,
       foldMarkers: viewState.foldMarkers,
       visibleRows: viewState.mountedRows.map((row) => ({
         index: row.index,

@@ -67,6 +67,8 @@ export type EditorCommandId =
   | 'editor.action.blockComment'
   | 'editor.action.indentLines'
   | 'editor.action.outdentLines'
+  | 'editor.action.reindentlines'
+  | 'editor.action.reindentselectedlines'
   | 'editor.action.deleteLines'
   | 'editor.action.copyLinesUpAction'
   | 'editor.action.copyLinesDownAction'

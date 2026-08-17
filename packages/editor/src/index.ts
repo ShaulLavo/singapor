@@ -68,14 +68,25 @@ export {
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   EditorDecorationStore,
+  editorLanguageConfiguration,
   projectDecorationRangeThroughEdits,
+  registerEditorLanguageConfiguration,
 } from './public/extensions'
 export type {
+  EditorAutoClosingPair,
+  EditorBlockCommentTokens,
+  EditorBracketPair,
+  EditorCommentTokens,
   EditorDecoration,
   EditorDecorationRange,
   EditorDecorationSpec,
   EditorDecorationSurface,
+  EditorEnterAction,
   EditorFindFeature,
+  EditorFoldingRules,
+  EditorIndentationRules,
+  EditorLanguageConfiguration,
+  EditorOnEnterRule,
 } from './public/extensions'
 export { applyEditorTheme, editorThemesEqual, mergeEditorThemes } from './public/rendering'
 export {

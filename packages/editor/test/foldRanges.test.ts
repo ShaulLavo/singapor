@@ -22,27 +22,13 @@ const HEADER_END = INDENTED_TEXT.indexOf('\n    first()')
 const TAB_TEXT = ['head:', '\tone', '  two'].join('\n')
 
 /**
- * Every language the fold rules name, with the comment its regions are marked in and whether a run of
- * blank lines closes the block above it.
+ * The two rule shapes the walk itself behaves differently for: a block that is its own indentation,
+ * and one a token closes. Which shape each language we ship gets is pinned on the records themselves,
+ * in test/languageConfiguration.test.ts.
  */
-const LANGUAGE_FOLDING_RULES = [
-  { languageId: 'css', comment: '/*', offSide: false },
-  { languageId: 'html', comment: '<!--', offSide: false },
-  { languageId: 'javascript', comment: '//', offSide: false },
-  { languageId: 'javascriptreact', comment: '//', offSide: false },
-  { languageId: 'json', comment: '//', offSide: false },
-  { languageId: 'jsonc', comment: '//', offSide: false },
-  { languageId: 'jsx', comment: '//', offSide: false },
-  { languageId: 'markdown', comment: '<!--', offSide: true },
-  { languageId: 'md', comment: '<!--', offSide: true },
+const FOLDING_RULE_SHAPES = [
   { languageId: 'python', comment: '#', offSide: true },
-  { languageId: 'scss', comment: '//', offSide: false },
-  { languageId: 'ts', comment: '//', offSide: false },
-  { languageId: 'tsx', comment: '//', offSide: false },
   { languageId: 'typescript', comment: '//', offSide: false },
-  { languageId: 'typescriptreact', comment: '//', offSide: false },
-  { languageId: 'yaml', comment: '#', offSide: true },
-  { languageId: 'yml', comment: '#', offSide: true },
 ] as const
 
 /** A region marked in `comment` syntax, on rows sharing one indentation so only a marker can fold. */
@@ -152,7 +138,7 @@ describe('fold ranges without a grammar', () => {
 
   // Both halves are what naming the language buys: a document we cannot name is read as prose, whose
   // blank line separates blocks and whose regions may be marked in any comment syntax at all.
-  it.each(LANGUAGE_FOLDING_RULES)(
+  it.each(FOLDING_RULE_SHAPES)(
     'reads $languageId by its own blank-line rule and comment syntax',
     ({ languageId, comment, offSide }) => {
       editor.openDocument({ documentId: `blank.${languageId}`, languageId, text: INDENTED_TEXT })
@@ -170,6 +156,20 @@ describe('fold ranges without a grammar', () => {
       expect(foldKeys()).toEqual([])
     },
   )
+
+  // Refusing a marker because we cannot name the language would mark nothing in an unnamed file at
+  // all, and a document with no grammar is indistinguishable from prose.
+  it('reads a document with no language off-side, after any comment opener', () => {
+    editor.openDocument({ documentId: 'notes', text: INDENTED_TEXT })
+    expect(foldKeys()).toEqual([`plain:indent:${HEADER_END}:${BODY_END}`])
+
+    const marked = markedText('--')
+    editor.openDocument({ documentId: 'marked', text: marked })
+
+    expect(foldKeys()).toEqual([
+      `plain:region:${marked.indexOf('\nimport a')}:${marked.indexOf('\nmain()')}`,
+    ])
+  })
 
   it('measures a tab in the columns it stands for before comparing indentation', () => {
     remount({ tabSize: 2 })

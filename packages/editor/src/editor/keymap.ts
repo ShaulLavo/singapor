@@ -400,6 +400,8 @@ const ADVANCED_EDITING_COMMANDS = new Set<EditorCommandId>([
   'editor.action.blockComment',
   'editor.action.indentLines',
   'editor.action.outdentLines',
+  'editor.action.reindentlines',
+  'editor.action.reindentselectedlines',
   'editor.action.deleteLines',
   'editor.action.copyLinesUpAction',
   'editor.action.copyLinesDownAction',
@@ -516,6 +518,29 @@ function advancedEditingBindings(platform: EditorPlatform): readonly EditorKeyBi
     { hotkey: key('A', blockCommentModifier), command: 'editor.action.blockComment' },
     { hotkey: key(']', { mod: true }), command: 'editor.action.indentLines' },
     { hotkey: key('[', { mod: true }), command: 'editor.action.outdentLines' },
+    ...reindentBindings(),
+  ]
+}
+
+/**
+ * Rewriting indentation from the rules, where the bracket chords above only push it by a unit.
+ *
+ * A letter rather than a bracket, because the two keys that spell indentation are already spent three
+ * times over between indenting, outdenting and folding. One chord on every platform: neither the
+ * primary modifier with shift, which is where a browser keeps its own tools, nor a lone alt, which is
+ * word motion on one platform, leaves room to vary it. Reaching past the selection to the whole
+ * document costs the primary modifier on top.
+ */
+function reindentBindings(): readonly EditorKeyBinding[] {
+  return [
+    {
+      hotkey: key('I', { alt: true, shift: true }),
+      command: 'editor.action.reindentselectedlines',
+    },
+    {
+      hotkey: key('I', { mod: true, alt: true, shift: true }),
+      command: 'editor.action.reindentlines',
+    },
   ]
 }
 

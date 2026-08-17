@@ -5,6 +5,14 @@
  * how a line is indented instead of two that can disagree.
  */
 
+import {
+  editorLanguageConfiguration,
+  matches,
+  onEnterAction,
+  type EditorEnterAction,
+  type EditorLanguageConfiguration,
+} from './languageConfiguration'
+
 export type LineBreakIndent = {
   /** Text inserted at the caret: the newline and the new line's indentation. */
   readonly insert: string
@@ -16,46 +24,72 @@ export type LineBreakIndent = {
 }
 
 export type LineBreakIndentOptions = {
+  /** Selects the rules to consult; an unregistered language gets the plain copy. */
+  readonly languageId: string | null | undefined
   /** The current line's text from its start up to the caret. */
   readonly lineTextBeforeCaret: string
-  /** Character immediately before the caret, or null. */
-  readonly charBefore: string | null
-  /** Character at the caret, or null. */
-  readonly charAfter: string | null
-  /** True when `charBefore` opens a pair whose closer is `charAfter`. */
-  readonly betweenPair: boolean
-  /** True when `charBefore` opens a block, whether or not its closer follows. */
-  readonly afterOpener: boolean
+  /** The rest of the current line, from the caret to the line's end. */
+  readonly lineTextAfterCaret: string
+  /** The whole previous line, or null when the caret is on the first one. */
+  readonly previousLineText: string | null
   readonly tabSize: number
 }
 
 /**
  * Indentation for a line break.
  *
- * Three cases, in order of specificity:
- * - between an opener and its closer: the closer moves to its own line and the caret lands on a
- *   blank line indented one level deeper
- * - directly after an opener: one level deeper, closer untouched
- * - otherwise: the previous line's indentation, continued
+ * The language's own rules and its delimiters decide first; only when neither recognises the
+ * construct does the new line copy the current one's indentation. Deciding it here rather than from
+ * the characters flanking the caret is what lets a switch label, a doc-comment leader or an opener
+ * with trailing spaces indent at all — none of them has a delimiter next to the caret.
  */
 export function lineBreakIndent(options: LineBreakIndentOptions): LineBreakIndent {
-  const base = leadingWhitespace(options.lineTextBeforeCaret)
+  const configuration = editorLanguageConfiguration(options.languageId)
+  const action = enterAction(configuration, options)
+
+  const base = trimEnd(leadingWhitespace(options.lineTextBeforeCaret), action?.removeText ?? 0)
   const unit = indentUnit(base, options.tabSize)
+  const appendText = action?.appendText ?? ''
 
-  if (options.betweenPair) {
-    return { insert: `\n${base}${unit}`, trailing: `\n${base}` }
+  if (action?.indentAction === 'indent') {
+    return { insert: `\n${base}${unit}${appendText}`, trailing: '' }
   }
-  if (options.afterOpener) {
-    return { insert: `\n${base}${unit}`, trailing: '' }
+  if (action?.indentAction === 'indentOutdent') {
+    return { insert: `\n${base}${action.appendText ?? unit}`, trailing: `\n${base}` }
   }
 
-  return { insert: `\n${base}`, trailing: '' }
+  return { insert: `\n${base}${appendText}`, trailing: '' }
+}
+
+function enterAction(
+  configuration: EditorLanguageConfiguration | null,
+  options: LineBreakIndentOptions,
+): EditorEnterAction | null {
+  const decided = onEnterAction(configuration, {
+    previousLineText: options.previousLineText,
+    textAfter: options.lineTextAfterCaret,
+    textBefore: options.lineTextBeforeCaret,
+  })
+  if (decided) return decided
+
+  // Reached when no delimiter sits at the caret at all, which is the only case the line-shape rules
+  // can still answer: `case 'a':` opens a block with a colon.
+  const rules = configuration?.indentationRules
+  if (!rules || !matches(rules.increaseIndentPattern, options.lineTextBeforeCaret)) return null
+
+  return { indentAction: 'indent' }
 }
 
 /** Leading whitespace of a line, which is what a continued line copies verbatim. */
 export function leadingWhitespace(lineText: string): string {
   const match = /^[ \t]*/.exec(lineText)
   return match?.[0] ?? ''
+}
+
+function trimEnd(indentation: string, count: number): string {
+  if (count <= 0) return indentation
+
+  return indentation.slice(0, Math.max(0, indentation.length - count))
 }
 
 /**

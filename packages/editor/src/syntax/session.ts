@@ -208,3 +208,30 @@ export const isEditorSyntaxLanguage = (
   if (!languageId) return false
   return languageId.trim().length > 0
 }
+
+/**
+ * The languages covering an offset, innermost first, ending with the host language.
+ *
+ * A chain rather than a single answer because a grammar the parser injects is not always a language
+ * anything downstream has rules for: markdown's inline layer is a grammar of its own with no comments
+ * and no brackets, and answering it alone would trade the host's rules for nothing. Callers walk
+ * outward until a layer can answer them.
+ *
+ * The narrowest span comes first because injected spans nest — a fenced block holding a template
+ * literal — and an enclosing span is that same offset's outer layer, which is the order the walk
+ * wants. Spans end where the host resumes, so the end is exclusive.
+ */
+export const injectedLanguageIdsAtOffset = (
+  injections: readonly EditorSyntaxInjection[],
+  offset: number,
+  hostLanguageId: EditorSyntaxLanguageId | null,
+): readonly EditorSyntaxLanguageId[] => {
+  const covering = injections
+    .filter((injection) => offset >= injection.startIndex && offset < injection.endIndex)
+    .toSorted(
+      (left, right) => left.endIndex - left.startIndex - (right.endIndex - right.startIndex),
+    )
+    .map((injection) => injection.languageId)
+
+  return hostLanguageId ? [...covering, hostLanguageId] : covering
+}

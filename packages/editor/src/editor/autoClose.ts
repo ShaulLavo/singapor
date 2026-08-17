@@ -1,43 +1,4 @@
-export type AutoClosingPair = {
-  readonly open: string
-  readonly close: string
-  /** Quotes use one character for both ends, which changes several rules below. */
-  readonly quote?: boolean
-}
-
-const CODE_PAIRS: readonly AutoClosingPair[] = [
-  { close: ')', open: '(' },
-  { close: ']', open: '[' },
-  { close: '}', open: '{' },
-  { close: "'", open: "'", quote: true },
-  { close: '"', open: '"', quote: true },
-  { close: '`', open: '`', quote: true },
-]
-
-/** Markdown and plain prose: brackets still help, but apostrophes are punctuation, not delimiters. */
-const PROSE_PAIRS: readonly AutoClosingPair[] = [
-  { close: ')', open: '(' },
-  { close: ']', open: '[' },
-  { close: '}', open: '{' },
-  { close: '`', open: '`', quote: true },
-]
-
-const PAIRS_BY_LANGUAGE: Record<string, readonly AutoClosingPair[]> = {
-  css: CODE_PAIRS,
-  html: CODE_PAIRS,
-  javascript: CODE_PAIRS,
-  javascriptreact: CODE_PAIRS,
-  json: CODE_PAIRS,
-  jsonc: CODE_PAIRS,
-  jsx: CODE_PAIRS,
-  markdown: PROSE_PAIRS,
-  md: PROSE_PAIRS,
-  scss: CODE_PAIRS,
-  ts: CODE_PAIRS,
-  tsx: CODE_PAIRS,
-  typescript: CODE_PAIRS,
-  typescriptreact: CODE_PAIRS,
-}
+import { editorLanguageConfiguration, type EditorAutoClosingPair } from './languageConfiguration'
 
 /**
  * Characters a pair may be auto-closed *before*: whitespace and the closers of
@@ -50,23 +11,21 @@ const AUTO_CLOSE_BEFORE = new Set([';', ':', '.', ',', '=', '}', ']', ')', '>', 
 
 export function autoClosingPairsForLanguage(
   languageId: string | null | undefined,
-): readonly AutoClosingPair[] {
-  if (!languageId) return []
-
-  return PAIRS_BY_LANGUAGE[languageId] ?? []
+): readonly EditorAutoClosingPair[] {
+  return editorLanguageConfiguration(languageId)?.autoClosingPairs ?? []
 }
 
 export function autoClosingPairForOpen(
   languageId: string | null | undefined,
   typed: string,
-): AutoClosingPair | null {
+): EditorAutoClosingPair | null {
   return autoClosingPairsForLanguage(languageId).find((pair) => pair.open === typed) ?? null
 }
 
 export function autoClosingPairForClose(
   languageId: string | null | undefined,
   typed: string,
-): AutoClosingPair | null {
+): EditorAutoClosingPair | null {
   return autoClosingPairsForLanguage(languageId).find((pair) => pair.close === typed) ?? null
 }
 
@@ -86,7 +45,7 @@ export type AutoCloseContext = {
  * - for quotes, additionally never close right after a word character, so an apostrophe in `don't`
  *   or `it's` stays an apostrophe
  */
-export function shouldAutoClose(pair: AutoClosingPair, context: AutoCloseContext): boolean {
+export function shouldAutoClose(pair: EditorAutoClosingPair, context: AutoCloseContext): boolean {
   if (context.charAfter !== null && !AUTO_CLOSE_BEFORE.has(context.charAfter)) return false
   if (!pair.quote) return true
 
@@ -122,7 +81,7 @@ export function shouldTypeOverCloser(options: {
 export function shouldDeletePair(options: {
   readonly charAfter: string | null
   readonly charBefore: string | null
-  readonly pair: AutoClosingPair | null
+  readonly pair: EditorAutoClosingPair | null
   readonly trackedAtCaret: boolean
 }): boolean {
   if (!options.trackedAtCaret) return false

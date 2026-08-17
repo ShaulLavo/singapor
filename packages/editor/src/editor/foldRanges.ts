@@ -1,21 +1,10 @@
 import type { EditorSyntaxLanguageId, FoldRange } from '../syntax/session'
 import { rejectCrossingFoldRanges } from './folds'
-
-/** Lines a language marks an explicit region with, written as a comment in that language. */
-type RegionMarkers = {
-  readonly start: RegExp
-  readonly end: RegExp
-}
-
-type FoldingRules = {
-  /**
-   * Whether a run of blank lines closes the block above it instead of trailing inside it. True where
-   * a block *is* its indentation, because then the blank lines are all that separates it from what
-   * follows; false where a closing token ends the block, because that token has not been reached yet.
-   */
-  readonly offSide: boolean
-  readonly markers: RegionMarkers
-}
+import {
+  editorLanguageConfiguration,
+  matches,
+  type EditorFoldingRules,
+} from './languageConfiguration'
 
 type FoldLine = {
   /** Offset the line's text ends at, which is where a region starting or ending here is pinned. */
@@ -40,65 +29,15 @@ const BLANK_INDENT = -1
 const MARKER_INDENT = -2
 
 /**
- * Region markers for a language whose comment syntax we do not know, which includes plain text.
- * Accepting any of the usual comment openers costs nothing — a line has to say `region` after one to
- * match — and it is the difference between markers working and not working in an unnamed file.
+ * What a document nobody has described gets: off-side, because a document we cannot name is
+ * indistinguishable from prose, where a blank line reads as a separator; and any of the usual comment
+ * openers, which costs nothing — a line has to say `region` after one to match — and is the difference
+ * between markers working and not working in an unnamed file.
  */
-const DEFAULT_REGION_MARKERS: RegionMarkers = {
-  start: /^\s*(?:\/\/|\/\*|#|--|;|%|<!--)\s*#?region\b/,
-  end: /^\s*(?:\/\/|\/\*|#|--|;|%|<!--)\s*#?endregion\b/,
-}
-
-const SLASH_REGION_MARKERS: RegionMarkers = {
-  start: /^\s*\/\/\s*#?region\b/,
-  end: /^\s*\/\/\s*#?endregion\b/,
-}
-
-const BLOCK_REGION_MARKERS: RegionMarkers = {
-  start: /^\s*\/\*\s*#?region\b/,
-  end: /^\s*\/\*\s*#?endregion\b/,
-}
-
-const HTML_REGION_MARKERS: RegionMarkers = {
-  start: /^\s*<!--\s*#?region\b/,
-  end: /^\s*<!--\s*#?endregion\b/,
-}
-
-const HASH_REGION_MARKERS: RegionMarkers = {
-  start: /^\s*#\s*region\b/,
-  end: /^\s*#\s*endregion\b/,
-}
-
-const BRACE_FOLDING_RULES: FoldingRules = { offSide: false, markers: SLASH_REGION_MARKERS }
-const BLOCK_COMMENT_FOLDING_RULES: FoldingRules = { offSide: false, markers: BLOCK_REGION_MARKERS }
-const TAG_FOLDING_RULES: FoldingRules = { offSide: false, markers: HTML_REGION_MARKERS }
-const INDENTED_FOLDING_RULES: FoldingRules = { offSide: true, markers: HASH_REGION_MARKERS }
-const PROSE_FOLDING_RULES: FoldingRules = { offSide: true, markers: HTML_REGION_MARKERS }
-
-/**
- * Off-side is the default because a document we cannot name is indistinguishable from prose, where a
- * blank line reads as a separator. Languages that close their blocks with a token say so here.
- */
-const DEFAULT_FOLDING_RULES: FoldingRules = { offSide: true, markers: DEFAULT_REGION_MARKERS }
-
-const FOLDING_RULES_BY_LANGUAGE: Record<string, FoldingRules> = {
-  css: BLOCK_COMMENT_FOLDING_RULES,
-  html: TAG_FOLDING_RULES,
-  javascript: BRACE_FOLDING_RULES,
-  javascriptreact: BRACE_FOLDING_RULES,
-  json: BRACE_FOLDING_RULES,
-  jsonc: BRACE_FOLDING_RULES,
-  jsx: BRACE_FOLDING_RULES,
-  markdown: PROSE_FOLDING_RULES,
-  md: PROSE_FOLDING_RULES,
-  python: INDENTED_FOLDING_RULES,
-  scss: BRACE_FOLDING_RULES,
-  ts: BRACE_FOLDING_RULES,
-  tsx: BRACE_FOLDING_RULES,
-  typescript: BRACE_FOLDING_RULES,
-  typescriptreact: BRACE_FOLDING_RULES,
-  yaml: INDENTED_FOLDING_RULES,
-  yml: INDENTED_FOLDING_RULES,
+const FALLBACK_FOLDING_RULES: EditorFoldingRules = {
+  offSide: true,
+  regionEnd: /^\s*(?:\/\/|\/\*|#|--|;|%|<!--)\s*#?endregion\b/,
+  regionStart: /^\s*(?:\/\/|\/\*|#|--|;|%|<!--)\s*#?region\b/,
 }
 
 /**
@@ -130,7 +69,7 @@ function indentationFoldRanges(context: EditorFoldRangeContext): readonly FoldRa
   const rules = foldingRulesForLanguage(context.languageId)
   // One scan of the buffer for the word every marker has to contain keeps documents that hold none —
   // nearly all of them — off the per-line matching path, which this runs on every keystroke.
-  const markers = context.text.includes('region') ? rules.markers : null
+  const markers = context.text.includes('region') ? rules : null
   const lines = foldLines(context.text, context.tabSize, markers)
   const folds: FoldRange[] = []
   const open: OpenRegion[] = [{ indent: BLANK_INDENT, endAbove: lines.length, line: lines.length }]
@@ -185,10 +124,8 @@ function indentationFoldRanges(context: EditorFoldRangeContext): readonly FoldRa
   return folds
 }
 
-function foldingRulesForLanguage(languageId: EditorSyntaxLanguageId | null): FoldingRules {
-  if (!languageId) return DEFAULT_FOLDING_RULES
-
-  return FOLDING_RULES_BY_LANGUAGE[languageId.trim().toLowerCase()] ?? DEFAULT_FOLDING_RULES
+function foldingRulesForLanguage(languageId: EditorSyntaxLanguageId | null): EditorFoldingRules {
+  return editorLanguageConfiguration(languageId)?.folding ?? FALLBACK_FOLDING_RULES
 }
 
 function innermostMarkerIndex(open: readonly OpenRegion[]): number {
@@ -222,7 +159,7 @@ function foldRange(
 function foldLines(
   text: string,
   tabSize: number,
-  markers: RegionMarkers | null,
+  markers: EditorFoldingRules | null,
 ): readonly FoldLine[] {
   const lines: FoldLine[] = []
   let start = 0
@@ -243,9 +180,9 @@ function foldLines(
   return lines
 }
 
-function lineMarker(lineText: string, markers: RegionMarkers): FoldLine['marker'] {
-  if (markers.start.test(lineText)) return 'start'
-  if (markers.end.test(lineText)) return 'end'
+function lineMarker(lineText: string, markers: EditorFoldingRules): FoldLine['marker'] {
+  if (matches(markers.regionStart, lineText)) return 'start'
+  if (matches(markers.regionEnd, lineText)) return 'end'
 
   return null
 }

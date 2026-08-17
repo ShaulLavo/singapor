@@ -1,5 +1,9 @@
 import type { EditorCommandHandler, EditorDisposable } from '../plugins'
 import type { EditorCommandContext, EditorCommandId } from './commands'
+import {
+  isEditorDocumentSelectionEditCommand,
+  type EditorDocumentSelectionEditCommandId,
+} from './reindent'
 import { isEditorEditActionCommand, type EditorEditActionCommandId } from './editActions'
 import { isEditorFoldCommand, type EditorFoldCommandId } from './foldOperations'
 
@@ -8,7 +12,10 @@ export type EditorCommandRouterHandlers = {
   cursorHistory(command: 'undo' | 'redo', context: EditorCommandContext): boolean
   delete(direction: 'backward' | 'forward', context: EditorCommandContext): boolean
   indent(direction: 'indent' | 'outdent', context: EditorCommandContext): boolean
-  editAction(command: EditorEditActionCommandId, context: EditorCommandContext): boolean
+  editAction(
+    command: EditorEditActionCommandId | EditorDocumentSelectionEditCommandId,
+    context: EditorCommandContext,
+  ): boolean
   fold(command: EditorFoldCommandId): boolean
   selectAll(context: EditorCommandContext): boolean
   smartSelect(direction: 'expand' | 'shrink', context: EditorCommandContext): boolean
@@ -70,7 +77,9 @@ export class EditorCommandRouter {
     if (command === 'deleteBackward') return this.handlers.delete('backward', context)
     if (command === 'deleteForward') return this.handlers.delete('forward', context)
     if (isEditorFoldCommand(command)) return this.handlers.fold(command)
-    if (isEditorEditActionCommand(command)) return this.handlers.editAction(command, context)
+    if (isEditorEditActionCommand(command) || isEditorDocumentSelectionEditCommand(command)) {
+      return this.handlers.editAction(command, context)
+    }
     if (command === 'indentSelection') return this.handlers.indent('indent', context)
     if (command === 'outdentSelection') return this.handlers.indent('outdent', context)
 

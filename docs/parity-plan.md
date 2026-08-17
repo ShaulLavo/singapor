@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**71 / 99 findings complete.** Update this count when you check a box.
+**78 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 11 / 16 complete.
+Milestones: 12 / 16 complete.
 
 
 ---
@@ -658,7 +658,7 @@ Milestones: 11 / 16 complete.
 
 ---
 
-## Milestone 12 — Find engine
+## Milestone 12 — Find engine ✅
 
 `effort L` · `risk medium` · 7 findings
 
@@ -666,20 +666,51 @@ Milestones: 11 / 16 complete.
 
 **Exit criteria.** findMatches reads through a {length, readRange, lineStartsView} source with a single-line loop and no 'm' flag on the single-line path, and the whole find suite runs twice — once over a plain string, once over a deliberately misaligned piece tree — driven by an assertFindState controller harness; Replace All in selection cannot rewrite outside the scope, and the scope survives a replace as anchors; Find Next past the match limit reaches the next match rather than the top of the file; Replace One performs one scan; re-search is scheduled with maxDelayMs and pending matches stay offset-correct while typing; matches appear on the minimap, row-merged above the coalescing threshold.
 
-- [ ] **Search materializes the entire document as one string; neither reference ever does**  
+- [x] **Search materializes the entire document as one string; neither reference ever does**  
   `high` `L` `missing` `find-replace`
-- [ ] **Monaco runs every find test twice, the second time over a piece tree with deliberately misaligned chunk boundaries**  
+- [~] **Monaco runs every find test twice, the second time over a piece tree with deliberately misaligned chunk boundaries**  
   `medium` `S` `missing` `find-replace`
-- [ ] **Find-in-selection scope is recomputed from the live selection, so it is destroyed by the first replace and silently widens to the whole document**  
+- [x] **Find-in-selection scope is recomputed from the live selection, so it is destroyed by the first replace and silently widens to the whole document**  
   `high` `M` `missing` `find-replace`
-- [ ] **Find Next past the match limit jumps to the top of the file instead of to the next match**  
+- [x] **Find Next past the match limit jumps to the top of the file instead of to the next match**  
   `high` `M` `missing` `find-replace`
-- [ ] **Replace One re-scans the whole document with capture groups enabled just to replace one match**  
+- [x] **Replace One re-scans the whole document with capture groups enabled just to replace one match**  
   `medium` `S` `missing` `find-replace`
-- [ ] **Every content change triggers a synchronous full re-search; both references debounce it and repair incrementally**  
+- [x] **Every content change triggers a synchronous full re-search; both references debounce it and repair incrementally**  
   `high` `L` `missing` `find-replace`
-- [ ] **Find matches are not surfaced on the minimap or scrollbar, and Monaco's >1000-match merge is the reason that is not trivial**  
+- [x] **Find matches are not surfaced on the minimap or scrollbar, and Monaco's >1000-match merge is the reason that is not trivial**  
   `medium` `M` `missing` `find-replace`
+
+> **`[~]` reason (the dual run).** The `assertFindState` harness landed and is the net the rest of
+> this milestone fell through. The second run did not: `FindTextSource` is `{length, readRange,
+> lineStartsView}`, and every production `readRange` returns one assembled string, so no searcher can
+> observe where a chunk boundary falls. Swapping the misaligned piece tree for a single aligned piece
+> left all 82 tests green — the run was unfalsifiable, confirmed by execution. A match straddling a
+> boundary is not a bug this design can have, so the run was deleted rather than left looking like
+> doubled coverage, and one falsifiable boundary test kept in its place: a reader that hands back one
+> chunk at a time fails it.
+>
+> **The root defect the review found, stated once.** Three `a ?? b` seams in the find plugin were
+> pinned only on `b`, because the editor always supplies `a` — so the tested path was the fallback and
+> the untested one was this milestone's entire point, not copying the document per search. The
+> editor's range tracking, which the deferred re-search and scope survival both rest on, could be
+> replaced with `{resolve: () => ranges}` while 1432 editor tests stayed green, because the find
+> harness reimplemented tracking for its own double. All of it is now driven through a real `Editor`
+> and observed through what the renderer paints.
+>
+> **Three correctness bugs in this milestone's own work.** Overlapping scopes were searched twice — an
+> anchor-tracked scope self-overlaps after an edit across its seam, so shared text was reported twice
+> and Replace All threw. The backward from-cursor scan listed with the paint cap and took the last
+> entry, so Find Previous past the cap answered with the 19,999th match rather than the nearest. And
+> the line-crossing decision was a blocklist of newline-matching constructs, which fails unsafely: one
+> nobody enumerated routes the query to the per-line path, where it reports "no results" for text that
+> is plainly there. It is an allowlist now — anything unrecognized takes the slower, always-correct
+> path.
+>
+> **A bias the tracking needed.** Ranges were tracked with one hardcoded pair, growing at both edges.
+> That is right for a scope, which should take in what the reader types at its edge, and wrong for a
+> match, which is the text the query answered for — typing against a match's edge was extending its
+> highlight onto text that was never found.
 
 
 ---

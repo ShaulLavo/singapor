@@ -1,4 +1,4 @@
-import type { EditorDecorationStore } from './editor/decorationStore'
+import type { EditorDecorationRange, EditorDecorationStore } from './editor/decorationStore'
 import type { DocumentSessionChange } from './documentSession'
 import type { DocumentTextSnapshot, TextSnapshot } from './documentTextSnapshot'
 import type { EditorCommandContext, EditorCommandId } from './editor/commands'
@@ -211,6 +211,18 @@ export type EditorViewSnapshot = {
 
 export type EditorOverlaySide = 'left' | 'right'
 
+/**
+ * Ranges the document keeps in step with its own text.
+ *
+ * A contribution that holds a span across edits it does not control — the region a find is scoped
+ * to, matches painted while a re-search is still outstanding — would otherwise be reading offsets
+ * the text has already moved out from under.
+ */
+export type EditorTrackedRanges = {
+  /** Where the tracked ranges now sit, without any whose text is gone. */
+  resolve(): readonly TextOffsetRange[]
+}
+
 export type EditorViewContributionContext = {
   readonly container: HTMLElement
   readonly scrollElement: HTMLDivElement
@@ -235,6 +247,14 @@ export type EditorViewContributionContext = {
   getReservedOverlayWidth?(side: EditorOverlaySide): number
   textOffsetFromPoint(clientX: number, clientY: number): number | null
   getRangeClientRect(start: number, end: number): DOMRect | null
+  // Spans the document follows on the contribution's behalf; see EditorTrackedRanges. Whether an
+  // edge absorbs text arriving against it is the contribution's call, in the bias terms
+  // EditorDecorationRange states it in: a region selected to work within absorbs it, something
+  // found in the text does not.
+  trackRanges?(
+    ranges: readonly TextOffsetRange[],
+    bias?: Pick<EditorDecorationRange, 'startBias' | 'endBias'>,
+  ): EditorTrackedRanges
   setRangeHighlight?(
     name: string,
     ranges: readonly { readonly start: number; readonly end: number }[],

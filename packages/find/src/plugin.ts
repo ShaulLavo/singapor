@@ -1,4 +1,8 @@
-import type { DocumentSessionChange } from '@singapor/core/document'
+import {
+  compareTextOffsetRanges,
+  createStringTextSnapshot,
+  type DocumentSessionChange,
+} from '@singapor/core/document'
 import type {
   EditorCapabilityContribution,
   EditorCapabilityContributionContext,
@@ -11,6 +15,8 @@ import type {
   EditorEditContributionContext,
   EditorEditContributionProvider,
   EditorFindFeature,
+  EditorMinimapDecoration,
+  EditorMinimapFeature,
   EditorPlugin,
   EditorResolvedSelection,
   EditorViewContribution,
@@ -19,14 +25,26 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
-import { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '@singapor/core/extensions'
+import {
+  EDITOR_FIND_FEATURE,
+  EDITOR_FIND_FEATURE_ID,
+  EDITOR_MINIMAP_FEATURE,
+} from '@singapor/core/extensions'
+import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
 import {
   EditorFindController,
   type EditorFindHost,
   type EditorFindResolvedSelection,
   type EditorFindUiEvent,
+  type FindTrackedRanges,
 } from './findController'
 import { EditorFindWidget, type EditorFindWidgetOptions } from './findWidget'
+import {
+  arrayFindLineStartsView,
+  type FindLineStartsView,
+  type FindRange,
+  type FindTextSource,
+} from './search'
 import type { EditorFindOptions } from './types'
 
 export { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID }
@@ -259,17 +277,185 @@ function createFindHost(
   context: EditorViewContributionContext,
   getSnapshot: () => EditorViewSnapshot,
 ): EditorFindHost {
+  const textSource = snapshotTextSource()
   return {
     hasDocument: () => context.hasDocument(),
-    materializeFullText: () => getSnapshot().fullText,
+    textSource: () => textSource(getSnapshot()),
+    trackRanges: (ranges) => context.trackRanges?.(ranges) ?? fixedFindRanges(ranges),
+    trackPaintedRanges: (ranges) => trackPaintedFindRanges(context, getSnapshot(), ranges),
     getSelections: () => findSelections(getSnapshot().selections),
     focusEditor: () => context.focusEditor(),
     setSelection: (anchor, head, timingName, revealOffset) =>
       context.setSelection(anchor, head, timingName, revealOffset),
     setSelections: (selections, timingName, revealOffset) =>
       context.setSelections(selections, timingName, revealOffset),
-    setRangeHighlight: (name, ranges, style) => context.setRangeHighlight?.(name, ranges, style),
-    clearRangeHighlight: (name) => context.clearRangeHighlight?.(name),
+    setRangeHighlight: (name, ranges, style) => {
+      context.setRangeHighlight?.(name, ranges, style)
+      minimapFeature(context)?.setDecorations(
+        name,
+        minimapBands(textSource(getSnapshot()).lineStartsView, ranges, style),
+      )
+    },
+    clearRangeHighlight: (name) => {
+      context.clearRangeHighlight?.(name)
+      minimapFeature(context)?.clearDecorations(name)
+    },
+  }
+}
+
+function minimapFeature(context: EditorViewContributionContext): EditorMinimapFeature | null {
+  return context.getFeature?.(EDITOR_MINIMAP_FEATURE) ?? null
+}
+
+/**
+ * A count says how many matches there are and nothing says where they are until
+ * they reach the scroll furniture, so every group find paints in the text is
+ * published under the name it is painted under.
+ *
+ * The band keeps its group's own colour: the minimap paints onto a canvas from a
+ * worker, which has no element to resolve a registered colour against and
+ * silently substitutes the selection colour for anything it cannot parse, so the
+ * literal has to travel with the group rather than be looked up there.
+ */
+function minimapBands(
+  lineStartsView: FindLineStartsView,
+  ranges: readonly FindRange[],
+  style: VirtualizedTextHighlightStyle,
+): readonly EditorMinimapDecoration[] {
+  return ranges.map((range): EditorMinimapDecoration => {
+    const rows = bandRows(lineStartsView, range)
+    return {
+      startLineNumber: rows.start,
+      startColumn: 1,
+      endLineNumber: rows.end,
+      endColumn: 1,
+      color: style.backgroundColor,
+      position: 'inline',
+      zIndex: style.zIndex,
+    }
+  })
+}
+
+// A range ending exactly at a line start ends on the row before it: the break
+// belongs to the line it terminates, and a selection taken to the end of one row
+// should not shade the next.
+function bandRows(
+  lineStartsView: FindLineStartsView,
+  range: FindRange,
+): { readonly start: number; readonly end: number } {
+  const startIndex = lineStartsView.indexForOffset(range.start)
+  const endIndex = lineStartsView.indexForOffset(range.end)
+  if (endIndex > startIndex && lineStartsView.at(endIndex) === range.end) {
+    return { start: startIndex + 1, end: endIndex }
+  }
+
+  return { start: startIndex + 1, end: endIndex + 1 }
+}
+
+// A host that cannot follow its own edits — a static projection of a document,
+// a test double — keeps the ranges it was given, which is the best answer
+// available and one find does not have to ask about.
+function fixedFindRanges(ranges: readonly FindRange[]): FindTrackedRanges {
+  return { resolve: () => ranges }
+}
+
+/**
+ * Follows the ranges as far as they are painted, answering for the rest with the
+ * offsets it was handed.
+ *
+ * A span the reader cannot see cannot be seen standing on text that moved out
+ * from under it, and the re-search already on its way replaces the whole set
+ * either way. Handing the document every match instead costs it an anchor pair
+ * each, on every keystroke — the bill deferring that re-search was supposed to
+ * take off the keystroke in the first place.
+ */
+function trackPaintedFindRanges(
+  context: EditorViewContributionContext,
+  snapshot: EditorViewSnapshot,
+  ranges: readonly FindRange[],
+): FindTrackedRanges {
+  const span = paintedSpan(snapshot)
+  if (!span) return fixedFindRanges(ranges)
+
+  const painted = ranges.filter((range) => overlapsSpan(range, span))
+  // A match is the text the query answered for, so typing against either edge of
+  // one is not part of it — unlike a scope, which is a region the user drew and
+  // which should take in what they add at its edges.
+  const tracked =
+    painted.length === 0
+      ? null
+      : context.trackRanges?.(painted, { startBias: 'right', endBias: 'left' })
+  if (!tracked) return fixedFindRanges(ranges)
+
+  const elsewhere = ranges.filter((range) => !overlapsSpan(range, span))
+  return { resolve: () => mergeRanges(tracked.resolve(), elsewhere) }
+}
+
+// The view adds a range highlight to the rows it has mounted and to no others.
+function paintedSpan(snapshot: EditorViewSnapshot): FindRange | null {
+  const first = snapshot.visibleRows[0]
+  const last = snapshot.visibleRows.at(-1)
+  if (!first || !last) return null
+
+  return { start: first.startOffset, end: last.endOffset }
+}
+
+function overlapsSpan(range: FindRange, span: FindRange): boolean {
+  return range.end > span.start && range.start < span.end
+}
+
+// Navigation steps the set rather than searching it, so an entry out of order
+// answers the next press with the wrong match.
+function mergeRanges(
+  left: readonly FindRange[],
+  right: readonly FindRange[],
+): readonly FindRange[] {
+  if (right.length === 0) return left
+
+  const merged: FindRange[] = []
+  let leftIndex = 0
+  let rightIndex = 0
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (compareTextOffsetRanges(left[leftIndex]!, right[rightIndex]!) <= 0) {
+      merged.push(left[leftIndex]!)
+      leftIndex += 1
+      continue
+    }
+
+    merged.push(right[rightIndex]!)
+    rightIndex += 1
+  }
+
+  for (; leftIndex < left.length; leftIndex += 1) merged.push(left[leftIndex]!)
+  for (; rightIndex < right.length; rightIndex += 1) merged.push(right[rightIndex]!)
+  return merged
+}
+
+/**
+ * The text a search reads, kept for as long as the snapshot it was taken from.
+ *
+ * Either view can be absent, and standing in for a missing one materializes what
+ * it exists to avoid: a copy of the document, or the whole line-start array.
+ * Every press in the find box searches again, so a stand-in built per search
+ * would hand a keystroke exactly the bill that ranged reads are here to spare it.
+ * Held against the snapshot itself rather than its text version, because a
+ * document swap can carry that version across unchanged.
+ */
+function snapshotTextSource(): (snapshot: EditorViewSnapshot) => FindTextSource {
+  let cached: { readonly snapshot: EditorViewSnapshot; readonly source: FindTextSource } | null =
+    null
+  return (snapshot) => {
+    if (cached?.snapshot !== snapshot) cached = { snapshot, source: findTextSource(snapshot) }
+    return cached.source
+  }
+}
+
+function findTextSource(snapshot: EditorViewSnapshot): FindTextSource {
+  const text = snapshot.textSnapshot ?? createStringTextSnapshot(snapshot.fullText)
+  return {
+    length: text.length,
+    readRange: (start, end) => text.readRange(start, end),
+    lineStartsView: snapshot.lineStartsView ?? arrayFindLineStartsView(snapshot.lineStarts),
   }
 }
 

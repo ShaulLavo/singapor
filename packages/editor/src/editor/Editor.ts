@@ -26,7 +26,7 @@ import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
 import { EditorCommandRouter } from './commandRouter'
 import { SelectionRangeStore } from './selectionRanges'
-import { EditorDecorationStore } from './decorationStore'
+import { EditorDecorationStore, type EditorDecorationRange } from './decorationStore'
 import { EditorOperation, type EditorOperationFlush } from './operation'
 import { CursorHistory, sameCursorSelections, type CursorHistoryEntry } from './cursorHistory'
 import {
@@ -90,8 +90,10 @@ import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
 import type { EditorInlineReplacementProvider } from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
 import type { BlockLane, BlockRow, InjectedTextRow } from '../displayTransforms'
-import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import { anchorAt, resolveAnchor } from '../pieceTable/anchors'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
+import type { TextOffsetRange } from '../textRanges'
 import {
   EditorPluginHost,
   type EditorCapabilityContribution,
@@ -118,6 +120,7 @@ import {
   type EditorLogInput,
   type EditorOverlaySide,
   type EditorPlugin,
+  type EditorTrackedRanges,
   type EditorViewContribution,
   type EditorViewContributionContext,
   type EditorViewContributionProvider,
@@ -189,6 +192,11 @@ const PLUGIN_INJECTED_ROWS_PROJECTION_OWNER = 'editor.injectedRows.plugins'
 type SyntaxScrollDirection = -1 | 0 | 1
 type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'feature' | 'view'
 type EditorContributionFailurePhase = 'dispose' | 'factory' | 'initial-update' | 'update'
+
+type TrackedAnchorRange = {
+  readonly start: PieceTableAnchor
+  readonly end: PieceTableAnchor
+}
 
 type EditorLifecycleSummary = {
   readonly pluginNames: Set<string>
@@ -2198,9 +2206,48 @@ export class Editor {
       textOffsetFromPoint: (clientX, clientY) =>
         this.inputSelection.textOffsetFromPoint(clientX, clientY),
       getRangeClientRect: (start, end) => this.inputSelection.rangeClientRect(start, end),
+      trackRanges: (ranges, bias) => this.trackDocumentRanges(ranges, bias),
       setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
       clearRangeHighlight: (name) => this.view.clearRangeHighlight(name),
     }
+  }
+
+  /**
+   * A caller that names no bias asked for a region of the document rather than for the characters
+   * that were in it, so text arriving at either edge belongs to the span it gets back.
+   */
+  private trackDocumentRanges(
+    ranges: readonly TextOffsetRange[],
+    bias: Pick<EditorDecorationRange, 'startBias' | 'endBias'> = {
+      startBias: 'left',
+      endBias: 'right',
+    },
+  ): EditorTrackedRanges {
+    const snapshot = this.session?.getSnapshot()
+    const tracked = snapshot
+      ? ranges.map((range) => ({
+          start: anchorAt(snapshot, range.start, bias.startBias),
+          end: anchorAt(snapshot, range.end, bias.endBias),
+        }))
+      : []
+
+    return { resolve: () => this.resolveTrackedRanges(tracked) }
+  }
+
+  private resolveTrackedRanges(tracked: readonly TrackedAnchorRange[]): readonly TextOffsetRange[] {
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot) return []
+
+    const resolved: TextOffsetRange[] = []
+    for (const range of tracked) {
+      const start = resolveAnchor(snapshot, range.start).offset
+      const end = resolveAnchor(snapshot, range.end).offset
+      // A span whose text is gone has nothing left to hold, and the point it collapsed onto is a
+      // range the caller never asked about.
+      if (end > start) resolved.push({ start, end })
+    }
+
+    return resolved
   }
 
   private createCommandContributionContext(): EditorCommandContributionContext {

@@ -36,6 +36,7 @@ import {
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   type EditorPluginContext,
+  type EditorTrackedRanges,
   type EditorViewContributionContext,
   projectDecorationRangeThroughEdits,
 } from '@singapor/core/extensions'
@@ -258,6 +259,21 @@ describe('public API facade', () => {
 
     expect(reserved('right')).toBe(96)
     expect(reserved('left')).toBe(0)
+  })
+
+  it('exports the range tracking a view contribution hands its spans over to', () => {
+    // A find shipped outside this package holds a scope and a batch of painted matches across edits
+    // it never sees, and the two want opposite things at their edges, so the accessor, the bias it
+    // takes and the handle it returns are all in that plugin's build.
+    const region: EditorTrackedRanges = { resolve: () => [{ start: 0, end: 4 }] }
+    const throughRoot: core.EditorTrackedRanges = region
+    const track: NonNullable<EditorViewContributionContext['trackRanges']> = (ranges, bias) =>
+      bias ? { resolve: () => ranges } : throughRoot
+
+    expect(track([{ start: 1, end: 3 }]).resolve()).toEqual([{ start: 0, end: 4 }])
+    expect(
+      track([{ start: 1, end: 3 }], { startBias: 'right', endBias: 'left' }).resolve(),
+    ).toEqual([{ start: 1, end: 3 }])
   })
 
   it('exposes the pass and cursor-history methods hosts drive the editor through', () => {

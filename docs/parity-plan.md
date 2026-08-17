@@ -258,11 +258,12 @@ Milestones: 4 / 16 complete.
 > DPR invalidation that landed covers the case it guards, so it would be a second detector for the
 > same staleness.
 >
-> **Exit criterion not met as written.** It asks for `virtualizedTextView.browser.test.ts` green on
-> caret placement, selection rects and hit tests under CSS transform. That file is gated behind a
-> real `Highlight` constructor and does not run under `bun run test`; the assertions live in the
-> happy-dom project against a deterministic layout stub instead. Same harness gap recorded for
-> Milestone 3's forced-layout count.
+> **Exit criterion, since closed.** It asks for `virtualizedTextView.browser.test.ts` green on caret
+> placement, selection rects and hit tests under CSS transform. That file was gated behind a real
+> `Highlight` constructor which no project provided, so it had not run in a long time. Commit
+> `2c90a8b` gives the editor package a real browser project and repairs the two assertions that had
+> rotted against it; the suite now runs 1123 tests with none skipped. Milestone 3's forced-layout
+> count remains asserted under happy-dom against a stubbed layout.
 
 
 ---

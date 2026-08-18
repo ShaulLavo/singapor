@@ -5,6 +5,8 @@ import { lspPositionToOffset } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { parseSnippet } from '@singapor/core/internal'
 
+import { fuzzyMatch, looseFuzzyMatch, type FuzzyMatch } from './fuzzyMatch'
+
 export const LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE_ID = 'editor.lsp-plugin.completion-edit'
 
 export const COMPLETION_REQUEST_DEBOUNCE_MS = 80
@@ -25,8 +27,9 @@ export type LanguageServerCompletionApplication = {
   readonly snippetStops?: readonly { readonly start: number; readonly end: number }[]
 }
 
+/** `3` is the kind reserved for asking a server again about a list it marked incomplete. */
 export type LanguageServerCompletionTrigger = {
-  readonly triggerKind: 1 | 2
+  readonly triggerKind: 1 | 2 | 3
   readonly triggerCharacter?: string
 }
 
@@ -38,6 +41,8 @@ export type CompletionWidgetShowOptions = {
 
 export type CompletionWidgetController = {
   show(options: CompletionWidgetShowOptions): void
+  /** Moves a list already on screen to a new anchor, without rebuilding its rows. */
+  reanchor(anchor: DOMRect): void
   hide(): void
   isVisible(): boolean
   containsTarget(target: EventTarget | null): boolean
@@ -56,6 +61,7 @@ export type CompletionWidgetOptions = {
 type CompletionWidgetClassNames = {
   readonly root: string
   readonly item: string
+  readonly match: string
 }
 
 const COMPLETION_WIDGET_GAP_PX = 4
@@ -98,6 +104,12 @@ export function createCompletionWidgetController(
     element.hidden = items.length === 0
   }
 
+  const reanchor = (anchor: DOMRect): void => {
+    if (element.hidden) return
+
+    positionCompletionWidget(element, anchor)
+  }
+
   const hide = (): void => {
     element.hidden = true
     element.replaceChildren()
@@ -137,6 +149,7 @@ export function createCompletionWidgetController(
 
   return {
     show,
+    reanchor,
     hide,
     isVisible: () => !element.hidden,
     containsTarget: (target) => target instanceof Node && element.contains(target),
@@ -146,12 +159,25 @@ export function createCompletionWidgetController(
   }
 }
 
-export function completionItems(
+/**
+ * A server's answer, with the one flag on it that outlives the request.
+ *
+ * `isIncomplete` is the server saying it truncated its answer for the word it was asked about — the
+ * large member sets and auto-import lists are always sent this way — so a list that stays on screen
+ * while the user keeps typing has to be asked again rather than narrowed.
+ */
+export type CompletionListResult = {
+  readonly items: readonly lsp.CompletionItem[]
+  readonly isIncomplete: boolean
+}
+
+export function completionListResult(
   result: lsp.CompletionList | readonly lsp.CompletionItem[] | null,
-): readonly lsp.CompletionItem[] {
-  if (!result) return []
-  if (isCompletionList(result)) return result.items ?? []
-  return result
+): CompletionListResult {
+  if (!result) return { items: [], isIncomplete: false }
+  if (isCompletionList(result))
+    return { items: result.items ?? [], isIncomplete: result.isIncomplete === true }
+  return { items: result, isIncomplete: false }
 }
 
 export function completionTriggerFromChange(
@@ -171,15 +197,27 @@ export function completionTriggerFromChange(
   return null
 }
 
+/**
+ * The document an accepted item is applied against.
+ *
+ * `text` and `offset` are what the request went out with, and the item's ranges are positions in
+ * that text. `caretOffset` is where the caret has reached since — rarely the same place, because the
+ * widget stays up while the user keeps typing.
+ */
+export type CompletionApplicationRequest = {
+  readonly text: string
+  readonly offset: number
+  readonly caretOffset: number
+}
+
 export function completionApplication(
-  text: string,
-  offset: number,
+  request: CompletionApplicationRequest,
   item: lsp.CompletionItem,
 ): LanguageServerCompletionApplication | null {
-  const primary = completionPrimaryEdit(text, offset, item)
+  const primary = completionPrimaryEdit(request, item)
   if (!primary) return null
 
-  const additional = additionalCompletionEdits(text, item.additionalTextEdits ?? [])
+  const additional = additionalCompletionEdits(request, item.additionalTextEdits ?? [])
   const edits = [primary, ...additional]
   const head = completionSelectionHead(primary, additional)
   // A snippet's first placeholder is selected so the next keystroke replaces it; without a stop the
@@ -194,12 +232,12 @@ export function completionApplication(
 }
 
 export function completionAnchorRange(
-  text: string,
+  length: number,
   offset: number,
 ): { readonly start: number; readonly end: number } {
-  if (text.length === 0) return { start: 0, end: 0 }
+  if (length === 0) return { start: 0, end: 0 }
 
-  const end = Math.max(1, Math.min(offset, text.length))
+  const end = Math.max(1, Math.min(offset, length))
   return { start: end - 1, end }
 }
 
@@ -275,7 +313,7 @@ function completionRowElement(
   })
   row.append(
     completionKindElement(document, item.kind),
-    completionLabelElement(document, item),
+    completionLabelElement(document, item, classNames),
     completionDetailElement(document, item),
   )
   return row
@@ -297,13 +335,68 @@ function completionKindElement(
   return element
 }
 
-function completionLabelElement(document: Document, item: lsp.CompletionItem): HTMLSpanElement {
+function completionLabelElement(
+  document: Document,
+  item: lsp.CompletionItem,
+  classNames: CompletionWidgetClassNames,
+): HTMLSpanElement {
   const element = document.createElement('span')
-  element.textContent = `${item.label}${item.labelDetails?.detail ?? ''}`
   Object.assign(element.style, {
     minWidth: '0',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+  })
+  appendCompletionLabel(element, item.label, completionLabelMatches.get(item) ?? [], classNames)
+  const detail = item.labelDetails?.detail
+  if (detail) element.append(detail)
+  return element
+}
+
+/**
+ * The label, with each run of characters the filter matched marked up.
+ *
+ * A list that reorders itself as the user types owes them the reason it did: with nothing marked, an
+ * entry that outranks the one above it looks arbitrary rather than earned.
+ */
+function appendCompletionLabel(
+  element: HTMLElement,
+  label: string,
+  positions: readonly number[],
+  classNames: CompletionWidgetClassNames,
+): void {
+  let plainStart = 0
+  let cursor = 0
+  while (cursor < positions.length) {
+    const start = positions[cursor] ?? 0
+    let end = start + 1
+    while (positions[cursor + 1] === end) {
+      end += 1
+      cursor += 1
+    }
+    cursor += 1
+
+    if (start > plainStart) element.append(label.slice(plainStart, start))
+    element.append(
+      completionMatchElement(element.ownerDocument, label.slice(start, end), classNames),
+    )
+    plainStart = end
+  }
+  if (plainStart < label.length) element.append(label.slice(plainStart))
+}
+
+function completionMatchElement(
+  document: Document,
+  text: string,
+  classNames: CompletionWidgetClassNames,
+): HTMLSpanElement {
+  const element = document.createElement('span')
+  element.className = classNames.match
+  element.textContent = text
+  Object.assign(element.style, {
+    // The colour the caret is drawn in is the one the theme already means "you are here" by.
+    color:
+      'color-mix(in srgb, var(--editor-caret-color, #60a5fa) 80%, var(--editor-foreground, #e4e4e7))',
+    fontWeight: '600',
   })
   return element
 }
@@ -370,18 +463,24 @@ function syncEditorThemeVariables(element: HTMLElement, source: HTMLElement): vo
 }
 
 function completionPrimaryEdit(
-  text: string,
-  offset: number,
+  request: CompletionApplicationRequest,
   item: lsp.CompletionItem,
 ): TextEdit | null {
   const textEdit = completionTextEdit(item)
-  if (textEdit) return lspTextEditToTextEdit(text, textEdit, item.insertTextFormat)
+  const range = textEdit
+    ? completionEditRange(request, textEdit.range)
+    : defaultCompletionReplacementRange(request.text, request.offset)
+  if (!range) return null
 
-  const range = defaultCompletionReplacementRange(text, offset)
   return {
     from: range.start,
-    to: range.end,
-    text: plainCompletionText(item.insertText ?? item.label, item.insertTextFormat),
+    // Whatever was typed since the request sits between the range's end and the caret, so the end
+    // travels with the caret while the start — the word the server matched — stays where it is.
+    to: Math.max(range.start, range.end + request.caretOffset - request.offset),
+    text: plainCompletionText(
+      textEdit ? textEdit.newText : (item.insertText ?? item.label),
+      item.insertTextFormat,
+    ),
   }
 }
 
@@ -389,26 +488,42 @@ function completionTextEdit(item: lsp.CompletionItem): lsp.TextEdit | null {
   const textEdit = item.textEdit
   if (!textEdit) return null
   if ('range' in textEdit) return textEdit
-  return { range: textEdit.insert, newText: textEdit.newText }
+  // Of the two ranges an item may carry, `insert` stops at the caret while `replace` covers the
+  // whole word it sits in. Insert would leave the tail of the word behind, which is neither what
+  // the no-textEdit path below does nor what accepting mid-word is asking for.
+  return { range: textEdit.replace, newText: textEdit.newText }
 }
 
-function lspTextEditToTextEdit(
-  text: string,
-  edit: lsp.TextEdit,
-  format: lsp.InsertTextFormat | undefined,
-): TextEdit {
-  return {
-    from: lspPositionToOffset(text, edit.range.start),
-    to: lspPositionToOffset(text, edit.range.end),
-    text: plainCompletionText(edit.newText, format),
-  }
+/**
+ * The item's replacement range in offsets, or null when it describes a document we never asked
+ * about: a range spanning lines, or one the caret was not inside, leaves nothing for the typed
+ * characters to be measured against.
+ */
+function completionEditRange(
+  request: CompletionApplicationRequest,
+  range: lsp.Range,
+): { readonly start: number; readonly end: number } | null {
+  if (range.start.line !== range.end.line) return null
+
+  const start = lspPositionToOffset(request.text, range.start)
+  const end = lspPositionToOffset(request.text, range.end)
+  if (start > request.offset || end < request.offset) return null
+
+  return { start, end }
 }
 
 function additionalCompletionEdits(
-  text: string,
+  request: CompletionApplicationRequest,
   edits: readonly lsp.TextEdit[],
 ): readonly TextEdit[] {
-  return edits.map((edit) => lspTextEditToTextEdit(text, edit, undefined))
+  return edits.map((edit) => {
+    const from = lspPositionToOffset(request.text, edit.range.start)
+    const to = lspPositionToOffset(request.text, edit.range.end)
+    // An import edit above the caret is unmoved; one below it addresses text the typing has already
+    // pushed along.
+    const shift = from < request.offset ? 0 : request.caretOffset - request.offset
+    return { from: from + shift, to: to + shift, text: edit.newText }
+  })
 }
 
 function completionSelectionHead(primary: TextEdit, additional: readonly TextEdit[]): number {
@@ -498,6 +613,7 @@ function completionWidgetClassNames(
   return {
     root,
     item: `${root}-item`,
+    match: `${root}-match`,
   }
 }
 
@@ -569,46 +685,105 @@ export function completionPrefix(text: string, offset: number): string {
 }
 
 /**
+ * Where each ranked item's label matched, kept beside the list instead of inside it.
+ *
+ * The items in a list are the server's own objects, and one of them goes back to the server on a
+ * resolve; the runs to mark are this client's reading of them. The widget is handed the items and
+ * nothing else, so this is where it reads that from.
+ */
+const completionLabelMatches = new WeakMap<lsp.CompletionItem, readonly number[]>()
+
+/** What the last filter of a list produced, and the word it was produced from. */
+type CompletionRanking = {
+  readonly prefix: string
+  readonly ranked: readonly lsp.CompletionItem[]
+}
+
+/**
+ * Each server list's last filter, hung on the list itself.
+ *
+ * A narrowing is an answer about the one list it was computed from, and that list is held by a
+ * single session in a single editor. Here it is out of reach of a second editor filtering its own
+ * list, and it is released along with the session holding the list; in a variable of its own it
+ * would be neither.
+ */
+const completionRankings = new WeakMap<readonly lsp.CompletionItem[], CompletionRanking>()
+
+/**
  * Filters and orders a completion list against what has been typed.
  *
- * Matching goes prefix, then case-insensitive prefix, then subsequence — the order of how much the
- * user has confirmed about their intent. Ties fall back to the server's own `sortText`, which is
- * how a server expresses relevance it knows and the client does not.
+ * An item earns its place by where the typed characters landed in it, so a word start, a camel-case
+ * hump and the far side of a separator all outrank the same letters found in the middle of a word.
+ * Ties fall back to the server's own `sortText`, which is how a server expresses relevance it knows
+ * and the client does not.
  */
 export function rankCompletionItems(
   items: readonly lsp.CompletionItem[],
   prefix: string,
 ): readonly lsp.CompletionItem[] {
-  if (prefix.length === 0) return items
+  if (prefix.length === 0) {
+    completionRankings.delete(items)
+    // The runs read a word that is no longer being typed, and the whole list is about to go back on
+    // screen — including the items an earlier, longer word had already dropped.
+    for (const item of items) completionLabelMatches.delete(item)
+    return items
+  }
 
   const scored: { item: lsp.CompletionItem; score: number }[] = []
-  for (const item of items) {
-    const score = completionMatchScore(item.filterText ?? item.label, prefix)
-    if (score === 0) continue
+  for (const item of narrowingSource(items, prefix)) {
+    const match = fuzzyMatch(prefix, item.filterText ?? item.label)
+    if (!match) continue
 
-    scored.push({ item, score })
+    completionLabelMatches.set(item, completionLabelPositions(item, prefix, match))
+    scored.push({ item, score: match.score })
   }
 
-  return scored
-    .sort((left, right) => right.score - left.score || compareCompletionOrder(left.item, right.item))
+  const ranked = scored
+    .sort(
+      (left, right) => right.score - left.score || compareCompletionOrder(left.item, right.item),
+    )
     .map((entry) => entry.item)
+  completionRankings.set(items, { prefix, ranked })
+  return ranked
 }
 
-function completionMatchScore(candidate: string, prefix: string): number {
-  if (candidate.startsWith(prefix)) return 3
-  if (candidate.toLowerCase().startsWith(prefix.toLowerCase())) return 2
+/**
+ * The items worth scoring for this word: the ones that survived the shorter word, when this word is
+ * that word plus what has been typed since.
+ *
+ * Typing a character can only narrow, never widen — no item the longer word matches was passed over
+ * by the shorter one — so a server's list is scored in full once for the word it answered, and for
+ * every keystroke the list stays up after that, only where it is still standing.
+ */
+function narrowingSource(
+  items: readonly lsp.CompletionItem[],
+  prefix: string,
+): readonly lsp.CompletionItem[] {
+  const previous = completionRankings.get(items)
+  if (!previous) return items
+  if (prefix.length <= previous.prefix.length || !prefix.startsWith(previous.prefix)) return items
 
-  return isSubsequence(candidate.toLowerCase(), prefix.toLowerCase()) ? 1 : 0
+  return previous.ranked
 }
 
-function isSubsequence(candidate: string, prefix: string): boolean {
-  let cursor = 0
-  for (const char of candidate) {
-    if (char === prefix[cursor]) cursor += 1
-    if (cursor === prefix.length) return true
-  }
+/**
+ * The label positions to mark for an item, given the match its filter text earned.
+ *
+ * An item may be filtered by one string and displayed as another, and positions in the string that
+ * was matched address nothing in the string on screen. Such a label is matched again on its own
+ * terms, and loosely: part of what was typed has no reason to appear in it at all, and marking the
+ * part that does beats marking nothing. The rank stays the one the filter text earned.
+ */
+function completionLabelPositions(
+  item: lsp.CompletionItem,
+  prefix: string,
+  match: FuzzyMatch,
+): readonly number[] {
+  const filterText = item.filterText
+  if (filterText === undefined) return match.positions
+  if (filterText.toLowerCase() === item.label.toLowerCase()) return match.positions
 
-  return prefix.length === 0
+  return looseFuzzyMatch(prefix, item.label)?.positions ?? []
 }
 
 function compareCompletionOrder(left: lsp.CompletionItem, right: lsp.CompletionItem): number {

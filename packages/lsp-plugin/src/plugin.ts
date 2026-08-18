@@ -20,6 +20,10 @@ import {
   type LanguageServerCompletionEditFeature,
 } from './completion'
 import { CompletionController } from './completionController'
+import {
+  createLanguageServerCompletionSource,
+  LanguageServerCompletionSources,
+} from './completionProviders'
 import { DiagnosticsPresenter } from './diagnosticsPresenter'
 import { DocumentSync, type DocumentSyncOptions } from './documentSync'
 import { HoverDefinitionController } from './hoverDefinitionController'
@@ -111,6 +115,12 @@ export type LanguageServerAdapterPluginOptions = {
     readonly editFeature?: EditorCapabilityToken<LanguageServerCompletionEditFeature>
     readonly acceptTimingName?: string
     readonly widgetClassNamespace?: string
+    /**
+     * Accepts the focused suggestion when one of the characters the item declares as committing it is
+     * typed, inserting that character too. Off by default: a server whose sets are wrong turns
+     * ordinary typing into unwanted completions, which is worse than no shortcut at all.
+     */
+    readonly acceptOnCommitCharacter?: boolean
   }
   readonly hoverDefinition?: {
     readonly linkHighlightNameNamespace?: string
@@ -150,6 +160,7 @@ type LanguageServerResolvedAdapterOptions = {
     readonly editFeature: EditorCapabilityToken<LanguageServerCompletionEditFeature>
     readonly acceptTimingName: string
     readonly widgetClassNamespace?: string
+    readonly acceptOnCommitCharacter: boolean
   }
   readonly hoverDefinition: {
     readonly linkHighlightNameNamespace: string
@@ -310,6 +321,7 @@ class LanguageServerContribution implements EditorViewContribution {
   private readonly connection: LspConnection
   private readonly diagnostics: DiagnosticsPresenter
   private readonly documentSync: DocumentSync
+  private readonly completionSources: LanguageServerCompletionSources
   private readonly completion: CompletionController
   private readonly hoverDefinition: HoverDefinitionController
   private readonly signatureHelp: SignatureHelpController
@@ -348,11 +360,16 @@ class LanguageServerContribution implements EditorViewContribution {
       ...options.documentSync,
       onDocumentClosed: () => this.completion.hide(),
     })
+    this.completionSources = new LanguageServerCompletionSources(
+      context,
+      createLanguageServerCompletionSource(this.connection.client),
+    )
     this.completion = new CompletionController({
       context,
-      client: this.connection.client,
+      completionSources: this.completionSources,
       completionEditFeature: options.completion.editFeature,
       completionWidgetClassNamespace: options.completion.widgetClassNamespace,
+      completionAcceptOnCommitCharacter: options.completion.acceptOnCommitCharacter,
       getActiveDocument: () => this.documentSync.activeDocument,
       ignorePointerTarget: (target) => this.hoverDefinition.containsTarget(target),
       onBeforeShow: () => this.hoverDefinition.clearPointerUi(),
@@ -419,6 +436,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.hoverDefinition.dispose()
     this.completion.hide()
     this.documentSync.close()
+    this.completionSources.dispose()
     this.completion.dispose()
     this.signatureHelp.dispose()
     this.documentHighlights.dispose()
@@ -661,6 +679,7 @@ function resolveCompletionOptions(
     editFeature: options.completion?.editFeature ?? LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE,
     acceptTimingName: options.completion?.acceptTimingName ?? DEFAULT_COMPLETION_ACCEPT_TIMING_NAME,
     widgetClassNamespace: options.completion?.widgetClassNamespace,
+    acceptOnCommitCharacter: options.completion?.acceptOnCommitCharacter ?? false,
   }
 }
 

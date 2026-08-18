@@ -1,5 +1,6 @@
 export {
   createEditorCapabilityToken,
+  createEditorLanguageFeatureToken,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
 } from '../plugins'
@@ -58,6 +59,8 @@ export type {
   EditorInjectedTextRowProviderContext,
   EditorInlineReplacementContext,
   EditorInlineReplacementProvider,
+  EditorLanguageFeatureSelector,
+  EditorLanguageFeatureToken,
   EditorLogEditorContext,
   EditorLogError,
   EditorLogEvent,

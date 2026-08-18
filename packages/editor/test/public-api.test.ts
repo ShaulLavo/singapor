@@ -15,6 +15,7 @@ import {
 import { Editor } from '@singapor/core/editor'
 import {
   createEditorCapabilityToken,
+  createEditorLanguageFeatureToken,
   EDITOR_FIND_FEATURE,
   EDITOR_FIND_FEATURE_ID,
   type EditorAutoClosingPair,
@@ -31,6 +32,8 @@ import {
   type EditorFoldingRules,
   type EditorIndentationRules,
   type EditorLanguageConfiguration,
+  type EditorLanguageFeatureSelector,
+  type EditorLanguageFeatureToken,
   editorLanguageConfiguration,
   type EditorOnEnterRule,
   EDITOR_MINIMAP_FEATURE,
@@ -151,6 +154,24 @@ describe('public API facade', () => {
     registration.dispose()
 
     expect(editorLanguageConfiguration('fauxml')).toBeNull()
+  })
+
+  it('exports the language feature channel a source outside this package registers into', () => {
+    // A completion or hover source shipped elsewhere — a snippet set, a second language server —
+    // names the feature and says which documents it speaks for, so the constructor and both types
+    // are in that package's build. It reaches the same feature as the plugin it joins by naming the
+    // same id, which is why the two doors have to hand back the same identity for one.
+    const throughRoot: core.EditorLanguageFeatureToken<{ readonly name: string }> =
+      core.createEditorLanguageFeatureToken(' test.completionSources ')
+    const restated: EditorLanguageFeatureToken<{ readonly name: string }> =
+      createEditorLanguageFeatureToken('test.completionSources')
+    const forLanguage: EditorLanguageFeatureSelector = { language: 'typescript', priority: 10 }
+    const forAnything: EditorLanguageFeatureSelector = { language: '*' }
+
+    expect(throughRoot.id).toBe(restated.id)
+    expect(forLanguage.priority).toBe(10)
+    expect(forAnything.language).toBe('*')
+    expect(() => createEditorLanguageFeatureToken('  ')).toThrow()
   })
 
   it('exports the option registry the framework bindings iterate', () => {

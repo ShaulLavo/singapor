@@ -67,6 +67,9 @@ export function createTypeScriptLspPlugin(
       editFeature: TYPESCRIPT_LSP_COMPLETION_EDIT_FEATURE,
       acceptTimingName: 'typescriptLsp.completion.accept',
       widgetClassNamespace: 'typescript-lsp',
+      // The worker sends TypeScript's own per-item sets, so the sets this turns on are the ones the
+      // language service vouches for rather than a guess made in the editor.
+      acceptOnCommitCharacter: true,
     },
     hoverDefinition: {
       linkHighlightNameNamespace: 'typescript-lsp',

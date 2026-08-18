@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**78 / 99 findings complete.** Update this count when you check a box.
+**83 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 12 / 16 complete.
+Milestones: 13 / 16 complete.
 
 
 ---
@@ -715,7 +715,7 @@ Milestones: 12 / 16 complete.
 
 ---
 
-## Milestone 13 — Completion pipeline
+## Milestone 13 — Completion pipeline ✅
 
 `effort L` · `risk medium` · 5 findings
 
@@ -723,16 +723,46 @@ Milestones: 12 / 16 complete.
 
 **Exit criteria.** registerProvider(token, selector, provider) supports multiple providers with a priority ordering while existing capability tokens keep throw-on-duplicate; accepting a suggestion after further typing applies against the current caret via overwriteBefore/overwriteAfter and honours InsertReplaceEdit; the widget survives backspace and typing, re-requests only when isIncomplete, and cancels on Monaco's conditions; labels render highlighted match runs from a bounded DP scorer with incremental re-filter; a commit character accepts the focused item and still inserts the character in the same undo entry, behind an option, with a test asserting the character is not lost.
 
-- [ ] **LanguageFeatureRegistry: score-based, multi-provider language feature dispatch**  
+- [x] **LanguageFeatureRegistry: score-based, multi-provider language feature dispatch**  
   `high` `L` `partial` `language-features`
-- [ ] **Completion insert-vs-replace ranges: we silently drop the replace range**  
+- [x] **Completion insert-vs-replace ranges: we silently drop the replace range**  
   `high` `S` `partial` `language-features`
-- [ ] **Incomplete completion lists: per-provider re-query with item reuse, instead of hide-and-refetch**  
+- [x] **Incomplete completion lists: per-provider re-query with item reuse, instead of hide-and-refetch**  
   `high` `M` `missing` `language-features`
-- [ ] **Suggest filtering: bounded fuzzy DP scoring with match positions, incremental re-filter, and filterText/label split**  
+- [x] **Suggest filtering: bounded fuzzy DP scoring with match positions, incremental re-filter, and filterText/label split**  
   `high` `L` `partial` `language-features`
-- [ ] **Commit characters: accepting the focused suggestion on the next typed character**  
+- [x] **Commit characters: accepting the focused suggestion on the next typed character**  
   `medium` `S` `partial` `language-features`
+
+> **The registry got a producer, on the second pass.** It first shipped reachable only from its own
+> test — seven milestones running for this repo — and the agent who built it said so and said it
+> should be deleted rather than defended if nothing consumed it. It is now the path completions
+> actually take: `CompletionController` holds no client at all and asks the channel for its sources,
+> so any keystroke in a buffer goes through it. The second provider is a plugin that registers a
+> source and nothing else, restating the token by id — not `typescript-lsp`, which I suggested and
+> the agent correctly refused, since that package *is* the language-server adapter and registering it
+> would have been the same server twice, which is exactly the provider-to-have-a-provider that the
+> delete option exists to prevent. Two behaviours came out of the wiring that were unreachable
+> before: a non-server source answers while the connection is still handshaking, and resolve goes to
+> the source that sent the item rather than to whichever client the widget sat beside.
+>
+> **Two blockers in this milestone's own work.** The commit character was lost whenever the item
+> could not be applied: the branch swallowed the key before attempting the acceptance, so a failed
+> accept dismissed the widget and ate the keystroke — the precise outcome the exit criterion demands
+> a test against. And the caret's word prefix was read from `snapshot.fullText`, a document copy per
+> keystroke, which tripped a guard in `typescript-lsp` that exists to catch exactly that; a bounded
+> window behind the caret is all a prefix can come from.
+>
+> **A compatibility branch that is honest but untested by production.** `registerProvider` and
+> `getProviders` are optional context members, following this file's convention for newer
+> registrations, so a host that supplies neither still gets completions from the server alone. In the
+> real editor that branch is never taken — its only callers are hand-written test doubles. Making
+> both members required and updating the four hand-written contexts is the follow-up that removes it.
+>
+> **A harness note for whoever touches this next.** The completion fan-out is exactly one microtask
+> deep, because `flushPromises()` in the typescript-lsp fixture is two ticks and a three-tick fan-out
+> turned that suite red. `Promise.allSettled` is what lets one source fail without taking the list
+> with it. A further await on this path breaks that test first.
 
 
 ---

@@ -44,6 +44,36 @@ export function createEditorCapabilityToken<T>(id: string): EditorCapabilityToke
   return Object.freeze({ id: normalized }) as EditorCapabilityToken<T>
 }
 
+/**
+ * Names a language feature — completion, hover, definition — that as many sources may answer as a
+ * document has for it: a language server, a grammar-backed word source and a snippet set all offer
+ * completions at once. A capability is the opposite case, one owner for the whole editor, which is
+ * why the two are separate token kinds rather than one channel that sometimes allows a second
+ * registration.
+ *
+ * The id is the identity: two packages that cannot import each other's token still answer the same
+ * feature by naming it the same.
+ */
+export type EditorLanguageFeatureToken<T> = {
+  readonly id: string
+  readonly __languageFeature?: T
+}
+
+export function createEditorLanguageFeatureToken<T>(id: string): EditorLanguageFeatureToken<T> {
+  const normalized = id.trim()
+  if (!normalized) throw new Error('Editor language feature token id cannot be empty')
+
+  return Object.freeze({ id: normalized }) as EditorLanguageFeatureToken<T>
+}
+
+/** Which documents a provider answers for. */
+export type EditorLanguageFeatureSelector = {
+  /** `'*'` answers for every document, including one whose language is unknown. */
+  readonly language: EditorSyntaxLanguageId | '*'
+  /** Separates providers that fit the document equally well; higher is asked first, default 0. */
+  readonly priority?: number
+}
+
 export type EditorLogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 export type EditorLogError = {
@@ -230,6 +260,26 @@ export type EditorViewContributionContext = {
   hasDocument(): boolean
   getSnapshot(): EditorViewSnapshot
   getFeature?<T>(token: EditorCapabilityToken<T>): T | null
+  /**
+   * The sources registered for a language feature, best first. The language is the caller's to name
+   * because the region being answered for is not always the whole document's — an embedded fence
+   * asks on behalf of the language inside it.
+   */
+  getProviders?<T>(
+    token: EditorLanguageFeatureToken<T>,
+    languageId: EditorSyntaxLanguageId | null,
+  ): readonly T[]
+  /**
+   * Registers a source from the contribution that owns whatever answers for it — a connection, a
+   * worker, an index built from the view. Such a source has to stop being asked the moment that
+   * thing goes away, and the contribution's own disposal is what knows when; a source that owns
+   * nothing view-scoped registers from a capability contribution instead.
+   */
+  registerProvider?<T>(
+    token: EditorLanguageFeatureToken<T>,
+    selector: EditorLanguageFeatureSelector,
+    provider: T,
+  ): EditorDisposable
   log?(event: EditorLogInput): void
   revealLine(row: number): void
   focusEditor(): void
@@ -345,6 +395,21 @@ export type EditorCommandContributionContext = {
 
 export type EditorCapabilityContributionContext = {
   registerFeature<T>(token: EditorCapabilityToken<T>, feature: T): EditorDisposable
+  /**
+   * Adds one more source for a language feature, next to whichever others already answer it. The
+   * selector decides which documents it is asked about and where in the order it sits; see
+   * EditorLanguageFeatureSelector.
+   *
+   * Optional on the same terms as the newer plugin-context registrations. A host without it hands
+   * the source on to no one, so a caller that consumes the feature itself is left asking what it
+   * registered and nothing else, and one that only registers has nothing to fall back to and should
+   * say so rather than going quiet.
+   */
+  registerProvider?<T>(
+    token: EditorLanguageFeatureToken<T>,
+    selector: EditorLanguageFeatureSelector,
+    provider: T,
+  ): EditorDisposable
 }
 
 export type EditorEditContributionContext = EditorDocumentContributionContext &
@@ -579,6 +644,115 @@ export type EditorPluginHostEvents = {
   onGutterContributionsChanged?(): void
   onBlockProvidersChanged?(): void
   onInjectedTextRowProvidersChanged?(): void
+}
+
+const LANGUAGE_SELECTOR_SCORE = 10
+const WILDCARD_SELECTOR_SCORE = 5
+
+type LanguageFeatureEntry = {
+  readonly provider: unknown
+  readonly selector: EditorLanguageFeatureSelector
+  readonly sequence: number
+}
+
+type LanguageFeatureChannel = {
+  readonly entries: LanguageFeatureEntry[]
+  readonly ordered: Map<EditorSyntaxLanguageId | null, readonly unknown[]>
+}
+
+/**
+ * The sources answering each language feature, and the order a consumer asks them in.
+ *
+ * How closely a provider's selector fits the document decides the order before anything the
+ * provider asked for itself does: one that named this language outranks one that took every
+ * document, so a general source cannot push a language's own source aside by claiming a priority.
+ * Priority separates only providers that fit equally well, and registration order separates the
+ * rest — leaving the sequence a consumer walks the same on every query.
+ */
+export class EditorLanguageFeatureRegistry {
+  private readonly channels = new Map<string, LanguageFeatureChannel>()
+  private sequence = 0
+
+  public register<T>(
+    token: EditorLanguageFeatureToken<T>,
+    selector: EditorLanguageFeatureSelector,
+    provider: T,
+  ): EditorDisposable {
+    const channel = this.channelFor(token.id)
+    const entry: LanguageFeatureEntry = { provider, selector, sequence: this.sequence++ }
+    channel.entries.push(entry)
+    channel.ordered.clear()
+
+    return disposableOnce(() => this.unregister(token.id, entry))
+  }
+
+  public ordered<T>(
+    token: EditorLanguageFeatureToken<T>,
+    languageId: EditorSyntaxLanguageId | null,
+  ): readonly T[] {
+    const channel = this.channels.get(token.id)
+    if (!channel) return []
+
+    // Language features are queried per keystroke, so the answer for a language is held until a
+    // registration moves and consumers can skip work on the array they already have.
+    const cached = channel.ordered.get(languageId)
+    if (cached) return cached as readonly T[]
+
+    const providers = orderedLanguageFeatureProviders(channel.entries, languageId)
+    channel.ordered.set(languageId, providers)
+
+    return providers as readonly T[]
+  }
+
+  private channelFor(id: string): LanguageFeatureChannel {
+    const existing = this.channels.get(id)
+    if (existing) return existing
+
+    const channel: LanguageFeatureChannel = { entries: [], ordered: new Map() }
+    this.channels.set(id, channel)
+
+    return channel
+  }
+
+  private unregister(id: string, entry: LanguageFeatureEntry): void {
+    const channel = this.channels.get(id)
+    if (!channel) return
+
+    const index = channel.entries.indexOf(entry)
+    if (index === -1) return
+
+    channel.entries.splice(index, 1)
+    channel.ordered.clear()
+  }
+}
+
+function orderedLanguageFeatureProviders(
+  entries: readonly LanguageFeatureEntry[],
+  languageId: EditorSyntaxLanguageId | null,
+): readonly unknown[] {
+  const matched: { readonly entry: LanguageFeatureEntry; readonly score: number }[] = []
+  for (const entry of entries) {
+    const score = languageFeatureSelectorScore(entry.selector, languageId)
+    if (score > 0) matched.push({ entry, score })
+  }
+
+  matched.sort(
+    (a, b) =>
+      b.score - a.score ||
+      (b.entry.selector.priority ?? 0) - (a.entry.selector.priority ?? 0) ||
+      a.entry.sequence - b.entry.sequence,
+  )
+
+  return matched.map((match) => match.entry.provider)
+}
+
+function languageFeatureSelectorScore(
+  selector: EditorLanguageFeatureSelector,
+  languageId: EditorSyntaxLanguageId | null,
+): number {
+  if (selector.language === '*') return WILDCARD_SELECTOR_SCORE
+
+  return selector.language === languageId ? LANGUAGE_SELECTOR_SCORE : 0
 }
 
 type InstalledEditorPlugin = {

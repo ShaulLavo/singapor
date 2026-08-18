@@ -1,5 +1,6 @@
 import type { EditorEditContributionContext } from '@singapor/core/extensions'
 import { describe, expect, it, vi } from 'vitest'
+import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
   completionApplication,
@@ -38,7 +39,7 @@ describe('completion helpers', () => {
   })
 
   it('creates completion applications from LSP primary and additional edits', () => {
-    const application = completionApplication('const va = helper', 8, {
+    const application = completionApplication(atCaret('const va = helper', 8), {
       label: 'value',
       textEdit: {
         range: {
@@ -141,14 +142,17 @@ describe('snippet completions', () => {
   })
 
   it('expands a snippet and selects its first placeholder', () => {
-    const application = completionApplication('const x = f', 11, snippetItem('fn(${1:arg})'))
+    const application = completionApplication(
+      atCaret('const x = f', 11),
+      snippetItem('fn(${1:arg})'),
+    )
 
     expect(application?.edits).toEqual([{ from: 10, to: 11, text: 'fn(arg)' }])
     expect(application?.selection).toEqual({ anchor: 13, head: 16 })
   })
 
   it('puts the caret at an empty tab stop', () => {
-    const application = completionApplication('f', 1, snippetItem('fn($1)'))
+    const application = completionApplication(atCaret('f', 1), snippetItem('fn($1)'))
 
     expect(application?.edits[0]?.text).toBe('fn()')
     expect(application?.selection).toEqual({ anchor: 3, head: 3 })
@@ -156,17 +160,113 @@ describe('snippet completions', () => {
 
   // Without a stop there is nothing to select, so it behaves like a plain completion.
   it('falls back to the end of the insertion when a snippet has no stops', () => {
-    const application = completionApplication('f', 1, snippetItem('fn()'))
+    const application = completionApplication(atCaret('f', 1), snippetItem('fn()'))
 
     expect(application?.selection).toEqual({ anchor: 4, head: 4 })
   })
 
   it('leaves a non-snippet completion alone', () => {
-    const application = completionApplication('f', 1, { insertText: 'fn(${1:arg})', label: 'fn' })
+    const application = completionApplication(atCaret('f', 1), {
+      insertText: 'fn(${1:arg})',
+      label: 'fn',
+    })
 
     expect(application?.edits[0]?.text).toBe('fn(${1:arg})')
   })
 })
+
+describe('completion ranges', () => {
+  const item = (textEdit: lsp.CompletionItem['textEdit']): lsp.CompletionItem => ({
+    label: 'value',
+    textEdit,
+  })
+
+  it('takes the replace range of an item that carries both', () => {
+    const application = completionApplication(atCaret('const foobar', 9), {
+      label: 'foobaz',
+      textEdit: {
+        insert: singleLineRange(6, 9),
+        replace: singleLineRange(6, 12),
+        newText: 'foobaz',
+      },
+    })
+
+    expect(application?.edits).toEqual([{ from: 6, to: 12, text: 'foobaz' }])
+  })
+
+  it('grows the replacement over the characters typed since the request', () => {
+    const application = completionApplication(
+      { text: 'const val', offset: 9, caretOffset: 11 },
+      item({ range: singleLineRange(6, 9), newText: 'value' }),
+    )
+
+    expect(application?.edits).toEqual([{ from: 6, to: 11, text: 'value' }])
+  })
+
+  it('follows the caret back when characters are removed after the request', () => {
+    const removed = (caretOffset: number) =>
+      completionApplication(
+        { text: 'const val', offset: 9, caretOffset },
+        item({ range: singleLineRange(6, 9), newText: 'value' }),
+      )?.edits
+
+    expect(removed(8)).toEqual([{ from: 6, to: 8, text: 'value' }])
+    // Deleting past the word start leaves nothing to replace rather than an inverted range.
+    expect(removed(5)).toEqual([{ from: 6, to: 6, text: 'value' }])
+  })
+
+  it('moves an additional edit below the caret along with what was typed', () => {
+    const application = completionApplication(
+      { text: 'const val\nend', offset: 9, caretOffset: 10 },
+      {
+        label: 'value',
+        textEdit: { range: singleLineRange(6, 9), newText: 'value' },
+        additionalTextEdits: [
+          {
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+            newText: '// note\n',
+          },
+        ],
+      },
+    )
+
+    expect(application?.edits).toEqual([
+      { from: 6, to: 10, text: 'value' },
+      { from: 11, to: 11, text: '// note\n' },
+    ])
+  })
+
+  // Both describe a document the request never asked about, so the typed characters cannot be
+  // measured against them.
+  it('rejects a range the caret was outside of', () => {
+    expect(
+      completionApplication(
+        atCaret('const val', 9),
+        item({ range: singleLineRange(0, 5), newText: 'value' }),
+      ),
+    ).toBeNull()
+  })
+
+  it('rejects a range spanning lines', () => {
+    expect(
+      completionApplication(atCaret('const val\nend', 9), {
+        label: 'value',
+        textEdit: {
+          range: { start: { line: 0, character: 6 }, end: { line: 1, character: 1 } },
+          newText: 'value',
+        },
+      }),
+    ).toBeNull()
+  })
+})
+
+function atCaret(text: string, offset: number): Parameters<typeof completionApplication>[0] {
+  return { text, offset, caretOffset: offset }
+}
+
+function singleLineRange(start: number, end: number): lsp.Range {
+  return { start: { line: 0, character: start }, end: { line: 0, character: end } }
+}
 
 describe('completionPrefix', () => {
   it('reads the identifier being typed', () => {
@@ -224,4 +324,58 @@ describe('rankCompletionItems', () => {
 
     expect(ranked.map((item) => item.label)).toEqual(['Different'])
   })
+
+  // Two editors on a page filter their own lists, in whatever order their users type. A filter that
+  // remembered one list at a time would hand each of them the other's work to do over again.
+  it('narrows each list against its own last filter, not the last list it saw', () => {
+    const scored: string[] = []
+    const server = watchedItems(['value', 'valueOf', 'other'], scored)
+    const elsewhere = watchedItems(['count'], scored)
+
+    rankCompletionItems(server, 'val')
+    rankCompletionItems(elsewhere, 'cou')
+    scored.length = 0
+    const ranked = rankCompletionItems(server, 'valu')
+
+    expect(ranked.map((item) => item.label)).toEqual(['value', 'valueOf'])
+    expect(scored).not.toContain('other')
+  })
+
+  // The runs mark a word that is no longer being typed: kept, they underline characters of the
+  // labels for a filter the list is no longer under.
+  it('takes the marked runs off a list it stops filtering', () => {
+    const items = [{ label: 'value' }, { label: 'verticalAlign' }]
+    rankCompletionItems(items, 'val')
+
+    const runs = shownMatchRuns(rankCompletionItems(items, ''))
+
+    expect(runs).toEqual([])
+  })
 })
+
+function watchedItems(labels: readonly string[], scored: string[]): readonly lsp.CompletionItem[] {
+  return labels.map((label) => ({
+    label,
+    get filterText() {
+      scored.push(label)
+      return label
+    },
+  }))
+}
+
+/** The runs the widget marks up when it is handed these items, and nothing left in the document. */
+function shownMatchRuns(items: readonly lsp.CompletionItem[]): readonly string[] {
+  const controller = createCompletionWidgetController({
+    document,
+    themeSource: document.createElement('div'),
+    classNamespace: 'test-marks',
+    onSelect: vi.fn(),
+  })
+  controller.show({ anchor: new DOMRect(10, 20, 1, 16), items })
+  const runs = Array.from(
+    document.querySelectorAll<HTMLElement>('.editor-test-marks-completion-match'),
+    (element) => element.textContent ?? '',
+  )
+  controller.dispose()
+  return runs
+}

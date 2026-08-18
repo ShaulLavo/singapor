@@ -63,6 +63,7 @@ export {
 } from './public/document'
 export {
   createEditorCapabilityToken,
+  createEditorLanguageFeatureToken,
   EDITOR_FIND_FEATURE,
   EDITOR_FIND_FEATURE_ID,
   EDITOR_MINIMAP_FEATURE,
@@ -213,6 +214,8 @@ export type {
   EditorInjectedTextRow,
   EditorInjectedTextRowProvider,
   EditorInjectedTextRowProviderContext,
+  EditorLanguageFeatureSelector,
+  EditorLanguageFeatureToken,
   EditorLogEditorContext,
   EditorLogError,
   EditorLogEvent,

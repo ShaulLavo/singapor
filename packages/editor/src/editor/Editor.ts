@@ -95,6 +95,7 @@ import { anchorAt, resolveAnchor } from '../pieceTable/anchors'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
 import type { TextOffsetRange } from '../textRanges'
 import {
+  EditorLanguageFeatureRegistry,
   EditorPluginHost,
   type EditorCapabilityContribution,
   type EditorCapabilityContributionContext,
@@ -247,6 +248,7 @@ export class Editor {
   private readonly document: EditorDocumentController
   private readonly editorFeatures = new Map<EditorCapabilityToken<unknown>, unknown>()
   private readonly editorFeatureTokensById = new Map<string, EditorCapabilityToken<unknown>>()
+  private readonly languageFeatures = new EditorLanguageFeatureRegistry()
   private readonly rowDecorationSourceOwners = new Map<string, symbol>()
   private readonly rowDecorationSourcesByOwner = new Map<symbol, Set<string>>()
   private readonly rowDecorationContributionOwners = new Map<
@@ -2193,6 +2195,9 @@ export class Editor {
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
       getFeature: (key) => this.getFeature(key),
+      getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
+      registerProvider: (token, selector, provider) =>
+        this.languageFeatures.register(token, selector, provider),
       log: (event) => this.log(event),
       revealLine: (row) => this.view.scrollToRow(row),
       focusEditor: () => this.focus(),
@@ -2259,6 +2264,8 @@ export class Editor {
   private createCapabilityContributionContext(): EditorCapabilityContributionContext {
     return {
       registerFeature: (key, feature) => this.registerFeature(key, feature),
+      registerProvider: (token, selector, provider) =>
+        this.languageFeatures.register(token, selector, provider),
     }
   }
 

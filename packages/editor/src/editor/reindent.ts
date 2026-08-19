@@ -1,5 +1,6 @@
 import { normalizeTabSize, visualColumnLength } from '../displayTransforms'
 import type { ResolvedSelection } from '../selections'
+import type { TextOffsetRange } from '../textRanges'
 import type { TextEdit } from '../tokens'
 import type { EditorCommandId } from './commands'
 import type { EditorEditActionOptions, EditorEditActionResult } from './editActions'
@@ -40,6 +41,14 @@ type RowRange = {
   readonly endRow: number
 }
 
+/**
+ * All a row range is decided from, which is less than a selection carries.
+ *
+ * Stated as its own shape so a caller holding nothing but offsets — a feature correcting one row
+ * while it is typed — can ask the same question without inventing a selection to ask it with.
+ */
+type ReindentRange = Pick<ResolvedSelection, 'startOffset' | 'endOffset' | 'collapsed'>
+
 /** The document twice over: as written, and as the indentation rules are allowed to see it. */
 type ReindentSource = {
   readonly text: string
@@ -61,7 +70,7 @@ export function isEditorDocumentSelectionEditCommand(
 export function documentSelectionEditForCommand(
   command: EditorDocumentSelectionEditCommandId,
   text: string,
-  selections: readonly ResolvedSelection[],
+  selections: readonly ReindentRange[],
   options: EditorEditActionOptions = {},
 ): EditorEditActionResult {
   const wholeDocument = command === 'editor.action.reindentlines'
@@ -81,6 +90,42 @@ export function documentSelectionEditForCommand(
     edits: ranges.flatMap((range) => reindentEdits(source, rules, range, options)),
     timingName,
   }
+}
+
+/**
+ * What deciding a row's level takes beyond the document text.
+ *
+ * Narrower than what the commands are handed, so a caller reaching this by offset is not offered the
+ * fields that only a selection-shaped edit has anything to do with.
+ */
+export type EditorReindentOptions = {
+  readonly languageId?: string | null
+  /** Levels are counted in columns, so a tab's width decides which of them a row lands on. */
+  readonly tabSize?: number
+}
+
+/**
+ * The same answer the reindent commands give, for callers that address the document by offset.
+ *
+ * A feature that corrects one row as it is being typed is asking exactly what a reindent of that
+ * row asks, and a second implementation of it would be a second set of indentation rules to keep in
+ * step with the language records — the failure this module was consolidated to end.
+ */
+export function reindentEditsForRanges(
+  text: string,
+  ranges: readonly TextOffsetRange[],
+  options: EditorReindentOptions = {},
+): readonly TextEdit[] {
+  return documentSelectionEditForCommand(
+    'editor.action.reindentselectedlines',
+    text,
+    ranges.map((range) => ({
+      collapsed: range.start === range.end,
+      endOffset: range.end,
+      startOffset: range.start,
+    })),
+    options,
+  ).edits
 }
 
 function createReindentSource(
@@ -205,7 +250,7 @@ function blankRanges(text: string, ranges: readonly OffsetRange[]): string {
  */
 function rowRangesForSelections(
   source: ReindentSource,
-  selections: readonly ResolvedSelection[],
+  selections: readonly ReindentRange[],
 ): readonly RowRange[] {
   const ranges = selections
     .map((selection) => rowRangeForSelection(source, selection))
@@ -228,10 +273,7 @@ function rowRangesForSelections(
   return merged
 }
 
-function rowRangeForSelection(
-  source: ReindentSource,
-  selection: ResolvedSelection,
-): RowRange | null {
+function rowRangeForSelection(source: ReindentSource, selection: ReindentRange): RowRange | null {
   const startRow = rowAtOffset(source, selection.startOffset)
   const endRow = endRowForSelection(source, selection, startRow)
   if (startRow === 0) return endRow === 0 ? null : { endRow, startRow: 0 }
@@ -241,7 +283,7 @@ function rowRangeForSelection(
 
 function endRowForSelection(
   source: ReindentSource,
-  selection: ResolvedSelection,
+  selection: ReindentRange,
   startRow: number,
 ): number {
   if (selection.collapsed) return startRow

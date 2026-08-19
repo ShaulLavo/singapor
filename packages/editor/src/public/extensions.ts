@@ -31,6 +31,9 @@ export type {
   EditorLanguageConfiguration,
   EditorOnEnterRule,
 } from '../editor/languageConfiguration'
+export type { EditorSnippetMirror, EditorSnippetStop } from '../plugins'
+export { reindentEditsForRanges } from '../editor/reindent'
+export type { EditorReindentOptions } from '../editor/reindent'
 export type {
   EditorCapabilityToken,
   EditorCapabilityContribution,

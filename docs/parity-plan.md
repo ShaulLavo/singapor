@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**83 / 99 findings complete.** Update this count when you check a box.
+**88 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 13 / 16 complete.
+Milestones: 14 / 16 complete.
 
 
 ---
@@ -767,7 +767,7 @@ Milestones: 13 / 16 complete.
 
 ---
 
-## Milestone 14 — Formatting, snippets, and code actions
+## Milestone 14 — Formatting, snippets, and code actions ✅
 
 `effort L` · `risk high` · 5 findings
 
@@ -775,16 +775,45 @@ Milestones: 13 / 16 complete.
 
 **Exit criteria.** A whole-document formatter response that changes one line applies as one small edit (regression test), with adjacent-edit merging, no-op dropping and a size cap; typing a closing brace dedents the line locally and synchronously, gated on trigger characters and cancelled by edits before the caret; snippet placeholder mirrors update live, server snippets are indentation-normalized on insert, and transforms/choices parse; code actions appear from a 250ms oracle debounced on both cursor and diagnostic changes, filter by dotted-prefix kind, order isPreferred first, resolve command-only actions, and bind editor.action.autoFix; semantic tokens, if shipped, layer over tree-sitter rather than replacing it.
 
-- [ ] **Re-diffing formatter output into minimal edits before applying it**  
+- [x] **Re-diffing formatter output into minimal edits before applying it**  
   `high` `S` `missing` `language-features`
-- [ ] **Format-on-type, gated by provider trigger characters and cancelled by any edit before the caret**  
+- [x] **Format-on-type, gated by provider trigger characters and cancelled by any edit before the caret**  
   `medium` `M` `missing` `language-features`
-- [ ] **Snippet engine: placeholder mirrors, transforms with regex + case-shorthands, choices, and indentation normalization**  
+- [x] **Snippet engine: placeholder mirrors, transforms with regex + case-shorthands, choices, and indentation normalization**  
   `high` `L` `partial` `language-features`
-- [ ] **Code actions: hierarchical kind filtering, isPreferred ordering, and 'auto fix'**  
+- [x] **Code actions: hierarchical kind filtering, isPreferred ordering, and 'auto fix'**  
   `high` `M` `missing` `language-features`
-- [ ] **Semantic tokens: delta protocol with in-place Uint32Array splicing**  
-  `medium` `L` `missing` `language-features`
+- [~] **Semantic tokens: delta protocol with in-place Uint32Array splicing**  
+  `medium` `L` `missing` `language-features`  
+  Not built. Ranked last of all 99 findings by the analysis itself; the exit criterion is
+  conditional ("if shipped"), and nothing shipped here replaces tree-sitter, so the condition
+  holds vacuously. The delta protocol pays only when a server re-sends tokens for a large file
+  per keystroke — a scenario no host in this repo has — and the transferable half, the
+  single-allocation packed-token splice, already exists in `syntax/packedTokens.ts`.
+
+> **Code actions are auto-fix only.** The kind filter and the isPreferred comparator were built,
+> found to have no reader, and cut rather than left ranked for a menu that does not exist —
+> surfacing them needs a lightbulb in `packages/gutters` and a floating action list, neither of
+> which this milestone owns. The request asks the server for the `quickfix` subtree and applies the
+> preferred answer; the public `codeActions.only` option is gone with it. `docs/parity-monaco-codemirror.md`
+> still describes the menu, which is now provenance rather than plan.
+>
+> **A command-only code action is refused rather than half-run.** `packages/lsp` has no
+> `workspace/executeCommand` sender and no `workspace/applyEdit` receiver, so an action carrying a
+> command and no edit is not selected at all unless the server advertised `resolveProvider`. The
+> chord reports the key unhandled instead of swallowing it and doing nothing.
+>
+> **Snippet mirrors are live, including transformed ones.** The compiled transform is carried on the
+> parsed range rather than discarded after its first render, which is what lets a mirror track. The
+> stop is re-anchored after every mirrored keystroke: rewriting a copy replaces the text its anchors
+> were taken in, so without that the copies stop tracking from the second keystroke on — and a
+> single-keystroke test cannot see it.
+>
+> **`test/` is not typechecked anywhere that gates.** Each package's `typecheck` is `include: ["src"]`
+> and vitest erases type-only imports, so a public-API assertion enforces its value half at runtime
+> and its type half not at all. The root `tsconfig.json` does include `packages/*/test` but reports
+> pre-existing errors across the repo, so it is not usable as a gate today. Pre-existing, recorded
+> here because this milestone added public types whose nameability rests on it.
 
 
 ---

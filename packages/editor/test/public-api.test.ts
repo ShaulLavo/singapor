@@ -11,6 +11,7 @@ import {
   wordRangeAtOffset,
   type TextCharacterClass,
   type TextEdit,
+  type TextOffsetRange,
 } from '@singapor/core/document'
 import { Editor } from '@singapor/core/editor'
 import {
@@ -27,6 +28,7 @@ import {
   type EditorDecorationRange,
   type EditorDecorationSpec,
   type EditorDecorationSurface,
+  type EditorEditContributionContext,
   type EditorEnterAction,
   type EditorFindFeature,
   type EditorFoldingRules,
@@ -39,9 +41,13 @@ import {
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   type EditorPluginContext,
+  type EditorReindentOptions,
+  type EditorSnippetMirror,
+  type EditorSnippetStop,
   type EditorTrackedRanges,
   type EditorViewContributionContext,
   projectDecorationRangeThroughEdits,
+  reindentEditsForRanges,
 } from '@singapor/core/extensions'
 import {
   applyEditorTheme,
@@ -154,6 +160,35 @@ describe('public API facade', () => {
     registration.dispose()
 
     expect(editorLanguageConfiguration('fauxml')).toBeNull()
+  })
+
+  it('exports the rules-driven reindent a plugin corrects rows through', () => {
+    // A plugin that puts a row back where its own text belongs — after a paste, on a keystroke —
+    // would otherwise carry a second copy of every language's indentation rules. It states the rows
+    // as offsets and the settings as a record, so both of those types are in its build too.
+    const ranges: readonly TextOffsetRange[] = [{ end: 15, start: 15 }]
+    const options: EditorReindentOptions = { languageId: 'typescript', tabSize: 2 }
+    const edits: readonly TextEdit[] = reindentEditsForRanges(
+      'function f() {\nrun()\n}',
+      ranges,
+      options,
+    )
+
+    expect(edits).toEqual([{ from: 15, text: '  ', to: 15 }])
+  })
+
+  it('exports the shape a snippet source hands its tab stops over in', () => {
+    // A completion source shipped elsewhere expands the snippet itself and states where the stops
+    // landed. It builds that list before it has a context to pass it to, so the entry it builds —
+    // including the copies a repeated stop is rendered into — has to be a type it can write down.
+    const mirror: EditorSnippetMirror = { end: 12, start: 9, transform: (value) => value.trim() }
+    const stops: readonly EditorSnippetStop[] = [
+      { end: 7, mirrors: [mirror], start: 4 },
+      { end: 20, start: 20 },
+    ]
+
+    expect(stops.map((stop) => stop.mirrors?.length ?? 0)).toEqual([1, 0])
+    expect(mirror.transform?.(' a ')).toBe('a')
   })
 
   it('exports the language feature channel a source outside this package registers into', () => {
@@ -295,6 +330,35 @@ describe('public API facade', () => {
     expect(
       track([{ start: 1, end: 3 }], { startBias: 'right', endBias: 'left' }).resolve(),
     ).toEqual([{ start: 1, end: 3 }])
+  })
+
+  it('exports the snippet stops a completion source hands over for the editor to keep in step', () => {
+    // A snippet source shipped outside this package — a server adapter, a snippet file — states
+    // each stop together with the places its template writes that stop again, and hands over the
+    // renderer for a copy it does not hold verbatim. Both the grouping and that renderer are part
+    // of the contract it builds against, not a shape it has to guess at.
+    let copies: readonly string[] = []
+    const startSnippetSession: NonNullable<EditorEditContributionContext['startSnippetSession']> = (
+      stops,
+    ) => {
+      copies = stops.flatMap((stop) =>
+        (stop.mirrors ?? []).map((mirror) => mirror.transform?.('name') ?? 'name'),
+      )
+    }
+
+    startSnippetSession([
+      {
+        start: 0,
+        end: 4,
+        mirrors: [
+          { start: 7, end: 11 },
+          { start: 14, end: 18, transform: (value) => value.toUpperCase() },
+        ],
+      },
+      { start: 24, end: 24 },
+    ])
+
+    expect(copies).toEqual(['name', 'NAME'])
   })
 
   it('exposes the pass and cursor-history methods hosts drive the editor through', () => {

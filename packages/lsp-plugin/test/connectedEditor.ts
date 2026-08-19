@@ -8,7 +8,9 @@
  */
 
 import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import type { EditorCommandId } from '@singapor/core/editor'
 import type {
+  EditorCommandHandler,
   EditorEditContributionContext,
   EditorPluginContext,
   EditorViewContributionContext,
@@ -24,6 +26,9 @@ import { createLanguageServerAdapterPlugin } from '../src/plugin'
 type JsonMessage = Record<string, unknown>
 
 export const COMPLETION_ACCEPT_TIMING_NAME = 'testLsp.completion.accept'
+
+/** What `documentId` below resolves to once the plugin has turned the path into a document uri. */
+export const DOCUMENT_URI = 'file:///src/index.ts'
 
 class FakeTransport implements LspManagedTransport {
   public readonly sent: string[] = []
@@ -62,10 +67,30 @@ export type ConnectedEditor = {
   breakAcceptance(): void
   answerCompletion(items: readonly lsp.CompletionItem[], isIncomplete?: boolean): void
   answerResolve(item: lsp.CompletionItem): void
+  answerCodeAction(actions: readonly (lsp.Command | lsp.CodeAction)[] | null): void
+  answerCodeActionResolve(action: lsp.CodeAction): void
+  publishDiagnostics(diagnostics: readonly lsp.Diagnostic[], version?: number): void
+  runCommand(commandId: EditorCommandId): boolean
   completionElement(): HTMLElement
   completionLabels(): readonly string[]
   focusedCompletionLabel(): string | null
   completionRequests(): readonly lsp.CompletionParams[]
+  codeActionRequests(): readonly lsp.CodeActionParams[]
+  initializeParams(): lsp.InitializeParams
+  reportedErrors(): readonly unknown[]
+  /** The tab stops each accepted snippet handed the host, newest last. */
+  startedSnippetSessions(): readonly (readonly SnippetStopRange[])[]
+}
+
+/** A stop and, where the snippet writes it more than once, the copies that have to follow it. */
+type SnippetStopRange = {
+  readonly start: number
+  readonly end: number
+  readonly mirrors?: readonly {
+    readonly start: number
+    readonly end: number
+    readonly transform?: (value: string) => string
+  }[]
 }
 
 export type ConnectedEditorOptions = {
@@ -89,7 +114,18 @@ export async function connectedEditor(
   let snapshot = editorSnapshot(text, caretOffset, 1)
   let anchorRect = new DOMRect(10, 20, 40, 18)
 
-  const provider = activateProvider(transport, features, applyEdits, options)
+  const commands = new Map<EditorCommandId, EditorCommandHandler>()
+  const errors: unknown[] = []
+  const snippetSessions: (readonly SnippetStopRange[])[] = []
+  const provider = activateProvider(
+    transport,
+    features,
+    commands,
+    applyEdits,
+    errors,
+    options,
+    snippetSessions,
+  )
   const contribution = provider.createContribution(
     viewContributionContext({
       element,
@@ -160,6 +196,19 @@ export async function connectedEditor(
     answerCompletion: (items, isIncomplete = false) =>
       answer('textDocument/completion', { isIncomplete, items }),
     answerResolve: (item) => answer('completionItem/resolve', item),
+    answerCodeAction: (actions) => answer('textDocument/codeAction', actions),
+    answerCodeActionResolve: (action) => answer('codeAction/resolve', action),
+    publishDiagnostics: (diagnostics, version) =>
+      transport.receive({
+        jsonrpc: '2.0',
+        method: 'textDocument/publishDiagnostics',
+        params: { diagnostics, uri: DOCUMENT_URI, version },
+      }),
+    runCommand: (commandId) => {
+      const handler = commands.get(commandId)
+      if (!handler) throw new Error(`missing command ${commandId}`)
+      return handler({})
+    },
     completionElement: () => {
       const widget = document.querySelector<HTMLElement>('.editor-test-lsp-completion')
       if (!widget) throw new Error('missing completion widget')
@@ -178,6 +227,18 @@ export async function connectedEditor(
         .map(jsonMessage)
         .filter((sent) => sent.method === 'textDocument/completion')
         .map((sent) => sent.params as lsp.CompletionParams),
+    codeActionRequests: () =>
+      transport.sent
+        .map(jsonMessage)
+        .filter((sent) => sent.method === 'textDocument/codeAction')
+        .map((sent) => sent.params as lsp.CodeActionParams),
+    initializeParams: () => {
+      const sent = transport.sent.map(jsonMessage).find((entry) => entry.method === 'initialize')
+      if (!sent) throw new Error('missing initialize request')
+      return sent.params as lsp.InitializeParams
+    },
+    reportedErrors: () => errors,
+    startedSnippetSessions: () => snippetSessions,
   }
 }
 
@@ -193,8 +254,11 @@ export function singleLineRange(start: number, end: number): lsp.Range {
 function activateProvider(
   transport: LspManagedTransport,
   features: Map<unknown, unknown>,
+  commands: Map<EditorCommandId, EditorCommandHandler>,
   applyEdits: EditorEditContributionContext['applyEdits'],
+  errors: unknown[],
   options: ConnectedEditorOptions,
+  snippetSessions: (readonly SnippetStopRange[])[],
 ): EditorViewContributionProvider {
   let provider: EditorViewContributionProvider | null = null
   const disposable = { dispose: () => undefined }
@@ -207,6 +271,7 @@ function activateProvider(
       widgetClassNamespace: 'test-lsp',
       acceptOnCommitCharacter: options.acceptOnCommitCharacter ?? false,
     },
+    onError: (error) => errors.push(error),
   }).activate({
     registerHighlighter: () => disposable,
     registerSyntaxProvider: () => disposable,
@@ -214,7 +279,15 @@ function activateProvider(
       provider = value
       return disposable
     },
-    registerCommandContribution: () => disposable,
+    registerCommandContribution: (value) => {
+      value.createContribution({
+        registerCommand: (commandId, handler) => {
+          commands.set(commandId, handler)
+          return { dispose: () => commands.delete(commandId) }
+        },
+      })
+      return disposable
+    },
     registerCapabilityContribution: () => disposable,
     registerEditContribution: (value) => {
       value.createContribution({
@@ -222,6 +295,7 @@ function activateProvider(
         materializeFullText: () => '',
         focusEditor: vi.fn(),
         applyEdits,
+        startSnippetSession: (ranges) => snippetSessions.push(ranges),
         registerFeature: (id, feature) => {
           features.set(id, feature)
           return { dispose: () => features.delete(id) }
@@ -276,7 +350,7 @@ function editorSnapshot(
     languageId: 'typescript',
     fullText,
     textVersion,
-    lineStarts: [0],
+    lineStarts: lineStartsOf(fullText),
     tokens: [],
     brackets: [],
     selections: [
@@ -288,7 +362,7 @@ function editorSnapshot(
       },
     ],
     metrics: {} as EditorViewSnapshot['metrics'],
-    lineCount: 1,
+    lineCount: lineStartsOf(fullText).length,
     contentWidth: 0,
     totalHeight: 0,
     tabSize: 4,
@@ -304,6 +378,19 @@ function editorSnapshot(
       visibleRange: { start: 0, end: 1 } as EditorViewSnapshot['viewport']['visibleRange'],
     },
   }
+}
+
+/** Real ones, so a suite can hand the harness a document with more than one line in it. */
+function lineStartsOf(fullText: string): readonly number[] {
+  const starts = [0]
+  for (
+    let index = fullText.indexOf('\n');
+    index !== -1;
+    index = fullText.indexOf('\n', index + 1)
+  ) {
+    starts.push(index + 1)
+  }
+  return starts
 }
 
 function caretOffsetOf(snapshot: EditorViewSnapshot): number {

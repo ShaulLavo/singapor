@@ -3,12 +3,17 @@ import type * as lsp from 'vscode-languageserver-protocol'
 import type { TextEdit } from '@singapor/core'
 import { lspPositionToOffset } from '@singapor/lsp'
 
+import { minimalReplacementEdits, REDIFF_LENGTH_LIMIT } from './minimalEdits'
+
 /**
  * Converts server formatting edits into buffer edits.
  *
  * Returned in descending order and with overlaps dropped, because the batch applicator rejects
  * overlapping edits outright — a formatter that returns a whole-document edit plus a nested one
  * would otherwise throw rather than format.
+ *
+ * What survives is re-diffed against the text it replaces, so a reply that rewrites the document to
+ * change one line touches only that line.
  */
 export function formattingEdits(text: string, edits: readonly lsp.TextEdit[] | null): TextEdit[] {
   if (!edits || edits.length === 0) return []
@@ -30,12 +35,33 @@ export function formattingEdits(text: string, edits: readonly lsp.TextEdit[] | n
   for (const edit of converted) {
     if (edit.from < keptThrough) continue
 
-    applied.push(edit)
+    const previous = applied[applied.length - 1]
+    // Edits that meet are joined first: two fragments that cancel each other out are invisible
+    // while they are compared apart. Joining stops at the length past which the comparison is
+    // skipped anyway, where a wider span would only buy a wider rewrite.
+    if (previous && previous.to === edit.from && joinFitsRediff(previous, edit)) {
+      applied[applied.length - 1] = {
+        from: previous.from,
+        text: previous.text + edit.text,
+        to: edit.to,
+      }
+    } else {
+      applied.push(edit)
+    }
     keptThrough = edit.to
   }
 
+  const minimal = applied.flatMap((edit) =>
+    minimalReplacementEdits(text.slice(edit.from, edit.to), edit.text, edit.from),
+  )
+
   // Descending, so applying them in order cannot shift the offsets of the ones still to come.
-  return applied.reverse()
+  return minimal.reverse()
+}
+
+function joinFitsRediff(left: TextEdit, right: TextEdit): boolean {
+  const joined = Math.max(right.to - left.from, left.text.length + right.text.length)
+  return joined <= REDIFF_LENGTH_LIMIT
 }
 
 /** Whether the edits would leave the document unchanged, so a no-op formatter records no change. */

@@ -19,6 +19,7 @@ import {
   createCompletionEditFeature,
   type LanguageServerCompletionEditFeature,
 } from './completion'
+import { CodeActionController } from './codeActions'
 import { CompletionController } from './completionController'
 import {
   createLanguageServerCompletionSource,
@@ -26,6 +27,7 @@ import {
 } from './completionProviders'
 import { DiagnosticsPresenter } from './diagnosticsPresenter'
 import { DocumentSync, type DocumentSyncOptions } from './documentSync'
+import { FormatOnTypeController } from './formatOnType'
 import { HoverDefinitionController } from './hoverDefinitionController'
 import { SignatureHelpController } from './signatureHelpController'
 import { DocumentHighlightController } from './documentHighlightController'
@@ -80,6 +82,7 @@ export type LanguageServerCommandTarget = {
   moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean
   formatDocument(): boolean
   renameSymbol(): boolean
+  applyAutoFix(): boolean
 }
 
 export type LanguageServerCommandSpec = {
@@ -122,6 +125,12 @@ export type LanguageServerAdapterPluginOptions = {
      */
     readonly acceptOnCommitCharacter?: boolean
   }
+  /**
+   * Corrects the caret's row as a block-closing delimiter is typed. On by default: without it every
+   * closed block is left a level too deep, and the correction is the language's own indentation
+   * rules applied to one row, not a formatter deciding how the file should look.
+   */
+  readonly formatOnType?: boolean
   readonly hoverDefinition?: {
     readonly linkHighlightNameNamespace?: string
     readonly tooltipClassNamespace?: string
@@ -162,6 +171,7 @@ type LanguageServerResolvedAdapterOptions = {
     readonly widgetClassNamespace?: string
     readonly acceptOnCommitCharacter: boolean
   }
+  readonly formatOnType: boolean
   readonly hoverDefinition: {
     readonly linkHighlightNameNamespace: string
     readonly tooltipClassNamespace: string
@@ -279,6 +289,14 @@ class LanguageServerPluginState implements LanguageServerCommandTarget {
 
     return false
   }
+
+  public applyAutoFix(): boolean {
+    for (const contribution of this.contributions) {
+      if (contribution.applyAutoFix()) return true
+    }
+
+    return false
+  }
 }
 
 class LanguageServerCommandContribution implements EditorDisposable {
@@ -326,6 +344,9 @@ class LanguageServerContribution implements EditorViewContribution {
   private readonly hoverDefinition: HoverDefinitionController
   private readonly signatureHelp: SignatureHelpController
   private readonly documentHighlights: DocumentHighlightController
+  private readonly codeActions: CodeActionController
+  /** Absent rather than idle when switched off, so nothing watches the typing at all. */
+  private readonly formatOnType: FormatOnTypeController | null
   private rename: RenameWidgetController | null = null
   private readonly connectionRegistration: EditorDisposable | null
   private disposed = false
@@ -350,7 +371,10 @@ class LanguageServerContribution implements EditorViewContribution {
       {
         onConnected: () => this.handleConnected(),
         onUnavailable: () => this.clearRequestUi(),
-        onPublishDiagnostics: (params) => this.documentSync.publishDiagnostics(params),
+        onPublishDiagnostics: (params) => {
+          this.documentSync.publishDiagnostics(params)
+          this.codeActions.diagnosticsChanged()
+        },
         onStatusChange: options.onStatusChange,
         onError: options.onError,
       },
@@ -407,6 +431,17 @@ class LanguageServerContribution implements EditorViewContribution {
       highlightName: `${context.highlightPrefix ?? options.defaultHighlightPrefix}-document-highlight`,
       onRequestError: (error) => this.handleRequestError(error),
     })
+    this.codeActions = new CodeActionController({
+      client: this.connection.client,
+      context,
+      editFeature: options.completion.editFeature,
+      getActiveDocument: () => this.documentSync.activeDocument,
+      getDiagnostics: () => this.documentSync.diagnostics,
+      onRequestError: (error) => this.handleRequestError(error),
+    })
+    this.formatOnType = options.formatOnType
+      ? new FormatOnTypeController({ context, editFeature: options.completion.editFeature })
+      : null
     this.state.register(this)
     this.connection.connect()
     this.update(context.getSnapshot(), 'document', null)
@@ -425,6 +460,8 @@ class LanguageServerContribution implements EditorViewContribution {
     this.completion.update(snapshot, kind, change ?? null)
     this.signatureHelp.update(snapshot, kind, change ?? null)
     this.documentHighlights.update(snapshot, kind)
+    this.codeActions.update(kind)
+    this.formatOnType?.update(snapshot, kind, change ?? null)
   }
 
   public dispose(): void {
@@ -440,6 +477,8 @@ class LanguageServerContribution implements EditorViewContribution {
     this.completion.dispose()
     this.signatureHelp.dispose()
     this.documentHighlights.dispose()
+    this.codeActions.dispose()
+    this.formatOnType?.dispose()
     this.rename?.dispose()
     this.connection.dispose()
   }
@@ -492,6 +531,11 @@ class LanguageServerContribution implements EditorViewContribution {
 
     void this.runRename(active)
     return true
+  }
+
+  /** Applies the preferred quick fix the oracle already found for the caret. */
+  public applyAutoFix(): boolean {
+    return this.codeActions.applyAutoFix()
   }
 
   private async runRename(active: ActiveDocument): Promise<void> {
@@ -648,6 +692,7 @@ function resolveAdapterOptions(
     documentSync: options.documentSync ?? {},
     diagnostics: resolveDiagnosticsOptions(options),
     completion: resolveCompletionOptions(options),
+    formatOnType: options.formatOnType ?? true,
     hoverDefinition: resolveHoverDefinitionOptions(options),
     commands: options.commands ?? LANGUAGE_SERVER_COMMANDS,
     onConnectionCreated: options.onConnectionCreated,
@@ -744,6 +789,10 @@ const LANGUAGE_SERVER_COMMANDS: readonly LanguageServerCommandSpec[] = [
   {
     id: 'editor.action.formatDocument',
     run: (state) => state.formatDocument(),
+  },
+  {
+    id: 'editor.action.autoFix',
+    run: (state) => state.applyAutoFix(),
   },
   {
     id: 'editor.action.marker.next',

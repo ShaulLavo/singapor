@@ -47,6 +47,7 @@ export type EditorCommandId =
   | 'editor.action.toggleWordWrap'
   | 'editor.action.formatDocument'
   | 'editor.action.rename'
+  | 'editor.action.autoFix'
   | 'editor.action.moveSelectionToNextFindMatch'
   | 'editor.fold'
   | 'editor.unfold'

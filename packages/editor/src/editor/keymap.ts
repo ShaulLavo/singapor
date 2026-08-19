@@ -25,6 +25,7 @@ export type EditorCommandPack =
   | 'multi-cursor'
   | 'folding'
   | 'lsp-navigation'
+  | 'lsp-editing'
 
 export type EditorKeymapLayerSource = 'core' | 'plugin' | 'app' | 'user'
 
@@ -207,6 +208,7 @@ export const defaultEditorCommandPacks = [
   'multi-cursor',
   'folding',
   'lsp-navigation',
+  'lsp-editing',
 ] as const satisfies readonly EditorCommandPack[]
 
 export const readonlySafeEditorCommandPacks = [
@@ -288,6 +290,7 @@ export function editorCommandPackForCommand(command: EditorCommandId): EditorCom
   if (MULTI_CURSOR_COMMANDS.has(command)) return 'multi-cursor'
   if (FOLDING_COMMANDS.has(command)) return 'folding'
   if (LSP_NAVIGATION_COMMANDS.has(command)) return 'lsp-navigation'
+  if (LSP_EDITING_COMMANDS.has(command)) return 'lsp-editing'
 
   return null
 }
@@ -304,6 +307,7 @@ function editorKeyBindingsForCommandPack(
   if (pack === 'multi-cursor') return multiCursorEditingBindings(platform)
   if (pack === 'folding') return foldingBindings(platform)
   if (pack === 'lsp-navigation') return lspNavigationBindings()
+  if (pack === 'lsp-editing') return lspEditingBindings(platform)
 
   return []
 }
@@ -446,6 +450,16 @@ const LSP_NAVIGATION_COMMANDS = new Set<EditorCommandId>([
   'editor.action.marker.prev',
 ])
 
+/**
+ * The language-server commands that write to the document, kept apart from the ones that only move
+ * the caret, so a host can offer the second family to a reader and neither one by accident.
+ */
+const LSP_EDITING_COMMANDS = new Set<EditorCommandId>([
+  'editor.action.formatDocument',
+  'editor.action.rename',
+  'editor.action.autoFix',
+])
+
 function navigationBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   return horizontalNavigationBindings(platform).concat(verticalNavigationBindings(platform))
 }
@@ -554,6 +568,19 @@ function multiCursorEditingBindings(platform: EditorPlatform): readonly EditorKe
 
 function lspNavigationBindings(): readonly EditorKeyBinding[] {
   return [{ hotkey: key('F12'), command: 'goToDefinition' }]
+}
+
+/**
+ * The fix chord deliberately takes a modifier more than the bare one on the same key.
+ *
+ * Applying a fix with no menu is the shorthand, not the general case, and leaving the shorter chord
+ * unclaimed keeps it for the menu that offers every action at the caret rather than just the obvious
+ * one. Mac spends shift on the period to type a colon, so it takes the primary modifier instead.
+ */
+function lspEditingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  const autoFix = platform === 'mac' ? { mod: true, alt: true } : { alt: true, shift: true }
+
+  return [{ hotkey: key('.', autoFix), command: 'editor.action.autoFix' }]
 }
 
 /**

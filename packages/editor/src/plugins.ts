@@ -4,6 +4,7 @@ import type { DocumentTextSnapshot, TextSnapshot } from './documentTextSnapshot'
 import type { EditorCommandContext, EditorCommandId } from './editor/commands'
 import { EditorDisposableStore, MutableEditorDisposable } from './editor/disposables'
 import type { PieceTableSnapshot } from './pieceTable/pieceTableTypes'
+import type { SnippetMirrorRange, SnippetSessionStop } from './editor/snippetSession'
 import type { EditorTheme } from './theme'
 import type { EditorToken, TextEdit } from './tokens'
 import type { EditorBlockProvider } from './editorBlocks'
@@ -421,12 +422,22 @@ export type EditorEditContributionContext = EditorDocumentContributionContext &
       selection?: EditorSelectionRange,
     ): void
     /**
-     * Starts tab-stop navigation over ranges of the text just inserted. Optional so existing
-     * hand-written contexts (test doubles, mostly) keep compiling; a host without it simply leaves
-     * the caret at the first stop.
+     * Starts tab-stop navigation over the text just inserted: one entry per stop, carrying the
+     * range the caret visits and, where the snippet writes that stop more than once, the copies
+     * that have to go on reading the same as it while it is being typed into. A copy with a
+     * `transform` is rendered from the stop's text rather than holding it verbatim.
+     *
+     * Optional so existing hand-written contexts (test doubles, mostly) keep compiling; a host
+     * without it simply leaves the caret at the first stop.
      */
-    startSnippetSession?(ranges: readonly { readonly start: number; readonly end: number }[]): void
+    startSnippetSession?(stops: readonly EditorSnippetStop[]): void
   }
+
+/** A second place a snippet writes a stop, kept reading the same as the stop while it is typed. */
+export type EditorSnippetMirror = SnippetMirrorRange
+
+/** One tab stop as a snippet source hands it over: where the caret visits, and its copies. */
+export type EditorSnippetStop = SnippetSessionStop
 
 export type EditorFeatureContributionContext = EditorFeatureDomContributionContext &
   EditorDocumentContributionContext &

@@ -5,8 +5,10 @@ import type { EditorCommandId } from '../src/editor/commands'
 import {
   documentSelectionEditForCommand,
   isEditorDocumentSelectionEditCommand,
+  reindentEditsForRanges,
   type EditorDocumentSelectionEditCommandId,
 } from '../src/editor/reindent'
+import type { TextEdit } from '../src/tokens'
 import { Editor } from '../src/editor/Editor'
 import {
   defaultEditorKeyBindings,
@@ -300,22 +302,52 @@ function selection(start: number, end = start): ResolvedSelection {
   } as ResolvedSelection
 }
 
-function run(
-  command: EditorDocumentSelectionEditCommandId,
-  text: string,
-  languageId: string,
-): string {
-  const action = documentSelectionEditForCommand(command, text, [selection(0, text.length)], {
-    languageId,
-    tabSize: 2,
-  })
+function applyEdits(text: string, edits: readonly TextEdit[]): string {
   let out = text
-  for (const edit of [...action.edits].sort((left, right) => right.from - left.from)) {
+  for (const edit of [...edits].sort((left, right) => right.from - left.from)) {
     out = out.slice(0, edit.from) + edit.text + out.slice(edit.to)
   }
 
   return out
 }
+
+function run(
+  command: EditorDocumentSelectionEditCommandId,
+  text: string,
+  languageId: string,
+): string {
+  return applyEdits(
+    text,
+    documentSelectionEditForCommand(command, text, [selection(0, text.length)], {
+      languageId,
+      tabSize: 2,
+    }).edits,
+  )
+}
+
+describe('reindent asked for by offset', () => {
+  // Two inner rows equally wrong, so a range reaching one of them and not the other is visible in
+  // the document rather than only in the edit list.
+  const NESTED = lines('function outer() {', 'if (ready) {', 'run()', 'more()', '}', '}')
+
+  const reindented = (start: number, end: number): string =>
+    applyEdits(
+      NESTED,
+      reindentEditsForRanges(NESTED, [{ end, start }], { languageId: 'typescript', tabSize: 2 }),
+    )
+
+  it('leaves every row the offsets did not ask about', () => {
+    expect(reindented(32, 32)).toBe(
+      lines('function outer() {', 'if (ready) {', '  run()', 'more()', '}', '}'),
+    )
+  })
+
+  it('reaches the last row a range spans and not only its first', () => {
+    expect(reindented(32, 44)).toBe(
+      lines('function outer() {', 'if (ready) {', '  run()', '  more()', '}', '}'),
+    )
+  })
+})
 
 describe('reindent and the language registry', () => {
   it('does nothing for a language that described no indentation rules', () => {

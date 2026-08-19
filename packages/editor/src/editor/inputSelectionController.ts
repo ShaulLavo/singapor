@@ -114,7 +114,12 @@ import {
   referenceRangeFor,
   type LinkedEditingRange,
 } from './linkedEditing'
-import { SnippetSession, type SnippetStopRange } from './snippetSession'
+import {
+  SnippetSession,
+  type SnippetMirrorRange,
+  type SnippetSessionStop,
+  type SnippetStopRange,
+} from './snippetSession'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
 import { lineBreakIndent } from './indentation'
@@ -285,7 +290,7 @@ export class InputSelectionController {
     // beforeinput line break; both routes must indent identically.
     if (text === '\n') return this.applyLineBreak(session, text)
 
-    const mirrored = this.mirrorTypedText(session, text)
+    const mirrored = this.mirrorSnippetText(session, text) ?? this.mirrorTypedText(session, text)
     if (mirrored) return mirrored
 
     const decided = this.autoCloseChange(session, text)
@@ -319,21 +324,155 @@ export class InputSelectionController {
    */
   private mirrorBackspace(session: DocumentSession): DocumentSessionChange | null {
     const snapshot = session.getSnapshot()
+    const target = this.singleSelection(session, snapshot)
+    if (!target?.collapsed) return null
+
+    const start = this.graphemeStartBefore(snapshot, target.startOffset)
+    if (start === null) return null
+
+    return this.mirrorNameEdit(session, '', start)
+  }
+
+  /** The one selection an edit that rewrites text elsewhere can reason about, resolved. */
+  private singleSelection(
+    session: DocumentSession,
+    snapshot: PieceTableSnapshot,
+  ): ResolvedSelection | null {
     const selections = session.getSelections().selections
     if (selections.length !== 1) return null
 
     const only = selections[0]
     if (!only) return null
 
-    const target = resolveSelection(snapshot, only)
-    if (!target.collapsed || target.startOffset === 0) return null
+    return resolveSelection(snapshot, only)
+  }
 
+  /** Where the character a backspace at `offset` eats begins, or null when there is none. */
+  private graphemeStartBefore(snapshot: PieceTableSnapshot, offset: number): number | null {
+    if (offset === 0) return null
+
+    const window = Math.min(8, offset)
     const from = previousGraphemeBoundary(
-      readPieceTableTextRange(snapshot, Math.max(0, target.startOffset - 8), target.startOffset),
-      Math.min(8, target.startOffset),
+      readPieceTableTextRange(snapshot, offset - window, offset),
+      window,
     )
-    const start = target.startOffset - (Math.min(8, target.startOffset) - from)
-    return this.mirrorNameEdit(session, '', start)
+    return offset - (window - from)
+  }
+
+  /**
+   * Typed text carried into the other places the snippet writes the stop it lands in.
+   *
+   * A stop written twice is one value shown twice, so the copies have to read the same while the
+   * word is being typed rather than once the caret leaves: text that is plainly wrong for as long
+   * as it takes to type a name is the thing a reader notices.
+   */
+  private mirrorSnippetText(session: DocumentSession, text: string): DocumentSessionChange | null {
+    if (text.length === 0) return null
+
+    return this.mirrorSnippetEdit(session, text, null)
+  }
+
+  /** The same copies kept true for the keystroke that takes a character back out of the stop. */
+  private mirrorSnippetBackspace(session: DocumentSession): DocumentSessionChange | null {
+    const snapshot = session.getSnapshot()
+    const target = this.singleSelection(session, snapshot)
+    if (!target) return null
+    // A selection is removed as it stands; only a collapsed caret has to look behind itself, and
+    // what sits there is a grapheme rather than a code unit.
+    if (!target.collapsed) return this.mirrorSnippetEdit(session, '', null)
+
+    const start = this.graphemeStartBefore(snapshot, target.startOffset)
+    if (start === null) return null
+
+    return this.mirrorSnippetEdit(session, '', start)
+  }
+
+  /**
+   * One batch that edits the active stop and rewrites every copy of it from the text the stop is
+   * left holding, or null for a keystroke that is not the stop being filled in.
+   *
+   * Batched for the reason a rename is: the copies are not something the reader typed, so the
+   * keystroke that caused them has to be the one that takes them back.
+   */
+  private mirrorSnippetEdit(
+    session: DocumentSession,
+    text: string,
+    replaceFrom: number | null,
+  ): DocumentSessionChange | null {
+    const snapshot = session.getSnapshot()
+    const stop = this.snippet.activeStop(snapshot)
+    if (!stop || stop.mirrors.length === 0) return null
+
+    const target = this.singleSelection(session, snapshot)
+    if (!target) return null
+
+    const start = replaceFrom ?? target.startOffset
+    const end = target.endOffset
+    // Only an edit the stop wholly contains is the stop's own text changing. One that reaches past
+    // either end is the reader editing the document around the snippet, and copying that would put
+    // text they never typed into the stop's copies.
+    if (start < stop.range.start || end > stop.range.end) return null
+
+    const read = (from: number, to: number) => readPieceTableTextRange(snapshot, from, to)
+    const current = rangeText(read, stop.range)
+    const value =
+      current.slice(0, start - stop.range.start) + text + current.slice(end - stop.range.start)
+
+    const rewrites = stop.mirrors.map((mirror) => {
+      const rendered = mirror.transform ? mirror.transform(value) : value
+      return { mirror, rendered, rewritten: rendered !== rangeText(read, mirror) }
+    })
+    // Nothing but the keystroke itself: every copy already reads the way this one will, so the
+    // ordinary typing path is both shorter and better at coalescing undo. That holds only while the
+    // stop outlives the keystroke, though: the stop is anchored on the characters at either end of
+    // it, and an edit that takes one of them out leaves the copies untracked for the rest of the
+    // session. Those go through the batch, which rewrites nothing but re-anchors.
+    const survives = start === end || (start > stop.range.start && end < stop.range.end)
+    if (survives && !rewrites.some((rewrite) => rewrite.rewritten)) return null
+
+    /** What the copies before `offset` add or remove between them; a copy never moves itself. */
+    const shift = (offset: number, self: number): number =>
+      rewrites.reduce(
+        (total, rewrite, index) =>
+          index === self || !rewrite.rewritten || rewrite.mirror.end > offset
+            ? total
+            : total + rewrite.rendered.length - (rewrite.mirror.end - rewrite.mirror.start),
+        0,
+      )
+
+    const grew = text.length - (end - start)
+    const edits: TextEdit[] = [{ from: start, text, to: end }]
+    const mirrors: SnippetMirrorRange[] = []
+    for (const [index, rewrite] of rewrites.entries()) {
+      const { mirror, rendered } = rewrite
+      if (rewrite.rewritten) edits.push({ from: mirror.start, text: rendered, to: mirror.end })
+
+      // A copy after the stop moves by what the keystroke itself added or removed; one before it
+      // does not, and either moves by whatever the copies before it did.
+      const at =
+        mirror.start + shift(mirror.start, index) + (mirror.start >= stop.range.end ? grew : 0)
+      mirrors.push(
+        mirror.transform
+          ? { end: at + rendered.length, start: at, transform: mirror.transform }
+          : { end: at + rendered.length, start: at },
+      )
+    }
+
+    const moved = stop.range.start + shift(stop.range.start, -1)
+    // A copy ahead of the caret leaves it where it was; one behind moves the whole document under
+    // it, and the caret is handed back in the coordinates the batch produces.
+    const caret = start + text.length + shift(start, -1)
+    const change = session.applyEdits(edits, {
+      selections: [{ anchor: caret, head: caret }],
+    })
+    this.snippet.reanchor(change.snapshot, {
+      mirrors,
+      range: { end: moved + value.length, start: moved },
+    })
+    this.linkedEditing.advance(change.snapshot)
+    this.autoClose.advance(change.snapshot)
+    this.markSessionSelectionForNextInput()
+    return change
   }
 
   private mirrorNameEdit(
@@ -660,11 +799,11 @@ export class InputSelectionController {
   }
 
   /** Begins tab-stop navigation for a snippet that was just inserted. */
-  startSnippetSession(ranges: readonly SnippetStopRange[]): void {
+  startSnippetSession(stops: readonly SnippetSessionStop[]): void {
     const session = this.session
     if (!session) return
 
-    this.snippet.start(session.getSnapshot(), ranges)
+    this.snippet.start(session.getSnapshot(), stops)
   }
 
   /** Moves to the next or previous snippet stop, or reports that no session owns the key. */
@@ -709,6 +848,7 @@ export class InputSelectionController {
     const change =
       direction === 'backward'
         ? (this.deleteAutoClosedPair(session) ??
+          this.mirrorSnippetBackspace(session) ??
           this.mirrorBackspace(session) ??
           session.backspace(this.options.tabSize))
         : session.deleteSelection()
@@ -2514,6 +2654,11 @@ function surroundedSelection(
   const end = selection.endOffset + shift
 
   return selection.reversed ? { anchor: end, head: start } : { anchor: start, head: end }
+}
+
+/** An empty range is asked for often enough here — a stop with no default — to answer for one. */
+function rangeText(read: (from: number, to: number) => string, range: SnippetStopRange): string {
+  return range.end <= range.start ? '' : read(range.start, range.end)
 }
 
 function mouseSelectionTimingName(granularity: MouseSelectionGranularity): string {

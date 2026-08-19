@@ -2279,7 +2279,7 @@ export class Editor {
       focusEditor: () => this.focus(),
       applyEdits: (edits, timingName, selection) =>
         this.inputSelection.applyFindEdits(edits, timingName, selection),
-      startSnippetSession: (ranges) => this.inputSelection.startSnippetSession(ranges),
+      startSnippetSession: (stops) => this.inputSelection.startSnippetSession(stops),
     }
   }
 

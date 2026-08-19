@@ -3,7 +3,12 @@ import type { EditorEditContributionContext, EditorSelectionRange } from '@singa
 import { createEditorCapabilityToken } from '@singapor/core/extensions'
 import { lspPositionToOffset } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
-import { parseSnippet } from '@singapor/core/internal'
+import {
+  parseSnippet,
+  snippetInitialSelection,
+  type ParsedSnippet,
+  type SnippetRange,
+} from '@singapor/core/internal'
 
 import { fuzzyMatch, looseFuzzyMatch, type FuzzyMatch } from './fuzzyMatch'
 
@@ -20,11 +25,27 @@ export const LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE =
     LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE_ID,
   )
 
+export type LanguageServerSnippetMirror = {
+  readonly start: number
+  readonly end: number
+  /** Renders this copy from the stop's text; without one the copy holds that text verbatim. */
+  readonly transform?: (value: string) => string
+}
+
+export type LanguageServerSnippetStop = {
+  readonly start: number
+  readonly end: number
+  readonly mirrors?: readonly LanguageServerSnippetMirror[]
+}
+
 export type LanguageServerCompletionApplication = {
   readonly edits: readonly TextEdit[]
   readonly selection: EditorSelectionRange
-  /** Tab stops to cycle with Tab, when the accepted item was a snippet with more than one. */
-  readonly snippetStops?: readonly { readonly start: number; readonly end: number }[]
+  /**
+   * Tab stops to cycle with Tab, each with the copies of it the snippet writes elsewhere, when the
+   * accepted item was a snippet the host has something to track.
+   */
+  readonly snippetStops?: readonly LanguageServerSnippetStop[]
 }
 
 /** `3` is the kind reserved for asking a server again about a list it marked incomplete. */
@@ -218,16 +239,19 @@ export function completionApplication(
   if (!primary) return null
 
   const additional = additionalCompletionEdits(request, item.additionalTextEdits ?? [])
-  const edits = [primary, ...additional]
-  const head = completionSelectionHead(primary, additional)
+  const edits = [primary.edit, ...additional]
+  const head = completionSelectionHead(primary.edit, additional)
+  const snippet = primary.snippet
+  if (!snippet) return { edits, selection: { anchor: head, head } }
+
   // A snippet's first placeholder is selected so the next keystroke replaces it; without a stop the
   // caret sits after the insertion exactly as a plain completion leaves it.
-  const insertionOffset = head - primary.text.length
-  const snippet = completionSnippetSelection(item, insertionOffset)
+  const insertionOffset = head - primary.edit.text.length
+  const first = snippetInitialSelection(snippet, insertionOffset)
   return {
     edits,
-    selection: snippet ?? { anchor: head, head },
-    snippetStops: completionSnippetStops(item, insertionOffset),
+    selection: { anchor: first.start, head: first.end },
+    snippetStops: snippetStopRanges(snippet, insertionOffset),
   }
 }
 
@@ -462,25 +486,40 @@ function syncEditorThemeVariables(element: HTMLElement, source: HTMLElement): vo
   }
 }
 
+/** The item's own insertion, and the snippet it was expanded from when the item carried one. */
+type CompletionInsertion = {
+  readonly edit: TextEdit
+  readonly snippet: ParsedSnippet | null
+}
+
 function completionPrimaryEdit(
   request: CompletionApplicationRequest,
   item: lsp.CompletionItem,
-): TextEdit | null {
+): CompletionInsertion | null {
   const textEdit = completionTextEdit(item)
   const range = textEdit
     ? completionEditRange(request, textEdit.range)
     : defaultCompletionReplacementRange(request.text, request.offset)
   if (!range) return null
 
+  const source = textEdit ? textEdit.newText : (item.insertText ?? item.label)
+  // Expanded against the document it is landing in, and once: the text that goes in and the offsets
+  // the stops are reported at have to come from the same expansion or the caret lands off the
+  // placeholder it is meant to select.
+  const snippet =
+    item.insertTextFormat === 2
+      ? parseSnippet(source, { insertion: { documentText: request.text, offset: range.start } })
+      : null
+
   return {
-    from: range.start,
-    // Whatever was typed since the request sits between the range's end and the caret, so the end
-    // travels with the caret while the start — the word the server matched — stays where it is.
-    to: Math.max(range.start, range.end + request.caretOffset - request.offset),
-    text: plainCompletionText(
-      textEdit ? textEdit.newText : (item.insertText ?? item.label),
-      item.insertTextFormat,
-    ),
+    snippet,
+    edit: {
+      from: range.start,
+      // Whatever was typed since the request sits between the range's end and the caret, so the end
+      // travels with the caret while the start — the word the server matched — stays where it is.
+      to: Math.max(range.start, range.end + request.caretOffset - request.offset),
+      text: snippet?.text ?? source,
+    },
   }
 }
 
@@ -547,55 +586,35 @@ function defaultCompletionReplacementRange(
   return { start, end }
 }
 
-function plainCompletionText(text: string, format: lsp.InsertTextFormat | undefined): string {
-  if (format !== 2) return text
-
-  return parseSnippet(text).text
-}
-
-/** The snippet source of the item's primary insertion, or null when it is not a snippet. */
-function completionSnippetSource(item: lsp.CompletionItem): string | null {
-  if (item.insertTextFormat !== 2) return null
-
-  const textEdit = completionTextEdit(item)
-  return textEdit ? textEdit.newText : (item.insertText ?? item.label)
-}
-
-/**
- * Where the caret lands after accepting a snippet: its first tab stop, selected so typing replaces
- * the placeholder. Falls back to the end of the insertion, which is what a plain completion does.
- */
-/** Every tab stop of a snippet, in visit order and in document offsets. */
-export function completionSnippetStops(
-  item: lsp.CompletionItem,
+/** Every tab stop in visit order and in document offsets, or undefined when there are none. */
+function snippetStopRanges(
+  snippet: ParsedSnippet,
   insertionOffset: number,
-): readonly { readonly start: number; readonly end: number }[] | undefined {
-  const source = completionSnippetSource(item)
-  if (source === null) return undefined
+): readonly LanguageServerSnippetStop[] | undefined {
+  const stops = snippet.stops.flatMap((stop) => {
+    // The caret is offered the occurrence it can type into — never a transform's output, which is
+    // rendered from another. Every further occurrence goes along as a copy, so a stop the snippet
+    // writes twice reads the same in both places while the reader is still typing it.
+    const caret = stop.ranges.findIndex((candidate) => !candidate.transform)
+    const range = stop.ranges[caret]
+    if (!range) return []
 
-  const parsed = parseSnippet(source)
-  if (parsed.stops.length === 0) return undefined
-
-  // One range per stop: a repeated stop's mirrors are not edited together yet, so the first
-  // occurrence is the one the caret visits.
-  return parsed.stops.flatMap((stop) => {
-    const range = stop.ranges[0]
-    return range ? [{ end: insertionOffset + range.end, start: insertionOffset + range.start }] : []
+    const mirrors = stop.ranges.flatMap((mirror, index) =>
+      index === caret ? [] : [shiftedSnippetRange(mirror, insertionOffset)],
+    )
+    const shifted = shiftedSnippetRange(range, insertionOffset)
+    return [mirrors.length > 0 ? { ...shifted, mirrors } : shifted]
   })
+
+  return stops.length > 0 ? stops : undefined
 }
 
-export function completionSnippetSelection(
-  item: lsp.CompletionItem,
+function shiftedSnippetRange(
+  range: SnippetRange,
   insertionOffset: number,
-): { readonly anchor: number; readonly head: number } | null {
-  const source = completionSnippetSource(item)
-  if (source === null) return null
-
-  const parsed = parseSnippet(source)
-  const first = parsed.stops[0]?.ranges[0]
-  if (!first) return null
-
-  return { anchor: insertionOffset + first.start, head: insertionOffset + first.end }
+): LanguageServerSnippetMirror {
+  const shifted = { end: insertionOffset + range.end, start: insertionOffset + range.start }
+  return range.transform ? { ...shifted, transform: range.transform } : shifted
 }
 
 function completionRowTarget(

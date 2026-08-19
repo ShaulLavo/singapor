@@ -85,7 +85,7 @@ import type {
 } from './types'
 import { EditorViewContributionController } from './viewContributions'
 import type { FoldMap } from '../foldMap'
-import { createInlineMap, type InlineMap } from '../inlineMap'
+import { createInlineMap, type InlineMap, type InlineReplacementSpec } from '../inlineMap'
 import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
 import type { EditorInlineReplacementProvider } from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
@@ -494,6 +494,8 @@ export class Editor {
       editAction: (command, context) =>
         this.inputSelection.applyEditActionCommand(command, context),
       fold: (command) => this.applyFoldCommand(command),
+      inlineSuggest: (command, context) =>
+        this.inputSelection.applyInlineSuggestCommand(command, context),
       selectAll: (context) => this.inputSelection.applySelectAllCommand(context),
       smartSelect: (direction) => this.selectionRanges.apply(direction),
       addNextOccurrence: (context) => this.inputSelection.applyAddNextOccurrenceCommand(context),
@@ -681,21 +683,44 @@ export class Editor {
     this.refreshInlineMap()
   }
 
+  /**
+   * Offers an inline suggestion, drawn in front of the reader as the part of it the document does
+   * not already hold. Passing null takes back whatever is showing.
+   */
+  setInlineSuggestion(edit: TextEdit | null): boolean {
+    const shown = this.inputSelection.setInlineSuggestion(edit)
+    this.refreshInlineMap()
+    return shown
+  }
+
   private refreshInlineMap(): void {
     const providers = this.inlineReplacementProviders()
     const snapshot = this.session?.getSnapshot()
-    if (providers.length === 0 || !snapshot) {
+    if (!snapshot) {
       this.view.setInlineMap(null)
       return
     }
 
+    // The suggestion joins the same map rather than one of its own: a document rendering itself
+    // through replacements is still that document, and ghost text has to take its columns from what
+    // is on screen rather than from text the reader cannot see.
+    const suggestion = this.inputSelection.inlineSuggestionSpecs()
+    const specs =
+      providers.length === 0 ? suggestion : this.providedInlineSpecs(providers, suggestion)
+    this.view.setInlineMap(specs.length === 0 ? null : createInlineMap(snapshot, specs))
+  }
+
+  private providedInlineSpecs(
+    providers: readonly EditorInlineReplacementProvider[],
+    suggestion: readonly InlineReplacementSpec[],
+  ): readonly InlineReplacementSpec[] {
     const context = {
       text: this.materializeFullText(),
       languageId: this.languageId,
       captures: this.syntaxCaptures,
     }
-    const specs = providers.flatMap((provider) => provider(context))
-    this.view.setInlineMap(specs.length === 0 ? null : createInlineMap(snapshot, specs))
+
+    return providers.flatMap((provider) => provider(context)).concat(suggestion)
   }
 
   private inlineReplacementProviders(): readonly EditorInlineReplacementProvider[] {
@@ -2679,6 +2704,11 @@ export class Editor {
         options,
       )
     })
+
+    // After the view has taken the change, because a map is only accepted while it describes text of
+    // the same length as the one on screen. An edit leaves a suggestion describing text that no
+    // longer exists, and the map carrying it is rebuilt rather than patched.
+    if (this.inputSelection.syncInlineSuggestion(change.snapshot)) this.refreshInlineMap()
   }
 
   private withOperation<T>(run: (operation: EditorOperation) => T): T {

@@ -9,6 +9,7 @@ import {
   createInlineRow,
   createWrapMap,
   type InjectedTextRow,
+  type InlineCursorStops,
   type InlineReplacement,
   inlineColumnToSourceColumn,
   sourceColumnToInlineColumn,
@@ -288,6 +289,81 @@ describe('inline display transform', () => {
     expect(sourceColumnToInlineColumn(row, 0)).toBe(0)
     expect(sourceColumnToInlineColumn(row, 2)).toBe(0)
     expect(sourceColumnToInlineColumn(row, 7)).toBe(5)
+  })
+})
+
+const injected = (
+  id: string,
+  column: number,
+  text: string,
+  cursorStops?: InlineCursorStops,
+): InlineReplacement => ({
+  id,
+  startColumn: column,
+  endColumn: column,
+  text,
+  insertion: true,
+  ...(cursorStops === undefined ? {} : { cursorStops }),
+})
+
+describe('injected inline runs', () => {
+  it('paints phantom text at a point without spending a source column', () => {
+    const row = createInlineRow('foo(1)', [injected('hint', 4, 'arg:')])
+
+    expect(row.text).toBe('foo(arg:1)')
+    for (let column = 4; column <= 8; column += 1) {
+      expect(inlineColumnToSourceColumn(row, column)).toBe(4)
+    }
+    expect(inlineColumnToSourceColumn(row, 9)).toBe(5)
+  })
+
+  it('drops a zero-width replacement that did not ask to be one', () => {
+    const row = createInlineRow('foo(1)', [{ id: 'hint', startColumn: 4, endColumn: 4, text: 'x' }])
+
+    expect(row.text).toBe('foo(1)')
+  })
+
+  it('carries a per-run class onto its own segment', () => {
+    const row = createInlineRow('foo(1)', [
+      { ...injected('hint', 4, 'arg:'), className: 'editor-inlay-hint' },
+    ])
+
+    expect(row.segments.map((segment) => segment.className)).toEqual([
+      undefined,
+      'editor-inlay-hint',
+      undefined,
+    ])
+  })
+
+  it('lets a travelling caret clear the run in the direction it is going', () => {
+    const row = createInlineRow('foo(1)', [injected('hint', 4, 'arg:')])
+
+    expect(sourceColumnToInlineColumn(row, 4, 'before')).toBe(4)
+    expect(sourceColumnToInlineColumn(row, 4, 'after')).toBe(8)
+  })
+
+  it('parks a standing caret on the side the run stops', () => {
+    const stopsAt = (cursorStops: InlineCursorStops | undefined): number =>
+      sourceColumnToInlineColumn(
+        createInlineRow('foo(1)', [injected('h', 4, 'arg:', cursorStops)]),
+        4,
+      )
+
+    expect(stopsAt(undefined)).toBe(4)
+    expect(stopsAt('both')).toBe(4)
+    expect(stopsAt('left')).toBe(4)
+    expect(stopsAt('right')).toBe(8)
+    expect(stopsAt('none')).toBe(4)
+  })
+
+  it('walks a standing caret past a run that stops on neither side', () => {
+    const row = createInlineRow('foo(1)', [
+      injected('a-pad', 4, ' ', 'none'),
+      injected('b-hint', 4, 'arg:', 'right'),
+    ])
+
+    expect(row.text).toBe('foo( arg:1)')
+    expect(sourceColumnToInlineColumn(row, 4)).toBe(9)
   })
 })
 

@@ -7,6 +7,7 @@ import type {
 import { lspPositionToOffset, offsetToLspPosition, type LspClient } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
+import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
 import {
   identifierRangeAtOffset,
   navigateToTarget,
@@ -449,8 +450,16 @@ export class HoverDefinitionController {
   }
 }
 
+/**
+ * This surface answers a view that moved by closing, where the others follow it.
+ *
+ * A hover is summoned by the pointer and stays keyed to it: once the text has slid out from under
+ * a pointer that never moved, the tooltip describes a token that is no longer there, and the link
+ * underline is pointing at the wrong word. Both belong to the old frame, so both go.
+ */
 function shouldClearPointerUi(kind: EditorViewContributionUpdateKind): boolean {
-  return kind === 'content' || kind === 'document' || kind === 'clear' || kind === 'viewport'
+  if (anchoredSurfaceFollowsUpdate(kind)) return true
+  return kind === 'content' || kind === 'document' || kind === 'clear'
 }
 
 function defaultDefinitionOptions(

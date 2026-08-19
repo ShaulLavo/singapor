@@ -179,16 +179,36 @@ export type WrapMap = {
 }
 
 /**
+ * Which display edge of an injected run the caret may rest on. It settles only the direction-free
+ * case: a caret that is already travelling follows its direction past the whole run either way.
+ */
+export type InlineCursorStops = 'both' | 'left' | 'right' | 'none'
+
+/**
+ * Fills the node a replacement is painted as. Returning a disposable lets the run take down whatever
+ * it attached — a listener, an observer — when the replacement leaves the map.
+ */
+export type InlineReplacementRender = (container: HTMLElement) => void | { dispose(): void }
+
+/**
  * A single-line source span painted as `text` instead of its own characters. An empty `text` hides
  * the span outright; a non-empty `text` stands in for it. Replacements are atomic: no display
  * column ever resolves to a source column strictly inside one.
+ *
+ * An `insertion` covers no source columns at all — phantom text hanging off a point, which is how an
+ * inlay hint or a colour swatch reaches the screen without the document ever holding it.
  */
 export type InlineReplacement = {
   readonly id: string
   readonly startColumn: number
   readonly endColumn: number
   readonly text: string
+  readonly insertion?: boolean
   readonly kind?: string
+  /** Styles the run alone, where `kind` restyles the whole row the run sits on. */
+  readonly className?: string
+  readonly cursorStops?: InlineCursorStops
+  readonly render?: InlineReplacementRender
   readonly metadata?: unknown
 }
 
@@ -202,6 +222,9 @@ export type InlineRowSegment = {
   readonly displayEndColumn: number
   readonly id?: string
   readonly replacementKind?: string
+  readonly className?: string
+  readonly cursorStops?: InlineCursorStops
+  readonly render?: InlineReplacementRender
   readonly metadata?: unknown
 }
 
@@ -368,11 +391,13 @@ export function sourceColumnToInlineColumn(
 
   for (const segment of row.segments) {
     if (target > segment.sourceEndColumn) continue
-    if (segment.kind === 'source') {
-      return segment.displayStartColumn + (target - segment.sourceStartColumn)
-    }
 
-    return inlineReplacementDisplayColumn(segment, target, bias)
+    const displayColumn =
+      segment.kind === 'source'
+        ? segment.displayStartColumn + (target - segment.sourceStartColumn)
+        : inlineReplacementDisplayColumn(segment, target, bias)
+
+    return injectedRunCaretColumn(row, displayColumn, bias)
   }
 
   return row.text.length
@@ -528,6 +553,9 @@ const inlineReplacementSegment = (
   displayStartColumn,
   displayEndColumn: displayStartColumn + replacement.text.length,
   ...(replacement.kind === undefined ? {} : { replacementKind: replacement.kind }),
+  ...(replacement.className === undefined ? {} : { className: replacement.className }),
+  ...(replacement.cursorStops === undefined ? {} : { cursorStops: replacement.cursorStops }),
+  ...(replacement.render === undefined ? {} : { render: replacement.render }),
   ...(replacement.metadata === undefined ? {} : { metadata: replacement.metadata }),
 })
 
@@ -543,7 +571,13 @@ const normalizeInlineReplacements = (
       startColumn: clampColumn(replacement.startColumn, sourceText.length),
       endColumn: clampColumn(replacement.endColumn, sourceText.length),
     }))
-    .filter((replacement) => replacement.endColumn > replacement.startColumn)
+    // Zero width is phantom text at a point, which only a replacement that asked for one may be; an
+    // ordinary span that clamping collapsed onto itself is degenerate and still goes.
+    .filter((replacement) =>
+      replacement.insertion === true
+        ? replacement.endColumn === replacement.startColumn
+        : replacement.endColumn > replacement.startColumn,
+    )
     .toSorted((left, right) => {
       return (
         left.startColumn - right.startColumn ||
@@ -560,6 +594,43 @@ const normalizeInlineReplacements = (
   }
 
   return kept
+}
+
+/**
+ * An injected run owns no source column, so the caret's source position cannot say which side of one
+ * it belongs on. Direction settles it while the caret is travelling; standing still, the runs' own
+ * cursor stops do, and a run that stops on neither side hands the choice to whatever follows it —
+ * which is how padding between two hint parts never traps the caret inside the hint.
+ */
+const injectedRunCaretColumn = (row: InlineRow, column: number, bias: TransformBias): number => {
+  let past = column
+  let stop: number | null = null
+
+  for (const segment of row.segments) {
+    if (segment.displayStartColumn !== past) continue
+    if (!isInjectedSegment(segment)) continue
+    if (stop === null && injectedRunStopsLeft(segment)) stop = past
+    past = segment.displayEndColumn
+    if (stop === null && injectedRunStopsRight(segment)) stop = past
+  }
+
+  if (bias === 'before') return column
+  if (bias === 'after') return past
+  return stop ?? column
+}
+
+const isInjectedSegment = (segment: InlineRowSegment): boolean =>
+  segment.kind === 'replacement' && segment.sourceStartColumn === segment.sourceEndColumn
+
+/** A run without stated stops takes both, matching a replacement that never heard of the concept. */
+const injectedRunStopsLeft = (segment: InlineRowSegment): boolean => {
+  const stops = segment.cursorStops ?? 'both'
+  return stops === 'both' || stops === 'left'
+}
+
+const injectedRunStopsRight = (segment: InlineRowSegment): boolean => {
+  const stops = segment.cursorStops ?? 'both'
+  return stops === 'both' || stops === 'right'
 }
 
 const inlineSegmentIndexForDisplayColumn = (

@@ -133,8 +133,9 @@ export type VirtualizedTextChunk = {
 export type VirtualizedTextChunkPart =
   | VirtualizedTextChunkTextPart
   | VirtualizedTextChunkControlPart
+  | VirtualizedTextChunkWidgetPart
 
-export type VirtualizedTextRenderMode = 'simple' | 'rendered' | 'chunked'
+export type VirtualizedTextRenderMode = 'simple' | 'rendered' | 'chunked' | 'widget'
 
 export type VirtualizedTextChunkTextPart = {
   readonly kind: 'text'
@@ -149,6 +150,18 @@ type VirtualizedTextChunkControlPart = {
   readonly localEnd: number
   readonly element: HTMLSpanElement
   readonly widthCells: number
+}
+
+/**
+ * An inline replacement that rendered its own DOM instead of standing for text. It covers the
+ * replacement's display columns like any other part, but its advance is whatever the mounted node
+ * measures — the columns underneath it say nothing about how wide it draws.
+ */
+type VirtualizedTextChunkWidgetPart = {
+  readonly kind: 'widget'
+  readonly localStart: number
+  readonly localEnd: number
+  readonly element: HTMLSpanElement
 }
 
 export type VirtualizedFoldMarker = {

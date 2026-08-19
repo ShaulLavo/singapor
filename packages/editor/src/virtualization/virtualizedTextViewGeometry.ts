@@ -116,6 +116,13 @@ export type RenderedChunkParts = {
   readonly textNode: Text
 }
 
+/** Where a mounted inline replacement sits in a row's rendered text, in row-local indices. */
+export type InlineWidgetPlacement = {
+  readonly localStart: number
+  readonly localEnd: number
+  readonly element: HTMLSpanElement
+}
+
 type ControlCharacterInfo = {
   readonly label: string
   readonly widthCells: number
@@ -126,6 +133,11 @@ let rowRectMeasurementDepth = 0
 let measuredRowRects: Map<HTMLElement, DOMRect> | null = null
 let measurementScratch: MeasurementScratch | null = null
 const measuredRowWidths = new WeakMap<HTMLElement, RowContentWidthCache>()
+/**
+ * Kept per element rather than per row: a mounted replacement outlives the rows it is painted into,
+ * and its advance is a property of the node, not of whichever row currently hosts it.
+ */
+const inlineWidgetWidths = new WeakMap<HTMLElement, number>()
 
 export function isSimpleRowText(text: string): boolean {
   for (let index = 0; index < text.length; index += 1) {
@@ -155,9 +167,48 @@ export function createRenderedChunkParts(
   text: string,
   localStart: number,
   cellWidth: number,
+  widgets: readonly InlineWidgetPlacement[] = [],
 ): RenderedChunkParts {
   const parts: VirtualizedTextChunkPart[] = []
   const nodes: Node[] = []
+  let cursor = 0
+
+  for (const widget of widgets) {
+    const start = widget.localStart - localStart
+    appendRenderedText(
+      document,
+      parts,
+      nodes,
+      text.slice(cursor, start),
+      localStart + cursor,
+      cellWidth,
+    )
+    nodes.push(widget.element)
+    parts.push({
+      kind: 'widget',
+      localStart: widget.localStart,
+      localEnd: widget.localEnd,
+      element: widget.element,
+    })
+    cursor = widget.localEnd - localStart
+  }
+
+  appendRenderedText(document, parts, nodes, text.slice(cursor), localStart + cursor, cellWidth)
+  return {
+    nodes,
+    parts,
+    textNode: firstTextNode(parts) ?? document.createTextNode(''),
+  }
+}
+
+function appendRenderedText(
+  document: Document,
+  parts: VirtualizedTextChunkPart[],
+  nodes: Node[],
+  text: string,
+  localStart: number,
+  cellWidth: number,
+): void {
   let run = ''
   let runStart = localStart
   let index = 0
@@ -186,11 +237,17 @@ export function createRenderedChunkParts(
   }
 
   appendTextPart(document, parts, nodes, runStart, run)
-  return {
-    nodes,
-    parts,
-    textNode: firstTextNode(parts) ?? document.createTextNode(''),
-  }
+}
+
+/**
+ * Reports whether the advance changed, so a caller that has just measured can tell whether anything
+ * that already read this width has to read it again.
+ */
+export function setInlineWidgetMeasuredWidth(element: HTMLElement, width: number): boolean {
+  if (inlineWidgetWidths.get(element) === width) return false
+
+  inlineWidgetWidths.set(element, width)
+  return true
 }
 
 export function clearRowGeometryCache(row: MountedVirtualizedTextRow): void {
@@ -407,7 +464,42 @@ export function offsetFromDomBoundary(
   const controlOffset = offsetFromControlPartBoundary(row, node, offset)
   if (controlOffset !== null) return controlOffset
 
+  const widgetOffset = offsetFromInlineWidgetBoundary(row, node, offset)
+  if (widgetOffset !== null) return widgetOffset
+
   return offsetFromElementBoundary(row, node, offset)
+}
+
+/**
+ * A replacement stands for its whole source span, so a boundary the browser found somewhere in the
+ * rendered node — a double-click reaching into an image's alt text, a drag that ended over it —
+ * resolves to an edge of the span rather than to whatever the row ends in.
+ */
+function offsetFromInlineWidgetBoundary(
+  row: MountedVirtualizedTextRow,
+  node: Node,
+  offset: number,
+): number | null {
+  const part = inlineWidgetPartForNode(row, node)
+  if (!part) return null
+  if (node === part.element && offset > 0) return rowOffsetForLocalIndex(row, part.localEnd)
+
+  return rowOffsetForLocalIndex(row, part.localStart)
+}
+
+function inlineWidgetPartForNode(
+  row: MountedVirtualizedTextRow,
+  node: Node,
+): Extract<VirtualizedTextChunkPart, { readonly kind: 'widget' }> | null {
+  for (const chunk of row.chunks) {
+    const part = chunk.parts.find((candidate) => {
+      if (candidate.kind !== 'widget') return false
+      return candidate.element === node || candidate.element.contains(node)
+    })
+    if (part?.kind === 'widget') return part
+  }
+
+  return null
 }
 
 function ensureRowGeometry(
@@ -662,7 +754,29 @@ function appendMeasuredPartBoundaries(
 ): number {
   if (part.kind === 'control')
     return appendControlBoundaries(boundaries, view, row, part, fallbackX, measurement)
+  if (part.kind === 'widget') return appendWidgetBoundaries(boundaries, view, row, part, fallbackX)
   return appendTextBoundaries(boundaries, view, row, part, fallbackX, measurement)
+}
+
+/**
+ * The columns a rendered replacement covers say nothing about how wide it draws, so its advance is
+ * the width the mount observed rather than anything read here — one rect per resize instead of one
+ * per geometry build, and a width even while the row is off-screen. The estimate stands in until
+ * something has been measured at all, which is the placeholder text's own width.
+ */
+function appendWidgetBoundaries(
+  boundaries: BoundaryBuffer,
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  part: Extract<VirtualizedTextChunkPart, { readonly kind: 'widget' }>,
+  fallbackX: number,
+): number {
+  const width =
+    inlineWidgetWidths.get(part.element) ??
+    estimatedLocalRangeWidth(view, row, part.localStart, part.localEnd)
+  appendBoundary(boundaries, rowOffsetForLocalIndex(row, part.localStart), fallbackX)
+  appendBoundary(boundaries, rowOffsetForLocalIndex(row, part.localEnd), fallbackX + width)
+  return fallbackX + width
 }
 
 function appendTextBoundaries(

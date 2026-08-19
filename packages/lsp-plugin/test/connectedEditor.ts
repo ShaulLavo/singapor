@@ -62,11 +62,16 @@ export type ConnectedEditor = {
   moveCaret(offset: number): void
   selectRange(start: number, end: number): void
   scroll(by: number): void
+  /** The same anchor movement a scroll makes, reported as the view being laid out again. */
+  relayout(by: number): void
+  pointerMove(clientX: number, clientY: number): void
   editElsewhere(edit: TextEdit): void
   pressKey(key: string, modifiers?: KeyboardEventInit): KeyboardEvent
   breakAcceptance(): void
   answerCompletion(items: readonly lsp.CompletionItem[], isIncomplete?: boolean): void
   answerResolve(item: lsp.CompletionItem): void
+  answerHover(hover: lsp.Hover | null): void
+  answerSignatureHelp(help: lsp.SignatureHelp | null): void
   answerCodeAction(actions: readonly (lsp.Command | lsp.CodeAction)[] | null): void
   answerCodeActionResolve(action: lsp.CodeAction): void
   publishDiagnostics(diagnostics: readonly lsp.Diagnostic[], version?: number): void
@@ -151,6 +156,11 @@ export async function connectedEditor(
     transport.receive({ jsonrpc: '2.0', id: request.id, result })
   }
 
+  const moveView = (by: number, kind: 'viewport' | 'layout'): void => {
+    anchorRect = new DOMRect(anchorRect.x, anchorRect.y - by, anchorRect.width, anchorRect.height)
+    contribution.update(snapshot, kind, null)
+  }
+
   const applyChange = (edit: TextEdit, caretOffset: number): void => {
     const next = `${snapshot.fullText.slice(0, edit.from)}${edit.text}${snapshot.fullText.slice(edit.to)}`
     snapshot = editorSnapshot(next, caretOffset, snapshot.textVersion + 1)
@@ -176,9 +186,12 @@ export async function connectedEditor(
       snapshot = editorSnapshot(snapshot.fullText, end, snapshot.textVersion, start)
       contribution.update(snapshot, 'selection', null)
     },
-    scroll: (by) => {
-      anchorRect = new DOMRect(anchorRect.x, anchorRect.y - by, anchorRect.width, anchorRect.height)
-      contribution.update(snapshot, 'viewport', null)
+    scroll: (by) => moveView(by, 'viewport'),
+    relayout: (by) => moveView(by, 'layout'),
+    pointerMove: (clientX, clientY) => {
+      element.dispatchEvent(
+        new PointerEvent('pointermove', { bubbles: true, buttons: 0, clientX, clientY }),
+      )
     },
     pressKey: (key, modifiers = {}) => {
       const event = new KeyboardEvent('keydown', {
@@ -196,6 +209,8 @@ export async function connectedEditor(
     answerCompletion: (items, isIncomplete = false) =>
       answer('textDocument/completion', { isIncomplete, items }),
     answerResolve: (item) => answer('completionItem/resolve', item),
+    answerHover: (hover) => answer('textDocument/hover', hover),
+    answerSignatureHelp: (help) => answer('textDocument/signatureHelp', help),
     answerCodeAction: (actions) => answer('textDocument/codeAction', actions),
     answerCodeActionResolve: (action) => answer('codeAction/resolve', action),
     publishDiagnostics: (diagnostics, version) =>

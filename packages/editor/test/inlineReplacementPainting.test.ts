@@ -76,6 +76,19 @@ describe('token painting over inline replacements', () => {
     expect(container.querySelector('.editor-inline-heading-marker-2')).toBeNull()
   })
 
+  it('renders phantom text at a point the document never gained', async () => {
+    editor.openDocument({ documentId: 'x.md', languageId: 'markdown', text: TEXT })
+    await flush()
+    editor.setInlineReplacementProvider(() => [
+      { id: 'hint', startIndex: 3, endIndex: 3, text: 'name:', insertion: true },
+    ])
+    await flush()
+
+    const rows = [...container.querySelectorAll('.editor-virtualized-row')]
+    expect(rows.map((row) => row.textContent)).toContain('## name:Summary')
+    expect(editor.materializeFullText()).toBe(TEXT)
+  })
+
   async function openWithHeadingReplacement(): Promise<void> {
     editor.openDocument({ documentId: 'x.md', languageId: 'markdown', text: TEXT })
     await flush()

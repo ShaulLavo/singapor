@@ -120,6 +120,8 @@ import {
   type SnippetSessionStop,
   type SnippetStopRange,
 } from './snippetSession'
+import { GhostTextSession, type EditorInlineSuggestCommandId } from './ghostText'
+import type { InlineReplacementSpec } from '../inlineMap'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
 import { lineBreakIndent } from './indentation'
@@ -204,6 +206,7 @@ const COLUMN_SELECTION_COMMANDS = new Set<EditorCommandId>([
 export class InputSelectionController {
   private readonly autoClose = new AutoCloseStore()
   private readonly snippet = new SnippetSession()
+  private readonly ghostText = new GhostTextSession()
   private readonly linkedEditing = new LinkedEditingSession()
   private occurrenceRun: OccurrenceRun | null = null
   private mouseSelectionDrag: MouseSelectionDrag | null = null
@@ -821,6 +824,97 @@ export class InputSelectionController {
     return true
   }
 
+  /**
+   * Offers an inline suggestion, drawn as the text the document does not already hold; null takes
+   * back whatever is showing.
+   *
+   * Only a single collapsed caret is offered one. With a selection, or with several carets, there is
+   * no one place the suggestion would be typed, so nothing about it could be drawn honestly — and a
+   * document nobody may write to is offered none at all, rather than text no key of theirs can take.
+   */
+  setInlineSuggestion(edit: TextEdit | null): boolean {
+    const session = this.session
+    const snapshot = session?.getSnapshot()
+    const caret = session && snapshot ? this.collapsedCaretOffset(session, snapshot) : null
+    if (!session || !snapshot || !edit || caret === null || !this.options.canEditDocument()) {
+      this.ghostText.clear()
+      return false
+    }
+
+    return this.ghostText.show(snapshot, session.materializeFullText(), edit, caret)
+  }
+
+  /** The runs painting the suggestion that is showing, for the map the view renders from. */
+  inlineSuggestionSpecs(): readonly InlineReplacementSpec[] {
+    const snapshot = this.session?.getSnapshot()
+
+    return snapshot ? this.ghostText.specs(snapshot) : []
+  }
+
+  /** Whether the suggestion on screen has to be rebuilt after a change reached the document. */
+  syncInlineSuggestion(snapshot: PieceTableSnapshot): boolean {
+    return this.ghostText.needsRepaint(snapshot)
+  }
+
+  applyInlineSuggestCommand(
+    command: EditorInlineSuggestCommandId,
+    context: EditorCommandContext,
+  ): boolean {
+    const session = this.session
+    if (!session) return false
+    if (!this.options.canEditDocument()) return false
+
+    return this.acceptInlineSuggestion(
+      session,
+      context,
+      command === 'editor.action.inlineSuggest.commit' ? 'all' : 'word',
+    )
+  }
+
+  /**
+   * Writes what is on offer into the document, whole or a word of it, or reports that nothing is.
+   *
+   * The sessions around it are carried across the edit rather than ended by it: taking a suggestion
+   * is not the reader leaving the snippet they are filling in, nor typing over a closer this editor
+   * put down. What is left of the suggestion is offered again from the text the accepted part
+   * produced, so the next press reads the document instead of a plan made before the edit.
+   */
+  private acceptInlineSuggestion(
+    session: DocumentSession,
+    context: EditorCommandContext,
+    scope: 'all' | 'word',
+  ): boolean {
+    const snapshot = session.getSnapshot()
+    const accepted =
+      scope === 'all'
+        ? this.ghostText.accept(snapshot)
+        : this.ghostText.acceptNextWord(
+            snapshot,
+            wordSeparatorsForLanguage(this.options.getLanguageId()),
+          )
+    if (!accepted) return false
+
+    const start = context.event ? eventStartMs(context.event) : nowMs()
+    const selectionChange = this.selectionChangeBeforeEdit()
+    const caret = accepted.edit.from + accepted.edit.text.length
+    const change = session.applyEdits([accepted.edit], {
+      selections: [{ anchor: caret, head: caret }],
+    })
+    this.autoClose.advance(change.snapshot)
+    this.snippet.advance(change.snapshot)
+    if (accepted.rest) {
+      this.ghostText.show(change.snapshot, session.materializeFullText(), accepted.rest, caret)
+    }
+    this.markSessionSelectionForNextInput()
+    this.options.applySessionChange(
+      mergeChangeTimings(change, selectionChange),
+      scope === 'all' ? 'input.inlineSuggestCommit' : 'input.inlineSuggestWord',
+      start,
+      { revealOffset: caret },
+    )
+    return true
+  }
+
   /** The single collapsed caret offset, or null when there is a selection or several carets. */
   private collapsedCaretOffset(
     session: DocumentSession,
@@ -865,7 +959,14 @@ export class InputSelectionController {
     if (!session) return false
     if (!this.options.canEditDocument()) return false
 
-    // Tab belongs to an active snippet first: cycling its stops is what the key means while one is
+    // What is drawn at the caret is what Tab takes, ahead of everything else the key means. A
+    // suggestion is gone the moment anything else happens, where the stops of a snippet around it are
+    // still there to cycle through afterwards — so this order costs the reader nothing and the
+    // opposite one costs them the suggestion. Only forwards: shift is how a snippet is walked back,
+    // and there is no backwards through text that has not been written yet.
+    if (direction === 'indent' && this.acceptInlineSuggestion(session, context, 'all')) return true
+
+    // Tab belongs to an active snippet next: cycling its stops is what the key means while one is
     // being filled in, and indenting there would push the placeholder around instead.
     if (this.moveSnippetStop(session, direction === 'indent' ? 1 : -1)) return true
 

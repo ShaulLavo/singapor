@@ -19,7 +19,9 @@ import {
   createCompletionEditFeature,
   type LanguageServerCompletionEditFeature,
 } from './completion'
+import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
 import { CodeActionController } from './codeActions'
+import type { OffsetRange } from './definitionNavigation'
 import { CompletionController } from './completionController'
 import {
   createLanguageServerCompletionSource,
@@ -348,6 +350,8 @@ class LanguageServerContribution implements EditorViewContribution {
   /** Absent rather than idle when switched off, so nothing watches the typing at all. */
   private readonly formatOnType: FormatOnTypeController | null
   private rename: RenameWidgetController | null = null
+  /** The symbol an open prompt is renaming, which is what the prompt has to stay beside. */
+  private renamePromptRange: OffsetRange | null = null
   private readonly connectionRegistration: EditorDisposable | null
   private disposed = false
 
@@ -455,6 +459,7 @@ class LanguageServerContribution implements EditorViewContribution {
     if (this.disposed) return
 
     this.hoverDefinition.update(snapshot, kind)
+    if (anchoredSurfaceFollowsUpdate(kind)) this.reanchorRenamePrompt()
     if (this.documentSync.shouldSync(kind, snapshot))
       this.documentSync.sync(snapshot, change ?? null)
     this.completion.update(snapshot, kind, change ?? null)
@@ -551,7 +556,13 @@ class LanguageServerContribution implements EditorViewContribution {
     if (!anchor) return
 
     try {
-      const nextName = await this.promptRenameName({ anchor, currentName })
+      this.renamePromptRange = range
+      let nextName: string | null
+      try {
+        nextName = await this.promptRenameName({ anchor, currentName })
+      } finally {
+        this.renamePromptRange = null
+      }
       if (nextName === null || nextName === currentName) return
       if (active !== this.documentSync.activeDocument) return
 
@@ -569,6 +580,21 @@ class LanguageServerContribution implements EditorViewContribution {
     } catch (error) {
       this.handleRequestError(error)
     }
+  }
+
+  /**
+   * Keeps an open prompt beside the symbol while the view moves under it.
+   *
+   * A host that supplies its own dialog places it wherever it likes, so there is nothing here to
+   * move; a symbol that has scrolled out of the rendered rows has no rect, and the prompt is left
+   * where it was rather than thrown at the top of the page.
+   */
+  private reanchorRenamePrompt(): void {
+    const range = this.renamePromptRange
+    if (!range) return
+
+    const anchor = this.context.getRangeClientRect(range.start, range.end)
+    if (anchor) this.rename?.reanchor(anchor)
   }
 
   private promptRenameName(prompt: LanguageServerRenamePrompt): Promise<string | null> {

@@ -98,6 +98,7 @@ import {
   applyRowHeight,
   disposeBlockRowMounts,
   disposeGutterCells,
+  disposeInlineWidgets,
   ensureOffsetMounted,
   getMountedRows,
   gutterWidth,
@@ -355,6 +356,7 @@ export class VirtualizedTextView {
     clearTokenHighlights(view)
     view.virtualizer.dispose()
     disposeBlockRowMounts(view)
+    disposeInlineWidgets(view)
     disposeAllMountedBlockLanes(view)
     disposeGutterCells(view)
     this.scrollElement.remove()

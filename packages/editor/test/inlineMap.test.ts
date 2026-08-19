@@ -200,6 +200,116 @@ describe('InlineMap reveal', () => {
   })
 })
 
+describe('InlineMap insertions', () => {
+  const CALL_LINE = 'foo(1)\n'
+  const hint = (): InlineReplacementSpec => ({
+    id: 'hint',
+    startIndex: 4,
+    endIndex: 4,
+    text: 'arg:',
+    insertion: true,
+  })
+
+  it('anchors phantom text to a point the document never holds', () => {
+    const snapshot = createPieceTableSnapshot(CALL_LINE)
+    const map = createInlineMap(snapshot, [hint()])
+
+    expect(map.ranges.map((range) => [range.startOffset, range.endOffset])).toEqual([[4, 4]])
+    expect(inlineRowForBufferRow(map, 0, 'foo(1)').text).toBe('foo(arg:1)')
+  })
+
+  it('drops an empty span no spec asked for, and a spec that asked with a span', () => {
+    const snapshot = createPieceTableSnapshot(CALL_LINE)
+    const specs: InlineReplacementSpec[] = [
+      { id: 'bare', startIndex: 4, endIndex: 4, text: 'x' },
+      { id: 'contradiction', startIndex: 4, endIndex: 5, text: 'x', insertion: true },
+    ]
+
+    expect(createInlineMap(snapshot, specs).ranges).toEqual([])
+  })
+
+  it('keeps an insertion collapsed when text is typed at its point', () => {
+    const snapshot = createPieceTableSnapshot(CALL_LINE)
+    const map = createInlineMap(snapshot, [hint()])
+    const next = insertIntoPieceTable(snapshot, 4, 'z')
+    const updated = updateInlineMapForEdit(map, { from: 4, to: 4, text: 'z' }, next)
+
+    expect(updated.map.ranges.map((range) => [range.startOffset, range.endOffset])).toEqual([
+      [4, 4],
+    ])
+    expect(inlineRowForBufferRow(updated.map, 0, 'foo(z1)').text).toBe('foo(arg:z1)')
+  })
+
+  it('stacks insertions sharing a point instead of deduplicating them', () => {
+    const snapshot = createPieceTableSnapshot(CALL_LINE)
+    const map = createInlineMap(snapshot, [
+      { ...hint(), id: 'b-hint' },
+      { ...hint(), id: 'a-pad', text: ' ' },
+    ])
+
+    expect(map.ranges.map((range) => range.id)).toEqual(['a-pad', 'b-hint'])
+    expect(inlineRowForBufferRow(map, 0, 'foo(1)').text).toBe('foo( arg:1)')
+  })
+
+  it('hands per-run styling and cursor stops down to the row segment', () => {
+    const snapshot = createPieceTableSnapshot(CALL_LINE)
+    const map = createInlineMap(snapshot, [
+      { ...hint(), className: 'editor-inlay-hint', cursorStops: 'right' },
+    ])
+    const segment = inlineRowForBufferRow(map, 0, 'foo(1)').segments[1]
+
+    expect(segment?.className).toBe('editor-inlay-hint')
+    expect(segment?.cursorStops).toBe('right')
+  })
+
+  it('drops an insertion that lands inside a substitution', () => {
+    const snapshot = createPieceTableSnapshot(CALL_LINE)
+    const map = createInlineMap(snapshot, [
+      { id: 'call', startIndex: 0, endIndex: 6, text: 'call' },
+      { ...hint(), id: 'inside' },
+    ])
+
+    expect(map.ranges.map((range) => range.id)).toEqual(['call'])
+  })
+})
+
+describe('InlineMap insertion reveal', () => {
+  it('leaves the map alone when a caret reaches phantom text', () => {
+    const snapshot = createPieceTableSnapshot('foo(1)\n')
+    const map = createInlineMap(snapshot, [
+      { id: 'hint', startIndex: 4, endIndex: 4, text: 'arg:', insertion: true },
+    ])
+
+    expect(revealInlineMap(map, [{ start: 4, end: 4 }])).toBe(map)
+  })
+
+  it('leaves the construct a phantom decorates hidden when only the phantom is touched', () => {
+    const snapshot = createPieceTableSnapshot(BOLD_LINE)
+    const map = createInlineMap(snapshot, [
+      ...boldSpecs(),
+      { id: 'hint', startIndex: 12, endIndex: 12, text: '?', insertion: true, groupId: 'bold' },
+    ])
+
+    expect(revealInlineMap(map, [{ start: 12, end: 12 }]).ranges.map((range) => range.id)).toEqual([
+      'open',
+      'close',
+      'hint',
+    ])
+  })
+
+  it('keeps phantom text a revealed group would otherwise take with it', () => {
+    const snapshot = createPieceTableSnapshot(BOLD_LINE)
+    const map = createInlineMap(snapshot, [
+      ...boldSpecs(),
+      { id: 'hint', startIndex: 5, endIndex: 5, text: '?', insertion: true, groupId: 'bold' },
+    ])
+
+    expect(revealInlineMap(map, [{ start: 2, end: 2 }]).ranges.map((range) => range.id)).toEqual([
+      'hint',
+    ])
+  })
+})
+
 describe('InlinePoint conversion', () => {
   it('collapses both sides of a hidden marker onto one display column', () => {
     const snapshot = createPieceTableSnapshot(BOLD_LINE)

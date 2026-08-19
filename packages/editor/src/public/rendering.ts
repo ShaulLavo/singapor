@@ -32,7 +32,9 @@ export type {
 } from '../inlineMap'
 export type {
   InlineColumnRange,
+  InlineCursorStops,
   InlineReplacement,
+  InlineReplacementRender,
   InlineRow,
   InlineRowSegment,
 } from '../displayTransforms'

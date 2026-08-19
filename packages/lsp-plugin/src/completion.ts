@@ -10,6 +10,7 @@ import {
   type SnippetRange,
 } from '@singapor/core/internal'
 
+import { createAnchoredSurface } from './anchoredSurface'
 import { fuzzyMatch, looseFuzzyMatch, type FuzzyMatch } from './fuzzyMatch'
 
 export const LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE_ID = 'editor.lsp-plugin.completion-edit'
@@ -103,6 +104,16 @@ export function createCompletionWidgetController(
   const classNames = completionWidgetClassNames(options.classNamespace)
   const element = createCompletionWidgetElement(options.document, classNames)
   options.document.body.append(element)
+  const surface = createAnchoredSurface({
+    element,
+    anchorClassName: `${classNames.root}-anchor`,
+    // Below the word, where the next thing typed continues it; above only when there is no room.
+    preferredPlacement: 'bottom',
+    alignment: 'start',
+    gapPx: COMPLETION_WIDGET_GAP_PX,
+    viewportMarginPx: COMPLETION_WIDGET_MARGIN_PX,
+    maxHeightPx: COMPLETION_WIDGET_MAX_HEIGHT_PX,
+  })
 
   let items: readonly lsp.CompletionItem[] = []
   let selectedIndex = 0
@@ -120,19 +131,23 @@ export function createCompletionWidgetController(
     items = showOptions.items
     selectedIndex = clampIndex(showOptions.selectedIndex ?? 0, items.length)
     syncEditorThemeVariables(element, options.themeSource)
-    positionCompletionWidget(element, showOptions.anchor)
     render()
     element.hidden = items.length === 0
+    // Placed once the rows are in and the list is visible: a hidden element measures as nothing,
+    // and how tall it is decides whether it fits below the word.
+    if (element.hidden) surface.release()
+    else surface.place(showOptions.anchor)
   }
 
   const reanchor = (anchor: DOMRect): void => {
     if (element.hidden) return
 
-    positionCompletionWidget(element, anchor)
+    surface.place(anchor)
   }
 
   const hide = (): void => {
     element.hidden = true
+    surface.release()
     element.replaceChildren()
     items = []
     selectedIndex = 0
@@ -165,6 +180,7 @@ export function createCompletionWidgetController(
 
     disposed = true
     element.removeEventListener('pointerdown', handlePointerDown)
+    surface.dispose()
     element.remove()
   }
 
@@ -292,7 +308,6 @@ function createCompletionWidgetElement(
   element.hidden = true
   element.setAttribute('role', 'listbox')
   Object.assign(element.style, {
-    position: 'fixed',
     zIndex: '1001',
     width: `${COMPLETION_WIDGET_WIDTH_PX}px`,
     maxWidth: `calc(100vw - ${COMPLETION_WIDGET_MARGIN_PX * 2}px)`,
@@ -452,28 +467,6 @@ function syncSelectedRow(row: HTMLElement, selected: boolean): void {
   row.style.background = selected
     ? 'color-mix(in srgb, var(--editor-caret-color, #60a5fa) 26%, transparent)'
     : 'transparent'
-}
-
-function positionCompletionWidget(element: HTMLDivElement, anchor: DOMRect): void {
-  const view = element.ownerDocument.defaultView
-  const width = view?.innerWidth ?? 1024
-  const height = view?.innerHeight ?? 768
-  const left = Math.min(
-    Math.max(COMPLETION_WIDGET_MARGIN_PX, anchor.left),
-    Math.max(
-      COMPLETION_WIDGET_MARGIN_PX,
-      width - COMPLETION_WIDGET_WIDTH_PX - COMPLETION_WIDGET_MARGIN_PX,
-    ),
-  )
-  const belowTop = anchor.bottom + COMPLETION_WIDGET_GAP_PX
-  const aboveTop = anchor.top - COMPLETION_WIDGET_MAX_HEIGHT_PX - COMPLETION_WIDGET_GAP_PX
-  const top =
-    belowTop + COMPLETION_WIDGET_MAX_HEIGHT_PX <= height || aboveTop < COMPLETION_WIDGET_MARGIN_PX
-      ? belowTop
-      : Math.max(COMPLETION_WIDGET_MARGIN_PX, aboveTop)
-
-  element.style.left = `${left}px`
-  element.style.top = `${Math.min(top, height - COMPLETION_WIDGET_MARGIN_PX)}px`
 }
 
 function syncEditorThemeVariables(element: HTMLElement, source: HTMLElement): void {

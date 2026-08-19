@@ -220,8 +220,8 @@ describe('a completion session while the user keeps typing', () => {
     expect(requests[1]?.position.character).toBe(10)
   })
 
-  // Typing at the bottom of the viewport scrolls the view, and the widget is placed in viewport
-  // coordinates — so a scroll has to move it, not end the session.
+  // Typing at the bottom of the viewport scrolls the view, and the list is anchored to a rect in
+  // viewport coordinates — so a scroll has to move it, not end the session.
   it('follows the caret down the viewport instead of closing when the view scrolls', async () => {
     vi.useFakeTimers()
     const editor = await connectedEditor('const va', 8)
@@ -230,12 +230,12 @@ describe('a completion session while the user keeps typing', () => {
     await vi.advanceTimersByTimeAsync(90)
     editor.answerCompletion([{ label: 'value' }])
     await flushPromises()
-    expect(editor.completionElement().style.top).toBe('42px')
+    expect(editor.completionAnchorElement().style.top).toBe('20px')
 
     editor.scroll(30)
 
     expect(editor.completionElement().hidden).toBe(false)
-    expect(editor.completionElement().style.top).toBe('12px')
+    expect(editor.completionAnchorElement().style.top).toBe('-10px')
   })
 
   // A trigger character is a different question, not a narrower one: the list has to go and the
@@ -583,6 +583,7 @@ type ConnectedEditor = {
   answerCompletion(items: readonly lsp.CompletionItem[], isIncomplete?: boolean): void
   answerResolve(item: lsp.CompletionItem): void
   completionElement(): HTMLElement
+  completionAnchorElement(): HTMLElement
   completionLabels(): readonly string[]
   focusedCompletionLabel(): string | null
   completionRequests(): readonly lsp.CompletionParams[]
@@ -674,6 +675,11 @@ async function connectedEditor(
       const widget = document.querySelector<HTMLElement>('.editor-test-lsp-completion')
       if (!widget) throw new Error('missing completion widget')
       return widget
+    },
+    completionAnchorElement: () => {
+      const anchor = document.querySelector<HTMLElement>('.editor-test-lsp-completion-anchor')
+      if (!anchor) throw new Error('missing completion anchor')
+      return anchor
     },
     completionLabels: () =>
       Array.from(

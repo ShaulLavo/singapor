@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**88 / 99 findings complete.** Update this count when you check a box.
+**92 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 14 / 16 complete.
+Milestones: 15 / 16 complete.
 
 
 ---
@@ -818,7 +818,7 @@ Milestones: 14 / 16 complete.
 
 ---
 
-## Milestone 15 — Injected text and anchored widgets
+## Milestone 15 — Injected text and anchored widgets ✅
 
 `effort L` · `risk high` · 4 findings
 
@@ -826,14 +826,50 @@ Milestones: 14 / 16 complete.
 
 **Exit criteria.** A zero-width anchored injection renders as its own inline chunk with per-side cursor stops and attached payload reaching the hit test, with inlay hints demonstrated end to end and the markdown WYSIWYG tests still green; a single-line range can be replaced by a mounted DOM node whose measured width feeds geometry and whose mount survives row recycling (multi-line collapsed marks explicitly out of scope); the four LSP floating controllers share one flip/clamp/re-anchor helper over CSS anchor positioning; ghost text renders from a computeGhostText of an arbitrary text edit with accept and partial-accept commands and defined Tab precedence against snippets.
 
-- [ ] **Injected text as a first-class concept: phantom content at a zero-width anchor, with cursor stops and hit-test payload**  
+- [x] **Injected text as a first-class concept: phantom content at a zero-width anchor, with cursor stops and hit-test payload**  
   `high` `L` `partial` `decorations-widgets`
-- [ ] **Replacing a text range with an arbitrary DOM node, and collapsed marks spanning multiple lines**  
+- [x] **Replacing a text range with an arbitrary DOM node, and collapsed marks spanning multiple lines**  
   `medium` `L` `missing` `decorations-widgets`
-- [ ] **Content widgets: an editor-managed layer for position-anchored floating UI with declarative fit preferences**  
+- [x] **Content widgets: an editor-managed layer for position-anchored floating UI with declarative fit preferences**  
   `high` `L` `missing` `decorations-widgets`
-- [ ] **Inline completions / ghost text: deriving renderable inline parts from an arbitrary text edit**  
+- [x] **Inline completions / ghost text: deriving renderable inline parts from an arbitrary text edit**  
   `medium` `M` `partial` `language-features`
+
+> **Multi-line collapsed marks were not built, per the finding's own Verifier and the plan's
+> de-scoping list.** The virtualizer treats the row as the unit of layout and recycling, and a mark
+> that eats line breaks breaks that everywhere; folding already covers the use case. No half-seam
+> was left for it.
+>
+> **No content-widget layer was built, also per the Verifier.** `tooltip.ts` already used CSS anchor
+> positioning, so the browser does the viewport layout; what was genuinely duplicated across the
+> four floating controllers was the flip-on-overflow decision and the max-height clamp. Those are
+> now one `anchoredSurface` helper that hover, completion, signature help and rename all route
+> through. `addContentWidget`/`layoutContentWidget` and the two-pass preference loop were
+> deliberately not added.
+>
+> **Nothing in this milestone asserts a pixel.** happy-dom lays nothing out, and the browser vitest
+> project is `packages/editor/test/**/*.browser.test.ts`, which `packages/lsp-plugin` has no
+> equivalent of. The anchored-surface tests assert what is decidable — that each surface resolves a
+> `position-anchor` to an element declaring that `anchor-name`, that the anchor carries the rect the
+> editor reported, that it is rewritten on both `'viewport'` and `'layout'`, and that side and
+> ceiling come out right for controlled inputs.
+>
+> **Two stacked insertions at one offset are ordered by `id`, not by emission order.** Both earlier
+> sort keys tie for zero-width ranges, so `localeCompare` decides. A consumer stacking a padding run
+> and a label run at one point must encode the order into its ids. Deterministic, but arbitrary — a
+> spec-supplied ordinal is the fix if a real consumer ever needs one, and none exists yet.
+>
+> **Ghost text is set on the editor rather than registered as a provider.**
+> `EditorInlineReplacementProvider` has no invalidation hook — the `onDidChangeBlocks` precedent
+> that `EditorBlockProvider` has — so a provider-registered suggestion would only repaint when
+> captures land or a registration changes, and one set between parses would never appear. Tab
+> precedence is a branch in `applyIndentCommand` rather than a keymap binding for the same
+> structural reason: bindings are one-per-chord with last-layer-wins, so binding Tab would have
+> destroyed `indentSelection` outright.
+>
+> **Tab order is ghost text → snippet stop → indent**, and accepting writes exactly what was drawn
+> rather than the original replacement — in the indentation case those differ, and applying a
+> whitespace change the reader never saw is the worse of the two.
 
 
 ---

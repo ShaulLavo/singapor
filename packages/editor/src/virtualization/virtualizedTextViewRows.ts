@@ -6,8 +6,14 @@ import {
   type DisplayBlockRow,
   type DisplayInjectedTextRow,
   type DisplayRow,
+  type InlineReplacementRender,
 } from '../displayTransforms'
 import { clamp } from '../style-utils'
+import {
+  createEditorBlockResizeObserver,
+  elementMeasuredEditorBlockSize,
+} from '../editor/editorBlockSurfaces'
+import type { InlineMap } from '../inlineMap'
 import type {
   EditorGutterContribution,
   EditorGutterRowContext,
@@ -60,7 +66,9 @@ import {
   rowInlineMappingForDisplayRow,
 } from './virtualizedTextViewInlineMapping'
 import {
+  type InlineWidgetPlacement,
   type RenderedChunkParts,
+  clearRowGeometryCaches,
   createRenderedChunkParts,
   createTextChunkParts,
   domBoundaryForOffset,
@@ -69,6 +77,7 @@ import {
   offsetFromDomBoundary,
   offsetToX,
   isSimpleRowText,
+  setInlineWidgetMeasuredWidth,
 } from './virtualizedTextViewGeometry'
 import {
   clearHiddenCharactersForRow,
@@ -93,6 +102,8 @@ const MAX_SINGLE_NODE_ROW_LENGTH = 512
 // which is the state hoisting exists to protect.
 const PARKED_HOISTED_BLOCK_TOP_PX = -1_000_000
 const hoistedBlockSurfacesByView = new WeakMap<VirtualizedTextViewInternal, HoistedBlockSurfaces>()
+const INLINE_WIDGET_CLASS = 'editor-inline-widget'
+const inlineWidgetsByView = new WeakMap<VirtualizedTextViewInternal, InlineWidgets>()
 
 type RowUpdatePass = {
   readonly cursorBufferRow: number | null
@@ -126,6 +137,27 @@ type HoistedBlockRowItem = {
   readonly hoistKey: string
 }
 
+/** Fills the span an inline replacement renders into; the return value tears that content down. */
+
+type InlineWidgets = {
+  readonly hosts: Map<string, InlineWidgetHost>
+  /** The map the live ids were last taken from; a different one is what retires a mount. */
+  inlineMap: InlineMap | null
+}
+
+type InlineWidgetHost = {
+  readonly element: HTMLSpanElement
+  readonly mountDisposable: { dispose(): void } | null
+  readonly observer: ResizeObserver | null
+}
+
+type InlineWidgetRun = {
+  readonly id: string
+  readonly localStart: number
+  readonly localEnd: number
+  readonly render: InlineReplacementRender
+}
+
 export function rowsKey(
   view: VirtualizedTextViewInternal,
   snapshot: FixedRowVirtualizerSnapshot,
@@ -141,6 +173,7 @@ export function renderRows(
   const updatePass = createRowUpdatePass(view)
   applyTotalHeight(view, snapshot)
   updateContentWidth(view, snapshot.virtualItems)
+  retireInlineWidgets(view)
   reconcileRows(view, snapshot.virtualItems, snapshot, updatePass, onRemoveSlot)
   renderHoistedBlockSurfaces(view, snapshot)
   renderHiddenCharacters(view)
@@ -981,6 +1014,12 @@ function updateRowTextChunks(
   mapping: RowInlineMapping | null,
   snapshot = view.virtualizer.getSnapshot(),
 ): void {
+  const runs = inlineWidgetRuns(mapping, text)
+  if (runs.length > 0) {
+    setInlineWidgetRowText(view, row, text, startOffset, mapping, runs)
+    return
+  }
+
   if (!shouldChunkLine(view, text)) {
     setDirectRowText(view, row, text, startOffset, mapping)
     return
@@ -1161,6 +1200,196 @@ function rowHasInlineAttachments(row: MountedVirtualizedTextRow): boolean {
   if (row.element.firstChild === row.blockContainerElement) return true
   if (row.foldCollapsed) return true
   return row.hiddenCharactersKey.length > 0
+}
+
+/**
+ * Which of the row's replacements render themselves. The row's display columns are line-absolute in
+ * the mapping, so a wrapped row only claims the runs that fall inside the slice it renders: a run
+ * cut by a wrap boundary has no single box to be, and stays the text it stands for.
+ */
+function inlineWidgetRuns(
+  mapping: RowInlineMapping | null,
+  text: string,
+): readonly InlineWidgetRun[] {
+  if (!mapping) return []
+
+  const runs: InlineWidgetRun[] = []
+  for (const segment of mapping.line.segments) {
+    if (segment.kind !== 'replacement' || segment.id === undefined) continue
+    const render = segment.render
+    if (!render) continue
+
+    const localStart = segment.displayStartColumn - mapping.displayStartColumn
+    const localEnd = segment.displayEndColumn - mapping.displayStartColumn
+    // A run with no display column of its own would put both its boundaries on one x, leaving the
+    // caret no side to stop on and the measured advance nothing to span.
+    if (localStart < 0 || localEnd > text.length || localEnd <= localStart) continue
+
+    runs.push({ id: segment.id, localStart, localEnd, render })
+  }
+
+  return runs
+}
+
+/**
+ * Widget rows never take the chunked path: a chunk boundary falls on a fixed column stride, which
+ * would cut a replacement's columns in two, and the node it renders is one box or nothing.
+ */
+function setInlineWidgetRowText(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  text: string,
+  startOffset: number,
+  mapping: RowInlineMapping | null,
+  runs: readonly InlineWidgetRun[],
+): void {
+  const placements = runs.map((run) => inlineWidgetPlacement(view, run))
+  const chunk = row.chunks[0]
+  if (chunk && reusesInlineWidgetRowText(row, chunk, text, placements)) {
+    syncDirectRowChunk(row, text, startOffset, mapping, chunk.parts, chunk.textNode)
+    return
+  }
+
+  const rendered = createRenderedChunkParts(
+    row.element.ownerDocument,
+    text,
+    0,
+    characterWidth(view),
+    placements,
+  )
+  row.element.replaceChildren(...rendered.nodes)
+  setTextRenderMode(row, 'widget')
+  syncDirectRowChunk(row, text, startOffset, mapping, rendered.parts, rendered.textNode)
+}
+
+/**
+ * Reuse is what keeps a widget out of the DOM churn a scroll frame otherwise causes, so it asks the
+ * row itself rather than a key: the mounted nodes are still where this row put them, in the columns
+ * these runs claim. A node another row has since taken fails on its parent.
+ */
+function reusesInlineWidgetRowText(
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+  text: string,
+  placements: readonly InlineWidgetPlacement[],
+): boolean {
+  if (row.text !== text || row.textRenderMode !== 'widget' || row.chunks.length !== 1) return false
+
+  const mounted = chunk.parts.filter((part) => part.kind === 'widget')
+  if (mounted.length !== placements.length) return false
+
+  return placements.every((placement, index) => {
+    const part = mounted[index]
+    if (!part || part.element !== placement.element) return false
+    if (part.localStart !== placement.localStart || part.localEnd !== placement.localEnd)
+      return false
+    return part.element.parentNode === row.element
+  })
+}
+
+/**
+ * A replacement id owns its mount for as long as the replacement lives, across every row the run is
+ * painted into. Re-rendering per row would tear the node down and build it again on every scroll
+ * frame that recycles the row under it, which for anything stateful — a loading image, a spinner,
+ * an input — is visible.
+ */
+function inlineWidgetPlacement(
+  view: VirtualizedTextViewInternal,
+  run: InlineWidgetRun,
+): InlineWidgetPlacement {
+  const widgets = inlineWidgets(view)
+  const host = widgets.hosts.get(run.id) ?? mountInlineWidget(view, widgets, run)
+  return { localStart: run.localStart, localEnd: run.localEnd, element: host.element }
+}
+
+function inlineWidgets(view: VirtualizedTextViewInternal): InlineWidgets {
+  const existing = inlineWidgetsByView.get(view)
+  if (existing) return existing
+
+  const widgets = { hosts: new Map<string, InlineWidgetHost>(), inlineMap: view.model.inlineMap }
+  inlineWidgetsByView.set(view, widgets)
+  return widgets
+}
+
+function mountInlineWidget(
+  view: VirtualizedTextViewInternal,
+  widgets: InlineWidgets,
+  run: InlineWidgetRun,
+): InlineWidgetHost {
+  const element = view.scrollElement.ownerDocument.createElement('span')
+  element.className = INLINE_WIDGET_CLASS
+  element.dataset.editorInlineWidget = run.id
+  // Nothing in the row is editable, but a browser still finds caret positions inside any node it can
+  // descend into, and the replacement is one indivisible stop.
+  element.setAttribute('contenteditable', 'false')
+
+  const mountDisposable = run.render(element) ?? null
+  // The callback is only the signal that something moved: re-reading the element keeps a resize and
+  // the measurement below on the same box, rather than the content box without its border. It is
+  // also the first real width, since nothing has laid this node out until a row paints it in.
+  const observer = createEditorBlockResizeObserver(() => measureInlineWidget(view, element))
+  observer?.observe(element)
+
+  const host = { element, mountDisposable, observer }
+  widgets.hosts.set(run.id, host)
+  measureInlineWidget(view, element)
+  return host
+}
+
+function measureInlineWidget(view: VirtualizedTextViewInternal, element: HTMLSpanElement): void {
+  applyInlineWidgetWidth(view, element, elementMeasuredEditorBlockSize(element, 'width'))
+}
+
+function applyInlineWidgetWidth(
+  view: VirtualizedTextViewInternal,
+  element: HTMLSpanElement,
+  width: number,
+): void {
+  // A node that measures nothing has not been laid out yet — off-screen, or a host that answers no
+  // rects at all. The columns it stands on are a better guess than collapsing it to nothing.
+  if (!Number.isFinite(width) || width <= 0) return
+  if (!setInlineWidgetMeasuredWidth(element, width)) return
+
+  // Row geometry is cached against the row's text and classes, none of which move when the node a
+  // replacement rendered does. An image that finished loading would otherwise keep the columns
+  // after it where they were laid out at its placeholder size.
+  clearRowGeometryCaches(view)
+}
+
+/**
+ * A mount lives as long as its replacement does, not as long as the row showing it: scrolling away
+ * keeps it, and only the replacement leaving the map — dropped by its provider, or revealed under
+ * the caret — takes it down.
+ */
+function retireInlineWidgets(view: VirtualizedTextViewInternal): void {
+  const widgets = inlineWidgetsByView.get(view)
+  if (!widgets || widgets.inlineMap === view.model.inlineMap) return
+
+  widgets.inlineMap = view.model.inlineMap
+  const live = new Set<string>()
+  for (const range of view.model.inlineMap?.ranges ?? []) live.add(range.id)
+
+  for (const [id, host] of widgets.hosts) {
+    if (live.has(id)) continue
+
+    disposeInlineWidget(host)
+    widgets.hosts.delete(id)
+  }
+}
+
+export function disposeInlineWidgets(view: VirtualizedTextViewInternal): void {
+  const widgets = inlineWidgetsByView.get(view)
+  if (!widgets) return
+
+  for (const host of widgets.hosts.values()) disposeInlineWidget(host)
+  widgets.hosts.clear()
+  inlineWidgetsByView.delete(view)
+}
+
+function disposeInlineWidget(host: InlineWidgetHost): void {
+  host.observer?.disconnect()
+  host.mountDisposable?.dispose()
+  host.element.remove()
 }
 
 function setBlockRowText(row: MountedVirtualizedTextRow, text: string, startOffset: number): void {

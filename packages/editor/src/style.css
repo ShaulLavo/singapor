@@ -253,6 +253,18 @@
   white-space: pre;
 }
 
+/* Laid out as one box in the text flow, and aligned to the row's top edge so a node taller than the
+   line does not push the baseline the rest of the row sits on. */
+.editor-inline-widget {
+  display: inline-block;
+  line-height: inherit;
+  max-height: var(--editor-row-height);
+  overflow: hidden;
+  user-select: none;
+  vertical-align: top;
+  white-space: normal;
+}
+
 .editor-virtualized-row-spacer {
   display: inline-block;
   height: 1px;

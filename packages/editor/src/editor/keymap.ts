@@ -26,6 +26,7 @@ export type EditorCommandPack =
   | 'folding'
   | 'lsp-navigation'
   | 'lsp-editing'
+  | 'inline-suggest'
 
 export type EditorKeymapLayerSource = 'core' | 'plugin' | 'app' | 'user'
 
@@ -209,6 +210,7 @@ export const defaultEditorCommandPacks = [
   'folding',
   'lsp-navigation',
   'lsp-editing',
+  'inline-suggest',
 ] as const satisfies readonly EditorCommandPack[]
 
 export const readonlySafeEditorCommandPacks = [
@@ -291,6 +293,7 @@ export function editorCommandPackForCommand(command: EditorCommandId): EditorCom
   if (FOLDING_COMMANDS.has(command)) return 'folding'
   if (LSP_NAVIGATION_COMMANDS.has(command)) return 'lsp-navigation'
   if (LSP_EDITING_COMMANDS.has(command)) return 'lsp-editing'
+  if (INLINE_SUGGEST_COMMANDS.has(command)) return 'inline-suggest'
 
   return null
 }
@@ -308,6 +311,7 @@ function editorKeyBindingsForCommandPack(
   if (pack === 'folding') return foldingBindings(platform)
   if (pack === 'lsp-navigation') return lspNavigationBindings()
   if (pack === 'lsp-editing') return lspEditingBindings(platform)
+  if (pack === 'inline-suggest') return inlineSuggestBindings(platform)
 
   return []
 }
@@ -460,6 +464,15 @@ const LSP_EDITING_COMMANDS = new Set<EditorCommandId>([
   'editor.action.autoFix',
 ])
 
+/**
+ * Taking text nobody typed, kept as its own pack so a host that offers no suggestions — or offers
+ * them and wants the reader's own keys back — turns the family off in one place.
+ */
+const INLINE_SUGGEST_COMMANDS = new Set<EditorCommandId>([
+  'editor.action.inlineSuggest.commit',
+  'editor.action.inlineSuggest.acceptNextWord',
+])
+
 function navigationBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   return horizontalNavigationBindings(platform).concat(verticalNavigationBindings(platform))
 }
@@ -584,6 +597,27 @@ function lspEditingBindings(platform: EditorPlatform): readonly EditorKeyBinding
 }
 
 /**
+ * Only the word at a time takes a chord: the whole suggestion is what Tab already means while one is
+ * showing, and a second key for it would be a synonym nobody reaches for.
+ *
+ * A word at a time is rightward motion the reader repeats, so it spells that on the arrow the word
+ * chords are already on, one modifier deeper. Only mac has that arrow left — everywhere else the
+ * primary modifier collapses onto ctrl and every combination on it is already word, subword, line or
+ * rectangle motion. Taking one of those from a reader who may never see a suggestion is the worse
+ * trade, so elsewhere the family is reached through Tab, through the host's own layer, or not at all.
+ */
+function inlineSuggestBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  if (platform !== 'mac') return []
+
+  return [
+    {
+      hotkey: key('ArrowRight', { mod: true, alt: true }),
+      command: 'editor.action.inlineSuggest.acceptNextWord',
+    },
+  ]
+}
+
+/**
  * Three keys carry the whole family, so none of it has to be remembered on its own.
  *
  * The brackets take the region at the caret, closing and opening the way the indent chords on those
@@ -598,12 +632,10 @@ function foldingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] 
   const plain = { mod: true, alt: true }
   const bracket = platform === 'mac' ? plain : { mod: true, shift: true }
   const variant = { mod: true, alt: true, shift: true }
-  const levelBindings = EDITOR_FOLD_LEVELS.map(
-    (level): EditorKeyBinding => ({
-      hotkey: key(String(level), plain),
-      command: `editor.foldLevel${level}`,
-    }),
-  )
+  const levelBindings = EDITOR_FOLD_LEVELS.map((level): EditorKeyBinding => ({
+    hotkey: key(String(level), plain),
+    command: `editor.foldLevel${level}`,
+  }))
 
   return [
     { hotkey: key('[', bracket), command: 'editor.fold' },

@@ -1,6 +1,8 @@
 import { anchorAfter, anchorBefore, resolveAnchor } from './pieceTable/anchors'
 import {
   createInlineRow,
+  type InlineCursorStops,
+  type InlineReplacementRender,
   type InlineReplacement,
   type InlineRow,
   type InvalidatedRange,
@@ -28,7 +30,13 @@ export type InlineReplacementSpec = {
   readonly startIndex: number
   readonly endIndex: number
   readonly text: string
+  /** Phantom text hung off the point `startIndex === endIndex`, standing in for nothing. */
+  readonly insertion?: boolean
   readonly kind?: string
+  readonly className?: string
+  readonly cursorStops?: InlineCursorStops
+  /** Painted as a node this fills instead of as `text`, which then stands in only for its width. */
+  readonly render?: InlineReplacementRender
   /** Replacements sharing a group reveal together, so both `**` fences of one construct unhide. */
   readonly groupId?: string
   readonly metadata?: unknown
@@ -43,7 +51,11 @@ export type InlineReplacementRange = {
   readonly startPoint: Point
   readonly endPoint: Point
   readonly text: string
+  readonly insertion?: boolean
   readonly kind?: string
+  readonly className?: string
+  readonly cursorStops?: InlineCursorStops
+  readonly render?: InlineReplacementRender
   readonly groupId?: string
   readonly metadata?: unknown
 }
@@ -101,6 +113,7 @@ export const revealInlineMap = (map: InlineMap, ranges: readonly TextOffsetRange
   const groupSpans = inlineGroupSpans(map.ranges)
 
   for (const range of map.ranges) {
+    if (isPhantomInlineRange(range)) continue
     const span = revealSpanForRange(range, groupSpans)
     if (!ranges.some((target) => spanTouchesOffsetRange(span, target))) continue
     revealedIds.add(range.id)
@@ -110,6 +123,7 @@ export const revealInlineMap = (map: InlineMap, ranges: readonly TextOffsetRange
   if (revealedIds.size === 0) return map
 
   const remaining = map.ranges.filter((range) => {
+    if (isPhantomInlineRange(range)) return true
     if (revealedIds.has(range.id)) return false
     return range.groupId === undefined || !revealedGroups.has(range.groupId)
   })
@@ -161,7 +175,10 @@ const inlineRangeFromSpec = (
 ): InlineReplacementRange | null => {
   const startOffset = clampOffset(snapshot, Math.min(spec.startIndex, spec.endIndex))
   const endOffset = clampOffset(snapshot, Math.max(spec.startIndex, spec.endIndex))
-  if (endOffset <= startOffset) return null
+  const insertion = spec.insertion === true
+  // Zero width is phantom text at a point, so it survives only where the spec asked for one: an empty
+  // span from a grammar is still dropped, and an insertion given a span is a contradiction.
+  if (insertion !== (endOffset === startOffset)) return null
   if (spec.id.length === 0) return null
 
   const anchors = inlineAnchorPair(snapshot, startOffset, endOffset)
@@ -176,8 +193,12 @@ const inlineRangeFromSpec = (
     startPoint: offsetToPoint(snapshot, startOffset),
     endPoint: offsetToPoint(snapshot, endOffset),
     text: spec.text,
+    ...(insertion ? { insertion: true } : {}),
+    ...(spec.className === undefined ? {} : { className: spec.className }),
+    ...(spec.cursorStops === undefined ? {} : { cursorStops: spec.cursorStops }),
     ...(spec.kind === undefined ? {} : { kind: spec.kind }),
     ...(spec.groupId === undefined ? {} : { groupId: spec.groupId }),
+    ...(spec.render === undefined ? {} : { render: spec.render }),
     ...(spec.metadata === undefined ? {} : { metadata: spec.metadata }),
   }
 }
@@ -230,15 +251,36 @@ const resolveInlineRange = (
   const start = resolveAnchor(snapshot, range.start)
   const end = resolveAnchor(snapshot, range.end)
   if (start.liveness === 'deleted' || end.liveness === 'deleted') return null
-  if (end.offset <= start.offset) return null
+
+  const offsets = resolvedInlineOffsets(range, start.offset, end.offset)
+  if (!offsets) return null
 
   return {
     ...range,
-    startOffset: start.offset,
-    endOffset: end.offset,
-    startPoint: offsetToPoint(snapshot, start.offset),
-    endPoint: offsetToPoint(snapshot, end.offset),
+    startOffset: offsets.start,
+    endOffset: offsets.end,
+    startPoint: offsetToPoint(snapshot, offsets.start),
+    endPoint: offsetToPoint(snapshot, offsets.end),
   }
+}
+
+/**
+ * Typing at an insertion's point pulls its two ends apart, since they carry the same opposing biases
+ * a substitution's do. Collapsing back onto the earlier one keeps the phantom text where it stood and
+ * leaves the typed characters beyond it, instead of letting the run grow over them.
+ */
+const resolvedInlineOffsets = (
+  range: InlineReplacementRange,
+  startOffset: number,
+  endOffset: number,
+): { readonly start: number; readonly end: number } | null => {
+  if (range.insertion === true) {
+    const offset = Math.min(startOffset, endOffset)
+    return { start: offset, end: offset }
+  }
+
+  if (endOffset <= startOffset) return null
+  return { start: startOffset, end: endOffset }
 }
 
 const rowReplacementIndex = (
@@ -270,7 +312,11 @@ const inlineReplacementFromRange = (range: InlineReplacementRange): InlineReplac
   startColumn: range.startPoint.column,
   endColumn: range.endPoint.column,
   text: range.text,
+  ...(range.insertion === undefined ? {} : { insertion: range.insertion }),
+  ...(range.className === undefined ? {} : { className: range.className }),
+  ...(range.cursorStops === undefined ? {} : { cursorStops: range.cursorStops }),
   ...(range.kind === undefined ? {} : { kind: range.kind }),
+  ...(range.render === undefined ? {} : { render: range.render }),
   ...(range.metadata === undefined ? {} : { metadata: range.metadata }),
 })
 
@@ -352,7 +398,7 @@ const inlineGroupSpans = (
   const spans = new Map<string, TextOffsetRange>()
 
   for (const range of ranges) {
-    if (range.groupId === undefined) continue
+    if (range.groupId === undefined || isPhantomInlineRange(range)) continue
     const existing = spans.get(range.groupId)
     spans.set(range.groupId, {
       start: existing ? Math.min(existing.start, range.startOffset) : range.startOffset,
@@ -362,6 +408,14 @@ const inlineGroupSpans = (
 
   return spans
 }
+
+/**
+ * An insertion stands in for no source text, so there is nothing under it a caret could ask to see.
+ * It takes no part in reveal at all: it neither unhides on contact, nor widens the span of a group it
+ * decorates, nor goes away with that group — a hint that blinked out as the caret passed would read
+ * as a rendering fault.
+ */
+const isPhantomInlineRange = (range: InlineReplacementRange): boolean => range.insertion === true
 
 const revealSpanForRange = (
   range: InlineReplacementRange,

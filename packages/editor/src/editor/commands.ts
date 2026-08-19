@@ -48,6 +48,8 @@ export type EditorCommandId =
   | 'editor.action.formatDocument'
   | 'editor.action.rename'
   | 'editor.action.autoFix'
+  | 'editor.action.inlineSuggest.commit'
+  | 'editor.action.inlineSuggest.acceptNextWord'
   | 'editor.action.moveSelectionToNextFindMatch'
   | 'editor.fold'
   | 'editor.unfold'

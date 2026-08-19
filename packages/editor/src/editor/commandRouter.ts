@@ -6,6 +6,7 @@ import {
 } from './reindent'
 import { isEditorEditActionCommand, type EditorEditActionCommandId } from './editActions'
 import { isEditorFoldCommand, type EditorFoldCommandId } from './foldOperations'
+import { isEditorInlineSuggestCommand, type EditorInlineSuggestCommandId } from './ghostText'
 
 export type EditorCommandRouterHandlers = {
   history(command: 'undo' | 'redo', context: EditorCommandContext): boolean
@@ -17,6 +18,7 @@ export type EditorCommandRouterHandlers = {
     context: EditorCommandContext,
   ): boolean
   fold(command: EditorFoldCommandId): boolean
+  inlineSuggest(command: EditorInlineSuggestCommandId, context: EditorCommandContext): boolean
   selectAll(context: EditorCommandContext): boolean
   smartSelect(direction: 'expand' | 'shrink', context: EditorCommandContext): boolean
   addNextOccurrence(context: EditorCommandContext): boolean
@@ -77,6 +79,9 @@ export class EditorCommandRouter {
     if (command === 'deleteBackward') return this.handlers.delete('backward', context)
     if (command === 'deleteForward') return this.handlers.delete('forward', context)
     if (isEditorFoldCommand(command)) return this.handlers.fold(command)
+    if (isEditorInlineSuggestCommand(command)) {
+      return this.handlers.inlineSuggest(command, context)
+    }
     if (isEditorEditActionCommand(command) || isEditorDocumentSelectionEditCommand(command)) {
       return this.handlers.editAction(command, context)
     }

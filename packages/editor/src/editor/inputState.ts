@@ -3,14 +3,12 @@ type EditorInputPhase =
   | 'composing'
   | 'beforeinput-pending'
   | 'native-input-observed'
-  | 'fallback-pending'
   | 'transaction-committed'
   | 'selection-reconciled'
 
 type EditorInputSelectionOwner = 'dom' | 'hidden-input' | 'session'
 type EditorHiddenInputValueOwner = 'browser' | 'editor'
-type EditorPendingTextSource = 'beforeinput' | 'composition' | 'paste' | 'drop' | 'fallback'
-type NativeTextInputState = 'unknown' | 'observed' | 'missing'
+type EditorPendingTextSource = 'beforeinput' | 'composition' | 'deduced' | 'paste' | 'drop'
 
 export type EditorInputState = {
   readonly phase: EditorInputPhase
@@ -18,10 +16,6 @@ export type EditorInputState = {
   readonly hiddenInputValueOwner: EditorHiddenInputValueOwner
   readonly pendingText: string
   readonly pendingTextSource: EditorPendingTextSource | null
-  readonly fallbackGeneration: number | null
-  readonly fallbackStartMs: number | null
-  readonly nativeInputGeneration: number
-  readonly nativeTextInputState: NativeTextInputState
   readonly compositionActive: boolean
   readonly compositionCommitted: boolean
   readonly compositionText: string
@@ -33,7 +27,6 @@ export type EditorInputStateOwnership = {
   readonly sessionSelection: 'document-session'
   readonly hiddenInputValue: EditorHiddenInputValueOwner
   readonly pendingText: 'none' | 'state-machine'
-  readonly fallbackGeneration: 'none' | 'state-machine'
 }
 
 export type EditorInputStateTransition =
@@ -42,18 +35,10 @@ export type EditorInputStateTransition =
   | { readonly type: 'composition-pending'; readonly text: string }
   | { readonly type: 'composition-end' }
   | { readonly type: 'beforeinput-pending'; readonly text?: string }
+  | { readonly type: 'deduced-input-pending'; readonly text: string }
   | { readonly type: 'paste-pending'; readonly text: string }
   | { readonly type: 'drop-pending'; readonly text: string }
   | { readonly type: 'native-input-observed' }
-  | {
-      readonly type: 'native-input-wait-started'
-      readonly generation: number
-      readonly startMs: number
-      readonly text: string
-    }
-  | { readonly type: 'native-input-wait-appended'; readonly startMs: number; readonly text: string }
-  | { readonly type: 'native-input-wait-cancelled' }
-  | { readonly type: 'native-input-missing'; readonly generation: number }
   | { readonly type: 'transaction-committed' }
   | { readonly type: 'selection-reconciled'; readonly owner: EditorInputSelectionOwner }
   | { readonly type: 'selection-owned-by-dom' }
@@ -62,24 +47,13 @@ export type EditorInputStateTransition =
   | { readonly type: 'mouse-selection-start' }
   | { readonly type: 'mouse-selection-finish' }
   | { readonly type: 'mouse-selection-cancel' }
-  | { readonly type: 'hidden-input-cleared' }
-
-export type NativeTextInputWaitOptions = {
-  readonly targetIsHiddenInput: boolean
-  readonly text: string
-}
+  | { readonly type: 'hidden-input-written' }
 
 export type EditorDomSelectionContext = {
   readonly hiddenInputFocused: boolean
 }
 
 export type EditorSelectionBeforeEditSource = 'dom' | 'hidden-input' | 'session'
-
-export type PendingKeyboardTextFallback = {
-  readonly generation: number
-  readonly startMs: number
-  readonly text: string
-}
 
 export function createEditorInputState(): EditorInputState {
   return {
@@ -88,10 +62,6 @@ export function createEditorInputState(): EditorInputState {
     hiddenInputValueOwner: 'editor',
     pendingText: '',
     pendingTextSource: null,
-    fallbackGeneration: null,
-    fallbackStartMs: null,
-    nativeInputGeneration: 0,
-    nativeTextInputState: 'unknown',
     compositionActive: false,
     compositionCommitted: false,
     compositionText: '',
@@ -114,17 +84,12 @@ export function transitionEditorInputState(
   if (transition.type === 'beforeinput-pending') {
     return setPendingText(state, 'beforeinput', transition.text ?? '')
   }
+  if (transition.type === 'deduced-input-pending') {
+    return setPendingText(state, 'deduced', transition.text)
+  }
   if (transition.type === 'paste-pending') return setPendingText(state, 'paste', transition.text)
   if (transition.type === 'drop-pending') return setPendingText(state, 'drop', transition.text)
   if (transition.type === 'native-input-observed') return nativeInputObserved(state)
-  if (transition.type === 'native-input-wait-started') {
-    return startNativeInputWait(state, transition)
-  }
-  if (transition.type === 'native-input-wait-appended') {
-    return appendNativeInputWaitText(state, transition)
-  }
-  if (transition.type === 'native-input-wait-cancelled') return cancelNativeInputWait(state)
-  if (transition.type === 'native-input-missing') return nativeInputMissing(state, transition)
   if (transition.type === 'transaction-committed') {
     return commitTransaction(state)
   }
@@ -149,46 +114,13 @@ export function editorInputStateOwnership(state: EditorInputState): EditorInputS
     sessionSelection: 'document-session',
     hiddenInputValue: state.hiddenInputValueOwner,
     pendingText: state.pendingText.length === 0 ? 'none' : 'state-machine',
-    fallbackGeneration: state.fallbackGeneration === null ? 'none' : 'state-machine',
   }
-}
-
-export function canWaitForNativeTextInput(
-  state: EditorInputState,
-  options: NativeTextInputWaitOptions,
-): boolean {
-  if (state.compositionActive) return false
-  if (options.text === ' ') return false
-  if (state.nativeTextInputState === 'missing') return false
-  return options.targetIsHiddenInput
 }
 
 export function shouldCommitCompositionEnd(state: EditorInputState, text: string): boolean {
   if (!state.compositionActive) return false
   if (state.compositionCommitted) return false
   return text.length > 0
-}
-
-export function pendingKeyboardTextFallback(
-  state: EditorInputState,
-): PendingKeyboardTextFallback | null {
-  if (state.phase !== 'fallback-pending') return null
-  if (state.pendingTextSource !== 'fallback') return null
-  if (state.fallbackGeneration === null) return null
-  if (state.fallbackStartMs === null) return null
-
-  return {
-    generation: state.fallbackGeneration,
-    startMs: state.fallbackStartMs,
-    text: state.pendingText,
-  }
-}
-
-export function hasPendingKeyboardTextFallbackForGeneration(
-  state: EditorInputState,
-  generation: number,
-): boolean {
-  return pendingKeyboardTextFallback(state)?.generation === generation
 }
 
 export function shouldSyncSessionSelectionFromDom(
@@ -254,56 +186,16 @@ function commitTransaction(state: EditorInputState): EditorInputState {
   })
 }
 
+/**
+ * The browser wrote the hidden input itself, so what the editor remembers of it is one event out of
+ * date. Recording that is what tells the next diff which of the two strings it holds is stale.
+ */
 function nativeInputObserved(state: EditorInputState): EditorInputState {
-  return clearPendingText({
+  return {
     ...state,
     phase: 'native-input-observed',
     hiddenInputValueOwner: 'browser',
-    nativeInputGeneration: state.nativeInputGeneration + 1,
-    nativeTextInputState: 'observed',
-  })
-}
-
-function nativeInputMissing(
-  state: EditorInputState,
-  transition: Extract<EditorInputStateTransition, { readonly type: 'native-input-missing' }>,
-): EditorInputState {
-  if (transition.generation !== state.nativeInputGeneration) return state
-  return { ...state, nativeTextInputState: 'missing' }
-}
-
-function startNativeInputWait(
-  state: EditorInputState,
-  transition: Extract<EditorInputStateTransition, { readonly type: 'native-input-wait-started' }>,
-): EditorInputState {
-  return {
-    ...state,
-    phase: 'fallback-pending',
-    pendingText: transition.text,
-    pendingTextSource: 'fallback',
-    fallbackGeneration: transition.generation,
-    fallbackStartMs: transition.startMs,
   }
-}
-
-function appendNativeInputWaitText(
-  state: EditorInputState,
-  transition: Extract<EditorInputStateTransition, { readonly type: 'native-input-wait-appended' }>,
-): EditorInputState {
-  if (state.phase !== 'fallback-pending') return state
-  if (state.fallbackGeneration === null) return state
-
-  return {
-    ...state,
-    pendingText: `${state.pendingText}${transition.text}`,
-    pendingTextSource: 'fallback',
-    fallbackStartMs: Math.min(state.fallbackStartMs ?? transition.startMs, transition.startMs),
-  }
-}
-
-function cancelNativeInputWait(state: EditorInputState): EditorInputState {
-  const phase = state.phase === 'fallback-pending' ? 'idle' : state.phase
-  return clearPendingText({ ...state, phase })
 }
 
 function clearPendingText(state: EditorInputState): EditorInputState {
@@ -311,8 +203,6 @@ function clearPendingText(state: EditorInputState): EditorInputState {
     ...state,
     pendingText: '',
     pendingTextSource: null,
-    fallbackGeneration: null,
-    fallbackStartMs: null,
   }
 }
 

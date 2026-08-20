@@ -14,6 +14,7 @@ import type {
 } from '../virtualization/virtualizedTextViewTypes'
 import type { BrowserTextMetrics } from '../virtualization/browserMetrics'
 import type { EditorKeymapOptions } from './keymap'
+import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'
 import type { TextEdit } from '../tokens'
 
 /** Minimal interface for the CSS Custom Highlight API registry. */
@@ -95,7 +96,14 @@ export type EditorOptions = {
   readonly rowPositioning?: EditorRowPositioning
   readonly scrollMode?: EditorScrollMode
   readonly selectionSyncMode?: EditorSelectionSyncMode
+  /** Confusable and invisible characters to point out; both families report unless turned off. */
+  readonly suspiciousCharacters?: EditorSuspiciousCharactersOptions
   readonly tabSize?: number
+  /**
+   * Hands Tab back to the page instead of indenting with it, for a reader who would otherwise have
+   * no key left to leave the editor by. Ctrl+M turns it on and off from inside.
+   */
+  readonly tabMovesFocus?: boolean
   readonly textMetrics?: BrowserTextMetrics
   /** Soft-wraps long lines to the viewport width instead of scrolling horizontally. */
   readonly wordWrap?: boolean

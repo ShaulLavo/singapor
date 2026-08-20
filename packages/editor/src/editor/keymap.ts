@@ -394,6 +394,9 @@ const TEXT_EDITING_COMMANDS = new Set<EditorCommandId>([
   'deleteForward',
   'indentSelection',
   'outdentSelection',
+  // Handing Tab back to the page belongs with the keys that took it, so a host cannot end up
+  // offering the trap without the way out of it.
+  'editor.action.toggleTabFocusMode',
   'findReplace',
   'replaceOne',
   'replaceAll',
@@ -499,6 +502,7 @@ function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBindin
     { hotkey: key('Delete'), command: 'deleteForward' },
     { hotkey: key('Tab'), command: 'indentSelection' },
     { hotkey: key('Tab', { shift: true }), command: 'outdentSelection' },
+    ...tabFocusBindings(platform),
     { hotkey: key('H', { mod: true }), command: 'findReplace' },
     { hotkey: key('Enter', { mod: true, alt: true }), command: 'replaceAll' },
     { hotkey: key('Z', { mod: true }), command: 'undo' },
@@ -507,6 +511,21 @@ function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBindin
     { hotkey: key('U', { mod: true, shift: true }), command: 'cursorRedo' },
     ...platformBindings,
   ]
+}
+
+/**
+ * The way back out, shipped with the key that closes it in.
+ *
+ * Tab is the only key a page gives for walking between its controls, so binding it above is what
+ * leaves a reader who reached the editor with no way to leave it. The escape hatch is wanted exactly
+ * where those two bindings are, which is why it travels in their pack rather than in one a host can
+ * drop while keeping them. On mac the bare ctrl chord is one of the system's own text keys, so the
+ * toggle takes shift as well there.
+ */
+function tabFocusBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  const toggle = platform === 'mac' ? { ctrl: true, shift: true } : { ctrl: true }
+
+  return [{ hotkey: key('M', toggle), command: 'editor.action.toggleTabFocusMode' }]
 }
 
 function findBindings(): readonly EditorKeyBinding[] {
@@ -632,10 +651,12 @@ function foldingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] 
   const plain = { mod: true, alt: true }
   const bracket = platform === 'mac' ? plain : { mod: true, shift: true }
   const variant = { mod: true, alt: true, shift: true }
-  const levelBindings = EDITOR_FOLD_LEVELS.map((level): EditorKeyBinding => ({
-    hotkey: key(String(level), plain),
-    command: `editor.foldLevel${level}`,
-  }))
+  const levelBindings = EDITOR_FOLD_LEVELS.map(
+    (level): EditorKeyBinding => ({
+      hotkey: key(String(level), plain),
+      command: `editor.foldLevel${level}`,
+    }),
+  )
 
   return [
     { hotkey: key('[', bracket), command: 'editor.fold' },

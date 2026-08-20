@@ -80,6 +80,18 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     method: 'setSelection',
     applied: [1, 3, undefined],
   },
+  suspiciousCharacters: {
+    initial: { ambiguous: true, invisible: true },
+    next: { ambiguous: false, invisible: true },
+    method: 'setSuspiciousCharacters',
+    applied: [{ ambiguous: false, allowedCodePoints: [], allowedLocales: [], invisible: true }],
+  },
+  tabMovesFocus: {
+    initial: false,
+    next: true,
+    method: 'setTabMovesFocus',
+    applied: [true],
+  },
   theme: {
     initial: { backgroundColor: '#111111' },
     next: { backgroundColor: '#222222' },

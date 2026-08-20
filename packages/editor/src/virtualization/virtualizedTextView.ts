@@ -1,4 +1,5 @@
 import type { FoldMap } from '../foldMap'
+import type { ResolvedSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
 import {
   normalizeTabSize,
@@ -55,9 +56,12 @@ import {
   setTokens as setViewTokens,
 } from './virtualizedTextViewHighlights'
 import {
+  DEFAULT_SUSPICIOUS_SETTINGS,
   normalizeHiddenCharactersMode,
   renderHiddenCharacters,
+  setSuspiciousCharacters,
 } from './virtualizedTextViewHiddenCharacters'
+import { setCompositionPreedit } from './virtualizedTextViewComposition'
 import { createVirtualizedTextViewModel } from './virtualizedTextViewModel'
 import {
   applyMultiLineTextLayout,
@@ -104,7 +108,7 @@ import {
   gutterWidth,
   horizontalViewportColumns,
   pageRowDelta,
-  positionInputInViewport,
+  positionInputAtCaret,
   renderRows,
   resetContentWidthScan,
   resolveMountedOffset,
@@ -314,6 +318,7 @@ export class VirtualizedTextView {
       metrics: { ...measuredMetrics, rowHeight },
       textMetrics,
       hiddenCharacters: normalizeHiddenCharactersMode(options.hiddenCharacters),
+      suspiciousCharacters: DEFAULT_SUSPICIOUS_SETTINGS,
     }
 
     scrollElement.style.setProperty('--editor-gutter-width', '0px')
@@ -527,15 +532,22 @@ export class VirtualizedTextView {
     this.inputElement.readOnly = true
   }
 
+  /** The text an IME is still assembling, drawn at the caret; empty text takes it back down. */
+  public setCompositionPreedit(text: string): void {
+    setCompositionPreedit(this.view, text)
+  }
+
   public focusInput(): void {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
     const scrollTop = snapshot.scrollTop
     const scrollLeft = this.scrollElement.scrollLeft
-    positionInputInViewport(view, snapshot.nativeScrollTop, scrollLeft)
-    this.inputElement.value = ''
+    positionInputAtCaret(view)
+    // Focus and nothing more: the value and the caret inside it belong to whoever knows the
+    // document, and are rewritten from it on every selection change. Emptying them here would take
+    // the screen reader's only view of the text away on each click, and leave an edit deduced from
+    // the element nothing to be deduced against.
     this.inputElement.focus({ preventScroll: true })
-    this.inputElement.setSelectionRange(0, 0)
     restoreScrollPosition(view, scrollTop, scrollLeft)
   }
 
@@ -567,6 +579,10 @@ export class VirtualizedTextView {
     clearRowGeometryCaches(view)
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
+  }
+
+  public setSuspiciousCharacters(options: ResolvedSuspiciousCharactersOptions): boolean {
+    return setSuspiciousCharacters(this.view, options)
   }
 
   public setHiddenCharacters(mode: HiddenCharactersMode): void {

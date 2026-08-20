@@ -15,13 +15,19 @@ import {
   type SelectionSet,
 } from '../selections'
 import { clamp } from '../style-utils'
-import type { TextEdit } from '../tokens'
+import type { EditorToken, TextEdit } from '../tokens'
+import type { EditorTheme } from '../theme'
 import type { VirtualizedTextView } from '../virtualization/virtualizedTextView'
 import type {
+  EditorPasteContext,
+  EditorPasteHandler,
+  EditorPasteTarget,
   EditorResolvedSelection,
   EditorSelectionRange,
   EditorViewContributionUpdateKind,
 } from '../plugins'
+import { dataTransferTypes, pasteHandlerMatchesTypes } from './pasteHandlers'
+import { readRichTextFont, richTextForCopy } from './richText'
 import type { EditorSyntaxInjection, EditorSyntaxLanguageId } from '../syntax/session'
 import {
   readClipboardMetadata,
@@ -46,7 +52,17 @@ import {
   indentTimingName,
   type SessionChangeOptions,
 } from './editorUtils'
-import { keyboardFallbackText } from './input'
+import {
+  EMPTY_HIDDEN_INPUT_STATE,
+  deduceHiddenInputEdit,
+  isEmptyDeducedInput,
+  isIncompleteDeducedInput,
+  keyboardFallbackText,
+  pagedHiddenInputContent,
+  readHiddenInputState,
+  type DeducedInputEdit,
+  type HiddenInputState,
+} from './input'
 import {
   cancelFrame,
   mouseSelectionAutoScrollDelta,
@@ -82,10 +98,7 @@ import {
 import { appendTiming, eventStartMs, mergeChangeTimings, nowMs } from './timing'
 import { measureEditorPerformance } from './performanceDiagnostics'
 import {
-  canWaitForNativeTextInput,
   createEditorInputState,
-  hasPendingKeyboardTextFallbackForGeneration,
-  pendingKeyboardTextFallback,
   selectionBeforeEditSource,
   shouldCommitCompositionEnd,
   shouldSyncCustomSelectionFromDom,
@@ -125,16 +138,25 @@ import type { InlineReplacementSpec } from '../inlineMap'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
 import { lineBreakIndent } from './indentation'
+import type { EditorAnnouncer } from './announce'
 
 export type InputSelectionControllerOptions = {
   readonly el: HTMLDivElement
+  readonly announcer: EditorAnnouncer
   readonly selectionSyncMode: EditorSelectionSyncMode
   readonly tabSize: number
+  /** Whether Tab is the page's key for leaving the editor rather than the editor's for indenting. */
+  readonly tabMovesFocus: boolean
   readonly view: VirtualizedTextView
   getLanguageId(): EditorSyntaxLanguageId | null
   getSyntaxInjections(): readonly EditorSyntaxInjection[]
   getSession(): DocumentSession | null
   getSessionOptions(): EditorSessionOptions
+  /** Whoever may read a paste as something other than its text, best-fitting handler first. */
+  getPasteHandlers(): readonly EditorPasteHandler[]
+  /** The two inputs a copy needs to render the range it took as styled markup. */
+  getSyntaxTokens(): readonly EditorToken[]
+  getEditorTheme(): EditorTheme | null
   materializeFullText(): string
   canEditDocument(): boolean
   applySessionChange(
@@ -216,6 +238,11 @@ export class InputSelectionController {
   private mouseSelectionAutoScrollFrame = 0
   private inputState: EditorInputState = createEditorInputState()
   private nativeInputHandlersInstalled = false
+  // What the editor last wrote into the hidden input, which is the other half of every diff: an
+  // input event only says the element changed, never what it changed from. Nothing but a write
+  // advances it — an event the editor decides not to act on leaves the element holding text it can
+  // still be diffed against next time.
+  private hiddenInputContent: HiddenInputState = EMPTY_HIDDEN_INPUT_STATE
 
   constructor(private readonly options: InputSelectionControllerOptions) {}
 
@@ -233,14 +260,13 @@ export class InputSelectionController {
     el.addEventListener('compositionstart', this.handleCompositionStart)
     el.addEventListener('compositionupdate', this.handleCompositionUpdate)
     el.addEventListener('compositionend', this.handleCompositionEnd)
-    el.addEventListener('keyup', this.handleKeyUp)
+    el.addEventListener('keyup', this.syncSessionSelectionFromDom)
     el.addEventListener('mouseup', this.syncSessionSelectionFromDom)
     el.ownerDocument.addEventListener('selectionchange', this.syncCustomSelectionFromDom)
   }
 
   dispose(): void {
     const { el } = this.options
-    this.cancelPendingKeyboardTextFallback()
     this.uninstallNativeInputHandlers()
     el.removeEventListener('mousedown', this.handleMouseDown)
     el.removeEventListener('beforeinput', this.handleBeforeInput)
@@ -254,7 +280,7 @@ export class InputSelectionController {
     el.removeEventListener('compositionstart', this.handleCompositionStart)
     el.removeEventListener('compositionupdate', this.handleCompositionUpdate)
     el.removeEventListener('compositionend', this.handleCompositionEnd)
-    el.removeEventListener('keyup', this.handleKeyUp)
+    el.removeEventListener('keyup', this.syncSessionSelectionFromDom)
     el.removeEventListener('mouseup', this.syncSessionSelectionFromDom)
     el.ownerDocument.removeEventListener('selectionchange', this.syncCustomSelectionFromDom)
     this.stopMouseSelectionDrag()
@@ -955,6 +981,13 @@ export class InputSelectionController {
   }
 
   applyIndentCommand(direction: 'indent' | 'outdent', context: EditorCommandContext): boolean {
+    // Ahead of the suggestion and the snippet below, and of the document being editable at all:
+    // once the reader has asked for the key back, nothing the editor happens to be in the middle of
+    // may keep it — a state that outranked this is a state they cannot get out of. Refusing the
+    // command rather than consuming it is the whole mechanism: an unhandled key is not
+    // default-prevented, and the browser moves focus with it exactly as it would anywhere else.
+    if (this.options.tabMovesFocus) return false
+
     const session = this.session
     if (!session) return false
     if (!this.options.canEditDocument()) return false
@@ -1067,7 +1100,8 @@ export class InputSelectionController {
     const inserted = resolved
       .map((selection) => this.cursorSelectionByDisplayRows(selection, rowDelta))
       .filter((selection) => selection.anchor !== selection.sourceHead)
-    if (inserted.length === 0) return false
+    const firstInserted = inserted[0]
+    if (!firstInserted) return false
 
     const selections = [
       ...resolved.map((selection) => ({
@@ -1086,9 +1120,17 @@ export class InputSelectionController {
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.options.applySessionChange(change, `input.insertCursor${capitalize(direction)}`, start, {
-      revealOffset: inserted[0]?.anchor,
+      revealOffset: firstInserted.anchor,
       syncDomSelection: false,
     })
+    // Where it landed, not only that it landed: one press puts a cursor on a row that may be off
+    // screen, and a count on its own leaves the reader to go looking for it with the arrow keys.
+    const point = offsetToPoint(session.getSnapshot(), firstInserted.anchor)
+    this.options.announcer.status(
+      inserted.length === 1
+        ? `Cursor added at line ${point.row + 1}, column ${point.column + 1}`
+        : `${inserted.length} cursors added, ${selections.length} in total`,
+    )
     return true
   }
 
@@ -1115,6 +1157,7 @@ export class InputSelectionController {
       revealOffset: query.range.end,
       syncDomSelection: false,
     })
+    this.announceOccurrenceSelection(ranges.length)
     return true
   }
 
@@ -1169,7 +1212,26 @@ export class InputSelectionController {
       revealOffset: result.revealOffset,
       syncDomSelection: false,
     })
+    // Counted off the session after the change rather than worked out from the press: the first one
+    // on a bare caret selects the word and adds nothing, and a press with nothing left to add has
+    // already returned, so the count is the only thing that describes all three.
+    this.announceOccurrenceSelection(this.resolvedSelections().length)
     return true
+  }
+
+  /**
+   * What both occurrence keys leave behind, said the same way by each of them, because the number is
+   * the part that decides what the next keystroke will do — and typing over four selections when you
+   * meant three is not something the reader can see coming.
+   *
+   * This is also the channel's duplicate case in the flesh: a second press that finds no further
+   * occurrence returns before here, but selecting the same word again answers with the same
+   * sentence, and a reader who hears nothing reads that as the key having done nothing.
+   */
+  private announceOccurrenceSelection(count: number): void {
+    this.options.announcer.status(
+      count === 1 ? '1 occurrence selected' : `${count} occurrences selected`,
+    )
   }
 
   applyNavigationCommand(command: EditorCommandId, context: EditorCommandContext): boolean {
@@ -1349,6 +1411,36 @@ export class InputSelectionController {
       }
     })
     this.options.view.setSelections(selections)
+    this.refreshHiddenInputContent()
+  }
+
+  /**
+   * Puts the document around the caret into the hidden input, and the caret with it.
+   *
+   * The element a screen reader is actually pointed at is this one, so an empty element is an
+   * editor with nothing to read: no line, no position, no idea what was just selected. Writing the
+   * window here — on the one call every selection and every change already funnels through — is
+   * also what gives the diff its other half, since the text it compares against has to be the text
+   * the browser was handed.
+   */
+  private refreshHiddenInputContent(): void {
+    const session = this.session
+    if (!session) return
+
+    const snapshot = session.getSnapshot()
+    const selection = session.getSelections().selections[0]
+    if (!selection) return
+
+    const content = pagedHiddenInputContent(snapshot, resolveSelection(snapshot, selection))
+    const input = this.options.view.inputElement
+    if (input.value !== content.value) input.value = content.value
+    input.setSelectionRange(content.selectionStart, content.selectionEnd, content.direction)
+    this.hiddenInputContent = {
+      selectionEnd: content.selectionEnd,
+      selectionStart: content.selectionStart,
+      value: content.value,
+    }
+    this.transitionInputState({ type: 'hidden-input-written' })
   }
 
   clearSelectionHighlight(): void {
@@ -1403,14 +1495,7 @@ export class InputSelectionController {
   private installNativeInputHandlers(): void {
     if (this.nativeInputHandlersInstalled) return
 
-    this.options.view.inputElement.addEventListener(
-      'beforeinput',
-      this.handleNativeInputBeforeInputCapture,
-      {
-        capture: true,
-      },
-    )
-    this.options.view.inputElement.addEventListener('input', this.handleNativeInputInputCapture, {
+    this.options.view.inputElement.addEventListener('input', this.handleHiddenInputChange, {
       capture: true,
     })
     this.nativeInputHandlersInstalled = true
@@ -1419,43 +1504,56 @@ export class InputSelectionController {
   private uninstallNativeInputHandlers(): void {
     if (!this.nativeInputHandlersInstalled) return
 
-    this.options.view.inputElement.removeEventListener(
-      'beforeinput',
-      this.handleNativeInputBeforeInputCapture,
-      { capture: true },
-    )
-    this.options.view.inputElement.removeEventListener(
-      'input',
-      this.handleNativeInputInputCapture,
-      {
-        capture: true,
-      },
-    )
+    this.options.view.inputElement.removeEventListener('input', this.handleHiddenInputChange, {
+      capture: true,
+    })
     this.nativeInputHandlersInstalled = false
   }
 
-  private handleNativeInputBeforeInputCapture = (_event: InputEvent): void => {
+  /**
+   * An edit the browser made to the hidden input itself, read back as an edit to the document.
+   *
+   * This is where every input event the editor cannot name arrives: an autocorrection, a dead key
+   * resolving, a dictated phrase, a soft keyboard rewriting the word around the caret. None of them
+   * carries usable data on the event, and all of them leave the answer in the element's value.
+   */
+  private handleHiddenInputChange = (event: Event): void => {
     this.transitionInputState({ type: 'native-input-observed' })
-    this.cancelPendingKeyboardTextFallback()
-  }
+    const session = this.session
+    if (!session) return
+    if (!this.options.canEditDocument()) return
+    // A composition writes each intermediate candidate into the input on its way to the text it
+    // finally commits. Diffing those would type every candidate the reader passed through.
+    if (this.inputState.compositionActive) return
 
-  private handleNativeInputInputCapture = (_event: Event): void => {
-    this.transitionInputState({ type: 'native-input-observed' })
-    this.cancelPendingKeyboardTextFallback()
+    const current = readHiddenInputState(this.options.view.inputElement)
+    const deduced = deduceHiddenInputEdit(this.hiddenInputContent, current)
+    // Nothing is written back for either of these, so the element keeps whatever the browser put
+    // there and the editor keeps the older text to measure the next event against.
+    if (isIncompleteDeducedInput(deduced)) return
+    if (isEmptyDeducedInput(deduced, this.hiddenInputContent)) return
+
+    this.applyDeducedInput(session, deduced, eventStartMs(event))
   }
 
   private handleCompositionStart = (_event: CompositionEvent): void => {
-    this.cancelPendingKeyboardTextFallback()
     this.transitionInputState({ type: 'composition-start' })
   }
 
   private handleCompositionUpdate = (event: CompositionEvent): void => {
     this.transitionInputState({ text: event.data, type: 'composition-update' })
+    // Every candidate a reader passes through on the way to the one they want is here and nowhere
+    // else: the hidden input holds it, and the document does not hear about any of them.
+    this.options.view.setCompositionPreedit(event.data)
   }
 
   private handleCompositionEnd = (event: CompositionEvent): void => {
     const text = event.data || this.inputState.compositionText
     const shouldCommit = shouldCommitCompositionEnd(this.inputState, text)
+    // Taken down for every way a composition can end, including the ones below that return: text
+    // already committed through beforeinput is the document's to draw, and text abandoned mid-word
+    // was never the document's at all.
+    this.options.view.setCompositionPreedit('')
     this.transitionInputState({ type: 'composition-end' })
     if (!shouldCommit) return
 
@@ -2091,7 +2189,6 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return
     if (!this.options.canEditDocument()) {
-      this.cancelPendingKeyboardTextFallback()
       event.preventDefault()
       return
     }
@@ -2099,7 +2196,6 @@ export class InputSelectionController {
     const inserted = beforeInputText(event)
     if (inserted === null) return
 
-    this.cancelPendingKeyboardTextFallback()
     const start = eventStartMs(event)
     const selectionChange = measureEditorPerformance('input.selectionChangeBeforeEdit', () =>
       this.selectionChangeBeforeEdit(),
@@ -2129,27 +2225,108 @@ export class InputSelectionController {
       return
     }
 
+    const transfer = event.clipboardData ?? null
     // The session flattens terminators again on its way into the buffer, so
     // this is not what keeps them out of the document. It is what pasteRevealBlock
     // reads: the reveal is decided from the payload rather than from the document
     // it produces, and a Word or PDF paste whose only breaks are U+2028/U+2029
     // would otherwise count as a single line and leave its new rows unrevealed.
-    const text = normalizeLineEndings(event.clipboardData?.getData('text/plain') ?? '')
-    if (text.length === 0) return
+    const text = normalizeLineEndings(transfer?.getData('text/plain') ?? '')
+    // An image is the case this second condition exists for: no text at all, and until something
+    // registers to read the transfer it carries there is genuinely nothing to insert.
+    if (text.length === 0 && !this.hasPasteHandlerForTransfer(transfer)) return
 
     // Looked up under the folded text, because that is the form the payload was written in.
-    const metadata = readClipboardMetadata(event.clipboardData ?? null, text)
-    this.cancelPendingKeyboardTextFallback()
+    const metadata = readClipboardMetadata(transfer, text)
     this.transitionInputState({ text, type: 'paste-pending' })
     const start = eventStartMs(event)
     const selectionChange = this.selectionChangeBeforeEdit()
     event.preventDefault()
-    const change = mergeChangeTimings(this.applyPaste(session, text, metadata), selectionChange)
+    // After the selection sync above, so a handler reads the carets the paste is actually landing
+    // on rather than the ones the last gesture left in the session.
+    const handled = this.handledPasteFragments(transfer, text, metadata !== null)
+    const pasted = handled?.join('') ?? text
+    const textChange = handled
+      ? this.applyDistributedPaste(session, handled, this.resolvedSelections())
+      : text.length > 0
+        ? this.applyPaste(session, text, metadata)
+        : null
     this.transitionInputState({ type: 'transaction-committed' })
+    // Every handler passed on a payload that had no text of its own, so the gesture inserts
+    // nothing; the selection the sync above corrected is still worth announcing.
+    const change = textChange ? mergeChangeTimings(textChange, selectionChange) : selectionChange
+    if (!change) return
+
     this.options.applySessionChange(change, 'input.paste', start, {
-      revealBlock: pasteRevealBlock(text),
+      revealBlock: pasteRevealBlock(pasted),
       revealOffset: this.primarySelectionHeadOffset(change),
     })
+  }
+
+  /**
+   * Whether anything registered would even look at this transfer.
+   *
+   * Asked before the paste is committed to, because the alternative to a handler here is doing
+   * nothing at all: a transfer with no text is not a paste unless someone can read it.
+   */
+  private hasPasteHandlerForTransfer(transfer: DataTransfer | null): boolean {
+    if (!transfer) return false
+
+    const types = dataTransferTypes(transfer)
+    return this.options
+      .getPasteHandlers()
+      .some((handler) => pasteHandlerMatchesTypes(handler, types))
+  }
+
+  /**
+   * The text each caret takes according to whoever claimed the paste, or null for the plain path.
+   *
+   * The first handler to answer takes it: a claim says this payload means something other than its
+   * text, and the order the handlers arrive in already says whose reading of it wins. A list that
+   * does not have one entry per caret is not describing these carets, which is the same reading a
+   * carried payload gets refused for in applyPaste.
+   */
+  private handledPasteFragments(
+    transfer: DataTransfer | null,
+    text: string,
+    internal: boolean,
+  ): readonly string[] | null {
+    if (!transfer) return null
+
+    const handlers = this.options.getPasteHandlers()
+    if (handlers.length === 0) return null
+
+    const types = dataTransferTypes(transfer)
+    const targets = this.pasteTargets()
+    const context: EditorPasteContext = {
+      dataTransfer: transfer,
+      files: Array.from(transfer.files ?? []),
+      internal,
+      languageId: this.options.getLanguageId(),
+      targets,
+      text,
+      types,
+    }
+    for (const handler of handlers) {
+      if (!pasteHandlerMatchesTypes(handler, types)) continue
+
+      const fragments = handler.handlePaste(context)
+      if (fragments && fragments.length === targets.length) return fragments
+    }
+
+    return null
+  }
+
+  private pasteTargets(): readonly EditorPasteTarget[] {
+    const session = this.session
+    if (!session) return []
+
+    const snapshot = session.getSnapshot()
+    return this.resolvedSelections().map((selection) => ({
+      end: selection.endOffset,
+      start: selection.startOffset,
+      text: readPieceTableTextRange(snapshot, selection.startOffset, selection.endOffset),
+    }))
   }
 
   /**
@@ -2188,7 +2365,6 @@ export class InputSelectionController {
     const session = this.session
     if (!session) return
 
-    this.cancelPendingKeyboardTextFallback()
     event.preventDefault()
     if (!this.options.canEditDocument()) return
 
@@ -2218,7 +2394,49 @@ export class InputSelectionController {
     if (!event.clipboardData) return
 
     writeClipboardPayload(event.clipboardData, payload.text, payload.metadata)
+    this.writeRichTextPayload(event.clipboardData)
     event.preventDefault()
+  }
+
+  /**
+   * The same text again as styled markup, so a paste into a document or a chat keeps the colours
+   * it was being read in.
+   *
+   * Never more than an addition: everything a paste depends on travels on text/plain, and a target
+   * with no use for markup reads that instead. One range only — markup is a single run of text
+   * with nowhere to say where one caret's share of it ended, which is exactly what the per-caret
+   * fragments beside it exist to carry.
+   */
+  private writeRichTextPayload(data: DataTransfer): void {
+    const session = this.session
+    if (!session) return
+
+    const resolved = this.resolvedSelections()
+    const selection = resolved.length === 1 ? resolved[0] : null
+    if (!selection) return
+
+    // A caret takes its line, the same range the plain payload was built from — minus the
+    // terminator, which under `white-space: pre` would paste as a blank line of its own.
+    const line = selection.collapsed ? this.readLineAt(selection.headOffset) : null
+    const range = line
+      ? { start: line.start, text: line.text }
+      : {
+          start: selection.startOffset,
+          text: readPieceTableTextRange(
+            session.getSnapshot(),
+            selection.startOffset,
+            selection.endOffset,
+          ),
+        }
+
+    const html = richTextForCopy({
+      font: readRichTextFont(this.options.el),
+      startOffset: range.start,
+      text: range.text,
+      theme: this.options.getEditorTheme(),
+      tokens: this.options.getSyntaxTokens(),
+    })
+    if (html) data.setData('text/html', html)
   }
 
   /**
@@ -2313,92 +2531,38 @@ export class InputSelectionController {
     return applyPasteEdits(session, edits, selections)
   }
 
+  /**
+   * A key pressed somewhere that will never produce an input event of its own.
+   *
+   * The hidden input is left alone here: a key that lands on it reaches the document either as a
+   * `beforeinput` the editor can read, or as a change to the element's value that the diff reads
+   * back. Both routes describe what happened; `event.key` only describes what was pressed, which is
+   * why waiting on one to decide about the other was a race worth deleting rather than tuning.
+   */
   private handleKeyDown = (event: KeyboardEvent): void => {
     const session = this.session
     if (!session) return
     if (!this.options.canEditDocument()) return
+    if (event.target === this.options.view.inputElement) return
 
-    const fallbackText = keyboardFallbackText(event)
-    if (fallbackText === null) return
+    const typedText = keyboardFallbackText(event)
+    if (typedText === null) return
     if (this.inputState.compositionActive) return
 
-    if (this.canWaitForNativeTextInput(event, fallbackText)) {
-      this.startKeyboardTextFallbackWait(event, fallbackText)
-      return
-    }
-
     event.preventDefault()
-    this.resolvePendingKeyboardTextFallback()
-    this.applyKeyboardTextFallback(fallbackText, eventStartMs(event))
-    if (event.target !== this.options.view.inputElement) this.options.view.focusInput()
+    this.applyKeyboardText(typedText, eventStartMs(event))
+    // The next keystroke belongs on the input, where the browser can describe it properly.
+    this.options.view.focusInput()
   }
 
-  private handleKeyUp = (event: KeyboardEvent): void => {
-    this.resolvePendingKeyboardTextFallback()
-    this.syncSessionSelectionFromDom(event)
-  }
-
-  private canWaitForNativeTextInput(event: KeyboardEvent, text: string): boolean {
-    return canWaitForNativeTextInput(this.inputState, {
-      targetIsHiddenInput: event.target === this.options.view.inputElement,
-      text,
-    })
-  }
-
-  private startKeyboardTextFallbackWait(event: KeyboardEvent, text: string): void {
-    const start = eventStartMs(event)
-    const nativeInputGeneration = this.inputState.nativeInputGeneration
-
-    if (hasPendingKeyboardTextFallbackForGeneration(this.inputState, nativeInputGeneration)) {
-      this.transitionInputState({ startMs: start, text, type: 'native-input-wait-appended' })
-      return
-    }
-
-    this.cancelPendingKeyboardTextFallback()
-    this.transitionInputState({
-      generation: nativeInputGeneration,
-      startMs: start,
-      text,
-      type: 'native-input-wait-started',
-    })
-  }
-
-  private cancelPendingKeyboardTextFallback(): void {
-    const pending = pendingKeyboardTextFallback(this.inputState)
-    if (!pending) return
-
-    this.transitionInputState({ type: 'native-input-wait-cancelled' })
-  }
-
-  private resolvePendingKeyboardTextFallback(): void {
-    const pending = pendingKeyboardTextFallback(this.inputState)
-    if (!pending) return
-
-    this.transitionInputState({ generation: pending.generation, type: 'native-input-missing' })
-    this.transitionInputState({ type: 'native-input-wait-cancelled' })
-    this.applyKeyboardTextFallback(pending.text, pending.startMs, pending.generation)
-  }
-
-  private applyKeyboardTextFallback(
-    text: string,
-    start: number,
-    nativeInputGeneration?: number,
-  ): void {
+  private applyKeyboardText(text: string, start: number): void {
     const session = this.session
     if (!session) return
     if (!this.options.canEditDocument()) return
-    if (
-      nativeInputGeneration !== undefined &&
-      this.inputState.nativeInputGeneration !== nativeInputGeneration
-    ) {
-      return
-    }
 
     const selectionChange = measureEditorPerformance('input.selectionChangeBeforeEdit', () =>
       this.selectionChangeBeforeEdit(),
     )
-    this.options.view.inputElement.value = ''
-    this.transitionInputState({ type: 'hidden-input-cleared' })
     const textChange = measureEditorPerformance('session.applyText', () =>
       this.applyTypedText(session, text),
     )
@@ -2408,6 +2572,65 @@ export class InputSelectionController {
       'input.keydownFallback',
       start,
     )
+  }
+
+  /**
+   * Writes a deduced edit into the document, around every caret rather than only the one the diff
+   * was measured at: the counts say how far either side of a selection the replacement reaches, and
+   * a document with several carets is holding several of them.
+   */
+  private applyDeducedInput(
+    session: DocumentSession,
+    deduced: DeducedInputEdit,
+    start: number,
+  ): void {
+    this.transitionInputState({ text: deduced.text, type: 'deduced-input-pending' })
+    const selectionChange = measureEditorPerformance('input.selectionChangeBeforeEdit', () =>
+      this.selectionChangeBeforeEdit(),
+    )
+    // Plain insertion is left to the typing path, so text that arrived without a readable event
+    // still closes a bracket, fills a snippet stop and carries a rename the way typing it would.
+    // Anything reaching past the selection is a range edit instead, including the empty text that
+    // means the selection itself was taken away.
+    const textChange =
+      deduced.text.length > 0 &&
+      deduced.replacePrevCharCnt === 0 &&
+      deduced.replaceNextCharCnt === 0
+        ? measureEditorPerformance('session.applyText', () =>
+            this.applyTypedText(session, deduced.text),
+          )
+        : this.replaceAroundSelections(session, deduced)
+    this.transitionInputState({ type: 'transaction-committed' })
+    this.options.applySessionChange(
+      mergeChangeTimings(textChange, selectionChange),
+      'input.deducedText',
+      start,
+    )
+  }
+
+  private replaceAroundSelections(
+    session: DocumentSession,
+    deduced: DeducedInputEdit,
+  ): DocumentSessionChange {
+    const snapshot = session.getSnapshot()
+    const resolved = session
+      .getSelections()
+      .selections.map((selection) => resolveSelection(snapshot, selection))
+    const edits: TextEdit[] = []
+    const selections: { readonly anchor: number; readonly head: number }[] = []
+    // Same accounting as a multi-caret paste: every range is expressed against the document as it
+    // stands, and every caret against the one the batch produces.
+    let shift = 0
+    for (const selection of resolved) {
+      const from = clamp(selection.startOffset - deduced.replacePrevCharCnt, 0, snapshot.length)
+      const to = clamp(selection.endOffset + deduced.replaceNextCharCnt, from, snapshot.length)
+      edits.push({ from, text: deduced.text, to })
+      const caret = from + shift + deduced.text.length
+      selections.push({ anchor: caret, head: caret })
+      shift += deduced.text.length - (to - from)
+    }
+
+    return session.applyEdits(edits, { selections })
   }
 
   private applyCompositionText(text: string, start: number): void {
@@ -2420,8 +2643,6 @@ export class InputSelectionController {
     const selectionChange = measureEditorPerformance('input.selectionChangeBeforeEdit', () =>
       this.selectionChangeBeforeEdit(),
     )
-    this.options.view.inputElement.value = ''
-    this.transitionInputState({ type: 'hidden-input-cleared' })
     const textChange = measureEditorPerformance('session.applyText', () => session.applyText(text))
     this.transitionInputState({ type: 'transaction-committed' })
     this.options.applySessionChange(
@@ -2690,6 +2911,10 @@ export class InputSelectionController {
   private syncCustomSelectionHighlight(anchorOffset: number, headOffset: number): void {
     this.options.view.setSelection(anchorOffset, headOffset)
     this.transitionInputState({ owner: 'dom', type: 'selection-reconciled' })
+    // A drag paints from offsets it worked out for itself and never reaches
+    // syncSessionSelectionHighlight, so without this the window would go stale for exactly the
+    // selections a reader is most likely to want read back to them.
+    this.refreshHiddenInputContent()
   }
 
   private isInputFocused(): boolean {

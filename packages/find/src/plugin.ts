@@ -285,6 +285,7 @@ function createFindHost(
     trackPaintedRanges: (ranges) => trackPaintedFindRanges(context, getSnapshot(), ranges),
     getSelections: () => findSelections(getSnapshot().selections),
     focusEditor: () => context.focusEditor(),
+    announce: (message) => context.announce?.(message),
     setSelection: (anchor, head, timingName, revealOffset) =>
       context.setSelection(anchor, head, timingName, revealOffset),
     setSelections: (selections, timingName, revealOffset) =>

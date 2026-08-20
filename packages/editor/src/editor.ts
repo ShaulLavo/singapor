@@ -15,6 +15,12 @@ export {
   EDITOR_OCCURRENCE_HIGHLIGHT_PLUGIN_ID,
 } from './occurrenceHighlightPlugin'
 export type { EditorOccurrenceHighlightPluginOptions } from './occurrenceHighlightPlugin'
+export type {
+  EditorSuspiciousCharactersOptions,
+  SuspiciousCharacterKind,
+  SuspiciousCharacterRange,
+} from './unicodeHighlight'
+export { suspiciousCharacterRanges } from './unicodeHighlight'
 export {
   createMergeConflictPlugin,
   EDITOR_MERGE_CONFLICT_FEATURE,

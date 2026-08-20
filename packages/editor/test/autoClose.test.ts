@@ -89,6 +89,20 @@ describe('auto-closing pairs', () => {
     expect(editor.getState().cursor).toMatchObject({ column: 1, row: 0 })
   })
 
+  // Text with no beforeinput to carry it — an autocorrection, a dictated phrase, a soft keyboard's
+  // suggestion — is read back off the hidden input instead, and has to reach the document by the
+  // same route a typed character does or none of the typing behaviours apply to it.
+  it('closes a pair for a character deduced from the hidden input', () => {
+    editor.focus()
+    const input = editor.el.querySelector('.editor-virtualized-input') as HTMLTextAreaElement
+    input.value = '('
+    input.setSelectionRange(1, 1)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+
+    expect(editor.materializeFullText()).toBe('()')
+    expect(selectionEnds()).toEqual({ anchor: 1, head: 1 })
+  })
+
   it('keeps typing inside the pair', () => {
     type('(', 'a')
 

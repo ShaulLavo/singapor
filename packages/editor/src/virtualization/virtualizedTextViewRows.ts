@@ -2348,13 +2348,46 @@ function scrollHorizontallyToOffset(
   view.scrollElement.scrollLeft = Math.max(0, targetLeft - gutterWidth(view))
 }
 
-export function positionInputInViewport(
+/**
+ * Moves the hidden input under the caret.
+ *
+ * An IME anchors its candidate window on the box of the element being typed into, not on the text
+ * the reader can see, so an input parked in a corner of the viewport takes the candidate list there
+ * with it — as do the accent and emoji pickers, which never announce themselves through a
+ * composition event at all. A caret nobody can see has no box worth pointing at, and an input moved
+ * outside the viewport invites the browser to scroll it back into view, so the corner stands in.
+ */
+export function positionInputAtCaret(view: VirtualizedTextViewInternal): void {
+  // The virtualizer's copy of the scroll offsets, never the element's: this runs inside the render
+  // pass, where reading scroll back off the DOM is what forces the layout it has just written.
+  const snapshot = view.virtualizer.getSnapshot()
+  const caret = visibleCaretPosition(view, snapshot)
+  // The input hangs off the scroll element rather than the spacer, so it does not come with the
+  // offset the spacer is translated by on a document taller than the browser will scroll.
+  const spacerOffset = snapshot.nativeScrollTop - snapshot.scrollTop
+
+  setStyleValue(
+    view.inputElement,
+    'top',
+    `${caret ? caret.top + spacerOffset : snapshot.nativeScrollTop}px`,
+  )
+  setStyleValue(view.inputElement, 'left', `${caret ? caret.left : snapshot.scrollLeft}px`)
+}
+
+/** Null for a caret outside the rows that are mounted, or behind the gutter or the right edge. */
+function visibleCaretPosition(
   view: VirtualizedTextViewInternal,
-  scrollTop: number,
-  scrollLeft: number,
-): void {
-  setStyleValue(view.inputElement, 'top', `${scrollTop}px`)
-  setStyleValue(view.inputElement, 'left', `${scrollLeft}px`)
+  snapshot: FixedRowVirtualizerSnapshot,
+): { readonly left: number; readonly top: number } | null {
+  const selection = view.selections[0]
+  if (!selection) return null
+
+  const position = caretPosition(view, selection.head)
+  if (!position) return null
+  if (position.left < snapshot.scrollLeft + gutterWidth(view)) return null
+  if (position.left > snapshot.scrollLeft + snapshot.viewportWidth) return null
+
+  return position
 }
 
 export function restoreScrollPosition(

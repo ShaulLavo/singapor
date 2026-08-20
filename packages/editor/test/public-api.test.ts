@@ -40,6 +40,11 @@ import {
   type EditorOnEnterRule,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
+  EDITOR_PASTE_HANDLER,
+  EDITOR_PASTE_HANDLER_ID,
+  type EditorPasteContext,
+  type EditorPasteHandler,
+  type EditorPasteTarget,
   type EditorPluginContext,
   type EditorReindentOptions,
   type EditorSnippetMirror,
@@ -403,6 +408,14 @@ describe('public API facade', () => {
     expect(EDITOR_FIND_FEATURE.id).toBe('editor.find')
     expect(EDITOR_MINIMAP_FEATURE_ID).toBe('editor.minimap')
     expect(EDITOR_MINIMAP_FEATURE.id).toBe('editor.minimap')
+    expect(EDITOR_PASTE_HANDLER_ID).toBe('editor.pasteHandler')
+    expect(EDITOR_PASTE_HANDLER.id).toBe('editor.pasteHandler')
+    const pasteHandler = {
+      handlePaste: (paste: EditorPasteContext) =>
+        paste.targets.map((target: EditorPasteTarget) => target.text),
+      mimeTypes: ['text/plain'],
+    } satisfies EditorPasteHandler
+    expect(pasteHandler.mimeTypes).toEqual(['text/plain'])
     expect(decorations.add(spec)).toBeTypeOf('string')
     const stored: readonly EditorDecoration[] = decorations.decorationsInRange(surface, 0, 3)
     expect(stored.map((decoration) => decoration.owner)).toEqual(['test.decoration'])

@@ -384,6 +384,26 @@ function dispatchInputKey(key: string, init: KeyboardEventInit = {}): KeyboardEv
   return event
 }
 
+/**
+ * What a browser leaves behind when it applies an edit to the hidden input the editor did not
+ * prevent — the state the editor has to work the edit back out of.
+ */
+function typeIntoHiddenInput(value: string, caret = value.length): void {
+  const input = editorInput()
+  input.value = value
+  input.setSelectionRange(caret, caret)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+function hiddenInputWindow(): { value: string; selectionStart: number; selectionEnd: number } {
+  const input = editorInput()
+  return {
+    selectionEnd: input.selectionEnd,
+    selectionStart: input.selectionStart,
+    value: input.value,
+  }
+}
+
 function dispatchInputKeyUp(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   const event = new KeyboardEvent('keyup', {
     bubbles: true,
@@ -2653,36 +2673,177 @@ describe('Editor', () => {
       expect(timingNames).not.toContain('input.keydownFallback')
     })
 
-    it('falls back to keydown text when native beforeinput never arrives', () => {
+    it('gives the screen reader the document around the caret, not an empty box', () => {
+      const session = createDocumentSession('alpha\nbeta\ngamma')
+      session.setSelection(6, 10)
+      editor.attachSession(session)
+      editor.focus()
+
+      expect(hiddenInputWindow()).toEqual({
+        selectionEnd: 10,
+        selectionStart: 6,
+        value: 'alpha\nbeta\ngamma',
+      })
+      expect(editorInput().getAttribute('aria-multiline')).toBe('true')
+      expect(editorInput().getAttribute('role')).toBe('textbox')
+      expect(editorInput().getAttribute('wrap')).toBe('off')
+    })
+
+    it('tells the screen reader which end of a selection the caret sits on', () => {
+      const session = createDocumentSession('alpha beta')
+      session.setSelection(10, 6)
+      editor.attachSession(session)
+      editor.focus()
+
+      expect(editorInput().selectionDirection).toBe('backward')
+      expect(hiddenInputWindow()).toEqual({
+        selectionEnd: 10,
+        selectionStart: 6,
+        value: 'alpha beta',
+      })
+    })
+
+    it('moves the hidden input window with the caret', () => {
+      const session = createDocumentSession('alpha\nbeta')
+      session.setSelection(10)
+      editor.attachSession(session)
+      editor.focus()
+
+      expect(hiddenInputWindow().selectionStart).toBe(10)
+
+      dispatchEditorKey('ArrowLeft')
+
+      expect(hiddenInputWindow().selectionStart).toBe(9)
+    })
+
+    it('carries a page of a large document rather than all of it', () => {
+      const text = Array.from(
+        { length: 60 },
+        (_, index) => `row${String(index).padStart(2, '0')}`,
+      ).join('\n')
+      const session = createDocumentSession(text)
+      session.setSelection(text.indexOf('row25'))
+      editor.attachSession(session)
+      editor.focus()
+
+      const carried = hiddenInputWindow()
+
+      expect(carried.value.startsWith('row20\n')).toBe(true)
+      expect(carried.value).not.toContain('row30')
+      expect(carried.value).not.toContain('row19')
+    })
+
+    it('keeps the caret in the hidden input when an already focused editor is focused again', () => {
+      const session = createDocumentSession('alpha\nbeta')
+      session.setSelection(8)
+      editor.attachSession(session)
+      editor.focus()
+      editor.focus()
+
+      expect(hiddenInputWindow()).toEqual({
+        selectionEnd: 8,
+        selectionStart: 8,
+        value: 'alpha\nbeta',
+      })
+    })
+
+    it('types text the browser put in the hidden input with no beforeinput to read', () => {
       const session = createDocumentSession('abc')
       editor.attachSession(session)
       editor.focus()
 
-      dispatchInputKey('X')
+      const keydown = dispatchInputKey('X')
+      expect(keydown.defaultPrevented).toBe(false)
       expect(session.materializeFullText()).toBe('abc')
 
-      dispatchInputKeyUp('X')
+      typeIntoHiddenInput('abcX')
 
       expect(session.materializeFullText()).toBe('abcX')
       expect(editor.materializeFullText()).toBe('abcX')
     })
 
-    it('applies focused keydown text synchronously after native input is missing', () => {
-      const session = createDocumentSession('abc')
+    it('replaces the word an autocorrection rewrote rather than appending its result', () => {
+      const session = createDocumentSession('teh')
+      session.setSelection(3)
       editor.attachSession(session)
       editor.focus()
 
-      dispatchInputKey('X')
-      dispatchInputKeyUp('X')
+      typeIntoHiddenInput('the')
 
-      const event = dispatchInputKey('Y')
-
-      expect(event.defaultPrevented).toBe(true)
-      expect(session.materializeFullText()).toBe('abcXY')
-      expect(editor.materializeFullText()).toBe('abcXY')
+      expect(session.materializeFullText()).toBe('the')
+      expect(editor.materializeFullText()).toBe('the')
     })
 
-    it('coalesces rapid focused keydown fallback text into one change', () => {
+    it('resolves a dead key into the accented character it produced', () => {
+      const session = createDocumentSession('a\u02c6')
+      session.setSelection(2)
+      editor.attachSession(session)
+      editor.focus()
+
+      typeIntoHiddenInput('a\u00ea')
+
+      expect(session.materializeFullText()).toBe('a\u00ea')
+      expect(editor.materializeFullText()).toBe('a\u00ea')
+    })
+
+    it('takes away the text a soft keyboard replaced ahead of the caret', () => {
+      const session = createDocumentSession('Micosoft')
+      session.setSelection(3)
+      editor.attachSession(session)
+      editor.focus()
+
+      typeIntoHiddenInput('Microsoft')
+
+      expect(session.materializeFullText()).toBe('Microsoft')
+      expect(editor.materializeFullText()).toBe('Microsoft')
+    })
+
+    it('carries a deduced replacement to every caret, each on the text the last one left', () => {
+      const session = createDocumentSession('ab ab')
+      session.setSelections([
+        { anchor: 2, head: 2 },
+        { anchor: 5, head: 5 },
+      ])
+      editor.attachSession(session)
+      editor.focus()
+
+      typeIntoHiddenInput('xyz ab', 3)
+
+      expect(session.materializeFullText()).toBe('xyz xyz')
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 3, head: 3, start: 3, end: 3 },
+        { anchor: 7, head: 7, start: 7, end: 7 },
+      ])
+    })
+
+    it('deletes the selection a browser took away with no beforeinput to say so', () => {
+      const session = createDocumentSession('alpha beta')
+      session.setSelection(6, 10)
+      editor.attachSession(session)
+      editor.focus()
+
+      typeIntoHiddenInput('alpha ', 6)
+
+      expect(session.materializeFullText()).toBe('alpha ')
+      expect(editor.materializeFullText()).toBe('alpha ')
+    })
+
+    it('holds half an astral character back until the other half arrives', () => {
+      const session = createDocumentSession('abc')
+      session.setSelection(3)
+      editor.attachSession(session)
+      editor.focus()
+
+      typeIntoHiddenInput('abc\ud83d')
+      expect(session.materializeFullText()).toBe('abc')
+
+      typeIntoHiddenInput('abc\ud83d\ude00')
+
+      expect(session.materializeFullText()).toBe('abc\ud83d\ude00')
+      expect(editor.materializeFullText()).toBe('abc\ud83d\ude00')
+    })
+
+    it('reports a deduced edit under its own timing name', () => {
       const changes: DocumentSessionChange[] = []
       editor.dispose()
       editor = new Editor(container, {
@@ -2695,18 +2856,11 @@ describe('Editor', () => {
       editor.attachSession(session)
       editor.focus()
 
-      dispatchInputKey('X')
-      dispatchInputKey('Y')
-      dispatchInputKey('Z')
-      expect(session.materializeFullText()).toBe('abc')
-      dispatchInputKeyUp('Z')
+      typeIntoHiddenInput('abcX')
 
-      const fallbackChanges = changes.filter((change) =>
-        change.timings.some(({ name }) => name === 'input.keydownFallback'),
-      )
-      expect(session.materializeFullText()).toBe('abcXYZ')
-      expect(editor.materializeFullText()).toBe('abcXYZ')
-      expect(fallbackChanges).toHaveLength(1)
+      const timingNames = changes.flatMap((change) => change.timings.map(({ name }) => name))
+      expect(session.materializeFullText()).toBe('abcX')
+      expect(timingNames).toContain('input.deducedText')
     })
 
     it('prevents browser scroll defaults when Space uses keydown fallback', async () => {
@@ -2723,7 +2877,7 @@ describe('Editor', () => {
       expect(editor.materializeFullText()).toBe('abc ')
     })
 
-    it('prevents browser scroll defaults when focused input receives Space', async () => {
+    it('leaves Space on the focused input to the browser instead of guessing at the key', async () => {
       const session = createDocumentSession('abc')
       editor.attachSession(session)
       editor.focus()
@@ -2733,11 +2887,12 @@ describe('Editor', () => {
         cancelable: true,
         key: ' ',
       })
-      const dispatched = editorInput().dispatchEvent(event)
-      expect(dispatched).toBe(false)
-      expect(event.defaultPrevented).toBe(true)
-      expect(session.materializeFullText()).toBe('abc ')
-      expect(editor.materializeFullText()).toBe('abc ')
+      editorInput().dispatchEvent(event)
+
+      expect(event.defaultPrevented).toBe(false)
+      expect(session.materializeFullText()).toBe('abc')
+
+      editorInput().dispatchEvent(createInsertEvent(' '))
       await flushTimers()
 
       expect(session.materializeFullText()).toBe('abc ')
@@ -2795,49 +2950,43 @@ describe('Editor', () => {
       expect(session.materializeFullText()).toBe('a\nb\nc')
     })
 
-    it('falls back to keydown line breaks when native beforeinput never arrives', () => {
+    it('types a line break from a key pressed on a surface with no input events', () => {
       const session = createDocumentSession('abc')
       editor.attachSession(session)
-      editor.focus()
 
-      dispatchInputKey('Enter')
-      expect(session.materializeFullText()).toBe('abc')
+      const event = dispatchEditorKey('Enter')
 
-      dispatchInputKeyUp('Enter')
-
+      expect(event.defaultPrevented).toBe(true)
       expect(session.materializeFullText()).toBe('abc\n')
       expect(editor.materializeFullText()).toBe('abc\n')
     })
 
-    it('does not schedule keydown fallback while composing', async () => {
+    it('does not type from a key that belongs to a composition', async () => {
       const session = createDocumentSession('abc')
       editor.attachSession(session)
-      editor.focus()
 
-      dispatchInputKey('X', { isComposing: true })
+      dispatchEditorKey('X', { isComposing: true })
       await flushTimers()
 
       expect(session.materializeFullText()).toBe('abc')
       expect(editor.materializeFullText()).toBe('abc')
     })
 
-    it('tracks composition state for keydown fallback decisions', async () => {
+    it('leaves the hidden input alone while a composition is writing into it', async () => {
       const session = createDocumentSession('abc')
       editor.attachSession(session)
       editor.focus()
 
       editorInput().dispatchEvent(createCompositionEvent('compositionstart'))
-      dispatchInputKey('X')
+      typeIntoHiddenInput('abcn')
       await flushTimers()
 
       expect(session.materializeFullText()).toBe('abc')
 
-      editorInput().dispatchEvent(createCompositionEvent('compositionend'))
-      dispatchInputKey('X')
-      dispatchInputKeyUp('X')
+      editorInput().dispatchEvent(createCompositionEvent('compositionend', '\u6587'))
 
-      expect(session.materializeFullText()).toBe('abcX')
-      expect(editor.materializeFullText()).toBe('abcX')
+      expect(session.materializeFullText()).toBe('abc\u6587')
+      expect(editor.materializeFullText()).toBe('abc\u6587')
     })
 
     it('commits compositionend data when final beforeinput is missing', () => {
@@ -2874,15 +3023,16 @@ describe('Editor', () => {
       expect(editor.materializeFullText()).toBe('abc文')
     })
 
-    it('clears pending keydown fallback on dispose', () => {
+    it('stops deducing from the hidden input once disposed', () => {
       const session = createDocumentSession('abc')
       editor.attachSession(session)
       editor.focus()
 
       const input = editorInput()
-      dispatchInputKey('X')
       editor.dispose()
-      input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'X' }))
+      input.value = 'abcX'
+      input.setSelectionRange(4, 4)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
 
       expect(session.materializeFullText()).toBe('abc')
       editor = new Editor(container, { plugins: withTestLanguagePlugins() })
@@ -4141,6 +4291,45 @@ describe('Editor', () => {
       document.dispatchEvent(
         new MouseEvent('mouseup', { cancelable: true, clientX: 30, clientY: 10 }),
       )
+    })
+
+    it('moves the hidden input window with a pointer drag selection', () => {
+      const session = createDocumentSession('abcd')
+      editor.attachSession(session)
+      editor.focus()
+      mockEditorViewport(editorRoot(), 120, 40)
+
+      const textNode = rowTextNode()
+      const original = (
+        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+      ).caretRangeFromPoint
+      Object.defineProperty(document, 'caretRangeFromPoint', {
+        configurable: true,
+        value: (x: number) => {
+          const range = document.createRange()
+          const offset = x <= 10 ? 1 : 3
+          range.setStart(textNode, offset)
+          range.setEnd(textNode, offset)
+          return range
+        },
+      })
+
+      try {
+        pressMouse({ clientX: 10, clientY: 10 })
+        moveMouse({ clientX: 30, clientY: 10 })
+        releaseMouse({ clientX: 30, clientY: 10 })
+      } finally {
+        if (original) {
+          Object.defineProperty(document, 'caretRangeFromPoint', {
+            configurable: true,
+            value: original,
+          })
+        } else {
+          Reflect.deleteProperty(document, 'caretRangeFromPoint')
+        }
+      }
+
+      expect(hiddenInputWindow()).toEqual({ selectionEnd: 3, selectionStart: 1, value: 'abcd' })
     })
 
     it('renders and copies pointer drag selections with selection sync disabled', () => {

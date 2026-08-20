@@ -26,7 +26,11 @@ export type {
   EditorBracketMatchPluginOptions,
   EditorDocumentLinkPluginOptions,
   EditorOccurrenceHighlightPluginOptions,
+  EditorSuspiciousCharactersOptions,
+  SuspiciousCharacterKind,
+  SuspiciousCharacterRange,
 } from './editor'
+export { suspiciousCharacterRanges } from './editor'
 export { createEditorOptionSync, EDITOR_OPTION_DESCRIPTORS } from './editor/optionDescriptors'
 export type {
   EditorControlledOptionName,

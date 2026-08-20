@@ -62,9 +62,9 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 ## Progress
 
-**92 / 99 findings complete.** Update this count when you check a box.
+**99 / 99 findings complete.** Update this count when you check a box.
 
-Milestones: 15 / 16 complete.
+Milestones: 16 / 16 complete.
 
 
 ---
@@ -874,7 +874,7 @@ Milestones: 15 / 16 complete.
 
 ---
 
-## Milestone 16 — Input pipeline and accessibility
+## Milestone 16 — Input pipeline and accessibility ✅
 
 `effort XL` · `risk high` · 7 findings
 
@@ -884,20 +884,50 @@ Milestones: 15 / 16 complete.
 
 > Ordering in this milestone rests partly on un-analyzed domains (input-a11y).
 
-- [ ] **Diff-based input deduction as the robust fallback, instead of a keydown timing race**  
+- [x] **Diff-based input deduction as the robust fallback, instead of a keydown timing race**  
   `high` `M` `partial` `input-a11y`
-- [ ] **In-progress IME composition is invisible and the candidate window lands at the viewport corner**  
+- [x] **In-progress IME composition is invisible and the candidate window lands at the viewport corner**  
   `high` `L` `missing` `input-a11y`
-- [ ] **Screen readers get an empty 1x1 textarea: no paged content window, no caret relationship**  
+- [x] **Screen readers get an empty 1x1 textarea: no paged content window, no caret relationship**  
   `high` `L` `missing` `input-a11y`
-- [ ] **No aria-live announcement channel for editor actions**  
+- [x] **No aria-live announcement channel for editor actions**  
   `medium` `S` `missing` `input-a11y`
-- [ ] **Tab-focus mode: an accessibility escape hatch from the Tab key**  
+- [x] **Tab-focus mode: an accessibility escape hatch from the Tab key**  
   `medium` `S` `missing` `input-a11y`
-- [ ] **Unicode ambiguous/invisible character highlighting**  
+- [x] **Unicode ambiguous/invisible character highlighting**  
   `high` `L` `missing` `input-a11y`
-- [ ] **Copy with syntax highlighting, and the paste-provider (paste-as) pipeline**  
+- [x] **Copy with syntax highlighting, and the paste-provider (paste-as) pipeline**  
   `medium` `XL` `missing` `input-a11y`
+
+> **Findings 1 and 3 landed as one refactor**, as this plan's own verifier said they must: both need
+> the hidden textarea to hold real content, and it was force-cleared to `''` in three places. The
+> textarea now carries a paged window — ten rows either side of the selection, each side clamped to
+> 500 characters, with a middle ellipsis for an oversized selection — and every input event is
+> deduced from it by common-prefix/suffix diffing into one `{text, replacePrevCharCnt,
+> replaceNextCharCnt}` triple. `replaceNextCharCnt` is computed on every path rather than only in a
+> soft-keyboard variant; that is the double-insert fix. The whole keydown-guessing fallback
+> (`canWaitForNativeTextInput` with its space special-case, the generation/timeout machine, the
+> `fallback-pending` phase) is deleted.
+>
+> **The composition preedit is a decoration, not a revealed textarea.** The reference reveals the
+> real input over the composed span; we cannot, because after the above the input holds a page of
+> document text, and showing it would need the element internally scrolled by measured pixel offsets
+> that tabs and any non-monospace fallback make wrong. Keeping it transparent is also what makes the
+> placement work — the browser pins the composition rect to that box, so moving the box moves the OS
+> candidate window.
+>
+> **Copy-as-HTML ships behind the reference's own guards** — a 64KB cap, one selection only, and a
+> range no token styles declines rather than emitting an unstyled block. `text/html` is only ever
+> written beside `text/plain`, never instead of it.
+>
+> **`ALLOWED_INVISIBLE_CODE_POINTS` was deleted rather than kept as tested-but-dead**: the
+> reference's space/tab/newline exemption is unreachable here, because all three are already excused
+> by the ASCII range check.
+>
+> **All four announcement consumers named in the exit criterion are wired.** Multi-cursor and
+> occurrence selection came with the channel; fold/unfold and find-wrap were added afterwards over a
+> new optional `announce?(message)` on the view contribution context, which is what let the find
+> package — in another package entirely — reach the channel at all.
 
 
 ---

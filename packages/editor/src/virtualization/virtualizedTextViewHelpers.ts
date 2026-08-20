@@ -166,6 +166,13 @@ export function createInputElement(container: HTMLElement): HTMLTextAreaElement 
   input.readOnly = true
   input.spellcheck = false
   input.setAttribute('aria-label', 'Editor input')
+  // Said out loud because the element carries a window of the document rather than a line of it: a
+  // reader told this is a multi-line text box navigates it by line, which is how code is read.
+  input.setAttribute('role', 'textbox')
+  input.setAttribute('aria-multiline', 'true')
+  // The window is written with the document's own breaks, so a soft wrap the element added would be
+  // read as a line the file does not have.
+  input.setAttribute('wrap', 'off')
   return input
 }
 

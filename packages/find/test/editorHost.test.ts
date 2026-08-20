@@ -102,6 +102,25 @@ describe('find inside a real editor', () => {
     expect(paintedText()).toEqual({ match: ['foo'], current: ['foo'], scope: ['foo mid'] })
   })
 
+  // The caret jumping back up the file is the only sign the search ran out and started again, and a
+  // reader who is not watching the caret has nothing else to go on.
+  it('says so when Find Next runs out of document and starts again', () => {
+    const probe = editorProbe('foo one\nfoo two\n', [
+      createEditorFindPlugin({ seedSearchStringFromSelection: 'never' }),
+    ])
+    probe.editor.openFind()
+    typeSearch(probe.context.container, 'foo')
+
+    // Opening lands on the first match, so one press reaches the last one and the next wraps.
+    probe.editor.findNext()
+
+    expect(announcements(probe.context.container)).toEqual([])
+
+    probe.editor.findNext()
+
+    expect(announcements(probe.context.container)).toEqual(['Wrapped to the first match'])
+  })
+
   it('never asks the editor to materialize what it already holds', () => {
     const probe = editorProbe(LONG_TEXT)
     const materialized = { fullText: 0, lineStarts: 0 }
@@ -278,6 +297,14 @@ function withoutTextViews(snapshot: EditorViewSnapshot): EditorViewSnapshot {
         ? undefined
         : Reflect.get(target, property),
   })
+}
+
+// What a screen reader would have been told, read off the live regions the editor publishes into.
+function announcements(container: HTMLElement): string[] {
+  const host = container.closest('div')?.parentElement ?? document.body
+  return [...host.querySelectorAll('[role="status"]')]
+    .map((region) => region.textContent ?? '')
+    .filter((text) => text.length > 0)
 }
 
 function mountedMatchCount(snapshot: EditorViewSnapshot): number {

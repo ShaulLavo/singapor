@@ -2,6 +2,14 @@ import { measureWhitespaceDotGlyph, type WhitespaceDotGlyph } from './browserMet
 import { setStyleValue } from './virtualizedTextViewHelpers'
 import { isDocumentTextDisplayRow } from '../displayTransforms'
 import { offsetToX } from './virtualizedTextViewGeometry'
+import {
+  normalizeSuspiciousCharactersOptions,
+  type ResolvedSuspiciousCharactersOptions,
+  sameSuspiciousCharactersOptions,
+  type SuspiciousCharacterKind,
+  suspiciousCharacterRanges,
+  suspiciousCharactersEnabled,
+} from '../unicodeHighlight'
 import type {
   VirtualizedStoredSelection,
   VirtualizedTextViewInternal,
@@ -13,7 +21,9 @@ import type {
 } from './virtualizedTextViewTypes'
 import { rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 
-type HiddenCharacterKind = 'space' | 'tab'
+type WhitespaceKind = 'space' | 'tab'
+
+type HiddenCharacterKind = WhitespaceKind | SuspiciousCharacterKind
 
 /** Everything an element needs, so building one costs no measurement of any kind. */
 type HiddenCharacterMarker = {
@@ -37,7 +47,18 @@ type NonWhitespaceBounds = {
 type HiddenCharacterPass = {
   readonly mode: HiddenCharactersMode
   readonly selectionKey: string
+  readonly suspicious: SuspiciousCharacterSettings
   spaceGlyph: WhitespaceDotGlyph | null
+}
+
+/**
+ * What a view reports suspicious characters for. The revision is what a row's cached inputs compare
+ * against: the settings decide which characters get a marker, so a row that kept its text still has
+ * to rebuild when they change.
+ */
+export type SuspiciousCharacterSettings = {
+  readonly options: ResolvedSuspiciousCharactersOptions
+  readonly revision: number
 }
 
 type HiddenCharacterRowContext = {
@@ -75,13 +96,40 @@ const HIDDEN_CHARACTER_MODES: readonly HiddenCharactersMode[] = [
   'trailing',
 ]
 const TAB_GLYPH = '→'
+/** Suspicious characters carry no glyph of their own; what marks them is the CSS on the marker. */
+const NO_GLYPH = ''
+export const DEFAULT_SUSPICIOUS_SETTINGS: SuspiciousCharacterSettings = {
+  options: normalizeSuspiciousCharactersOptions(undefined),
+  revision: 0,
+}
 const hiddenCharacterInputs = new WeakMap<HTMLElement, HiddenCharacterInputs>()
+/** Bumped per change rather than per view, so a row's cached inputs can compare it as one number. */
+let suspiciousRevision = 0
 
 export function normalizeHiddenCharactersMode(
   mode: HiddenCharactersMode | undefined,
 ): HiddenCharactersMode {
   if (mode && HIDDEN_CHARACTER_MODES.includes(mode)) return mode
   return DEFAULT_HIDDEN_CHARACTERS
+}
+
+/**
+ * Points the view at a different set of suspicious characters, redrawing what is already mounted.
+ *
+ * Answers whether anything changed, so a caller that reports the change does not report a setting
+ * being restated.
+ */
+export function setSuspiciousCharacters(
+  view: VirtualizedTextViewInternal,
+  options: ResolvedSuspiciousCharactersOptions,
+): boolean {
+  if (sameSuspiciousCharactersOptions(view.suspiciousCharacters.options, options)) return false
+
+  suspiciousRevision += 1
+  view.suspiciousCharacters = { options, revision: suspiciousRevision }
+  renderHiddenCharacters(view)
+
+  return true
 }
 
 /**
@@ -93,6 +141,7 @@ export function renderHiddenCharacters(view: VirtualizedTextViewInternal): void 
   const pass: HiddenCharacterPass = {
     mode: view.hiddenCharacters,
     selectionKey: hiddenCharacterSelectionKey(view),
+    suspicious: view.suspiciousCharacters,
     spaceGlyph: null,
   }
   const plans: HiddenCharacterRowPlan[] = []
@@ -158,6 +207,7 @@ function hiddenCharacterInputKey(
     row.chunkKey,
     pass.mode,
     pass.selectionKey,
+    pass.suspicious.revision,
   ].join(':')
 }
 
@@ -175,12 +225,26 @@ function hiddenCharacterMarkersForRow(
   row: MountedVirtualizedTextRow,
   pass: HiddenCharacterPass,
 ): readonly HiddenCharacterMarker[] {
-  if (pass.mode === 'hidden') return []
   if (row.kind !== 'text') return []
   if (row.source === 'injected') return []
+
+  const markers: HiddenCharacterMarker[] = []
+  appendWhitespaceMarkers(markers, view, row, pass)
+  appendSuspiciousCharacterMarkers(markers, view, row, pass)
+
+  return markers
+}
+
+function appendWhitespaceMarkers(
+  markers: HiddenCharacterMarker[],
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  pass: HiddenCharacterPass,
+): void {
+  if (pass.mode === 'hidden') return
   // What sits at the end of a wrapped segment is the middle of the line it was cut from, so a row
   // that carries on below has no trailing whitespace of its own to report.
-  if (pass.mode === 'trailing' && rowContinuesBelow(view, row)) return []
+  if (pass.mode === 'trailing' && rowContinuesBelow(view, row)) return
 
   const context: HiddenCharacterRowContext = {
     view,
@@ -188,32 +252,29 @@ function hiddenCharacterMarkersForRow(
     pass,
     bounds: nonWhitespaceBounds(row.text),
   }
-  const markers: HiddenCharacterMarker[] = []
   for (const chunk of row.chunks) {
-    appendHiddenCharacterMarkersForChunk(markers, context, chunk)
+    appendWhitespaceMarkersForChunk(markers, context, chunk)
   }
-
-  return markers
 }
 
-function appendHiddenCharacterMarkersForChunk(
+function appendWhitespaceMarkersForChunk(
   markers: HiddenCharacterMarker[],
   context: HiddenCharacterRowContext,
   chunk: VirtualizedTextChunk,
 ): void {
   for (let index = chunk.localStart; index < chunk.localEnd; index += 1) {
     const char = context.row.text[index]!
-    appendHiddenCharacterMarker(markers, context, char, index)
+    appendWhitespaceMarker(markers, context, char, index)
   }
 }
 
-function appendHiddenCharacterMarker(
+function appendWhitespaceMarker(
   markers: HiddenCharacterMarker[],
   context: HiddenCharacterRowContext,
   char: string,
   localIndex: number,
 ): void {
-  const kind = hiddenCharacterKind(char)
+  const kind = whitespaceKind(char)
   if (!kind) return
 
   const { view, row } = context
@@ -231,7 +292,41 @@ function appendHiddenCharacterMarker(
   })
 }
 
-function hiddenCharacterKind(char: string): HiddenCharacterKind | null {
+/**
+ * Marks the characters that are not what they appear to be, whatever the whitespace mode is: this
+ * is a warning about the text rather than a way of looking at it, and nothing about wanting spaces
+ * left alone says a bidirectional override should be.
+ *
+ * Scanning per chunk keeps a long line's cost proportional to what is mounted, which is the same
+ * bargain the whitespace scan above makes.
+ */
+function appendSuspiciousCharacterMarkers(
+  markers: HiddenCharacterMarker[],
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  pass: HiddenCharacterPass,
+): void {
+  const { options } = pass.suspicious
+  if (!suspiciousCharactersEnabled(options)) return
+
+  for (const chunk of row.chunks) {
+    const mounted = { start: chunk.localStart, end: chunk.localEnd }
+    for (const range of suspiciousCharacterRanges(row.text, options, mounted)) {
+      const offset = rowOffsetForLocalIndex(row, range.start)
+      const left = offsetToX(view, row, offset)
+      const right = offsetToX(view, row, rowOffsetForLocalIndex(row, range.end))
+      markers.push({
+        kind: range.kind,
+        offset,
+        left: Math.min(left, right),
+        width: Math.abs(right - left),
+        glyph: NO_GLYPH,
+      })
+    }
+  }
+}
+
+function whitespaceKind(char: string): WhitespaceKind | null {
   if (char === ' ') return 'space'
   if (char === '\t') return 'tab'
   return null
@@ -239,7 +334,7 @@ function hiddenCharacterKind(char: string): HiddenCharacterKind | null {
 
 function shouldShowHiddenCharacter(
   context: HiddenCharacterRowContext,
-  kind: HiddenCharacterKind,
+  kind: WhitespaceKind,
   localIndex: number,
   offset: number,
 ): boolean {
@@ -268,7 +363,7 @@ function nonWhitespaceBounds(text: string): NonWhitespaceBounds {
   let first = -1
   let last = -1
   for (let index = 0; index < text.length; index += 1) {
-    if (hiddenCharacterKind(text[index]!)) continue
+    if (whitespaceKind(text[index]!)) continue
     if (first === -1) first = index
     last = index
   }
@@ -312,10 +407,7 @@ function createHiddenCharacterMarker(
   return element
 }
 
-function hiddenCharacterGlyph(
-  context: HiddenCharacterRowContext,
-  kind: HiddenCharacterKind,
-): string {
+function hiddenCharacterGlyph(context: HiddenCharacterRowContext, kind: WhitespaceKind): string {
   if (kind === 'tab') return TAB_GLYPH
 
   const { pass } = context

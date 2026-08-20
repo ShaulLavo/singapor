@@ -1,6 +1,11 @@
 import { normalizeEditorEditability } from './editorDocument'
 import { normalizeRowGap, normalizeScrollMode } from '../virtualization/virtualizedTextViewHelpers'
 import { normalizeHiddenCharactersMode } from '../virtualization/virtualizedTextViewHiddenCharacters'
+import {
+  type EditorSuspiciousCharactersOptions,
+  normalizeSuspiciousCharactersOptions,
+  sameSuspiciousCharactersOptions,
+} from '../unicodeHighlight'
 import type { Editor } from './Editor'
 import type { EditorKeymapOptions } from './keymap'
 import type { EditorSelectionRevealTarget } from './selectionReveal'
@@ -30,6 +35,8 @@ type EditorControlledOptions = {
   readonly scrollMode?: EditorScrollMode
   readonly scrollPosition?: EditorScrollPosition | null
   readonly selection?: EditorControlledSelection | null
+  readonly suspiciousCharacters?: EditorSuspiciousCharactersOptions
+  readonly tabMovesFocus?: boolean
   readonly theme?: EditorTheme | null
 }
 
@@ -173,6 +180,31 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
       if (!scrollPosition) return
 
       editor.setScrollPosition(scrollPosition)
+    },
+  }),
+  defineOption({
+    name: 'suspiciousCharacters',
+    defaultValue: normalizeSuspiciousCharactersOptions(undefined),
+    validate: (input) =>
+      isRecord(input)
+        ? normalizeSuspiciousCharactersOptions(input as EditorSuspiciousCharactersOptions)
+        : undefined,
+    equals: sameSuspiciousCharactersOptions,
+    applyTo: (editor, suspiciousCharacters) => {
+      if (suspiciousCharacters === undefined) return
+
+      editor.setSuspiciousCharacters(suspiciousCharacters)
+    },
+  }),
+  defineOption({
+    name: 'tabMovesFocus',
+    defaultValue: false,
+    validate: (input) => (typeof input === 'boolean' ? input : undefined),
+    equals: Object.is,
+    applyTo: (editor, tabMovesFocus) => {
+      if (tabMovesFocus === undefined) return
+
+      editor.setTabMovesFocus(tabMovesFocus)
     },
   }),
   defineOption({

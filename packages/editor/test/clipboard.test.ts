@@ -92,6 +92,77 @@ describe('clipboard', () => {
     })
   })
 
+  // Markup travels beside the text, never instead of it: a target with no use for it reads the
+  // text/plain the cases above are about.
+  describe('copy as html', () => {
+    it('carries the copied range as the markup it was being read in', () => {
+      const clipboard = createClipboard()
+      editor.setText('const x = 1')
+      editor.setTokens([{ start: 0, end: 5, style: { color: '#569cd6' } }])
+      editor.setSelection(0, 7)
+
+      clipboard.copy()
+
+      expect(clipboard.html()).toContain('<span style="color: #569cd6;">const</span>')
+      expect(clipboard.text()).toBe('const x')
+    })
+
+    it('takes the line a caret is standing on, without the terminator that would paste blank', () => {
+      const clipboard = createClipboard()
+      editor.setText('alpha\nbeta')
+      editor.setTokens([{ start: 6, end: 10, style: { color: '#569cd6' } }])
+      editor.setSelection(8, 8)
+
+      clipboard.copy()
+
+      expect(clipboard.html()).toContain('>beta</span>')
+      expect(clipboard.html()).not.toContain('\n')
+      expect(clipboard.text()).toBe('beta\n')
+    })
+
+    it('writes no markup for a document nothing has highlighted', () => {
+      const clipboard = createClipboard()
+      editor.setText('const x = 1')
+      editor.setSelection(0, 7)
+
+      clipboard.copy()
+
+      expect(clipboard.html()).toBe('')
+      expect(clipboard.text()).toBe('const x')
+    })
+
+    // Markup is one run of text with nowhere to say where a caret's share of it ended, which is
+    // exactly what the per-caret fragments beside it carry.
+    it('writes no markup for a copy taken off more than one selection', () => {
+      const clipboard = createClipboard()
+      const session = createDocumentSession('const x = 1')
+      session.setSelections([
+        { anchor: 0, head: 5 },
+        { anchor: 6, head: 7 },
+      ])
+      editor.attachSession(session)
+      editor.setTokens([{ start: 0, end: 5, style: { color: '#569cd6' } }])
+
+      clipboard.copy()
+
+      expect(clipboard.html()).toBe('')
+      expect(clipboard.text()).toBe('const\nx')
+    })
+
+    it('writes no markup for a payload past the size cap', () => {
+      const clipboard = createClipboard()
+      const text = 'x'.repeat(65537)
+      editor.setText(text)
+      editor.setTokens([{ start: 0, end: 5, style: { color: '#569cd6' } }])
+      editor.setSelection(0, text.length)
+
+      clipboard.copy()
+
+      expect(clipboard.html()).toBe('')
+      expect(clipboard.text()).toBe(text)
+    })
+  })
+
   describe('paste', () => {
     it('hands every cursor back the fragment it copied', () => {
       const clipboard = createClipboard()
@@ -241,6 +312,7 @@ describe('clipboard', () => {
 function createClipboard(): {
   readonly copy: () => void
   readonly cut: () => void
+  readonly html: () => string
   readonly paste: () => void
   readonly stripEditorTypes: () => void
   readonly text: () => string
@@ -270,6 +342,7 @@ function createClipboard(): {
       values.clear()
       values.set('text/plain', text)
     },
+    html: () => values.get('text/html') ?? '',
     text: () => values.get('text/plain') ?? '',
     write: (format: string, value: string) => {
       values.set(format, value)

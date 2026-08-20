@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  canWaitForNativeTextInput,
   createEditorInputState,
   editorInputStateOwnership,
-  hasPendingKeyboardTextFallbackForGeneration,
-  pendingKeyboardTextFallback,
   selectionBeforeEditSource,
   shouldCommitCompositionEnd,
   shouldSyncCustomSelectionFromDom,
@@ -30,69 +27,42 @@ describe('editor input state machine', () => {
     expect(state.phase).toBe('selection-reconciled')
     expect(editorInputStateOwnership(state)).toEqual({
       domSelection: 'editor',
-      fallbackGeneration: 'none',
       hiddenInputValue: 'editor',
       pendingText: 'none',
       sessionSelection: 'document-session',
     })
   })
 
-  it('tracks native input generations separately from fallback text', () => {
+  it('records which side last wrote the hidden input', () => {
     let state = createEditorInputState()
-    state = transitionEditorInputState(state, {
-      generation: state.nativeInputGeneration,
-      startMs: 10,
-      text: 'A',
-      type: 'native-input-wait-started',
-    })
-    state = transitionEditorInputState(state, {
-      startMs: 11,
-      text: 'B',
-      type: 'native-input-wait-appended',
-    })
 
-    expect(state).toMatchObject({
-      fallbackGeneration: 0,
-      fallbackStartMs: 10,
-      pendingText: 'AB',
-      phase: 'fallback-pending',
-    })
-    expect(pendingKeyboardTextFallback(state)).toEqual({
-      generation: 0,
-      startMs: 10,
-      text: 'AB',
-    })
-    expect(hasPendingKeyboardTextFallbackForGeneration(state, 0)).toBe(true)
+    expect(editorInputStateOwnership(state).hiddenInputValue).toBe('editor')
 
     state = transitionEditorInputState(state, { type: 'native-input-observed' })
 
-    expect(state).toMatchObject({
-      fallbackGeneration: null,
-      nativeInputGeneration: 1,
-      nativeTextInputState: 'observed',
-      pendingText: '',
-      phase: 'native-input-observed',
-    })
-    expect(pendingKeyboardTextFallback(state)).toBeNull()
+    expect(state.phase).toBe('native-input-observed')
+    expect(editorInputStateOwnership(state).hiddenInputValue).toBe('browser')
+
+    state = transitionEditorInputState(state, { type: 'hidden-input-written' })
+
+    expect(editorInputStateOwnership(state).hiddenInputValue).toBe('editor')
   })
 
-  it('makes keyboard fallback waiting explicit', () => {
+  it('tracks text deduced from the hidden input as its own pending source', () => {
     let state = createEditorInputState()
 
-    expect(canWaitForNativeTextInput(state, { targetIsHiddenInput: true, text: 'x' })).toBe(true)
-    expect(canWaitForNativeTextInput(state, { targetIsHiddenInput: false, text: 'x' })).toBe(false)
-    expect(canWaitForNativeTextInput(state, { targetIsHiddenInput: true, text: ' ' })).toBe(false)
+    state = transitionEditorInputState(state, { text: 'the', type: 'deduced-input-pending' })
 
-    state = transitionEditorInputState(state, { type: 'composition-start' })
-    expect(canWaitForNativeTextInput(state, { targetIsHiddenInput: true, text: 'x' })).toBe(false)
-
-    state = transitionEditorInputState(state, { type: 'composition-end' })
-    state = transitionEditorInputState(state, {
-      generation: state.nativeInputGeneration,
-      type: 'native-input-missing',
+    expect(state).toMatchObject({
+      pendingText: 'the',
+      pendingTextSource: 'deduced',
+      phase: 'beforeinput-pending',
     })
+    expect(editorInputStateOwnership(state).pendingText).toBe('state-machine')
 
-    expect(canWaitForNativeTextInput(state, { targetIsHiddenInput: true, text: 'x' })).toBe(false)
+    state = transitionEditorInputState(state, { type: 'transaction-committed' })
+
+    expect(editorInputStateOwnership(state).pendingText).toBe('none')
   })
 
   it('tracks paste and drop pending text sources', () => {

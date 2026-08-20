@@ -6,6 +6,7 @@ import type { BrowserTextMetrics } from './browserMetrics'
 import type { FixedRowVirtualizer } from './fixedRowVirtualizer'
 import type { LineStartOffsetIndex } from './lineStartIndex'
 import type { RowHeightIndex } from './rowHeightIndex'
+import type { SuspiciousCharacterSettings } from './virtualizedTextViewHiddenCharacters'
 import type { VirtualizedTextViewModelState } from './virtualizedTextViewModel'
 import type {
   EditorCursorLineHighlightOptions,
@@ -158,6 +159,7 @@ export interface VirtualizedTextViewInternal {
   metrics: BrowserTextMetrics
   textMetrics: BrowserTextMetrics | null
   hiddenCharacters: HiddenCharactersMode
+  suspiciousCharacters: SuspiciousCharacterSettings
 }
 
 export type MountedVirtualizedBlockLane = {

@@ -27,6 +27,7 @@
   --editor-cursor-line-row-background: rgba(255, 255, 255, 0.06);
   --editor-caret-color: var(--editor-foreground);
   --editor-hidden-character-foreground: #71717a;
+  --editor-suspicious-character-color: #f87171;
   --editor-minimap-background: var(--editor-background);
   --editor-minimap-background-opacity: 0.5;
   --editor-syntax-attribute: #99f6e4;
@@ -73,6 +74,7 @@
   --editor-cursor-line-row-background: rgba(255, 255, 255, 0.06);
   --editor-caret-color: var(--editor-foreground);
   --editor-hidden-character-foreground: #71717a;
+  --editor-suspicious-character-color: #f87171;
   --editor-minimap-background: var(--editor-background);
   --editor-minimap-background-opacity: 0.5;
   --editor-syntax-attribute: #99f6e4;
@@ -310,12 +312,31 @@
   white-space: pre;
 }
 
+/* A confusable character is legible and has to stay legible — the reader has to be able to compare
+   it with what it imitates — so it is underlined rather than covered. */
+.editor-virtualized-hidden-character-marker[data-editor-hidden-character='ambiguous'] {
+  border-bottom: 2px solid var(--editor-suspicious-character-color);
+}
+
+/* An invisible one has no glyph and often no width at all, so the marker is the only thing there is
+   to see; the minimum width is what keeps a zero-width character from drawing a zero-width mark. */
+.editor-virtualized-hidden-character-marker[data-editor-hidden-character='invisible'] {
+  background-color: var(--editor-suspicious-character-color);
+  min-width: 2px;
+  opacity: 0.6;
+}
+
 .editor-virtualized-fold-placeholder {
   color: #a1a1aa;
   padding-left: 6px;
   user-select: none;
 }
 
+/* Invisible, but not sizeless and not parked: the OS anchors an IME candidate window, an accent
+   picker and an emoji picker on this element's box, so it is kept a row tall and moved to the caret
+   (positionInputAtCaret). The width stays at one pixel so the browser's own scroll-the-caret-into-
+   view keeps whatever is being composed pinned to that box, and so nothing of the page of document
+   text this element carries for screen readers can ever be read off the screen. */
 .editor-virtualized-input {
   -webkit-appearance: none;
   appearance: none;
@@ -324,7 +345,7 @@
   box-shadow: none;
   caret-color: transparent;
   color: transparent;
-  height: 1px;
+  height: var(--editor-row-height);
   left: 0;
   opacity: 0;
   outline: none;
@@ -336,6 +357,19 @@
   top: 0;
   -webkit-text-fill-color: transparent;
   width: 1px;
+}
+
+/* Text an IME is still assembling. It belongs to no line yet, so it draws over the row it is going
+   to land in and has to cover what is behind it; the underline is what says it is not committed. */
+.editor-virtualized-composition {
+  background: var(--editor-background);
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  text-decoration: underline;
+  top: 0;
+  user-select: none;
+  z-index: var(--editor-z-inline-surface);
 }
 
 .editor-virtualized-caret-layer {

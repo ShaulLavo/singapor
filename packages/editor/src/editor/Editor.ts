@@ -25,6 +25,7 @@ import { measureEditorPerformance } from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
 import { EditorCommandRouter } from './commandRouter'
+import { EditorAnnouncer } from './announce'
 import { SelectionRangeStore } from './selectionRanges'
 import { EditorDecorationStore, type EditorDecorationRange } from './decorationStore'
 import { EditorOperation, type EditorOperationFlush } from './operation'
@@ -83,6 +84,7 @@ import type {
   EditorState,
   EditorSyntaxStatus,
 } from './types'
+import { registerBuiltInPasteHandlers } from './pasteHandlers'
 import { EditorViewContributionController } from './viewContributions'
 import type { FoldMap } from '../foldMap'
 import { createInlineMap, type InlineMap, type InlineReplacementSpec } from '../inlineMap'
@@ -95,6 +97,7 @@ import { anchorAt, resolveAnchor } from '../pieceTable/anchors'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
 import type { TextOffsetRange } from '../textRanges'
 import {
+  EDITOR_PASTE_HANDLER,
   EditorLanguageFeatureRegistry,
   EditorPluginHost,
   type EditorCapabilityContribution,
@@ -158,6 +161,7 @@ import {
   endRowRectMeasurements,
   invalidateRowRectMeasurements,
 } from '../virtualization/virtualizedTextViewGeometry'
+import { normalizeSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { observeBrowserTextMetricsInvalidation } from '../virtualization/browserMetrics'
 import { EditorDisposableStore } from './disposables'
 
@@ -315,6 +319,8 @@ export class Editor {
   private readonly configuredTabSize: number
   /** The width in effect: the host's when it named one, otherwise the loaded document's own. */
   private tabSize: number
+  private tabMovesFocus: boolean
+  private readonly announcer: EditorAnnouncer
   private operation: EditorOperation | null = null
   private readonly cursorHistory = new CursorHistory()
   private cursorHistorySession: DocumentSession | null = null
@@ -393,8 +399,15 @@ export class Editor {
     this.options = options
     this.configuredTabSize = normalizeTabSize(options.tabSize)
     this.tabSize = this.configuredTabSize
+    this.tabMovesFocus = options.tabMovesFocus ?? false
+    // On the host's container rather than on the scrolling element: everything under that element is
+    // layers the view mounts and measures, and what the editor has to say is none of the document.
+    this.announcer = new EditorAnnouncer(container)
     this.configuredTheme = options.theme ?? null
     this.pluginHost = new EditorPluginHost(options.plugins)
+    // Into the same channel a plugin registers into, so what ships and what a host adds are asked
+    // in one order rather than one of them being a fallback the other cannot get in front of.
+    registerBuiltInPasteHandlers(this.languageFeatures)
     this.highlightPrefix = nextEditorHighlightPrefix()
     this.document = new EditorDocumentController({
       defaultDocumentMode: options.documentMode,
@@ -423,6 +436,9 @@ export class Editor {
     })
     this.foldState = new EditorFoldState(this.view, () => this.session?.getSnapshot() ?? null)
     this.el = this.view.scrollElement
+    this.view.setSuspiciousCharacters(
+      normalizeSuspiciousCharactersOptions(options.suspiciousCharacters),
+    )
     this.environmentRegistrations.add(
       observeBrowserTextMetricsInvalidation(this.el, () => this.remeasureTextMetrics()),
     )
@@ -460,17 +476,27 @@ export class Editor {
     // a line break copies all have to measure in the width the open document actually uses, and that
     // is only known once one has been loaded.
     const effectiveTabSize = (): number => this.tabSize
+    const tabMovesFocus = (): boolean => this.tabMovesFocus
     this.inputSelection = new InputSelectionController({
       el: this.el,
+      announcer: this.announcer,
       selectionSyncMode: normalizeEditorSelectionSyncMode(options.selectionSyncMode),
       get tabSize(): number {
         return effectiveTabSize()
+      },
+      // Read per press for the same reason as the width above: this one is toggled from a key, so a
+      // copy taken here is the state at mount rather than the state the reader is in.
+      get tabMovesFocus(): boolean {
+        return tabMovesFocus()
       },
       view: this.view,
       getLanguageId: () => this.languageId,
       getSyntaxInjections: () => this.syntax.injections,
       getSession: () => this.session,
       getSessionOptions: () => this.sessionOptions,
+      getPasteHandlers: () => this.languageFeatures.ordered(EDITOR_PASTE_HANDLER, this.languageId),
+      getSyntaxTokens: () => this.tokens,
+      getEditorTheme: () => this.resolvedTheme(),
       materializeFullText: () => this.materializeFullText(),
       canEditDocument: () => this.canEditDocument(),
       applySessionChange: (change, totalName, totalStart, options) =>
@@ -509,6 +535,15 @@ export class Editor {
         this.inputSelection.applyMoveSelectionToNextOccurrenceCommand(context),
       toggleWordWrap: () => {
         this.setWordWrap(!this.isWordWrapEnabled())
+        return true
+      },
+      toggleTabFocusMode: () => {
+        const moves = this.setTabMovesFocus(!this.isTabMovesFocusEnabled())
+        // Said, not shown: the reader this key exists for is the one who cannot see an indicator
+        // change, and the next press of Tab is about to do something other than what it did.
+        this.announcer.alert(
+          moves ? 'Tab moves focus out of the editor' : 'Tab inserts indentation',
+        )
         return true
       },
       navigation: (command, context) =>
@@ -647,6 +682,20 @@ export class Editor {
     return this.view.isWrapEnabled()
   }
 
+  /**
+   * Gives Tab back to the page, or takes it for indentation again. Returns the state in effect
+   * afterwards. Nothing is announced from here: a host writing its own controls says what it did in
+   * its own words, and the key that toggles this from inside the editor speaks for itself.
+   */
+  setTabMovesFocus(enabled: boolean): boolean {
+    this.tabMovesFocus = enabled
+    return this.tabMovesFocus
+  }
+
+  isTabMovesFocusEnabled(): boolean {
+    return this.tabMovesFocus
+  }
+
   setFoldMap(foldMap: FoldMap | null): void {
     this.view.setFoldMap(foldMap)
   }
@@ -755,6 +804,7 @@ export class Editor {
 
     const changed = this.foldState.foldAll()
     if (changed) {
+      this.announcer.status(`Folded all, ${this.foldState.collapsedFoldCount} regions collapsed`)
       this.notifyViewContributions('layout', null)
       this.log({
         action: 'editor.fold.all',
@@ -770,6 +820,7 @@ export class Editor {
 
     const changed = this.foldState.unfoldAll()
     if (changed) {
+      this.announcer.status('Unfolded all')
       this.notifyViewContributions('layout', null)
       this.log({
         action: 'editor.unfold.all',
@@ -1036,6 +1087,16 @@ export class Editor {
     })
   }
 
+  setSuspiciousCharacters(options: EditorOptions['suspiciousCharacters']): void {
+    if (!this.view.setSuspiciousCharacters(normalizeSuspiciousCharactersOptions(options))) return
+
+    this.log({
+      action: 'editor.rendering.suspicious_characters_changed',
+      level: 'info',
+      rendering: { suspiciousCharacters: options ?? null },
+    })
+  }
+
   setKeymap(keymap: EditorOptions['keymap']): void {
     if (!this.keymap.setKeymap(keymap)) return
 
@@ -1234,6 +1295,7 @@ export class Editor {
     this.disposeCapabilityContributions()
     this.disposeCommandContributions()
     this.keymap.dispose()
+    this.announcer.dispose()
     this.syntax.dispose()
     this.detachSession()
     this.logLifecycleSummary()
@@ -2225,6 +2287,7 @@ export class Editor {
         this.languageFeatures.register(token, selector, provider),
       log: (event) => this.log(event),
       revealLine: (row) => this.view.scrollToRow(row),
+      announce: (message) => this.announcer.status(message),
       focusEditor: () => this.focus(),
       setSelection: (anchor, head, timingName, revealOffset) =>
         this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset),
@@ -3080,11 +3143,13 @@ export class Editor {
       locations,
       isCollapsed: (fold) => this.foldState.isCollapsed(fold),
     })
-    let changed = false
-    for (const fold of plan.collapse) changed = this.foldState.fold(fold) || changed
-    for (const fold of plan.expand) changed = this.foldState.unfold(fold) || changed
-    if (!changed) return false
+    let collapsed = 0
+    let expanded = 0
+    for (const fold of plan.collapse) if (this.foldState.fold(fold)) collapsed += 1
+    for (const fold of plan.expand) if (this.foldState.unfold(fold)) expanded += 1
+    if (collapsed === 0 && expanded === 0) return false
 
+    this.announceFoldChange(collapsed, expanded)
     this.notifyViewContributions('layout', null)
     this.log({
       action: 'editor.fold.command',
@@ -3096,6 +3161,18 @@ export class Editor {
       },
     })
     return true
+  }
+
+  /**
+   * Rows leave the document without the caret moving, so a reader who cannot see the rows go has
+   * nothing to tell them how much of the file just stopped being there.
+   */
+  private announceFoldChange(collapsed: number, expanded: number): void {
+    const parts: string[] = []
+    if (collapsed > 0) parts.push(`Folded ${collapsed} ${collapsed === 1 ? 'region' : 'regions'}`)
+    if (expanded > 0) parts.push(`Unfolded ${expanded} ${expanded === 1 ? 'region' : 'regions'}`)
+
+    this.announcer.status(parts.join(', '))
   }
 
   /**

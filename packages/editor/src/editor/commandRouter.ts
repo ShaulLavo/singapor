@@ -30,6 +30,7 @@ export type EditorCommandRouterHandlers = {
   ): boolean
   moveSelectionToNextOccurrence(context: EditorCommandContext): boolean
   toggleWordWrap(context: EditorCommandContext): boolean
+  toggleTabFocusMode(context: EditorCommandContext): boolean
   navigation(command: EditorCommandId, context: EditorCommandContext): boolean
 }
 
@@ -76,6 +77,9 @@ export class EditorCommandRouter {
       return this.handlers.moveSelectionToNextOccurrence(context)
     }
     if (command === 'editor.action.toggleWordWrap') return this.handlers.toggleWordWrap(context)
+    if (command === 'editor.action.toggleTabFocusMode') {
+      return this.handlers.toggleTabFocusMode(context)
+    }
     if (command === 'deleteBackward') return this.handlers.delete('backward', context)
     if (command === 'deleteForward') return this.handlers.delete('forward', context)
     if (isEditorFoldCommand(command)) return this.handlers.fold(command)

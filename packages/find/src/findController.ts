@@ -89,6 +89,7 @@ export type EditorFindHost = {
   trackPaintedRanges(ranges: readonly FindRange[]): FindTrackedRanges
   getSelections(): readonly EditorFindResolvedSelection[]
   focusEditor(): void
+  announce?(message: string): void
   setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
   setSelections(
     selections: readonly EditorFindSelectionRange[],
@@ -241,7 +242,12 @@ export class EditorFindController {
     if (!this.ensureFindReady('none')) return false
 
     const startOffset = this.primarySelection()?.endOffset ?? 0
-    return this.selectMatch(this.nextMatchAt(startOffset, true))
+    const match = this.nextMatchAt(startOffset, true)
+    // Landing behind where the search started is the search having run out and begun again. Nothing
+    // on screen says so to a reader who cannot see the caret jump back up the file.
+    if (match && match.start < startOffset) this.host?.announce?.('Wrapped to the first match')
+
+    return this.selectMatch(match)
   }
 
   public findPrevious(): boolean {
@@ -253,7 +259,10 @@ export class EditorFindController {
         this.searchFrom(findPreviousMatchFrom, startOffset, { escapeEmptyMatchAtOffset: true }),
       )
 
-    return this.selectMatch(previousMatchBefore(this.matches, startOffset, this.options.loop, true))
+    const match = previousMatchBefore(this.matches, startOffset, this.options.loop, true)
+    if (match && match.start > startOffset) this.host?.announce?.('Wrapped to the last match')
+
+    return this.selectMatch(match)
   }
 
   public replaceOne(): boolean {

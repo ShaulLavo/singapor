@@ -284,6 +284,11 @@ export type EditorViewContributionContext = {
   log?(event: EditorLogInput): void
   revealLine(row: number): void
   focusEditor(): void
+  /**
+   * Says something out loud to a screen reader. Optional so a hand-written context keeps compiling;
+   * a host without one simply stays quiet, which is what it did before it could speak at all.
+   */
+  announce?(message: string): void
   setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
   setSelections(
     selections: readonly EditorSelectionRange[],
@@ -467,6 +472,58 @@ export type EditorEditContribution = EditorDisposable
 export type EditorEditContributionProvider = {
   createContribution(context: EditorEditContributionContext): EditorEditContribution | null
 }
+
+/** One place a paste is about to land, with the text it would replace. */
+export type EditorPasteTarget = {
+  readonly start: number
+  readonly end: number
+  /** What the paste displaces, empty at a caret. A handler that rewrites around it reads it here. */
+  readonly text: string
+}
+
+/**
+ * A paste, as the transfer describes it rather than as the text it flattens to.
+ *
+ * The flattening is the whole problem: an image, a URL landing on a word, a symbol whose import has
+ * to travel with it are each a different payload, and every one of them reaches `text/plain` as
+ * either nothing at all or as something that reads wrong where it lands.
+ */
+export type EditorPasteContext = {
+  /** The transfer itself, for a type nothing named here carries. */
+  readonly dataTransfer: DataTransfer
+  /** Types the transfer reports; `'Files'` is the one a browser uses for the files below. */
+  readonly types: readonly string[]
+  readonly files: readonly File[]
+  /** `text/plain` with its line endings already flattened — what the default path would insert. */
+  readonly text: string
+  readonly languageId: EditorSyntaxLanguageId | null
+  /** The payload was copied out of an editor in this process, so a move within one is visible. */
+  readonly internal: boolean
+  /** Where it lands, in document order. */
+  readonly targets: readonly EditorPasteTarget[]
+}
+
+/**
+ * A reading of a paste other than its plain text.
+ *
+ * Registered against `EDITOR_PASTE_HANDLER`, so which documents a handler is asked about and where
+ * in the order it sits are the selector's to say. The first handler to answer takes the paste;
+ * declining costs it nothing, and the plain-text path is what remains when every one of them does.
+ */
+export type EditorPasteHandler = {
+  /** Types this handler answers for. A transfer carrying none of them never reaches it. */
+  readonly mimeTypes: readonly string[]
+  /**
+   * The text each target takes, one entry per entry of `context.targets`, or null to pass. A list
+   * of any other length does not describe these targets and is declined on the handler's behalf.
+   */
+  handlePaste(context: EditorPasteContext): readonly string[] | null
+}
+
+export const EDITOR_PASTE_HANDLER_ID = 'editor.pasteHandler'
+
+export const EDITOR_PASTE_HANDLER =
+  createEditorLanguageFeatureToken<EditorPasteHandler>(EDITOR_PASTE_HANDLER_ID)
 
 export type EditorDecorationContributionContext = EditorDocumentContributionContext &
   EditorRangeHighlightContributionContext &

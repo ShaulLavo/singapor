@@ -31,6 +31,7 @@ import {
   cursorLineBufferRow,
   cursorLineVirtualRow,
   getMountedRows,
+  positionInputAtCaret,
   refreshCursorLineRows,
 } from './virtualizedTextViewRows'
 import { renderHiddenCharacters } from './virtualizedTextViewHiddenCharacters'
@@ -322,6 +323,9 @@ function renderCaret(view: VirtualizedTextViewInternal): void {
 
   renderCaretElement(view, view.caretElement, selections[0]!)
   renderSecondaryCaretElements(view, selections)
+  // Whatever the OS is about to anchor on the input — a candidate window, an accent picker — belongs
+  // over the caret the reader is watching, and this is where that caret stops moving.
+  positionInputAtCaret(view)
 }
 
 function renderSecondaryCaretElements(

@@ -3,6 +3,8 @@ export {
   createEditorLanguageFeatureToken,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
+  EDITOR_PASTE_HANDLER,
+  EDITOR_PASTE_HANDLER_ID,
 } from '../plugins'
 export {
   EditorDecorationStore,
@@ -75,6 +77,9 @@ export type {
   EditorMinimapFeature,
   EditorMinimapSectionHeaderStyle,
   EditorOverlaySide,
+  EditorPasteContext,
+  EditorPasteHandler,
+  EditorPasteTarget,
   EditorPlugin,
   EditorPluginContext,
   EditorPluginLifecycleState,

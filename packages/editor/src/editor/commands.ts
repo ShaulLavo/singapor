@@ -45,6 +45,7 @@ export type EditorCommandId =
   | 'editor.action.changeAll'
   | 'editor.action.jumpToBracket'
   | 'editor.action.toggleWordWrap'
+  | 'editor.action.toggleTabFocusMode'
   | 'editor.action.formatDocument'
   | 'editor.action.rename'
   | 'editor.action.autoFix'

@@ -166,6 +166,11 @@ function drive(
   }
 
   if (cells.length === 0) {
+    /**
+     * @justification Nothing to animate still has to finish asynchronously, or a caller that always sees its
+     * completion after returning would see it before returning on an empty document. Guarded by
+     * `stopped`, so a cancel between the two beats it.
+     */
     queueMicrotask(() => {
       if (!stopped) onDone()
     })
@@ -174,6 +179,11 @@ function drive(
 
   const tickMs = Math.max(1, Math.round(duration / SAMPLING_STEPS))
   let step = 0
+  /**
+   * @justification Drives a fixed-duration decorative overlay at a tick computed from its own duration, and owns
+   * the matching `clearInterval` in `stop()`. It paints a layer above the rows rather than editor
+   * state, so nothing it does has to be ordered against document work.
+   */
   const interval = setInterval(() => {
     step += 1
     const progress = step / SAMPLING_STEPS

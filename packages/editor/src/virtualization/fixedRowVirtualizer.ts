@@ -294,6 +294,12 @@ export class FixedRowVirtualizer {
 
   private scheduleTrailingScrollEmit(): void {
     this.cancelTrailingScrollEmit()
+    /**
+     * @justification The tail of a scroll, which has to be measured against the raw scroll events it follows
+     * rather than against editor work — pacing it with other tasks would make the settle time
+     * depend on what else was queued. Cancelled by `cancelTrailingScrollEmit` on every further
+     * scroll, so at most one is ever pending.
+     */
     this.trailingScrollEmitTimer = setTimeout(() => {
       this.trailingScrollEmitTimer = null
       this.emitChange()

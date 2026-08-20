@@ -80,6 +80,11 @@ class DecodeViewContribution implements EditorViewContribution {
     // Hide the real rows immediately (CSS clip) so there is no flash of the
     // fully-painted file before the reveal — even while we wait for tokens.
     this.context.scrollElement.classList.add(ACTIVE_CLASS)
+    /**
+     * @justification The ceiling on how long the reveal waits for tokens before starting anyway. A scheduler would
+     * pace it against other editor work, which is the opposite of what it is for: it exists so a
+     * document whose tokens never arrive still reveals.
+     */
     this.tokensTimer = setTimeout(
       () => this.maybeStart(this.context.getSnapshot(), true),
       TOKENS_WAIT_MS,

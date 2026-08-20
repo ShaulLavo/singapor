@@ -63,6 +63,11 @@ export class DocumentHighlightController {
 
   private schedule(offset: number): void {
     this.cancel()
+    /**
+     * @justification Debounces a request to the language server against the caret, not against
+     * rendering, and `cancel()` clears it on every move — so the server sees one question per
+     * pause rather than one per keystroke.
+     */
     this.timer = setTimeout(() => {
       this.timer = null
       void this.request(offset)

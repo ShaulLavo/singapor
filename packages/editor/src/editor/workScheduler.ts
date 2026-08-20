@@ -116,6 +116,10 @@ const PRIORITY_RANK: Record<EditorWorkPriority, number> = {
 }
 
 const defaultSetTimeout = ((handler: () => void, timeout?: number) =>
+  /**
+   * @justification Phase 3 scheduler owner; all delayed editor work enters through EditorWorkScheduler, which
+   * provides keyed cancellation, stale-result checks, budget aborts, and observability.
+   */
   setTimeout(handler, timeout)) as typeof globalThis.setTimeout
 const defaultClearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) =>
   clearTimeout(handle)) as typeof globalThis.clearTimeout

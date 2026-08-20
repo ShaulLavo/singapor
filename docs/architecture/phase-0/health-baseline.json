@@ -49,50 +49,7 @@
     "opensrc",
     "references"
   ],
-  "missingPackageScripts": {
-    "@singapor/core": [
-      "build"
-    ],
-    "@singapor/diff": [
-      "build"
-    ],
-    "@singapor/find": [
-      "build"
-    ],
-    "@singapor/gutters": [
-      "build"
-    ],
-    "@singapor/lsp": [
-      "build"
-    ],
-    "@singapor/lsp-plugin": [
-      "build"
-    ],
-    "@singapor/minimap": [
-      "build"
-    ],
-    "@singapor/panes": [
-      "build"
-    ],
-    "@singapor/react": [
-      "build"
-    ],
-    "@singapor/scope-lines": [
-      "build"
-    ],
-    "@singapor/solid": [
-      "build"
-    ],
-    "@singapor/tree-sitter": [
-      "build"
-    ],
-    "@singapor/tree-sitter-languages": [
-      "build"
-    ],
-    "@singapor/typescript-lsp": [
-      "build"
-    ]
-  },
+  "missingPackageScripts": {},
   "packageCycles": [],
   "schemaVersion": 1,
   "sourceCycles": {

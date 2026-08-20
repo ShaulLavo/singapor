@@ -46,6 +46,7 @@ import {
   setEditorSyntaxSessionFactory,
   setHighlightRegistry,
 } from '../src/public/testing'
+import { createFoldMap } from '../src/foldMap'
 import { resolveSelection } from '../src/selections'
 
 // Mock HighlightRegistry backed by a Map, used to assert highlight state.
@@ -6716,15 +6717,37 @@ describe('Editor', () => {
       expect(rowsContainingText('Qz();')).toHaveLength(1)
     })
 
-    it('pulls a caret set inside a collapsed region onto its header row', async () => {
+    it('opens the region a caret is set inside rather than retargeting the caret', async () => {
       await openCollapsedBlock(editor)
 
       editor.setSelection(COLLAPSED_BLOCK_HIDDEN_OFFSET)
 
-      expect(editor.getState().cursor).toEqual({ row: 0, column: COLLAPSED_BLOCK_HEADER_END })
+      expect(editor.getState().cursor).toEqual({ row: 2, column: 2 })
       editorRoot().dispatchEvent(createInsertEvent('Q'))
-      expect(rowsContainingText('if (x) {Q')).toHaveLength(1)
-      expect(editor.materializeFullText()).toContain('if (x) {Q\n  y();')
+      expect(rowsContainingText('  Qy2();')).toHaveLength(1)
+      expect(editor.materializeFullText()).toContain('  y();\n  Qy2();')
+    })
+
+    // Rows a host hid through a fold map of its own answer to no region anyone can open, so the
+    // caret has nothing to be revealed by and still has to end up on a row that is drawn.
+    it('pulls a caret set into rows a host fold map hides onto the row on screen', () => {
+      const session = createDocumentSession(COLLAPSED_BLOCK_TEXT)
+      editor.attachSession(session)
+      editor.setFoldMap(
+        createFoldMap(session.getSnapshot(), [
+          {
+            startIndex: 0,
+            endIndex: COLLAPSED_BLOCK_TEXT.indexOf('\nz();'),
+            startLine: 0,
+            endLine: 3,
+            type: 'statement_block',
+          },
+        ]),
+      )
+
+      editor.setSelection(COLLAPSED_BLOCK_HIDDEN_OFFSET)
+
+      expect(editor.getState().cursor).toEqual({ row: 0, column: COLLAPSED_BLOCK_HEADER_END })
     })
 
     it('leaves a find match inside a collapsed region addressable by find itself', async () => {
@@ -6758,6 +6781,8 @@ describe('Editor', () => {
         start: 18,
         end: 19,
       })
+      // And on screen: landing on a hit opened the region that was hiding it.
+      expect(rowsContainingText('  y2();')).toHaveLength(1)
     })
 
     it('refreshes syntax after edits', async () => {

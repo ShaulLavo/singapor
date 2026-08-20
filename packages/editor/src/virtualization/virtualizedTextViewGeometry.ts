@@ -46,8 +46,15 @@ const COLUMN_EPSILON = 1e-9
 type RowGeometry = {
   readonly offsets: Float64Array
   readonly xs: Float64Array
-  readonly xOrder: Uint32Array | null
-  readonly width: number
+  /**
+   * What is still owed on `xs`, or null once nothing is. A caret asks one row for one column, so
+   * reading the row's every advance to answer it is the whole row's cost spent on a hundredth of
+   * it. The plan holds what a boundary would be read from, and `xs` starts as sentinels that the
+   * boundaries somebody actually asks about replace.
+   */
+  plan: MeasuredRowPlan | null
+  xOrder: Uint32Array | null
+  width: number
   /**
    * Flattened (x, visual column) pairs, ascending, that a calculated row extrapolated from — null
    * when it extrapolated from column zero alone. The inverse mapping has to start from the same
@@ -56,15 +63,68 @@ type RowGeometry = {
   readonly anchors: Float64Array | null
 }
 
+/** No advance is ever NaN, so it is free to stand for a boundary that has not been read yet. */
+const UNREAD = Number.NaN
+
+const UNIT_LEFT = 0
+const UNIT_RIGHT = 1
+
+type MeasuredUnitKind = 'text' | 'control' | 'widget'
+
+/**
+ * One advance a measured row is assembled from: a grapheme of a text part, a control glyph, or a
+ * mounted replacement. Which offsets it spans follows from the text alone and costs no layout, so a
+ * row can be laid out in units in full while none of them has been measured.
+ */
+type MeasuredUnit = {
+  readonly kind: MeasuredUnitKind
+  readonly node: Text | null
+  readonly nodeOffset: number
+  readonly nodeLength: number
+  readonly element: HTMLElement | null
+  readonly widthCells: number
+  readonly localStart: number
+  readonly localEnd: number
+  /**
+   * The unit this one follows inside its chunk, or -1 at a chunk's first. Only a unit that fails to
+   * measure — or a replacement, which is placed rather than measured — needs it: it stands where
+   * whatever precedes it ended, and that is the one direction a lazy read has to chase.
+   */
+  readonly previous: number
+  /** Where the chunk begins, for a unit with nothing before it to stand after. */
+  readonly chunkX: number
+}
+
+type MeasuredRowPlan = {
+  readonly view: VirtualizedTextViewInternal
+  readonly row: MountedVirtualizedTextRow
+  readonly units: readonly MeasuredUnit[]
+  readonly lefts: Float64Array
+  readonly widths: Float64Array
+  /** Per boundary: the unit whose edge stands there, or -1 for one no unit reaches. */
+  readonly writerUnit: Int32Array
+  readonly writerSide: Uint8Array
+  readonly writerX: Float64Array
+  measurement: RowMeasurementContext | null
+}
+
 type BoundaryBuffer = {
   offsets: Float64Array
   xs: Float64Array
   length: number
 }
 
+type PlanBuffer = {
+  readonly offsets: Float64Array
+  readonly writerUnit: Int32Array
+  readonly writerSide: Uint8Array
+  readonly writerX: Float64Array
+  length: number
+}
+
 /**
- * Sampled once and carried through a whole row build. `scale` is itself a layout read, and two
- * readings of it taken at different points in one build would put the boundaries either side of
+ * Sampled once and carried through every advance a row is read for. `scale` is itself a layout
+ * read, and two readings of it taken at different points would put the boundaries either side of
  * them in different spaces.
  */
 type RowMeasurementContext = {
@@ -290,7 +350,7 @@ export function knownRowContentWidth(
 ): number | null {
   const key = rowGeometryCacheKey(view, row)
   const cached = row.geometryCache as RowGeometryCache | null
-  if (cached?.key === key) return cached.geometry.width
+  if (cached?.key === key && !cached.geometry.plan) return cached.geometry.width
   if (rowUsesCalculatedGeometry(row)) return calculatedRowWidth(view, row)
 
   const measured = measuredRowWidths.get(row.element)
@@ -714,17 +774,38 @@ function keyColumnX(
   return null
 }
 
+/**
+ * Lays the row out in units without reading a single advance. Everything expensive is deferred to
+ * `boundaryX`, which reads the one unit the asked-for boundary stands on — a caret on a paragraph
+ * row costs one segment rect instead of one per grapheme in the paragraph.
+ */
 function buildMeasuredRowGeometry(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): RowGeometry {
-  const boundaries = createBoundaryBuffer(row)
-  const measurement = { row, scale: rowClientRectScale(row) }
-  for (const chunk of row.chunks) {
-    appendMeasuredChunkBoundaries(boundaries, view, row, chunk, measurement)
-  }
+  const buffer = createPlanBuffer(row)
+  const units: MeasuredUnit[] = []
+  for (const chunk of row.chunks) appendChunkPlan(buffer, units, view, row, chunk)
+  if (buffer.length === 0) appendPlanBoundary(buffer, row.startOffset, -1, UNIT_LEFT, 0)
 
-  return geometryFromBoundaries(row, boundaries, estimatedRowContentWidth(view, row), null)
+  return {
+    offsets: buffer.offsets.subarray(0, buffer.length),
+    xs: new Float64Array(buffer.length).fill(UNREAD),
+    plan: {
+      view,
+      row,
+      units,
+      lefts: new Float64Array(units.length).fill(UNREAD),
+      widths: new Float64Array(units.length).fill(UNREAD),
+      writerUnit: buffer.writerUnit.subarray(0, buffer.length),
+      writerSide: buffer.writerSide.subarray(0, buffer.length),
+      writerX: buffer.writerX.subarray(0, buffer.length),
+      measurement: null,
+    },
+    xOrder: null,
+    width: UNREAD,
+    anchors: null,
+  }
 }
 
 function estimatedRowContentWidth(
@@ -735,120 +816,266 @@ function estimatedRowContentWidth(
   return rowTextInsetLeft(row) + textWidth + rowTextInsetRight(row)
 }
 
-function appendMeasuredChunkBoundaries(
-  boundaries: BoundaryBuffer,
+function appendChunkPlan(
+  buffer: PlanBuffer,
+  units: MeasuredUnit[],
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
-  measurement: RowMeasurementContext,
 ): void {
-  let fallbackX = rowTextInsetLeft(row) + estimatedPrefixWidth(view, row, chunk.localStart)
-  appendBoundary(boundaries, rowOffsetForLocalIndex(row, chunk.localStart), fallbackX)
+  const chunkX = rowTextInsetLeft(row) + estimatedPrefixWidth(view, row, chunk.localStart)
+  appendPlanBoundary(buffer, rowOffsetForLocalIndex(row, chunk.localStart), -1, UNIT_LEFT, chunkX)
 
+  let previous = -1
   for (const part of chunk.parts) {
-    fallbackX = appendMeasuredPartBoundaries(boundaries, view, row, part, fallbackX, measurement)
+    previous = appendPartPlan(buffer, units, row, part, previous, chunkX)
   }
 
-  appendBoundary(boundaries, rowOffsetForLocalIndex(row, chunk.localEnd), fallbackX)
+  // A chunk that rendered nothing still ends where it began; one that rendered something ends where
+  // its last unit does, which is the same edge that unit already wrote.
+  appendPlanBoundary(
+    buffer,
+    rowOffsetForLocalIndex(row, chunk.localEnd),
+    previous,
+    UNIT_RIGHT,
+    chunkX,
+  )
 }
 
-function appendMeasuredPartBoundaries(
-  boundaries: BoundaryBuffer,
-  view: VirtualizedTextViewInternal,
+function appendPartPlan(
+  buffer: PlanBuffer,
+  units: MeasuredUnit[],
   row: MountedVirtualizedTextRow,
   part: VirtualizedTextChunkPart,
-  fallbackX: number,
-  measurement: RowMeasurementContext,
+  previous: number,
+  chunkX: number,
 ): number {
-  if (part.kind === 'control')
-    return appendControlBoundaries(boundaries, view, row, part, fallbackX, measurement)
-  if (part.kind === 'widget') return appendWidgetBoundaries(boundaries, view, row, part, fallbackX)
-  return appendTextBoundaries(boundaries, view, row, part, fallbackX, measurement)
+  if (part.kind === 'text') {
+    let last = previous
+    for (const segment of segmentGraphemes(part.node.data)) {
+      last = appendUnitPlan(buffer, units, row, textUnit(part, segment, last, chunkX))
+    }
+
+    return last
+  }
+
+  if (part.kind === 'control') {
+    return appendUnitPlan(buffer, units, row, {
+      kind: 'control',
+      node: null,
+      nodeOffset: 0,
+      nodeLength: 0,
+      element: part.element,
+      widthCells: part.widthCells,
+      localStart: part.localStart,
+      localEnd: part.localEnd,
+      previous,
+      chunkX,
+    })
+  }
+
+  return appendUnitPlan(buffer, units, row, {
+    kind: 'widget',
+    node: null,
+    nodeOffset: 0,
+    nodeLength: 0,
+    element: part.element,
+    widthCells: 0,
+    localStart: part.localStart,
+    localEnd: part.localEnd,
+    previous,
+    chunkX,
+  })
+}
+
+function textUnit(
+  part: VirtualizedTextChunkTextPart,
+  segment: TextSegment,
+  previous: number,
+  chunkX: number,
+): MeasuredUnit {
+  const localStart = part.localStart + segment.index
+  return {
+    kind: 'text',
+    node: part.node,
+    nodeOffset: segment.index,
+    nodeLength: segment.segment.length,
+    element: null,
+    widthCells: 0,
+    localStart,
+    localEnd: localStart + segment.segment.length,
+    previous,
+    chunkX,
+  }
+}
+
+function appendUnitPlan(
+  buffer: PlanBuffer,
+  units: MeasuredUnit[],
+  row: MountedVirtualizedTextRow,
+  unit: MeasuredUnit,
+): number {
+  const index = units.length
+  units.push(unit)
+  appendPlanBoundary(buffer, rowOffsetForLocalIndex(row, unit.localStart), index, UNIT_LEFT, UNREAD)
+  appendPlanBoundary(buffer, rowOffsetForLocalIndex(row, unit.localEnd), index, UNIT_RIGHT, UNREAD)
+  return index
+}
+
+/** Sized once against the same bound `createBoundaryBuffer` is, and appended to the same way. */
+function createPlanBuffer(row: MountedVirtualizedTextRow): PlanBuffer {
+  const capacity = row.text.length + row.chunks.length + 2
+  return {
+    offsets: new Float64Array(capacity),
+    writerUnit: new Int32Array(capacity),
+    writerSide: new Uint8Array(capacity),
+    writerX: new Float64Array(capacity),
+    length: 0,
+  }
 }
 
 /**
- * The columns a rendered replacement covers say nothing about how wide it draws, so its advance is
- * the width the mount observed rather than anything read here — one rect per resize instead of one
- * per geometry build, and a width even while the row is off-screen. The estimate stands in until
- * something has been measured at all, which is the placeholder text's own width.
+ * Where two units meet they name the same boundary, and the later of them is the one that stands
+ * there. Recording that here rather than resolving it at read time is what lets a boundary asked
+ * for on its own come back as the value it would have had if the whole row had been read at once.
  */
-function appendWidgetBoundaries(
-  boundaries: BoundaryBuffer,
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-  part: Extract<VirtualizedTextChunkPart, { readonly kind: 'widget' }>,
-  fallbackX: number,
-): number {
-  const width =
-    inlineWidgetWidths.get(part.element) ??
-    estimatedLocalRangeWidth(view, row, part.localStart, part.localEnd)
-  appendBoundary(boundaries, rowOffsetForLocalIndex(row, part.localStart), fallbackX)
-  appendBoundary(boundaries, rowOffsetForLocalIndex(row, part.localEnd), fallbackX + width)
-  return fallbackX + width
+function appendPlanBoundary(
+  buffer: PlanBuffer,
+  offset: number,
+  unit: number,
+  side: number,
+  x: number,
+): void {
+  const last = buffer.length - 1
+  const at = last >= 0 && buffer.offsets[last] === offset ? last : buffer.length
+  buffer.offsets[at] = offset
+  buffer.writerUnit[at] = unit
+  buffer.writerSide[at] = side
+  buffer.writerX[at] = x
+  if (at === buffer.length) buffer.length += 1
 }
 
-function appendTextBoundaries(
-  boundaries: BoundaryBuffer,
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-  part: VirtualizedTextChunkTextPart,
-  fallbackX: number,
-  measurement: RowMeasurementContext,
-): number {
-  let currentX = fallbackX
-  for (const segment of segmentGraphemes(part.node.data)) {
-    currentX = appendTextSegmentBoundaries(
-      boundaries,
-      view,
-      row,
-      part,
-      segment,
-      currentX,
-      measurement,
-    )
+function boundaryX(geometry: RowGeometry, index: number): number {
+  const cached = geometry.xs[index]
+  if (cached === undefined) return 0
+  if (!Number.isNaN(cached)) return cached
+
+  const plan = geometry.plan
+  if (!plan) return 0
+
+  const unit = plan.writerUnit[index]!
+  const x =
+    unit < 0 ? plan.writerX[index]! : resolvedUnitEdge(plan, unit, plan.writerSide[index] === 1)
+  geometry.xs[index] = x
+  return x
+}
+
+function resolvedUnitEdge(plan: MeasuredRowPlan, unit: number, right: boolean): number {
+  resolveUnit(plan, unit)
+  const left = plan.lefts[unit]!
+  return right ? left + plan.widths[unit]! : left
+}
+
+/**
+ * A measured advance stands at an absolute position in the row, so almost every unit answers from
+ * its own rect alone. Only the ones with no rect to read — a replacement, whose drawn width is a
+ * property of the mounted node rather than of the span it covers, or a segment the engine reports
+ * empty — stand after whatever precedes them, and those walk backwards until something does.
+ */
+function resolveUnit(plan: MeasuredRowPlan, index: number): void {
+  if (!Number.isNaN(plan.lefts[index]!)) return
+
+  const placed: number[] = []
+  let current = index
+  while (current >= 0 && Number.isNaN(plan.lefts[current]!)) {
+    const measured = measuredUnitRect(plan, plan.units[current]!)
+    if (measured) {
+      plan.lefts[current] = measured.left
+      plan.widths[current] = measured.width
+      break
+    }
+
+    placed.push(current)
+    current = plan.units[current]!.previous
   }
 
-  return currentX
+  for (let at = placed.length - 1; at >= 0; at -= 1) {
+    const unitIndex = placed[at]!
+    const unit = plan.units[unitIndex]!
+    plan.lefts[unitIndex] =
+      unit.previous >= 0 ? plan.lefts[unit.previous]! + plan.widths[unit.previous]! : unit.chunkX
+    plan.widths[unitIndex] = estimatedUnitWidth(plan, unit)
+  }
 }
 
-function appendTextSegmentBoundaries(
-  boundaries: BoundaryBuffer,
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-  part: VirtualizedTextChunkTextPart,
-  segment: TextSegment,
-  fallbackX: number,
-  measurement: RowMeasurementContext,
-): number {
-  const localStart = part.localStart + segment.index
-  const localEnd = localStart + segment.segment.length
-  const measured = measuredTextSegmentRect(
-    measurement,
-    part.node,
-    segment.index,
-    segment.segment.length,
+function measuredUnitRect(
+  plan: MeasuredRowPlan,
+  unit: MeasuredUnit,
+): { readonly left: number; readonly width: number } | null {
+  if (unit.kind === 'widget') return null
+  if (unit.kind === 'control') return measuredElementRect(planMeasurement(plan), unit.element!)
+  return measuredTextSegmentRect(
+    planMeasurement(plan),
+    unit.node!,
+    unit.nodeOffset,
+    unit.nodeLength,
   )
-  const width = measured?.width ?? estimatedLocalRangeWidth(view, row, localStart, localEnd)
-  const left = measured?.left ?? fallbackX
-  appendBoundary(boundaries, rowOffsetForLocalIndex(row, localStart), left)
-  appendBoundary(boundaries, rowOffsetForLocalIndex(row, localEnd), left + width)
-  return left + width
 }
 
-function appendControlBoundaries(
-  boundaries: BoundaryBuffer,
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-  part: Extract<VirtualizedTextChunkPart, { readonly kind: 'control' }>,
-  fallbackX: number,
-  measurement: RowMeasurementContext,
-): number {
-  const measured = measuredElementRect(measurement, part.element)
-  const width = measured?.width ?? part.widthCells * view.metrics.characterWidth
-  const left = measured?.left ?? fallbackX
-  appendBoundary(boundaries, rowOffsetForLocalIndex(row, part.localStart), left)
-  appendBoundary(boundaries, rowOffsetForLocalIndex(row, part.localEnd), left + width)
-  return left + width
+/**
+ * What a unit advances by when it has no rect of its own. A rendered replacement is the interesting
+ * one: the columns it covers say nothing about how wide it draws, so its advance is the width the
+ * mount observed — one rect per resize rather than one per read, and a width even while the row is
+ * off-screen. Until something has measured it at all, the placeholder text's own width stands in.
+ */
+function estimatedUnitWidth(plan: MeasuredRowPlan, unit: MeasuredUnit): number {
+  const { view, row } = plan
+  if (unit.kind === 'control') return unit.widthCells * view.metrics.characterWidth
+
+  const estimated = estimatedLocalRangeWidth(view, row, unit.localStart, unit.localEnd)
+  if (unit.kind !== 'widget') return estimated
+  return inlineWidgetWidths.get(unit.element!) ?? estimated
+}
+
+/**
+ * Sampled at the first advance the row is asked for rather than when the plan is laid out, so a row
+ * nobody measures into never reads a layout box at all. The factor is a ratio of two boxes and so
+ * survives the row being scrolled, which is the only thing that moves it without retiring the plan.
+ */
+function planMeasurement(plan: MeasuredRowPlan): RowMeasurementContext {
+  const current = plan.measurement
+  if (current) return current
+
+  const measurement = { row: plan.row, scale: rowClientRectScale(plan.row) }
+  plan.measurement = measurement
+  return measurement
+}
+
+/**
+ * Reading a row's every boundary is what the plan exists to avoid, so this is only for the two
+ * questions that genuinely need the whole row: which offset an x falls on, and how wide the row
+ * draws. Both search across boundaries rather than at one, and neither can bound where it looks.
+ */
+function resolveRowGeometry(geometry: RowGeometry): RowGeometry {
+  const plan = geometry.plan
+  if (!plan) return geometry
+
+  const { offsets, xs } = geometry
+  let contentRight = 0
+  let ascending = true
+  for (let index = 0; index < xs.length; index += 1) {
+    const x = boundaryX(geometry, index)
+    if (x > contentRight) contentRight = x
+    if (index > 0 && x < xs[index - 1]!) ascending = false
+  }
+
+  geometry.plan = null
+  geometry.xOrder = ascending ? null : boundaryOrderByX(offsets, xs)
+  geometry.width = Math.max(
+    estimatedRowContentWidth(plan.view, plan.row),
+    contentRight + rowTextInsetRight(plan.row),
+  )
+  return geometry
 }
 
 /**
@@ -895,6 +1122,7 @@ function geometryFromBoundaries(
   return {
     offsets,
     xs,
+    plan: null,
     xOrder: ascending ? null : boundaryOrderByX(offsets, xs),
     width: Math.max(fallbackWidth, contentRight + rowTextInsetRight(row)),
     anchors: anchors && anchors.length > 0 ? Float64Array.from(anchors) : null,
@@ -930,13 +1158,14 @@ function appendRangeSegmentForChunk(
 }
 
 function xForOffset(geometry: RowGeometry, offset: number): number {
-  const { offsets, xs } = geometry
+  const { offsets } = geometry
   const index = firstBoundaryAtOrAfterOffset(offsets, offset)
-  if (offsets[index] === offset) return xs[index]!
-  if (index === 0) return xs[0] ?? 0
-  if (index === offsets.length) return xs[index - 1]!
-  if (offset - offsets[index - 1]! <= offsets[index]! - offset) return xs[index - 1]!
-  return xs[index]!
+  if (offsets[index] === offset) return boundaryX(geometry, index)
+  if (index === 0) return boundaryX(geometry, 0)
+  if (index === offsets.length) return boundaryX(geometry, index - 1)
+  if (offset - offsets[index - 1]! <= offsets[index]! - offset)
+    return boundaryX(geometry, index - 1)
+  return boundaryX(geometry, index)
 }
 
 function firstBoundaryAtOrAfterOffset(offsets: Float64Array, offset: number): number {
@@ -955,7 +1184,8 @@ function firstBoundaryAtOrAfterOffset(offsets: Float64Array, offset: number): nu
   return low
 }
 
-function offsetForX(geometry: RowGeometry, x: number): number {
+function offsetForX(lazy: RowGeometry, x: number): number {
+  const geometry = resolveRowGeometry(lazy)
   const { offsets, xs, xOrder } = geometry
   const first = boundaryAtXRank(xOrder, 0)
   const last = boundaryAtXRank(xOrder, offsets.length - 1)

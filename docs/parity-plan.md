@@ -12,11 +12,11 @@ the only state that survives context compaction, session restarts, and handoff b
 1. **Re-read this file first, every turn.** Work the topmost milestone that is not yet complete,
    and within it the topmost unchecked finding.
 2. **Before implementing a finding**, open its entry in `docs/parity-monaco-codemirror.md` and read
-   the *mechanism*, *how to implement*, and *reference* citations. Confirm against the current
+   the _mechanism_, _how to implement_, and _reference_ citations. Confirm against the current
    source that the gap still exists — some entries may already have been closed by earlier work.
 3. **Implement it the way this codebase already works**, not the way the reference does. Monaco
    builds spans per token; we paint through the CSS Highlight API over fixed-row virtualization.
-   Adopt the *idea*, not the DOM strategy. Match surrounding naming, comment density, and idiom.
+   Adopt the _idea_, not the DOM strategy. Match surrounding naming, comment density, and idiom.
 4. **Every finding gets a test** that fails before the change and passes after, in the package's
    existing `vitest` setup. A finding with no test is not complete.
 5. **Update the checkbox in this file immediately** after each finding lands — before starting the
@@ -66,7 +66,6 @@ strong default rather than a proof. Re-order per rule 9 if a dependency turns ou
 
 Milestones: 16 / 16 complete.
 
-
 ---
 
 ## Milestone 1 — Cheap correctness wins ✅
@@ -78,21 +77,21 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** Row geometry survives a 1px horizontal scroll (browser assertion); a find match keeps its stacking order after scrolling out of and back into view; find navigation terminates on a zero-width match; regex-mode seeding escapes metacharacters; '19999+' renders for a truncated result set and selectAllMatches is either uncapped or explicitly refuses; a 'İ'/'ẞ' regression test asserts returned ranges slice back to the query; syntax refresh fires within maxDelayMs under continuous typing. Full test suite green.
 
 - [x] **Semantic render-input equality as the invalidation key, not a scroll-position-derived string**  
-  `medium` `S` `partial` `rendering`
+      `medium` `S` `partial` `rendering`
 - [x] **Range-highlight paint order is registration-order dependent, so overlapping decorations can swap z-order after scrolling**  
-  `medium` `S` `missing` `decorations-widgets`
+      `medium` `S` `missing` `decorations-widgets`
 - [x] **Zero-width matches deadlock navigation; both references have an explicit escape and Monaco adds a line-stop rule**  
-  `high` `S` `partial` `find-replace`
+      `high` `S` `partial` `find-replace`
 - [x] **Seeding the search string from the selection does not escape regex metacharacters when regex mode is on**  
-  `medium` `S` `partial` `find-replace`
+      `medium` `S` `partial` `find-replace`
 - [x] **Replace-pattern edge cases: out-of-range $nn should degrade digit-by-digit, and a backslash should swallow the next character**  
-  `medium` `S` `partial` `find-replace`
+      `medium` `S` `partial` `find-replace`
 - [x] **Replace All silently stops at 19,999 matches; Monaco has a dedicated large-replace path**  
-  `high` `S` `missing` `find-replace`
+      `high` `S` `missing` `find-replace`
 - [x] **Case-insensitive plain search folds the whole haystack, which both wastes memory and corrupts offsets**  
-  `high` `S` `missing` `find-replace`
+      `high` `S` `missing` `find-replace`
 - [x] **Debounces with no maximum wait starve syntax refresh under continuous typing**  
-  `high` `S` `partial` `api-perf-infra`
+      `high` `S` `partial` `api-perf-infra`
 
 > **Deviations, recorded.** (a) The zero-width escape steps the ordered match list rather than
 > re-probing the document, so Monaco's `^`/`$` line-stop rule is not ported: we already hold every
@@ -100,7 +99,6 @@ Milestones: 16 / 16 complete.
 > Next/Previous still walk the capped match list — that is M12's "Find Next past the match limit"
 > finding, and the truncated-count tooltip names Replace All and Select All Matches specifically
 > rather than claiming all find operations are uncapped.
-
 
 ---
 
@@ -115,19 +113,19 @@ Milestones: 16 / 16 complete.
 > Ordering in this milestone rests partly on un-analyzed domains (input-a11y, text-model).
 
 - [x] **EOL detection, normalization, and BOM stripping at buffer-construction time**  
-  `high` `M` `missing` `text-model`
+      `high` `M` `missing` `text-model`
 - [x] **U+2028/U+2029 line separators are a rendering/geometry landmine**  
-  `high` `S` `missing` `input-a11y`
+      `high` `S` `missing` `input-a11y`
 - [x] **Surrogate-pair-aware range validation before an edit is applied**  
-  `medium` `S` `partial` `text-model`
+      `medium` `S` `partial` `text-model`
 - [x] **Huge-file guards decided once at construction and permanently respected**  
-  `high` `S` `partial` `text-model`
+      `high` `S` `partial` `text-model`
 - [~] **Buffer-level `mightContainRTL` / `mightContainNonBasicASCII` flags that unlock a per-line rendering fast path**  
   `medium` `M` `partial` `text-model`
 - [x] **Position<->offset conversion caches: a node search cache, a last-visited-line cache, and a remainder trick that avoids the second tree descent**  
-  `medium` `M` `partial` `text-model`
+      `medium` `M` `partial` `text-model`
 - [x] **Chunked change buffer with re-chunking, and typed-array line-start indexes**  
-  `medium` `M` `partial` `text-model`
+      `medium` `M` `partial` `text-model`
 
 > **`[~]` reason (RTL/ASCII flags).** Two of its three sub-items are dead here. The ASCII fast path
 > already exists and is applied harder than the reference's — `isSimpleRowText` gates seven call
@@ -138,7 +136,7 @@ Milestones: 16 / 16 complete.
 > which is its own project. The third sub-item, unusual line terminators, shipped as the
 > U+2028/U+2029 finding above.
 >
-> **Deviations, recorded.** (a) Surrogate snapping validates the *result*, not the range: an edit is
+> **Deviations, recorded.** (a) Surrogate snapping validates the _result_, not the range: an edit is
 > only widened when it would actually orphan half a pair. A code-unit diff that replaces one low
 > surrogate with another (which is what `syncTextEdit` emits for an emoji swap) is left alone, and
 > two adjacent edits that between them consume a whole pair no longer collide. Range-only snapping
@@ -150,7 +148,6 @@ Milestones: 16 / 16 complete.
 > touches `editor/inputSelectionController.ts` (paste/drop normalization) and
 > `virtualization/virtualizedTextViewLayout.ts` (`computeLineStartsFromSnapshot` indexOf), neither of
 > which is in the piece table or the session.
-
 
 ---
 
@@ -165,19 +162,19 @@ Milestones: 16 / 16 complete.
 > Ordering in this milestone rests partly on un-analyzed domains (text-model).
 
 - [x] **DisposableStore and a pluggable disposable tracker for leak detection**  
-  `medium` `S` `partial` `api-perf-infra`
+      `medium` `S` `partial` `api-perf-infra`
 - [x] **Operation batching: coalesce DOM reads/writes across nested and repeated edits**  
-  `high` `L` `partial` `api-perf-infra`
+      `high` `L` `partial` `api-perf-infra`
 - [x] **Emitter/Event: lazy wiring, listener-error isolation, re-entrancy-safe delivery, leak detection**  
-  `medium` `M` `partial` `api-perf-infra`
+      `medium` `M` `partial` `api-perf-infra`
 - [x] **Typed option registry: validate → compute → per-option change diff**  
-  `high` `L` `missing` `api-perf-infra`
+      `high` `L` `missing` `api-perf-infra`
 - [x] **Undo coalescing keyed on edit-operation type, so consecutive deletes merge and an explicit undo-stop API exists**  
-  `high` `M` `partial` `text-model`
+      `high` `M` `partial` `text-model`
 - [x] **Bounded undo history — depth cap, and serializing closed stack elements out of the live heap**  
-  `high` `M` `missing` `text-model`
+      `high` `M` `missing` `text-model`
 - [x] **Cursor undo/redo as an independent bounded stack**  
-  `medium` `S` `missing` `cursor-selection`
+      `medium` `S` `missing` `cursor-selection`
 
 > **Deviations, recorded.** Each finding was cut to its Verifier scope, so several halves named in
 > the prose are deliberately absent: no global disposable tracker or stack capture (the leak it
@@ -190,7 +187,7 @@ Milestones: 16 / 16 complete.
 >
 > Two exit criteria were not met as written. "updateOptions and the 21 legacy setters" was reduced
 > to the descriptor registry, which is what the Verifier asked for. And the operation-batching
-> criterion asks for a *browser* test counting forced-layout reads; the count is asserted in the
+> criterion asks for a _browser_ test counting forced-layout reads; the count is asserted in the
 > happy-dom project instead, against a stubbed layout — the editor package runs no browser project.
 >
 > **Infrastructure fix that belongs to the whole plan.** `packages/react` and `packages/solid`
@@ -206,7 +203,6 @@ Milestones: 16 / 16 complete.
 > I tried — so it survives mutation. Kept rather than removed, because it guards a corruption whose
 > cost is far above the cost of an unreachable branch.
 
-
 ---
 
 ## Milestone 4 — Font metrics and character geometry ✅
@@ -218,27 +214,58 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** A webfont swap or DPR change re-measures and relayouts every mounted editor (no caret desync); row geometry allocates typed arrays rather than per-character objects, with offsetToX/xToOffset signatures unchanged and virtualizedTextView.browser.test.ts green on caret placement, selection rects and hit tests under CSS transform; a CJK/emoji/large-font line can be scrolled to its end; whitespace 'boundary' and 'trailing' modes render with an advance-width-matched glyph and marker recomputation is gated on a cheap precondition rather than running offsetToX twice per whitespace character per frame.
 
 - [x] **Font measurement: what to measure, how to key the cache, and when to throw it away**  
-  `high` `M` `partial` `api-perf-infra`
+      `high` `M` `partial` `api-perf-infra`
 - [x] **Key-column anchoring: bounded float drift on long lines without per-character measurement**  
-  `high` `S` `missing` `rendering`
+      `high` `S` `missing` `rendering`
 - [x] **CharacterMapping: a packed bidirectional column↔DOM-position index**  
-  `medium` `M` `partial` `rendering`
-- [~] **Lazy, memoized per-column pixel offsets with a shared Range and one cached container rect**  
-  `high` `M` `partial` `rendering`
+      `medium` `M` `partial` `rendering`
+- [x] **Lazy, memoized per-column pixel offsets with a shared Range and one cached container rect**  
+      `high` `M` `partial` `rendering`
 - [x] **Long-line defences: token-span splitting, render truncation with an escape hatch, and bounded coordinate magnitudes**  
-  `medium` `S` `partial` `rendering`
+      `medium` `S` `partial` `rendering`
 - [x] **Deferred true line-width measurement to fix the horizontal scroll extent**  
-  `high` `M` `missing` `rendering`
+      `high` `M` `missing` `rendering`
 - [x] **Whitespace rendering as an overlay, with boundary/trailing modes and an advance-width-matched dot glyph**  
-  `medium` `S` `partial` `rendering`
+      `medium` `S` `partial` `rendering`
 
-> **`[~]` reason (lazy per-column offsets).** Three of its four parts landed: the container rect is
-> read once per measurement window rather than once per grapheme (already true via Milestone 3's
-> pass), the per-segment `createRange()` is now one reused module-level Range parked on a detached
-> node between reads, and `clientRectScale` — the correctness half — divides measured advances back
-> out of a CSS-transformed host. The fourth, the lazy `Float32Array`-with-sentinel fill-on-demand
-> scheme, is **not** done. The Verifier called it the optional last step, and the typed-array layout
-> it needs is now in place, so it drops in without rework. Reported undone rather than half-built.
+> **Lazy per-column offsets — measured first, then built.** Three parts had already landed (one
+> container rect per measurement window, one reused module-level Range parked on a detached node,
+> and `clientRectScale` dividing measured advances back out of a CSS-transformed host). The fourth,
+> fill-on-demand, was reported undone. It is now done, and it was measured before it was built,
+> because the calculated-geometry path could plausibly have made it worthless: `rowUsesCalculatedGeometry`
+> routes every simple-ASCII row without an inline mapping to pure arithmetic, so the rows that
+> measure could have been rows that need every column anyway.
+>
+> They are not. Instrumenting the measured path and driving a real chromium render of a markdown
+> document with inline replacements: a caret placed on a 1394-character paragraph row read **1394
+> segment rects to answer one column** (4.3ms — a dropped frame from one caret placement). Fifteen
+> frames of a drag-select over 95-character rows read 2789 rects to answer 509 asked columns (40ms,
+> 186 rects/frame). A first render reads nothing at all — geometry is built only when something
+> asks — so the whole cost lands on the first question each row is asked, which is exactly the
+> latency-sensitive one. After: **1394 → 1** rect for the caret, and 2789 → 505 (40ms → 22ms) for
+> the drag. That second number wants a qualifier the measurement alone does not carry: a row the
+> pointer actually hit-tests is still read through in full, because x→offset cannot bound where it
+> looks. The saving is on rows the selection covers without the pointer ever visiting them, which
+> makes it a property of the gesture rather than of drag-select as such.
+>
+> `RowGeometry` for a measured row now carries a plan — the row laid out in units (one per grapheme,
+> control glyph, or replacement) with the offsets each spans, all derivable from the text without a
+> layout read — plus a `Float64Array` of NaN sentinels that only the boundaries somebody asks about
+> replace. Adapting rather than porting: because our measured advances are absolute row-local rects
+> rather than cumulative widths, almost every unit answers from its own rect alone, and only the
+> ones with no rect to read — a replacement, or a segment the engine reports empty — walk backwards
+> to stand after whatever precedes them. Two questions still need the row read through: x→offset,
+> which searches across boundaries and cannot bound where it looks, and the row's rendered width.
+> The width is the visible trade: `knownRowContentWidth` now returns null for a row read only where
+> it was asked, so the deferred width pass measures it at one union rect per chunk instead — which
+> is what it already did for every row without warm geometry, and cheaper than the fill it replaces.
+>
+> The tests count DOM reads rather than compare coordinates, since correct offsets cannot tell you
+> whether they were computed lazily. Mutation: forcing `resolveRowGeometry` at build time (eager
+> again) fails _costs one advance for one column, not one per grapheme in the row_ with 270 reads
+> against a ceiling of 2; dropping the full read-through in `offsetForX` fails _reads the row
+> through only for the question that needs the whole row_ and, separately, the existing dom test
+> _hit tests a row whose measured parts do not advance left to right_.
 >
 > **Two correctness bugs the review caught in this milestone's own work.** Both were in key-column
 > anchoring, both verified by execution before and after. (a) The forward map re-anchors by column
@@ -246,7 +273,7 @@ Milestones: 16 / 16 complete.
 > and the next anchor resolved to a column past the span — a click landing one to two characters
 > right of where the caret draws, and not monotonically. The inverse now clamps to the span its
 > anchor owns. (b) Anchors are measured in the row's own space but `characterWidth` is probed
-> through the host, so under a CSS transform an anchored row's boundaries stepped *backwards* at
+> through the host, so under a CSS transform an anchored row's boundaries stepped _backwards_ at
 > every anchor (offset 300 drawn 1069px left of offset 299). The estimate is now divided by the same
 > scale the measurements are.
 >
@@ -265,7 +292,6 @@ Milestones: 16 / 16 complete.
 > rotted against it; the suite now runs 1123 tests with none skipped. Milestone 3's forced-layout
 > count remains asserted under happy-dom against a stubbed layout.
 
-
 ---
 
 ## Milestone 5 — Layout, scroll anchoring, and surface hosting ✅
@@ -277,19 +303,19 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** Inserting or measuring a 100px block above the viewport, and folding a region above the viewport, leave the first visible row unchanged (browser test on fixedRowVirtualizer); a settling block re-sums the height index only from the changed row; hidden-character marker computation is a distinct pass from the DOM write and the plugin render contract is documented; block rows accept an ordinal and an incremental add/remove path that does not re-run every provider; an opt-in overlay-hosted block surface keeps focus, scroll position and IME state across scroll recycling; the find widget no longer underlaps the minimap and z-index values come from one documented scale.
 
 - [x] **Preserve the visual anchor when content height changes above the viewport**  
-  `medium` `S` `missing` `decorations-widgets`
+      `medium` `S` `missing` `decorations-widgets`
 - [x] **Sparse, lazily-summed layout index instead of a dense per-line prefix array**  
-  `medium` `M` `partial` `rendering`
+      `medium` `M` `partial` `rendering`
 - [x] **Measure-back-and-correct loop with scroll-position compensation for variable-height rows**  
-  `high` `M` `partial` `rendering`
+      `high` `M` `partial` `rendering`
 - [x] **Type-enforced read/write phase separation (RenderingContext vs RestrictedRenderingContext)**  
-  `high` `L` `missing` `rendering`
+      `high` `L` `missing` `rendering`
 - [x] **View zone knobs we lack: ordinal tiebreak, before-first-line, render-in-hidden-areas, margin twin, min scroll width, suppressMouseDown**  
-  `medium` `M` `partial` `decorations-widgets`
+      `medium` `M` `partial` `decorations-widgets`
 - [x] **ZoneWidget: view zone reserves whitespace, the DOM lives in a stable overlay widget driven by onDomNodeTop — our block-row DOM is destroyed on scroll recycle**  
-  `high` `M` `partial` `decorations-widgets`
+      `high` `M` `partial` `decorations-widgets`
 - [x] **Overlay widgets: declarative corner anchoring with stacking, and widget min-width feeding the editor's scroll width**  
-  `medium` `M` `partial` `decorations-widgets`
+      `medium` `M` `partial` `decorations-widgets`
 
 > **Deviations, recorded.** Skipped per the Verifiers: the RenderingContext/RestrictedRenderingContext
 > class hierarchy (rows are their own layout boundary here, so the two-pass split plus a documented
@@ -321,7 +347,6 @@ Milestones: 16 / 16 complete.
 > end — a surface keeps focus, draft text and scroll position across scroll recycling and across a
 > provider re-resolution — but nothing in this repo or its example app sets it.
 
-
 ---
 
 ## Milestone 6 — Decoration model ✅
@@ -335,13 +360,13 @@ Milestones: 16 / 16 complete.
 > Ordering in this milestone rests partly on un-analyzed domains (text-model).
 
 - [x] **Edit-tracked decoration identity: interval tree + 4-way stickiness + collapseOnReplaceEdit**  
-  `high` `L` `partial` `decorations-widgets`
+      `high` `L` `partial` `decorations-widgets`
 - [x] **Decorations as an interval tree with lazy subtree deltas and a four-way stickiness taxonomy**  
-  `medium` `L` `partial` `text-model`
+      `medium` `L` `partial` `text-model`
 - [x] **One decoration object, many surfaces — text, glyph margin, line margin, minimap, overview ruler, injected text**  
-  `high` `L` `partial` `decorations-widgets`
+      `high` `L` `partial` `decorations-widgets`
 - [x] **Highlight painting is O(mounted rows × total matches) per frame, with no visible-window index**  
-  `high` `M` `missing` `find-replace`
+      `high` `M` `missing` `find-replace`
 
 > **Deviations, recorded.** Skipped per the Verifiers: no red-black interval tree, no lazy subtree
 > deltas, no four-way stickiness enum (a per-endpoint left|right anchor bias already spans all four
@@ -376,7 +401,6 @@ Milestones: 16 / 16 complete.
 > kind never walks another's entries, which is the finding's whole point, but nothing outside tests
 > registers a `row` or `minimap` decoration yet.
 
-
 ---
 
 ## Milestone 7 — Word, grapheme, and vertical motion ✅
@@ -390,19 +414,19 @@ Milestones: 16 / 16 complete.
 > Ordering in this milestone rests partly on un-analyzed domains (input-a11y).
 
 - [x] **Word/character operations are line-scoped with a Uint8Array classifier; ours materialize the whole document and run regexes per character**  
-  `medium` `M` `missing` `cursor-selection`
+      `medium` `M` `missing` `cursor-selection`
 - [x] **Word navigation has three distinct stop policies; ours is a fourth that matches none**  
-  `high` `M` `partial` `cursor-selection`
+      `high` `M` `partial` `cursor-selection`
 - [x] **Word-part (subword) motion clamped between the word-start and word-end candidates**  
-  `medium` `S` `partial` `cursor-selection`
+      `medium` `S` `partial` `cursor-selection`
 - [x] **Grapheme-cluster movement and emoji-aware backspace (move ≠ delete granularity)**  
-  `high` `M` `missing` `cursor-selection`
+      `high` `M` `missing` `cursor-selection`
 - [x] **Backspace is code-point aware but not grapheme-cluster aware**  
-  `medium` `S` `partial` `input-a11y`
+      `medium` `S` `partial` `input-a11y`
 - [x] **Atomic soft-tab movement and tab-stop-aware backspace inside indentation**  
-  `high` `M` `missing` `cursor-selection`
+      `high` `M` `missing` `cursor-selection`
 - [x] **Vertical motion and Home/End from selection edges, wrapped lines, and first-non-blank**  
-  `medium` `M` `partial` `cursor-selection`
+      `medium` `M` `partial` `cursor-selection`
 
 > **Deviations, recorded.** Skipped per the Verifiers: the Uint8Array classifier and the memoized
 > per-line segmenter (line-scoping is the win; those only matter once the O(document) allocation is
@@ -434,7 +458,6 @@ Milestones: 16 / 16 complete.
 > (it checks the published facade) and is why `turbo.json` orders the build ahead of the tests, but
 > means running vitest in the package directly reads whatever was last built.
 
-
 ---
 
 ## Milestone 8 — Multi-cursor, mouse, and clipboard ✅
@@ -448,21 +471,21 @@ Milestones: 16 / 16 complete.
 > Ordering in this milestone rests partly on un-analyzed domains (input-a11y).
 
 - [x] **Multi-cursor merge rules: touching vs overlapping, direction preservation, and last-added priority**  
-  `high` `S` `partial` `cursor-selection`
+      `high` `S` `partial` `cursor-selection`
 - [x] **Cmd+D from a collapsed caret is whole-word and case-sensitive, and searches from the last-added selection**  
-  `high` `S` `partial` `cursor-selection`
+      `high` `S` `partial` `cursor-selection`
 - [x] **Mouse dispatch matrix: shift-click extend, and word/line-granularity drag via a Range-valued anchor**  
-  `high` `M` `missing` `cursor-selection`
+      `high` `M` `missing` `cursor-selection`
 - [x] **Column (box) selection: a persistent from/to visual-column rectangle, driven by mouse and keyboard**  
-  `high` `L` `missing` `cursor-selection`
+      `high` `L` `missing` `cursor-selection`
 - [x] **Smart-select as a ranked ladder of ranges, not a single tree walk**  
-  `medium` `M` `partial` `cursor-selection`
+      `medium` `M` `partial` `cursor-selection`
 - [x] **Clipboard carries no editor metadata, so multi-cursor copy/paste degenerates into one blob**  
-  `high` `M` `missing` `input-a11y`
+      `high` `M` `missing` `input-a11y`
 - [x] **No cut handler at all, and no empty-selection line copy/cut**  
-  `high` `M` `missing` `input-a11y`
+      `high` `M` `missing` `input-a11y`
 - [x] **Drag-and-drop of text is non-functional: no dragover, no dragstart, no move semantics**  
-  `high` `M` `partial` `input-a11y`
+      `high` `M` `partial` `input-a11y`
 
 > **Deviations, recorded.** No primary/creation-order cursor identity field: the array stays
 > document-ordered because the edit batch and its delta accumulation are derived from that order.
@@ -488,7 +511,6 @@ Milestones: 16 / 16 complete.
 > command ids, no binding — so its exit criterion was unreachable there; every platform now keeps a
 > chord on both axes.
 
-
 ---
 
 ## Milestone 9 — Folding model and sticky scroll ✅
@@ -500,22 +522,46 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** A failing-first test proving collapse survives an edit above the fold now passes, and the offset-keyed remap machinery is deleted; an unparsed file folds by indentation with #region markers honoured, and the syntax provider taking over does not drop collapse state; the caret landing in hidden lines unfolds and selections clamp across them; foldAll/foldLevel N/foldRecursively/manual-fold commands and keybindings exist with a single nesting representation; the sticky header renders enclosing scopes through the normal row path in a sticky layer, pushes out correctly, and respects the minimap's reserved width.
 
 - [x] **Fold collapse state is keyed by content offsets, so any earlier edit silently expands folds**  
-  `high` `M` `missing` `folding-brackets`
+      `high` `M` `missing` `folding-brackets`
 - [x] **Two range providers (syntax + indentation fallback), with #region markers and off-side rule**  
-  `high` `M` `missing` `folding-brackets`
-- [~] **Auto-unfold when the caret lands inside hidden lines, and selection clamping across them**  
-  `high` `S` `partial` `folding-brackets`
+      `high` `M` `missing` `folding-brackets`
+- [x] **Auto-unfold when the caret lands inside hidden lines, and selection clamping across them**  
+      `high` `S` `partial` `folding-brackets`
 - [x] **Fold by level, fold recursively, fold all regions, manual folds from selection**  
-  `medium` `M` `missing` `folding-brackets`
+      `medium` `M` `missing` `folding-brackets`
 - [x] **Sticky scroll: enclosing-scope header from the fold/outline model, with a push-out transition**  
-  `high` `L` `missing` `rendering`
+      `high` `L` `missing` `rendering`
 
-> **`[~]` reason (auto-unfold).** The clamping half landed — a caret that would sit in hidden rows is
-> retargeted to the row the reader can see, and a selection spanning a collapsed region no longer
-> silently carries its hidden text into a copy or a delete. The unfold half did not: a find hit or a
-> go-to-definition inside a collapsed region retargets rather than opening it. The finding's Verifier
-> licensed deferring that half, and it is a behaviour change to reveal, not a missing primitive — the
-> fold state and commands to do it are all in place.
+> **Auto-unfold — the seam is the request, not the caret.** The clamping half landed first: a caret
+> that would sit in hidden rows is retargeted to the row the reader can see, and a selection spanning
+> a collapsed region no longer silently carries its hidden text into a copy or a delete. The revealing
+> half is now in, and the whole difficulty was where to put it. Nothing downstream can ask whether the
+> caret is hidden — clamping has already moved it, so the answer is always no, and a check placed
+> there would be dead code. The position that was asked for survives in exactly one place: the editor's
+> own delegations to the selection controller, which is where every programmatic jump goes and where
+> the requested offset is still intact. Reveal runs there, before the request is applied, so the clamp
+> then finds nothing to clamp.
+>
+> **Three decisions, and why.** (1) The seam separates the two gestures for us without needing a flag:
+> arrow keys never pass through it — they resolve their own target and step over a collapsed region on
+> the way past — so a reader walking their own fold keeps it, while a find hit, a go-to-definition, a
+> go-to-line, smart-select, a cursor-history restore and a host `setSelection` open what hides them.
+> (2) A region opens only for a row strictly past its first, matching the reference's rule for the
+> reference's reason — the header row stays drawn — but asked by _row_ rather than by offset, because
+> where along that row a provider says the region begins differs between the grammar and the
+> indentation walk and says nothing about which rows are taken away. (3) Nothing is deferred behind
+> the secondary-work scheduler. The reference debounces because it listens to every cursor movement;
+> we are called once per request, there is nothing to coalesce, and a reader who jumped is waiting.
+>
+> **A third rule the finding names, found live and closed.** A region restated larger by a parse that
+> lands in the background inherits the collapse and used to close over the caret's row — the finding's
+> `_currentFoldedOrManualRanges` rule, reachable here because our inheritance deliberately survives a
+> changed extent. The collapse is now dropped when the restated region would hide a caret row the
+> collapse was not already hiding; a row already inside it stays inside, so Fold All and a fold aimed
+> elsewhere are not undone by the next parse. Reveal is not involved: nobody asked to go anywhere.
+>
+> **What the clamp is still for.** With reveal ahead of it, the only fold-shaped rows it still answers
+> for are ones no region describes — a host's own `setFoldMap` — which is what its test now pins.
 >
 > **The collapse-identity rule, and why it is not the reference's.** The reference inherits a collapse
 > only when the line span is unchanged, because it resolves one provider hierarchy before matching.
@@ -534,7 +580,7 @@ Milestones: 16 / 16 complete.
 >
 > **Two real bugs the review caught.** A caret at the last column of a region's last row read as
 > outside it, so the fold command silently did nothing there. And the indentation fallback stood down
-> whenever the parse had merely *settled* — but fold queries ship per language, so css, html and json
+> whenever the parse had merely _settled_ — but fold queries ship per language, so css, html and json
 > parsed to ready with zero folds and got no folds at all. The fallback now stands down only once a
 > grammar has actually described a fold.
 >
@@ -542,7 +588,6 @@ Milestones: 16 / 16 complete.
 > and it was running inside the edit path — an O(document) materialization per keystroke, which the
 > solid binding's own test caught. It is now deferred behind the same debounce-with-a-ceiling the
 > syntax refresh uses, so a region a keystroke creates appears on the following frame.
-
 
 ---
 
@@ -557,15 +602,15 @@ Milestones: 16 / 16 complete.
 > Ordering in this milestone rests partly on un-analyzed domains (text-model).
 
 - [x] **Language configuration as declarative data: onEnterRules and indentationRules**  
-  `high` `M` `partial` `folding-brackets`
+      `high` `M` `partial` `folding-brackets`
 - [x] **Model-level indentation guessing (tabSize + insertSpaces) with an alignment-vs-indentation heuristic**  
-  `medium` `S` `partial` `text-model`
+      `medium` `S` `partial` `text-model`
 - [x] **Reindent lines / reindent selection driven by indentation rules**  
-  `medium` `M` `missing` `folding-brackets`
+      `medium` `M` `missing` `folding-brackets`
 - [x] **Continue-list on Enter, including empty-item termination and renumbering of following items**  
-  `medium` `S` `missing` `folding-brackets`
+      `medium` `S` `missing` `folding-brackets`
 - [x] **Comment tokens resolved at the caret's embedded language, plus insertion-point column normalization**  
-  `medium` `S` `partial` `folding-brackets`
+      `medium` `S` `partial` `folding-brackets`
 
 > **The consolidation actually happened, on the second pass.** The registry first landed beside the
 > two tables it was meant to absorb — and a new third one — so the module's own claim that a language
@@ -600,7 +645,6 @@ Milestones: 16 / 16 complete.
 > module, so the extension point is real and exercised through the public entry point; there is simply
 > no second producer in this repo to point at.
 
-
 ---
 
 ## Milestone 11 — Color registry, brackets, and auto-close ✅
@@ -612,17 +656,17 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** Colors are registered ids with per-theme-type defaults and Darken/Lighten/Transparent/OneOf derivations, written as generated CSS rules through the existing refcounted stylesheet rather than inline styles, with merge/equality respecting contributed ids and one plugin package migrated off hardcoded colors; scope resolution is a memoized trie with inheritance that reproduces current output for every scope the two tables covered; a quote typed inside a string or comment does not auto-close, surround works with multiple selections, renaming a JSX tag updates its partner in one undo unit, and guides use per-pair min indentation with bracket levels behind a capped, opt-in colorization.
 
 - [x] **Extensible color registry with per-theme-type defaults and derived colors**  
-  `high` `M` `partial` `api-perf-infra`
+      `high` `M` `partial` `api-perf-infra`
 - [x] **Theme scope matching should be a trie with inheritance, not exact-match plus first-segment fallback**  
-  `high` `M` `partial` `api-perf-infra`
+      `high` `M` `partial` `api-perf-infra`
 - [x] **Auto-close gated on token type, with the 'neutral character' tokenizer probe for quotes**  
-  `high` `M` `partial` `folding-brackets`
+      `high` `M` `partial` `folding-brackets`
 - [x] **Auto-closing: token-aware quote suppression via a 'neutral character' probe, and multi-cursor surround**  
-  `medium` `M` `partial` `cursor-selection`
+      `medium` `M` `partial` `cursor-selection`
 - [x] **Linked editing: mirrored ranges kept in sync with minimal prefix/suffix-trimmed edits**  
-  `high` `M` `missing` `folding-brackets`
+      `high` `M` `missing` `folding-brackets`
 - [x] **Bracket-pair guides and colorization derived from the AST, including min-indentation per pair**  
-  `high` `L` `partial` `folding-brackets`
+      `high` `L` `partial` `folding-brackets`
 
 > **The two auto-close findings are one mechanism and its consumer**, as the plan says; they were
 > implemented once, not twice. The token gate — tokenizing the line with a neutral character in the
@@ -640,11 +684,11 @@ Milestones: 16 / 16 complete.
 >
 > **Three real bugs the review caught in this milestone's own work.** The colour defaults' polarity
 > was inverted: the shipped palette is unconditionally dark, but each registered colour emitted its
-> *light* value as the base rule and swapped to dark only under a dark preference, so an unconfigured
+> _light_ value as the base rule and swapped to dark only under a dark preference, so an unconfigured
 > editor on a light-preference machine resolved every colour against the wrong theme type. Linked
 > editing mirrored insertions but not deletions, and since the re-scan requires both names to match,
 > a Backspace left a permanently mismatched pair that could never re-link. And the LSP colour
-> migration replaced the tests that pinned literal colours with assertions on the CSS *variable name*
+> migration replaced the tests that pinned literal colours with assertions on the CSS _variable name_
 > — which cannot see what the variable resolves to, so every registered default could have been wrong
 > with the suite green.
 >
@@ -654,7 +698,6 @@ Milestones: 16 / 16 complete.
 > string being typed and the next quote should close it; three existing tests said so. Telling them
 > apart needs to know whether the offset sits in markup text content or in an attribute. The
 > constraint is stated on the function rather than left to be rediscovered.
-
 
 ---
 
@@ -667,23 +710,23 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** findMatches reads through a {length, readRange, lineStartsView} source with a single-line loop and no 'm' flag on the single-line path, and the whole find suite runs twice — once over a plain string, once over a deliberately misaligned piece tree — driven by an assertFindState controller harness; Replace All in selection cannot rewrite outside the scope, and the scope survives a replace as anchors; Find Next past the match limit reaches the next match rather than the top of the file; Replace One performs one scan; re-search is scheduled with maxDelayMs and pending matches stay offset-correct while typing; matches appear on the minimap, row-merged above the coalescing threshold.
 
 - [x] **Search materializes the entire document as one string; neither reference ever does**  
-  `high` `L` `missing` `find-replace`
+      `high` `L` `missing` `find-replace`
 - [~] **Monaco runs every find test twice, the second time over a piece tree with deliberately misaligned chunk boundaries**  
   `medium` `S` `missing` `find-replace`
 - [x] **Find-in-selection scope is recomputed from the live selection, so it is destroyed by the first replace and silently widens to the whole document**  
-  `high` `M` `missing` `find-replace`
+      `high` `M` `missing` `find-replace`
 - [x] **Find Next past the match limit jumps to the top of the file instead of to the next match**  
-  `high` `M` `missing` `find-replace`
+      `high` `M` `missing` `find-replace`
 - [x] **Replace One re-scans the whole document with capture groups enabled just to replace one match**  
-  `medium` `S` `missing` `find-replace`
+      `medium` `S` `missing` `find-replace`
 - [x] **Every content change triggers a synchronous full re-search; both references debounce it and repair incrementally**  
-  `high` `L` `missing` `find-replace`
+      `high` `L` `missing` `find-replace`
 - [x] **Find matches are not surfaced on the minimap or scrollbar, and Monaco's >1000-match merge is the reason that is not trivial**  
-  `medium` `M` `missing` `find-replace`
+      `medium` `M` `missing` `find-replace`
 
 > **`[~]` reason (the dual run).** The `assertFindState` harness landed and is the net the rest of
 > this milestone fell through. The second run did not: `FindTextSource` is `{length, readRange,
-> lineStartsView}`, and every production `readRange` returns one assembled string, so no searcher can
+lineStartsView}`, and every production `readRange` returns one assembled string, so no searcher can
 > observe where a chunk boundary falls. Swapping the misaligned piece tree for a single aligned piece
 > left all 82 tests green — the run was unfalsifiable, confirmed by execution. A match straddling a
 > boundary is not a bug this design can have, so the run was deleted rather than left looking like
@@ -712,7 +755,6 @@ Milestones: 16 / 16 complete.
 > match, which is the text the query answered for — typing against a match's edge was extending its
 > highlight onto text that was never found.
 
-
 ---
 
 ## Milestone 13 — Completion pipeline ✅
@@ -724,15 +766,15 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** registerProvider(token, selector, provider) supports multiple providers with a priority ordering while existing capability tokens keep throw-on-duplicate; accepting a suggestion after further typing applies against the current caret via overwriteBefore/overwriteAfter and honours InsertReplaceEdit; the widget survives backspace and typing, re-requests only when isIncomplete, and cancels on Monaco's conditions; labels render highlighted match runs from a bounded DP scorer with incremental re-filter; a commit character accepts the focused item and still inserts the character in the same undo entry, behind an option, with a test asserting the character is not lost.
 
 - [x] **LanguageFeatureRegistry: score-based, multi-provider language feature dispatch**  
-  `high` `L` `partial` `language-features`
+      `high` `L` `partial` `language-features`
 - [x] **Completion insert-vs-replace ranges: we silently drop the replace range**  
-  `high` `S` `partial` `language-features`
+      `high` `S` `partial` `language-features`
 - [x] **Incomplete completion lists: per-provider re-query with item reuse, instead of hide-and-refetch**  
-  `high` `M` `missing` `language-features`
+      `high` `M` `missing` `language-features`
 - [x] **Suggest filtering: bounded fuzzy DP scoring with match positions, incremental re-filter, and filterText/label split**  
-  `high` `L` `partial` `language-features`
+      `high` `L` `partial` `language-features`
 - [x] **Commit characters: accepting the focused suggestion on the next typed character**  
-  `medium` `S` `partial` `language-features`
+      `medium` `S` `partial` `language-features`
 
 > **The registry got a producer, on the second pass.** It first shipped reachable only from its own
 > test — seven milestones running for this repo — and the agent who built it said so and said it
@@ -740,7 +782,7 @@ Milestones: 16 / 16 complete.
 > actually take: `CompletionController` holds no client at all and asks the channel for its sources,
 > so any keystroke in a buffer goes through it. The second provider is a plugin that registers a
 > source and nothing else, restating the token by id — not `typescript-lsp`, which I suggested and
-> the agent correctly refused, since that package *is* the language-server adapter and registering it
+> the agent correctly refused, since that package _is_ the language-server adapter and registering it
 > would have been the same server twice, which is exactly the provider-to-have-a-provider that the
 > delete option exists to prevent. Two behaviours came out of the wiring that were unreachable
 > before: a non-server source answers while the connection is still handshaking, and resolve goes to
@@ -764,7 +806,6 @@ Milestones: 16 / 16 complete.
 > turned that suite red. `Promise.allSettled` is what lets one source fail without taking the list
 > with it. A further await on this path breaks that test first.
 
-
 ---
 
 ## Milestone 14 — Formatting, snippets, and code actions ✅
@@ -776,13 +817,13 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** A whole-document formatter response that changes one line applies as one small edit (regression test), with adjacent-edit merging, no-op dropping and a size cap; typing a closing brace dedents the line locally and synchronously, gated on trigger characters and cancelled by edits before the caret; snippet placeholder mirrors update live, server snippets are indentation-normalized on insert, and transforms/choices parse; code actions appear from a 250ms oracle debounced on both cursor and diagnostic changes, filter by dotted-prefix kind, order isPreferred first, resolve command-only actions, and bind editor.action.autoFix; semantic tokens, if shipped, layer over tree-sitter rather than replacing it.
 
 - [x] **Re-diffing formatter output into minimal edits before applying it**  
-  `high` `S` `missing` `language-features`
+      `high` `S` `missing` `language-features`
 - [x] **Format-on-type, gated by provider trigger characters and cancelled by any edit before the caret**  
-  `medium` `M` `missing` `language-features`
+      `medium` `M` `missing` `language-features`
 - [x] **Snippet engine: placeholder mirrors, transforms with regex + case-shorthands, choices, and indentation normalization**  
-  `high` `L` `partial` `language-features`
+      `high` `L` `partial` `language-features`
 - [x] **Code actions: hierarchical kind filtering, isPreferred ordering, and 'auto fix'**  
-  `high` `M` `missing` `language-features`
+      `high` `M` `missing` `language-features`
 - [~] **Semantic tokens: delta protocol with in-place Uint32Array splicing**  
   `medium` `L` `missing` `language-features`  
   Not built. Ranked last of all 99 findings by the analysis itself; the exit criterion is
@@ -815,7 +856,6 @@ Milestones: 16 / 16 complete.
 > pre-existing errors across the repo, so it is not usable as a gate today. Pre-existing, recorded
 > here because this milestone added public types whose nameability rests on it.
 
-
 ---
 
 ## Milestone 15 — Injected text and anchored widgets ✅
@@ -827,13 +867,13 @@ Milestones: 16 / 16 complete.
 **Exit criteria.** A zero-width anchored injection renders as its own inline chunk with per-side cursor stops and attached payload reaching the hit test, with inlay hints demonstrated end to end and the markdown WYSIWYG tests still green; a single-line range can be replaced by a mounted DOM node whose measured width feeds geometry and whose mount survives row recycling (multi-line collapsed marks explicitly out of scope); the four LSP floating controllers share one flip/clamp/re-anchor helper over CSS anchor positioning; ghost text renders from a computeGhostText of an arbitrary text edit with accept and partial-accept commands and defined Tab precedence against snippets.
 
 - [x] **Injected text as a first-class concept: phantom content at a zero-width anchor, with cursor stops and hit-test payload**  
-  `high` `L` `partial` `decorations-widgets`
+      `high` `L` `partial` `decorations-widgets`
 - [x] **Replacing a text range with an arbitrary DOM node, and collapsed marks spanning multiple lines**  
-  `medium` `L` `missing` `decorations-widgets`
+      `medium` `L` `missing` `decorations-widgets`
 - [x] **Content widgets: an editor-managed layer for position-anchored floating UI with declarative fit preferences**  
-  `high` `L` `missing` `decorations-widgets`
+      `high` `L` `missing` `decorations-widgets`
 - [x] **Inline completions / ghost text: deriving renderable inline parts from an arbitrary text edit**  
-  `medium` `M` `partial` `language-features`
+      `medium` `M` `partial` `language-features`
 
 > **Multi-line collapsed marks were not built, per the finding's own Verifier and the plan's
 > de-scoping list.** The virtualizer treats the row as the unit of layout and recycling, and a mark
@@ -871,7 +911,6 @@ Milestones: 16 / 16 complete.
 > rather than the original replacement — in the indentation case those differ, and applying a
 > whitespace change the reader never saw is the worse of the two.
 
-
 ---
 
 ## Milestone 16 — Input pipeline and accessibility ✅
@@ -885,26 +924,26 @@ Milestones: 16 / 16 complete.
 > Ordering in this milestone rests partly on un-analyzed domains (input-a11y).
 
 - [x] **Diff-based input deduction as the robust fallback, instead of a keydown timing race**  
-  `high` `M` `partial` `input-a11y`
+      `high` `M` `partial` `input-a11y`
 - [x] **In-progress IME composition is invisible and the candidate window lands at the viewport corner**  
-  `high` `L` `missing` `input-a11y`
+      `high` `L` `missing` `input-a11y`
 - [x] **Screen readers get an empty 1x1 textarea: no paged content window, no caret relationship**  
-  `high` `L` `missing` `input-a11y`
+      `high` `L` `missing` `input-a11y`
 - [x] **No aria-live announcement channel for editor actions**  
-  `medium` `S` `missing` `input-a11y`
+      `medium` `S` `missing` `input-a11y`
 - [x] **Tab-focus mode: an accessibility escape hatch from the Tab key**  
-  `medium` `S` `missing` `input-a11y`
+      `medium` `S` `missing` `input-a11y`
 - [x] **Unicode ambiguous/invisible character highlighting**  
-  `high` `L` `missing` `input-a11y`
+      `high` `L` `missing` `input-a11y`
 - [x] **Copy with syntax highlighting, and the paste-provider (paste-as) pipeline**  
-  `medium` `XL` `missing` `input-a11y`
+      `medium` `XL` `missing` `input-a11y`
 
 > **Findings 1 and 3 landed as one refactor**, as this plan's own verifier said they must: both need
 > the hidden textarea to hold real content, and it was force-cleared to `''` in three places. The
 > textarea now carries a paged window — ten rows either side of the selection, each side clamped to
 > 500 characters, with a middle ellipsis for an oversized selection — and every input event is
 > deduced from it by common-prefix/suffix diffing into one `{text, replacePrevCharCnt,
-> replaceNextCharCnt}` triple. `replaceNextCharCnt` is computed on every path rather than only in a
+replaceNextCharCnt}` triple. `replaceNextCharCnt` is computed on every path rather than only in a
 > soft-keyboard variant; that is the double-insert fix. The whole keydown-guessing fallback
 > (`canWaitForNativeTextInput` with its space special-case, the generation/timeout machine, the
 > `fallback-pending` phase) is deleted.
@@ -929,7 +968,6 @@ Milestones: 16 / 16 complete.
 > new optional `announce?(message)` on the view contribution context, which is what let the find
 > package — in another package entirely — reach the channel at all.
 
-
 ---
 
 ## Sequencing notes
@@ -937,6 +975,7 @@ Milestones: 16 / 16 complete.
 Scope: the 99 titles are exactly the findings in docs/parity-findings.json whose ourStatus is not 'present' — the two excluded are 'Refcounted dynamic CSS rule factory...' and 'Randomized differential testing of the range store...'. Two included titles ('EOL detection, normalization, and BOM stripping...' in M2, 'Case-insensitive plain search folds the whole haystack...' in M1) already landed in the working tree; they are scheduled as verify-and-add-the-missing-regression-test items, not re-implementations, and the surrounding items in those milestones build directly on them.
 
 Hard prerequisite edges and where they forced the order:
+
 - CharacterMapping → lazy per-column offsets (M4, in that order): fill-on-demand sentinels built on the object array would be rewritten by the typed-array conversion.
 - Font measurement → key-column anchoring, deferred line width, whitespace glyph (all M4, after it); the option registry (M3) → font measurement, because the 'metrics changed, relayout everything' fan-out is the registry's recompute.
 - Preserve the visual anchor → measure-back-and-correct (M5): implementing anchoring inside blockSurfaceController first would be thrown away; both entry points funnel through fixedRowVirtualizer.setOptions.

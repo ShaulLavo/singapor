@@ -201,7 +201,11 @@ describe('EditorFoldState', () => {
   it('syncs markers and re-keys a collapsed region onto a reparsed fold', () => {
     const setFoldState = vi.fn()
     const snapshot = createPieceTableSnapshot('function f() {\n  return 1;\n}\n')
-    const state = new EditorFoldState({ setFoldState }, () => snapshot)
+    const state = new EditorFoldState(
+      { setFoldState },
+      () => snapshot,
+      () => [],
+    )
     const fold = foldRange({ startIndex: 0, endIndex: 28, startLine: 0, endLine: 2 })
 
     state.setFoldProjections([foldProjection([fold])])
@@ -217,7 +221,11 @@ describe('EditorFoldState', () => {
   it('keeps markers for nested folds and collapses the outer range when both are folded', () => {
     const setFoldState = vi.fn()
     const snapshot = createPieceTableSnapshot('function f() {\n  if (x) {\n    y();\n  }\n}\n')
-    const state = new EditorFoldState({ setFoldState }, () => snapshot)
+    const state = new EditorFoldState(
+      { setFoldState },
+      () => snapshot,
+      () => [],
+    )
     const outer = foldRange({ startIndex: 14, endIndex: 40, startLine: 0, endLine: 4 })
     const inner = foldRange({ startIndex: 25, endIndex: 38, startLine: 1, endLine: 3 })
 

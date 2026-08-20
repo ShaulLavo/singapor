@@ -542,6 +542,10 @@ describe('virtualized text view geometry', () => {
       const glyphsEnd = offsetToX(internal, row, row.endOffset)
 
       expect(glyphsEnd).toBeGreaterThan(5 * 2 * CHARACTER_WIDTH)
+      // Asking for one column reads one advance, which says nothing about where the row ends — so
+      // the width is still only available for the price of a layout read.
+      expect(knownRowContentWidth(internal, row)).toBeNull()
+      expect(measureRowContentWidth(internal, row)).toBeGreaterThanOrEqual(glyphsEnd)
       expect(knownRowContentWidth(internal, row)).toBeGreaterThanOrEqual(glyphsEnd)
     } finally {
       restore()

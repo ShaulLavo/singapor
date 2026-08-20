@@ -9,6 +9,7 @@ import type {
 } from '../virtualization/virtualizedTextView'
 import type { EditorDisplayProjection } from './displayProjectionRegistry'
 import { EMPTY_FOLD_MARKERS, foldMarkerFromRange, foldRangeKey, foldRangesEqual } from './folds'
+import { collapsedFoldsHidingRow, foldSpanHidesRow } from './foldOperations'
 
 type FoldView = Pick<VirtualizedTextView, 'setFoldState'>
 type FoldDisplayProjection = EditorDisplayProjection<'folds'>
@@ -28,6 +29,7 @@ type CollapsedRegion = {
 type ResolvedCollapsedRegion = {
   readonly region: CollapsedRegion
   readonly startRow: number
+  readonly endRow: number
 }
 
 /** A range that could carry a collapse recorded on its header row, and how far their extents differ. */
@@ -50,13 +52,19 @@ const EMPTY_FOLDS: readonly FoldRange[] = []
 export class EditorFoldState {
   private readonly view: FoldView
   private readonly getSnapshot: () => PieceTableSnapshot | null
+  private readonly getCaretRows: () => readonly number[]
   private projectedFolds: readonly FoldRange[] = EMPTY_FOLDS
   private collapsedRegions: CollapsedRegion[] = []
   private collapsedRegionsByFoldKey = new Map<string, CollapsedRegion>()
 
-  public constructor(view: FoldView, getSnapshot: () => PieceTableSnapshot | null) {
+  public constructor(
+    view: FoldView,
+    getSnapshot: () => PieceTableSnapshot | null,
+    getCaretRows: () => readonly number[],
+  ) {
     this.view = view
     this.getSnapshot = getSnapshot
+    this.getCaretRows = getCaretRows
   }
 
   public get folds(): readonly FoldRange[] {
@@ -113,6 +121,27 @@ export class EditorFoldState {
     return collapsed
   }
 
+  /**
+   * Opens whatever is hiding `row`, and reports how many regions that took.
+   *
+   * One pass over the whole set rather than one call per region: several nested regions can be closed
+   * over the same row, and each of them opening the view separately would draw rows that are about to
+   * move again.
+   */
+  public revealRow(row: number): number {
+    let expanded = 0
+    for (const fold of collapsedFoldsHidingRow(
+      this.projectedFolds,
+      (candidate) => this.isCollapsed(candidate),
+      row,
+    )) {
+      if (this.expandFoldKey(foldRangeKey(fold))) expanded += 1
+    }
+    if (expanded > 0) this.syncFoldView()
+
+    return expanded
+  }
+
   public unfoldAll(): boolean {
     if (this.collapsedRegions.length === 0) return false
 
@@ -138,7 +167,7 @@ export class EditorFoldState {
 
     this.projectedFolds = folds
     this.collapsedRegions = resolved.map((entry) => entry.region)
-    this.collapsedRegionsByFoldKey = inheritCollapsedRegions(folds, resolved)
+    this.collapsedRegionsByFoldKey = inheritCollapsedRegions(folds, resolved, this.getCaretRows())
     this.syncFoldView()
   }
 
@@ -247,6 +276,7 @@ function liveCollapsedRegions(
     resolved.push({
       region,
       startRow: offsetToPoint(snapshot, start.offset).row,
+      endRow: offsetToPoint(snapshot, end.offset).row,
     })
   }
 
@@ -262,6 +292,7 @@ function liveCollapsedRegions(
 function inheritCollapsedRegions(
   folds: readonly FoldRange[],
   resolved: readonly ResolvedCollapsedRegion[],
+  caretRows: readonly number[],
 ): Map<string, CollapsedRegion> {
   const inherited = new Map<string, CollapsedRegion>()
   if (resolved.length === 0) return inherited
@@ -274,11 +305,30 @@ function inheritCollapsedRegions(
 
   for (const [row, regions] of regionsByStartRow) {
     for (const pair of pairedByNearestRowSpan(foldsByStartRow.get(row) ?? EMPTY_FOLDS, regions)) {
+      if (reachesOverCaret(pair, caretRows)) continue
+
       inherited.set(foldRangeKey(pair.fold), pair.entry.region)
     }
   }
 
   return inherited
+}
+
+/**
+ * Whether taking the collapse onto the restated range would hide a row the reader is on that the
+ * collapse was not already hiding.
+ *
+ * A parse lands whenever it lands, and a region that has grown since the reader collapsed it must not
+ * take the row they are working on with it — they asked for the region they saw, not for this one. A
+ * row already inside it stays inside: that is a region folded around the caret on purpose, by Fold All
+ * or by a fold aimed elsewhere, and reopening it on the next parse would be the editor undoing them.
+ */
+function reachesOverCaret(pair: CollapseInheritance, caretRows: readonly number[]): boolean {
+  return caretRows.some(
+    (row) =>
+      foldSpanHidesRow(pair.fold.startLine, pair.fold.endLine, row) &&
+      !foldSpanHidesRow(pair.entry.startRow, pair.entry.endRow, row),
+  )
 }
 
 /**

@@ -181,6 +181,34 @@ export function foldRangesOutsideSpans(
   return ranges.filter((range) => !spans.some((span) => foldRangeMeetsSpan(range, span)))
 }
 
+/**
+ * Whether a region running from `startRow` to `endRow` takes `row` off the screen when it closes.
+ *
+ * Strictly past the first row, because a collapsed region keeps that one drawn: everywhere a reader
+ * can put the caret on it — including the columns after the point a provider measures the region
+ * from — is somewhere they can still look.
+ */
+export function foldSpanHidesRow(startRow: number, endRow: number, row: number): boolean {
+  return row > startRow && row <= endRow
+}
+
+/**
+ * The collapsed regions hiding `row` — everything that would have to open for a reader sent there to
+ * see where they landed.
+ *
+ * Asked by row rather than by offset: where along its first row a provider says a region begins says
+ * nothing about which rows it takes away.
+ */
+export function collapsedFoldsHidingRow(
+  folds: readonly FoldRange[],
+  isCollapsed: (fold: FoldRange) => boolean,
+  row: number,
+): readonly FoldRange[] {
+  return folds.filter(
+    (fold) => foldSpanHidesRow(fold.startLine, fold.endLine, row) && isCollapsed(fold),
+  )
+}
+
 export function foldCandidateAtLocation(
   folds: readonly FoldRange[],
   row: number,

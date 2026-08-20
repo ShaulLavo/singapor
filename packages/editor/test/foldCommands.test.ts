@@ -465,4 +465,92 @@ describe('fold commands', () => {
     expect(visibleText()).not.toContain('data one')
     expect(visibleText()).not.toContain('data two')
   })
+
+  describe('rows a collapsed region hides', () => {
+    /** Collapses the block on row 1, which is the one hiding rows 2 and 3. */
+    async function foldInner(): Promise<void> {
+      await openTree(1)
+      expect(editor.dispatchCommand('editor.fold')).toBe(true)
+      expect(visibleText()).not.toContain('    inner()')
+    }
+
+    it('opens the region and leaves the caret where it was sent', async () => {
+      await foldInner()
+
+      editor.setSelection(rowStart(TREE_TEXT, 2) + 4)
+
+      expect(visibleText()).toContain('    inner()')
+      expect(editor.getState().cursor).toEqual({ row: 2, column: 4 })
+    })
+
+    it('opens every region standing between the destination and the reader', async () => {
+      await openTree(0)
+      press('[', VARIANT_CHORD)
+      expect(visibleText()).not.toContain('  if (a) {')
+
+      editor.setSelection(rowStart(TREE_TEXT, 2) + 4)
+
+      expect(visibleText()).toContain('  if (a) {')
+      expect(visibleText()).toContain('    inner()')
+      expect(editor.getState().cursor).toEqual({ row: 2, column: 4 })
+    })
+
+    it('reveals a selection by its head, so the match a find hit made is on screen', async () => {
+      await foldInner()
+
+      editor.setSelection(rowStart(TREE_TEXT, 2) + 4, rowStart(TREE_TEXT, 2) + 9)
+
+      expect(visibleText()).toContain('    inner()')
+      expect(editor.getState().cursor).toEqual({ row: 2, column: 9 })
+    })
+
+    // The header row is on screen the whole time a region is collapsed, so a destination on it is
+    // already somewhere the reader can look, and opening the region would undo a fold they just made.
+    it('stays collapsed for a destination on the header row it keeps on screen', async () => {
+      await foldInner()
+
+      editor.setSelection(rowEnd(TREE_TEXT, 1))
+
+      expect(visibleText()).not.toContain('    inner()')
+      expect(editor.getState().cursor).toEqual({ row: 1, column: TREE_LINES[1]!.length })
+    })
+
+    // The other way a caret ends up in rows nobody is shown: the region grows over it, from a parse
+    // that landed while the reader was working. Nothing asked to go anywhere, so nothing is revealed
+    // — the region that reached over the caret is the one that gives way.
+    it('drops the collapse a restated region would have closed over the caret', async () => {
+      await open(TREE_TEXT, [blockFold(TREE_TEXT, 0, 1)])
+      editor.setSelection(rowStart(TREE_TEXT, 3))
+      expect(editor.fold(rowStart(TREE_TEXT, 0))).toBe(true)
+      expect(visibleText()).not.toContain('  if (a) {')
+
+      editor.setSyntaxFolds([blockFold(TREE_TEXT, 0, 5)])
+
+      expect(visibleText()).toContain('  }')
+      expect(editor.getState().cursor).toEqual({ row: 3, column: 0 })
+    })
+
+    it('keeps a collapse the reader made over the caret when a parse restates it', async () => {
+      await open(TREE_TEXT, [blockFold(TREE_TEXT, 0, 5)])
+      editor.setSelection(rowStart(TREE_TEXT, 3))
+      expect(editor.foldAll()).toBe(true)
+      expect(visibleText()).not.toContain('  }')
+
+      editor.setSyntaxFolds([blockFold(TREE_TEXT, 0, 4)])
+
+      expect(visibleText()).not.toContain('  }')
+    })
+
+    // Walking a document is not asking to be taken somewhere: motion already steps over the rows a
+    // region hides, so the reader who collapsed it keeps it collapsed.
+    it('stays collapsed when the caret walks into it instead', async () => {
+      await foldInner()
+      editor.setSelection(rowStart(TREE_TEXT, 1))
+
+      press('ArrowDown', {})
+
+      expect(visibleText()).not.toContain('    inner()')
+      expect(editor.getState().cursor.row).toBe(4)
+    })
+  })
 })

@@ -126,6 +126,7 @@ import {
   type EditorLogInput,
   type EditorOverlaySide,
   type EditorPlugin,
+  type EditorSelectionRange,
   type EditorTrackedRanges,
   type EditorViewContribution,
   type EditorViewContributionContext,
@@ -442,7 +443,11 @@ export class Editor {
       onViewportChange: this.handleViewportChange,
       selectionHighlightName: `${this.highlightPrefix}-selection`,
     })
-    this.foldState = new EditorFoldState(this.view, () => this.session?.getSnapshot() ?? null)
+    this.foldState = new EditorFoldState(
+      this.view,
+      () => this.session?.getSnapshot() ?? null,
+      () => this.foldCommandLocations().map((location) => location.row),
+    )
     this.el = this.view.scrollElement
     this.view.setSuspiciousCharacters(
       normalizeSuspiciousCharactersOptions(options.suspiciousCharacters),
@@ -458,7 +463,7 @@ export class Editor {
       applyBlockLanes: (lanes) => this.applyBlockLanesProjection(lanes),
       focusEditor: () => this.focus(),
       setSelection: (anchor, head) =>
-        this.inputSelection.applyFindSelection(anchor, head, 'editor.block.setSelection', head),
+        this.applyRequestedSelection(anchor, head, 'editor.block.setSelection', head),
       notifyLayout: () => this.notifyViewContributions('layout', null),
     })
     this.syntax = new EditorSyntaxController({
@@ -518,7 +523,7 @@ export class Editor {
       getSyntaxFolds: () => this.syntaxFoldProjection(),
       getProviders: () => this.pluginHost.getSelectionRangeProviders(),
       setSelections: (selections, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelections(selections, timingName, revealOffset),
+        this.applyRequestedSelections(selections, timingName, revealOffset),
     })
     this.commandRouter = new EditorCommandRouter({
       history: (command, context) => this.inputSelection.applyHistoryCommand(command, context),
@@ -1015,7 +1020,7 @@ export class Editor {
   setSelection(anchor: number, head = anchor, reveal?: EditorSelectionRevealTarget): void {
     this.runInOperation(() => {
       const revealOffset = selectionRevealOffset(reveal, head)
-      this.inputSelection.applyFindSelection(anchor, head, 'editor.setSelection', revealOffset)
+      this.applyRequestedSelection(anchor, head, 'editor.setSelection', revealOffset)
     })
   }
 
@@ -2315,9 +2320,9 @@ export class Editor {
       announce: (message) => this.announcer.status(message),
       focusEditor: () => this.focus(),
       setSelection: (anchor, head, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset),
+        this.applyRequestedSelection(anchor, head, timingName, revealOffset),
       setSelections: (selections, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelections(selections, timingName, revealOffset),
+        this.applyRequestedSelections(selections, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
       getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
       setScrollTop: (scrollTop) => this.setScrollTop(scrollTop),
@@ -2426,9 +2431,9 @@ export class Editor {
       getSelections: () => this.inputSelection.resolveViewSelections(),
       focusEditor: () => this.focus(),
       setSelection: (anchor, head, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset),
+        this.applyRequestedSelection(anchor, head, timingName, revealOffset),
       setSelections: (selections, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelections(selections, timingName, revealOffset),
+        this.applyRequestedSelections(selections, timingName, revealOffset),
       applyEdits: (edits, timingName, selection) =>
         this.inputSelection.applyFindEdits(edits, timingName, selection),
       setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
@@ -2959,7 +2964,7 @@ export class Editor {
     this.restoringCursorHistory = true
     try {
       this.runInOperation(() => {
-        this.inputSelection.applyFindSelections(entry.selections, timingName)
+        this.applyRequestedSelections(entry.selections, timingName)
       })
     } finally {
       this.restoringCursorHistory = false
@@ -3199,6 +3204,61 @@ export class Editor {
   }
 
   /**
+   * Moves the selection somewhere this editor was asked to go, opening whatever hides it on the way.
+   *
+   * A caret can never be asked afterwards whether it is on a row nobody is shown: one that would land
+   * there is pulled back onto the header of the region hiding it before it is ever stored, so by then
+   * the answer is always no. This is the last place the position that was asked for still exists, and
+   * opening the regions here means the landing is the one the request named rather than the nearest
+   * row that happened to be on screen.
+   *
+   * Nothing is deferred behind a scheduler: there is one call per request rather than a stream of
+   * cursor movements to coalesce, and someone who asked to be taken somewhere is waiting to see it.
+   */
+  private applyRequestedSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    revealOffset?: number,
+  ): void {
+    this.revealFoldedOffset(head)
+    this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset)
+  }
+
+  /** The primary selection is the one reveal follows, so it is the one that has to end up on screen. */
+  private applyRequestedSelections(
+    selections: readonly EditorSelectionRange[],
+    timingName: string,
+    revealOffset?: number,
+  ): void {
+    const primary = selections[0]
+    if (primary) this.revealFoldedOffset(primary.head)
+    this.inputSelection.applyFindSelections(selections, timingName, revealOffset)
+  }
+
+  /**
+   * Only a request that names a destination opens anything. Walking into a region with the arrow keys
+   * is the reader moving through a document they folded themselves, and motion already steps over the
+   * rows a region hides rather than stalling on its header — a key that opened them would be undoing
+   * the fold on the way past.
+   */
+  private revealFoldedOffset(offset: number): void {
+    const location = this.foldLocation(offset)
+    if (!location) return
+
+    const expanded = this.foldState.revealRow(location.row)
+    if (expanded === 0) return
+
+    this.announceFoldChange(0, expanded)
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.fold.revealed',
+      level: 'info',
+      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: expanded },
+    })
+  }
+
+  /**
    * Rows leave the document without the caret moving, so a reader who cannot see the rows go has
    * nothing to tell them how much of the file just stopped being there.
    */
@@ -3228,7 +3288,7 @@ export class Editor {
     const carets = created.map((fold) =>
       pointToOffset(snapshot, { row: fold.startLine, column: 0 }),
     )
-    this.inputSelection.applyFindSelections(
+    this.applyRequestedSelections(
       carets.map((offset) => ({ anchor: offset, head: offset })),
       'editor.fold.manual',
       carets[0],

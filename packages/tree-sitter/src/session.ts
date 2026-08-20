@@ -28,7 +28,10 @@ import type {
   TreeSitterParseResult,
   TreeSitterRangeResult,
 } from './treeSitter/types'
-import type { TreeSitterLanguageResolver } from './treeSitter/registry'
+import type {
+  TreeSitterLanguageDescriptor,
+  TreeSitterLanguageResolver,
+} from './treeSitter/registry'
 import {
   createTreeSitterWorkerBackend,
   type TreeSitterBackend,
@@ -271,8 +274,37 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     const descriptor = await this.languageResolver?.resolveTreeSitterLanguage(this.languageId)
     if (!descriptor) return false
 
-    await this.backend.registerLanguages([descriptor])
+    await this.backend.registerLanguages(await this.withInjectedLanguages(descriptor))
     return true
+  }
+
+  /**
+   * The worker parses an injection with the runtime for that language, and it has no way to ask for
+   * one it was never sent — an unregistered injection language degrades to a missing layer, which is
+   * how markdown lost every inline construct (`markdown_inline` is an injection, not a file type).
+   * So the languages an injection query names outright travel with the document's own descriptor.
+   * Injections whose language is a capture, like a fenced code block's info string, stay dynamic and
+   * cannot be resolved here.
+   */
+  private async withInjectedLanguages(
+    descriptor: TreeSitterLanguageDescriptor,
+  ): Promise<readonly TreeSitterLanguageDescriptor[]> {
+    const descriptors = [descriptor]
+    const seen = new Set([descriptor.id])
+
+    // Injections nest — markdown injects markdown_inline, which injects html — so the worklist
+    // grows as it is walked.
+    for (let index = 0; index < descriptors.length; index += 1) {
+      for (const languageId of injectedLanguageIds(descriptors[index]?.injectionQuerySource)) {
+        if (seen.has(languageId)) continue
+        seen.add(languageId)
+
+        const injected = await this.languageResolver?.resolveTreeSitterLanguage(languageId)
+        if (injected) descriptors.push(injected)
+      }
+    }
+
+    return descriptors
   }
 
   private updateFromUnavailableLanguage(
@@ -465,6 +497,21 @@ export const createTextDiffEdit = (previousText: string, nextText: string): Text
     to: previousEnd,
     text: nextText.slice(start, nextEnd),
   }
+}
+
+/**
+ * Language ids an injection query names as a literal, as in
+ * `((inline) @injection.content (#set! injection.language "markdown_inline"))`. A query that reads
+ * its language out of the source instead — a fenced code block's info string — names nothing here.
+ */
+const INJECTION_LANGUAGE_PATTERN = /injection\.language"?\s+"([^"]+)"/g
+
+const injectedLanguageIds = (injectionQuerySource: string | undefined): readonly string[] => {
+  if (!injectionQuerySource) return []
+
+  return [...injectionQuerySource.matchAll(INJECTION_LANGUAGE_PATTERN)].map(
+    (match) => match[1] ?? '',
+  )
 }
 
 const createSyntaxTextEdits = (

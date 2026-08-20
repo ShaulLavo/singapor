@@ -59,6 +59,11 @@ export type EditorScheduleWorkOptions<T> = {
   readonly priority?: EditorWorkPriority
   readonly tags?: EditorWorkTags
   readonly delayMs?: number
+  // Ceiling on how long re-scheduling the same key may keep postponing it.
+  // With delayMs alone, work that is rescheduled on every keystroke never runs
+  // while the user keeps typing; maxDelayMs makes the deadline something a
+  // replacement can only pull in, never push out.
+  readonly maxDelayMs?: number
   readonly budgetMs?: number
   readonly defer?: boolean
   readonly replace?: boolean
@@ -86,6 +91,9 @@ type ScheduledEditorWork<T = unknown> = {
   readonly controller: AbortController
   readonly options: EditorScheduleWorkOptions<T>
   readonly createdAt: number
+  // When this key's currently-pending run was *first* requested; survives
+  // replacement so maxDelayMs measures the whole burst, not the last keystroke.
+  readonly firstScheduledAt: number
   timer: ReturnType<typeof globalThis.setTimeout> | null
   budgetTimer: ReturnType<typeof globalThis.setTimeout> | null
   startedAt: number | null
@@ -135,9 +143,12 @@ export class EditorWorkScheduler {
     const existing = this.scheduled.get(options.key)
     if (existing && options.replace === false) return this.handleFor(existing)
 
+    // Read before cancelling: the outgoing work carries the deadline that the
+    // replacement must not push out.
+    const firstScheduledAt = existing?.firstScheduledAt ?? null
     if (options.replace !== false) this.cancel(options.key, 'replaced')
 
-    const work = this.createWork(options)
+    const work = this.createWork(options, firstScheduledAt)
     this.scheduled.set(options.key, work)
     this.emit(work, 'scheduled')
     this.scheduleStart(work)
@@ -161,10 +172,15 @@ export class EditorWorkScheduler {
     this.queued = []
   }
 
-  private createWork<T>(options: EditorScheduleWorkOptions<T>): ScheduledEditorWork<T> {
+  private createWork<T>(
+    options: EditorScheduleWorkOptions<T>,
+    firstScheduledAt: number | null = null,
+  ): ScheduledEditorWork<T> {
     const token = this.nextToken + 1
     this.nextToken = token
+    const now = this.now()
     return {
+      firstScheduledAt: firstScheduledAt ?? now,
       key: options.key,
       token,
       taskClass: options.taskClass,
@@ -172,7 +188,7 @@ export class EditorWorkScheduler {
       tags: options.tags ?? {},
       controller: new AbortController(),
       options,
-      createdAt: this.now(),
+      createdAt: now,
       timer: null,
       budgetTimer: null,
       startedAt: null,
@@ -180,13 +196,25 @@ export class EditorWorkScheduler {
   }
 
   private scheduleStart(work: ScheduledEditorWork): void {
-    const delayMs = normalizeDelayMs(work.options.delayMs)
+    const delayMs = this.effectiveDelayMs(work)
     if (delayMs === 0) {
       this.startZeroDelayWork(work)
       return
     }
 
     work.timer = this.setTimer(() => this.start(work), delayMs)
+  }
+
+  // The requested delay, clamped by whatever remains of the burst's maximum
+  // wait. Once that budget is exhausted the work runs on the next tick even if
+  // the key keeps being rescheduled.
+  private effectiveDelayMs(work: ScheduledEditorWork): number {
+    const delayMs = normalizeDelayMs(work.options.delayMs)
+    const maxDelayMs = normalizeDelayMs(work.options.maxDelayMs)
+    if (maxDelayMs === 0 || delayMs === 0) return delayMs
+
+    const remaining = work.firstScheduledAt + maxDelayMs - this.now()
+    return Math.max(0, Math.min(delayMs, remaining))
   }
 
   private startZeroDelayWork(work: ScheduledEditorWork): void {

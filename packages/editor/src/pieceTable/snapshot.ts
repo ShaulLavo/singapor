@@ -9,6 +9,7 @@ import { buildReverseIndex } from './reverseIndex'
 import { createNode, getSubtreePieces, getSubtreeVisibleLength, normalizePieceOrders } from './tree'
 import { PIECE_ORDER_STEP } from './orders'
 import { priorityForPiece } from './priority'
+import { DEFAULT_DOCUMENT_LINE_ENDING, normalizeDocumentText } from './lineEndings'
 
 export const createSnapshot = (
   buffers: PieceTableBuffers,
@@ -38,13 +39,24 @@ export const createSnapshotWithIndex = (
   )
 }
 
-export type CreatePieceTableSnapshotOptions = PieceTableBufferOptions
+export type CreatePieceTableSnapshotOptions = PieceTableBufferOptions & {
+  // Skip ingestion normalization when the caller already holds LF-only text
+  // (snapshot round-trips, undo restores, worker-side reconstruction).
+  readonly normalized?: boolean
+}
 
 export const createPieceTableSnapshot = (
   original: string,
   options: CreatePieceTableSnapshotOptions = {},
 ): PieceTableTreeSnapshot => {
-  const buffers = createInitialBuffers(original, options)
+  const ingested = options.normalized
+    ? null
+    : normalizeDocumentText(original, options.lineEnding ?? DEFAULT_DOCUMENT_LINE_ENDING)
+  const buffers = createInitialBuffers(ingested ? ingested.text : original, {
+    ...options,
+    lineEnding: ingested ? ingested.lineEnding : options.lineEnding,
+    byteOrderMark: ingested ? ingested.byteOrderMark : options.byteOrderMark,
+  })
   const originalPiece = createOriginalPiece(buffers)
   const root = originalPiece
     ? createNode(originalPiece, null, null, priorityForPiece(originalPiece, buffers.prioritySeed))

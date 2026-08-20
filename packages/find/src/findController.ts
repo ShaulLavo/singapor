@@ -7,6 +7,7 @@ import type { EditorDisposable, EditorViewContributionUpdateKind } from '@singap
 import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
 import {
   FIND_MATCHES_LIMIT,
+  FIND_REPLACE_ALL_LIMIT,
   findMatchIndex,
   findMatches,
   nextMatchAfter,
@@ -212,7 +213,13 @@ export class EditorFindController {
     if (!this.editHost) return false
 
     const pattern = this.replacePattern()
-    const matches = this.findAll(pattern.hasReplacementPatterns || this.state.preserveCase)
+    // Deliberately not FIND_MATCHES_LIMIT: that cap exists to bound painting,
+    // and applying it here would rewrite the first 19,999 matches and leave the
+    // rest, silently.
+    const matches = this.findAll(
+      pattern.hasReplacementPatterns || this.state.preserveCase,
+      FIND_REPLACE_ALL_LIMIT,
+    )
     if (matches.length === 0) return false
 
     const edits = mergeAdjacentReplaceEdits(
@@ -367,17 +374,11 @@ export class EditorFindController {
     if (moveCursor) this.selectFirstMatchFromSelection()
   }
 
-  private findAll(captureMatches: boolean): readonly FindMatch[] {
+  private findAll(captureMatches: boolean, limit = FIND_MATCHES_LIMIT): readonly FindMatch[] {
     const host = this.host
     if (!host) return []
 
-    return findMatches(
-      host.materializeFullText(),
-      this.state,
-      this.scopes,
-      captureMatches,
-      FIND_MATCHES_LIMIT,
-    )
+    return findMatches(host.materializeFullText(), this.state, this.scopes, captureMatches, limit)
   }
 
   private selectFirstMatchFromSelection(): void {

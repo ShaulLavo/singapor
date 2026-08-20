@@ -114,9 +114,19 @@ describe('markdown inline replacements', () => {
     expect(preview('* star item')).toBe('• star item')
   })
 
-  it('leaves ordered lists and block quotes alone', () => {
+  it('substitutes block-quote markers with a quote bar, width-for-width', () => {
+    expect(preview('> quoted')).toBe('│ quoted')
+    expect(preview('> > nested')).toBe('│ │ nested')
+  })
+
+  it('leaves ordered lists alone', () => {
     expect(preview('1. ordered')).toBe('1. ordered')
-    expect(preview('> quoted')).toBe('> quoted')
+  })
+
+  it('carries the heading level in the marker kind', () => {
+    const specs = markdownInlineReplacements('## Two', parseMarkdown('## Two'))
+
+    expect(specs.map((spec) => spec.kind)).toEqual(['heading-marker-2'])
   })
 
   it('leaves escapes and stray punctuation alone', () => {

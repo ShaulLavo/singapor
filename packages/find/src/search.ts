@@ -5,7 +5,15 @@ import {
   type TextOffsetRange,
 } from '@singapor/core/document'
 
+// Bounds the match set the widget counts and paints, so a pathological query
+// on a huge file cannot stall the frame.
 export const FIND_MATCHES_LIMIT = 19_999
+
+// Replace All must never apply to a truncated match set: stopping early would
+// silently rewrite part of the document and leave the rest, with no signal to
+// the user. Searching is linear, so the only real cost of lifting the cap here
+// is the edit batch itself.
+export const FIND_REPLACE_ALL_LIMIT = 1_073_741_824
 
 export type FindRange = TextOffsetRange
 
@@ -22,8 +30,9 @@ export type FindMatch = FindRange & {
 
 type CompiledFindQuery = {
   readonly regex: RegExp
+  // Non-null only when a plain indexOf over the untouched text is exactly
+  // equivalent to the regex; see compileFindQuery.
   readonly simpleSearch: string | null
-  readonly simpleNeedle: string | null
   readonly wholeWord: boolean
 }
 
@@ -82,17 +91,32 @@ function escapeRegExpCharacters(value: string): string {
   return value.replace(/[\\{}*+?|^$.[\]()]/g, '\\$&')
 }
 
+// True when the query contains at least one character whose case can differ,
+// which is the only situation where matchCase changes what a plain search
+// finds. Digits, punctuation and CJK are caseless, so an untouched indexOf is
+// still exact for them even with matchCase off.
+function queryIsCaseSensitiveByContent(searchString: string): boolean {
+  return searchString.toLowerCase() !== searchString.toUpperCase()
+}
+
 function compileFindQuery(query: FindQuery): CompiledFindQuery | null {
   if (query.searchString.length === 0) return null
 
   const source = query.isRegex ? query.searchString : escapeRegExpCharacters(query.searchString)
   const flags = query.matchCase ? 'gmu' : 'gimu'
 
+  // The fast path may never case-fold the haystack: folding is not
+  // length-preserving (U+0130 'İ' lowercases to two code units), so an index
+  // into folded text does not address the original text, and a match reported
+  // from it slices the wrong characters — Replace would then overwrite them.
+  // Fall back to the case-insensitive regex, which reports original indices.
+  const canUseSimpleSearch =
+    !query.isRegex && (query.matchCase || !queryIsCaseSensitiveByContent(query.searchString))
+
   try {
     return {
       regex: new RegExp(source, flags),
-      simpleSearch: query.isRegex ? null : query.searchString,
-      simpleNeedle: query.matchCase ? query.searchString : query.searchString.toLocaleLowerCase(),
+      simpleSearch: canUseSimpleSearch ? query.searchString : null,
       wholeWord: query.wholeWord,
     }
   } catch {
@@ -131,14 +155,14 @@ function appendSimpleMatches(
   range: FindRange,
   limit: number,
 ): void {
-  const needle = query.simpleNeedle
   const searchString = query.simpleSearch
-  if (!needle || !searchString) return
+  if (!searchString) return
 
-  const haystack = query.regex.ignoreCase ? text.toLocaleLowerCase() : text
+  // Searched as-is: no folded copy of the document is allocated, and every
+  // index returned already addresses `text`.
   let index = range.start - searchString.length
   while (matches.length < limit) {
-    index = haystack.indexOf(needle, index + searchString.length)
+    index = text.indexOf(searchString, index + searchString.length)
     if (index === -1 || index + searchString.length > range.end) return
     if (index < range.start) continue
     if (!validWholeWordMatch(text, index, searchString.length, query.wholeWord)) continue

@@ -30,6 +30,7 @@ import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from './pieceTabl
 import { applyBatchToPieceTable } from './pieceTable/edits'
 import { readPieceTableTextRange, pieceTableSnapshotsHaveSameText } from './pieceTable/reads'
 import { createPieceTableSnapshot } from './pieceTable/snapshot'
+import { normalizeLineEndings } from './pieceTable/lineEndings'
 
 export type DocumentSessionChangeKind = 'edit' | 'selection' | 'undo' | 'redo' | 'none'
 
@@ -270,10 +271,13 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public applyText(
     selections: SelectionSet<PieceTableAnchor>,
-    text: string,
+    rawText: string,
     sourceViewId: string | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
+    // Pasted text is the common CRLF carrier; flatten before the edits are
+    // derived so selections land where the inserted text actually ends.
+    const text = normalizeLineEndings(rawText)
     if (text.length === 0) {
       return appendTiming(this.createChange('none', []), 'session.applyText', start)
     }
@@ -1231,9 +1235,12 @@ export function withDocumentSessionChangeTimings(
   })
 }
 
+// Line endings are flattened here rather than inside insertIntoPieceTable so
+// that the edits recorded for history, the inverse edits, and the tree all
+// describe the same text; undo derives its ranges from edit.text.length.
 function normalizeTextEdits(edits: readonly TextEdit[]): readonly TextEdit[] {
   return edits
-    .map((edit) => ({ from: edit.from, to: edit.to, text: edit.text }))
+    .map((edit) => ({ from: edit.from, to: edit.to, text: normalizeLineEndings(edit.text) }))
     .sort((left, right) => left.from - right.from || left.to - right.to)
 }
 

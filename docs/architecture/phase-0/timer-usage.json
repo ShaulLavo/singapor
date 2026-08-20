@@ -3,6 +3,38 @@
   "schemaVersion": 1,
   "timers": [
     {
+      "api": "queueMicrotask",
+      "file": "packages/decode/src/diffusion.ts",
+      "id": "packages/decode/src/diffusion.ts:queueMicrotask:a60528563a",
+      "justification": "Nothing to animate still has to finish asynchronously, or a caller that always sees its completion after returning would see it before returning on an empty document. Guarded by `stopped`, so a cancel between the two beats it.",
+      "line": 169,
+      "snippet": "queueMicrotask(() => {"
+    },
+    {
+      "api": "setInterval",
+      "file": "packages/decode/src/diffusion.ts",
+      "id": "packages/decode/src/diffusion.ts:setInterval:f2b6c75238",
+      "justification": "Drives a fixed-duration decorative overlay at a tick computed from its own duration, and owns the matching `clearInterval` in `stop()`. It paints a layer above the rows rather than editor state, so nothing it does has to be ordered against document work.",
+      "line": 177,
+      "snippet": "const interval = setInterval(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/decode/src/index.ts",
+      "id": "packages/decode/src/index.ts:setTimeout:ffb8061fde",
+      "justification": "The ceiling on how long the reveal waits for tokens before starting anyway. A scheduler would pace it against other editor work, which is the opposite of what it is for: it exists so a document whose tokens never arrive still reveals.",
+      "line": 83,
+      "snippet": "this.tokensTimer = setTimeout("
+    },
+    {
+      "api": "queueMicrotask",
+      "file": "packages/decode/src/reveal.ts",
+      "id": "packages/decode/src/reveal.ts:queueMicrotask:5894d1d78b",
+      "justification": "Fires the completion callback when no animation was started, so a caller hears about it in the same turn ordering either way.",
+      "line": 303,
+      "snippet": "if (animations.length === 0) queueMicrotask(fire)"
+    },
+    {
       "api": "setTimeout",
       "file": "packages/editor/src/editor/blockSurfaceController.ts",
       "id": "packages/editor/src/editor/blockSurfaceController.ts:setTimeout:81986effee",
@@ -31,7 +63,7 @@
       "file": "packages/editor/src/editor/workScheduler.ts",
       "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:e34be5e183",
       "justification": "Phase 3 scheduler owner; all delayed editor work enters through EditorWorkScheduler, which provides keyed cancellation, stale-result checks, budget aborts, and observability.",
-      "line": 111,
+      "line": 119,
       "snippet": "setTimeout(handler, timeout)) as typeof globalThis.setTimeout"
     },
     {
@@ -39,7 +71,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:requestAnimationFrame:f20775aa16",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 733,
+      "line": 1049,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -47,8 +79,24 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:setTimeout:2ac189eec3",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 734,
+      "line": 1050,
       "snippet": "return setTimeout(() => callback(nowMs()), 0) as unknown as number"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
+      "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:setTimeout:7aa8053100",
+      "justification": "The tail of a scroll, which has to be measured against the raw scroll events it follows rather than against editor work \u2014 pacing it with other tasks would make the settle time depend on what else was queued. Cancelled by `cancelTrailingScrollEmit` on every further scroll, so at most one is ever pending.",
+      "line": 297,
+      "snippet": "this.trailingScrollEmitTimer = setTimeout(() => {"
+    },
+    {
+      "api": "queueMicrotask",
+      "file": "packages/editor/src/virtualization/geckoHighlightRepaint.ts",
+      "id": "packages/editor/src/virtualization/geckoHighlightRepaint.ts:queueMicrotask:804ee49585",
+      "justification": "Coalesces the re-registration one engine needs to repaint highlights to once per registry per turn; `pendingRegistries` is what makes a second call in the same turn a no-op rather than a second pass.",
+      "line": 21,
+      "snippet": "queueMicrotask(() => {"
     },
     {
       "api": "queueMicrotask",
@@ -87,8 +135,16 @@
       "file": "packages/lsp-plugin/src/completionController.ts",
       "id": "packages/lsp-plugin/src/completionController.ts:setTimeout:af6e0495c6",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 143,
+      "line": 146,
       "snippet": "this.completionTimer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/lsp-plugin/src/documentHighlightController.ts",
+      "id": "packages/lsp-plugin/src/documentHighlightController.ts:setTimeout:72bc987661",
+      "justification": "Debounces a request to the language server against the caret, not against rendering, and `cancel()` clears it on every move \u2014 so the server sees one question per pause rather than one per keystroke.",
+      "line": 66,
+      "snippet": "this.timer = setTimeout(() => {"
     },
     {
       "api": "setTimeout",

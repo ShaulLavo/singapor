@@ -90,6 +90,45 @@ describe('editor search', () => {
     ).toHaveLength(3)
   })
 
+  it('reports case-insensitive matches against original offsets', () => {
+    // 'İ' (U+0130) lowercases to two code units, so any index taken from a
+    // case-folded copy of the text addresses the wrong characters here.
+    const text = 'aİstanbul stanbul'
+    const matches = findMatches(text, {
+      searchString: 'stanbul',
+      isRegex: false,
+      matchCase: false,
+      wholeWord: false,
+    })
+
+    expect(matches).toHaveLength(2)
+    for (const match of matches) {
+      expect(text.slice(match.start, match.end).toLocaleLowerCase()).toBe('stanbul')
+    }
+  })
+
+  it('still matches case-insensitively without folding', () => {
+    const matches = findMatches('Foo foo FOO', {
+      searchString: 'foo',
+      isRegex: false,
+      matchCase: false,
+      wholeWord: false,
+    })
+
+    expect(matches.map((match) => match.start)).toEqual([0, 4, 8])
+  })
+
+  it('keeps the plain-text path for caseless queries', () => {
+    const matches = findMatches('a1b1c', {
+      searchString: '1',
+      isRegex: false,
+      matchCase: false,
+      wholeWord: false,
+    })
+
+    expect(matches.map((match) => match.start)).toEqual([1, 3])
+  })
+
   it('parses replacement patterns and preserve-case replacements', () => {
     const pattern = parseReplaceString('[$&]-$1-$$-\\n-\\u$2')
 

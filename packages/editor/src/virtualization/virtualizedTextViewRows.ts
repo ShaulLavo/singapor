@@ -60,6 +60,7 @@ import {
   rowInlineMappingForDisplayRow,
 } from './virtualizedTextViewInlineMapping'
 import {
+  type RenderedChunkParts,
   createRenderedChunkParts,
   createTextChunkParts,
   domBoundaryForOffset,
@@ -219,6 +220,7 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
     rowDecorationClassName: '',
     rowDecorationGutterClassName: '',
     rowDecorationKey: '',
+    inlineKindsClassName: '',
     cursorLineContentActive: false,
     textRenderMode: 'simple',
     geometryCache: null,
@@ -555,6 +557,7 @@ function updateRowElement(
   updateRowFrame(view, row, item, state.kind)
   applyRowDecoration(view, row, item.index)
   updateCursorLineContentClass(view, row, state.cursorVirtualLine)
+  updateRowInlineKindClasses(row, state.kind === 'text' ? state.inlineMapping : null)
   updateGutterRowElement(view, row, item, state)
   if (state.kind === 'block') {
     setBlockRowContent(view, row, item, state)
@@ -816,7 +819,7 @@ function setDirectRowText(
   }
 
   if (row.textRenderMode !== 'simple' || rowHasInlineAttachments(row)) {
-    row.element.replaceChildren(row.textNode)
+    if (!isSoleRowChild(row, row.textNode)) row.element.replaceChildren(row.textNode)
     setTextRenderMode(row, 'simple')
   }
   if (row.textNode.data !== text) row.textNode.data = text
@@ -836,9 +839,41 @@ function setRenderedDirectRowText(
     0,
     characterWidth(view),
   )
-  row.element.replaceChildren(...rendered.nodes)
+  if (!adoptRenderedSingleTextPart(row, rendered)) {
+    row.element.replaceChildren(...rendered.nodes)
+  }
   setTextRenderMode(row, 'rendered')
   syncDirectRowChunk(row, text, startOffset, mapping, rendered.parts, rendered.textNode)
+}
+
+/**
+ * Most non-simple lines still render as a single text part (no
+ * control-character spans). When the row's current DOM is already exactly one
+ * text node, adopt it: write `Text.data` in place and point the fresh parts at
+ * the retained node. `replaceChildren` would tear down and rebuild the row's
+ * layout objects on every recycle, for DOM-identical output.
+ */
+function adoptRenderedSingleTextPart(
+  row: MountedVirtualizedTextRow,
+  rendered: RenderedChunkParts,
+): boolean {
+  const part = rendered.parts[0]
+  if (rendered.parts.length !== 1 || part?.kind !== 'text') return false
+  if (!isSoleRowChild(row, row.textNode)) return false
+
+  const existing = row.textNode
+  if (existing.data !== rendered.textNode.data) existing.data = rendered.textNode.data
+
+  const mutablePart = part as { node: Text }
+  mutablePart.node = existing
+  const mutableRendered = rendered as { textNode: Text }
+  mutableRendered.textNode = existing
+  return true
+}
+
+function isSoleRowChild(row: MountedVirtualizedTextRow, node: Text): boolean {
+  if (node.parentNode !== row.element) return false
+  return node.previousSibling === null && node.nextSibling === null
 }
 
 function reuseDirectRowText(
@@ -902,7 +937,10 @@ function syncSimpleDirectRowChunk(
     text: string
   }
   mutableChunk.startOffset = startOffset
-  mutableChunk.endOffset = startOffset + text.length
+  // Chunk offsets are buffer offsets; with an inline mapping the display text is shorter than the
+  // buffer span, and `startOffset + text.length` silently clips every token range to the display
+  // length before the boundary math ever maps it.
+  mutableChunk.endOffset = offsetForLocalIndex(mapping, startOffset, text.length, 'after')
   mutableChunk.localEnd = text.length
   mutableChunk.text = text
 
@@ -1490,6 +1528,42 @@ function setRowDecorationGutterClassName(
 function setRowDecorationKey(row: MountedVirtualizedTextRow, rowDecorationKey: string): void {
   const mutable = row as { rowDecorationKey: string }
   mutable.rowDecorationKey = rowDecorationKey
+}
+
+/** Class names may only be built from kinds that are safe as CSS class fragments. */
+const CLASS_SAFE_REPLACEMENT_KIND = /^[a-z0-9-]+$/
+
+/**
+ * Mirrors the row's inline replacement kinds onto its element as `editor-inline-<kind>` classes, so
+ * a replacement provider's stylesheet can restyle whole rows — a markdown heading row turning bold
+ * and larger — without the editor knowing any provider's vocabulary. Reveal drops the row's
+ * replacements, which drops the classes with them, so a revealed heading renders as plain source.
+ */
+function updateRowInlineKindClasses(
+  row: MountedVirtualizedTextRow,
+  mapping: RowInlineMapping | null,
+): void {
+  const nextClassName = inlineKindClassNames(mapping)
+  if (nextClassName === row.inlineKindsClassName) return
+
+  removeClassNames(row.element, row.inlineKindsClassName)
+  addClassNames(row.element, nextClassName)
+  const mutable = row as { inlineKindsClassName: string }
+  mutable.inlineKindsClassName = nextClassName
+}
+
+function inlineKindClassNames(mapping: RowInlineMapping | null): string {
+  if (!mapping) return ''
+
+  const names = new Set<string>()
+  for (const segment of mapping.line.segments) {
+    if (segment.kind !== 'replacement') continue
+    const replacementKind = segment.replacementKind
+    if (!replacementKind || !CLASS_SAFE_REPLACEMENT_KIND.test(replacementKind)) continue
+    names.add(`editor-inline-${replacementKind}`)
+  }
+
+  return [...names].join(' ')
 }
 
 function addClassNames(element: HTMLElement, className: string): void {

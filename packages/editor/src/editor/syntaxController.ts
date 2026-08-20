@@ -28,7 +28,7 @@ import {
 } from './tokenIndex'
 import { LatestAsyncRequest } from './latestAsyncRequest'
 import { getEditorSyntaxSessionFactory } from './runtime'
-import { syntaxRefreshDelay } from './editorUtils'
+import { syntaxRefreshDelay, SYNTAX_REFRESH_MAX_DELAY_MS } from './editorUtils'
 
 export type EditorSyntaxDocumentStartOptions = {
   readonly documentId: string
@@ -49,6 +49,11 @@ export type EditorSyntaxControllerOptions = {
   setSyntaxFolds(folds: readonly FoldRange[]): void
   notifyChange(change: DocumentSessionChange | null): void
   setSyntaxCaptures?(captures: readonly EditorSyntaxCapture[]): void
+  /**
+   * Whether anything downstream reads raw captures. Captures cost payload on every parse, so a
+   * session asks for them only while an inline replacement provider is registered to consume them.
+   */
+  needsSyntaxCaptures?(): boolean
   notifyThemeChanged(): void
   log?(event: EditorLogInput): void
 }
@@ -107,6 +112,7 @@ export class EditorSyntaxController {
   private disposed = false
   private syntaxStatus: EditorSyntaxStatus = 'plain'
   private syntaxSession: EditorSyntaxSession | null = null
+  private syntaxSessionIncludesCaptures = false
   private highlighterSession: EditorHighlighterSession | null = null
   private providerHighlighterTheme: EditorTheme | null = null
   private highlighterTheme: EditorTheme | null = null
@@ -211,6 +217,19 @@ export class EditorSyntaxController {
     this.highlighterThemeRequests.dispose()
     this.disposeSyntaxSession()
     this.disposeHighlighterSession()
+  }
+
+  /**
+   * Reparses when the capture requirement flips. A provider that registers after the document
+   * started — plugin activation is async — would otherwise wait for the next edit to see captures,
+   * and the first one it ever gets is the one it needs to paint the file it was opened on.
+   */
+  syncCaptureRequirement(): void {
+    if (this.disposed) return
+    if ((this.options.needsSyntaxCaptures?.() ?? false) === this.syntaxSessionIncludesCaptures)
+      return
+
+    this.reloadSyntaxSession()
   }
 
   reloadHighlighterAndSyntax(): void {
@@ -371,11 +390,13 @@ export class EditorSyntaxController {
   ): EditorSyntaxSession | null {
     if (!document.languageId) return null
 
+    const includeCaptures = this.options.needsSyntaxCaptures?.() ?? false
+    this.syntaxSessionIncludesCaptures = includeCaptures
     const options = {
       documentId: document.documentId,
       languageId: document.languageId,
       includeHighlights: !this.highlighterSession,
-      includeCaptures: false,
+      includeCaptures,
       syntaxMode: 'range' as const,
       textSnapshot: document.textSnapshot,
       snapshot: document.snapshot,
@@ -416,6 +437,7 @@ export class EditorSyntaxController {
     this.pendingSyntaxContentVersion = null
     this.syntaxSession?.dispose()
     this.syntaxSession = null
+    this.syntaxSessionIncludesCaptures = false
   }
 
   private scheduleSyntaxRangeRequest(
@@ -475,6 +497,7 @@ export class EditorSyntaxController {
     const delayMs = options.delayMs ?? syntaxRefreshDelay(change)
     this.syntaxRequests.schedule({
       delayMs,
+      maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: syntaxWorkTags(documentVersion, contentVersion, 'full'),
       run: () => this.loadSyntaxResult(change, contentVersion),
       apply: (result, startedAt) => this.applySyntaxResult(result, documentVersion, startedAt),
@@ -494,6 +517,7 @@ export class EditorSyntaxController {
     const delayMs = options.delayMs ?? syntaxRefreshDelay(change)
     this.highlightRequests.schedule({
       delayMs,
+      maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: { version: documentVersion, configuration: 'highlight' },
       run: () => this.loadHighlightResult(change),
       apply: (result, startedAt) => this.applyHighlightResult(result, documentVersion, startedAt),

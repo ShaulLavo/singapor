@@ -333,10 +333,9 @@ function publicEntrypoints(packageInfo) {
   const entrypoints = []
 
   for (const [specifier, target] of Object.entries(exportsField)) {
-    if (typeof target !== 'string') continue
-    if (!target.endsWith('.ts') && !target.endsWith('.tsx')) continue
+    const source = entrypointSource(packageInfo, target)
+    if (!source) continue
 
-    const source = normalizePath(path.join(packageInfo.dir, target))
     entrypoints.push({
       specifier,
       source,
@@ -345,6 +344,33 @@ function publicEntrypoints(packageInfo) {
   }
 
   return entrypoints.sort((left, right) => left.specifier.localeCompare(right.specifier))
+}
+
+/**
+ * The source file an export condition stands for.
+ *
+ * A conditional export points at the build output, which carries no export list this can read — the
+ * declarations there are generated from the source and the source is what a reviewer changes. An
+ * entrypoint whose target resolves to nothing is skipped rather than guessed at, so a package that
+ * publishes something this cannot map is visible as a missing entrypoint instead of an empty one.
+ */
+function entrypointSource(packageInfo, target) {
+  const specified =
+    typeof target === 'string'
+      ? target
+      : (target?.import ?? target?.default ?? target?.types ?? null)
+  if (typeof specified !== 'string') return null
+
+  const candidates = specified.endsWith('.ts') || specified.endsWith('.tsx')
+    ? [specified]
+    : [specified.replace(/^\.\/dist\//, './src/').replace(/\.(d\.ts|js)$/, '.ts')]
+
+  for (const candidate of candidates) {
+    const source = normalizePath(path.join(packageInfo.dir, candidate))
+    if (existsSync(source)) return source
+  }
+
+  return null
 }
 
 function moduleExports(source) {

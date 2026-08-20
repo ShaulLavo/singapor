@@ -382,6 +382,7 @@ export class Editor {
       clearSyntaxFolds: () => this.clearSyntaxFolds(),
       setSyntaxFolds: (folds) => this.setSyntaxFolds(folds),
       setSyntaxCaptures: (captures) => this.setSyntaxCaptures(captures),
+      needsSyntaxCaptures: () => this.inlineReplacementProviders().length > 0,
       notifyChange: (change) => this.notifyChange(change),
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
@@ -488,7 +489,7 @@ export class Editor {
       onGutterContributionsChanged: () => this.syncGutterContributions(),
       onBlockProvidersChanged: () => this.handleBlockProvidersChanged(),
       onInjectedTextRowProvidersChanged: () => this.handleInjectedTextRowProvidersChanged(),
-      onInlineReplacementProvidersChanged: () => this.refreshInlineMap(),
+      onInlineReplacementProvidersChanged: () => this.handleInlineReplacementProvidersChanged(),
     })
     this.inputSelection.install()
     this.initializeDefaultText()
@@ -575,6 +576,15 @@ export class Editor {
    */
   setInlineReplacementProvider(provider: EditorInlineReplacementProvider | null): void {
     this.inlineReplacementProvider = provider
+    this.handleInlineReplacementProvidersChanged()
+  }
+
+  /**
+   * The first provider turns raw captures on, and the last one to go turns them off again. The
+   * reparse is what hands a provider the captures its map is derived from, so it has to come first.
+   */
+  private handleInlineReplacementProvidersChanged(): void {
+    this.syntax.syncCaptureRequirement()
     this.refreshInlineMap()
   }
 

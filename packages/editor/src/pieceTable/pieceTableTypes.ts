@@ -1,3 +1,5 @@
+import type { DocumentLineEnding } from './lineEndings'
+
 declare const pieceBufferIdBrand: unique symbol
 
 export type PieceBufferId = string & {
@@ -43,6 +45,10 @@ export type PieceTableBuffers = {
   readonly chunks: PieceBufferChunks
   readonly nextBufferSequence: number
   readonly prioritySeed: number
+  // Stored text is always LF-only; these record what the document arrived with
+  // so a host can round-trip it on save. See pieceTable/lineEndings.ts.
+  readonly lineEnding: DocumentLineEnding
+  readonly byteOrderMark: string
   // Lazily built '\n' offset index per buffer, shared across snapshots via
   // spread copies. Buffers are append-only, so cached prefixes stay valid
   // for every historical snapshot; see bufferLineIndex in buffers.ts.

@@ -1135,7 +1135,7 @@ const flattenDocument = async (
   const queryContext = { ...context, budgetMs: QUERY_BUDGET_MS }
 
   for (const layer of document.layers) {
-    await flattenLayer(layer, result, queryContext, includeHighlights)
+    await flattenLayer(layer, result, queryContext, includeHighlights || includeCaptures)
   }
 
   const captures = sortCaptures(result.captures)
@@ -1146,7 +1146,9 @@ const flattenDocument = async (
     errors: sortErrors(result.errors),
     injections: sortInjections(result.injections),
     degraded: result.degraded,
-    tokensPacked: packEditorTokens(treeSitterCapturesToEditorTokens(captures)),
+    tokensPacked: packEditorTokens(
+      includeHighlights ? treeSitterCapturesToEditorTokens(captures) : [],
+    ),
   }
 }
 
@@ -1172,15 +1174,22 @@ const flattenDocumentRange = async (
     errors: sortErrors(result.errors),
     injections: sortInjections(result.injections),
     degraded: result.degraded,
-    tokensPacked: packEditorTokens(treeSitterCapturesToEditorTokens(captures)),
+    tokensPacked: packEditorTokens(
+      options.includeHighlights ? treeSitterCapturesToEditorTokens(captures) : [],
+    ),
   }
 }
 
+/**
+ * `withCaptures` covers both consumers of the highlight query: the tokens to paint, and the raw
+ * captures an inline replacement provider derives markdown preview from. A caller that wants only
+ * the captures still needs the query to run, so the gate is not `includeHighlights`.
+ */
 const flattenLayer = async (
   layer: ParsedLayer,
   result: Writable<FlattenedDocument>,
   context: CancellationContext,
-  includeHighlights: boolean,
+  withCaptures: boolean,
 ): Promise<void> => {
   const runtime = await ensureRuntime(layer.languageId)
   const treeData = runOptionalWorkerPhase(
@@ -1189,7 +1198,7 @@ const flattenLayer = async (
     result.degraded,
     () => collectTreeData(layer.tree),
   )
-  if (includeHighlights) {
+  if (withCaptures) {
     appendItems(
       result.captures,
       runOptionalWorkerPhase('collect highlights', [] as TreeSitterCapture[], result.degraded, () =>
@@ -1221,7 +1230,7 @@ const flattenLayerRange = async (
     result.degraded,
     () => collectTreeData(layer.tree, options.range),
   )
-  if (options.includeHighlights) {
+  if (options.includeHighlights || options.includeCaptures) {
     appendItems(
       result.captures,
       runOptionalWorkerPhase(

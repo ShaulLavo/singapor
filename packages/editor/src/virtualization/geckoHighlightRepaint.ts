@@ -18,6 +18,11 @@ export function scheduleHighlightRepaintNudge(registry: HighlightRegistry | null
   if (pendingRegistries.has(registry)) return
 
   pendingRegistries.add(registry)
+  /**
+   * @justification Coalesces the re-registration one engine needs to repaint highlights to once per registry per
+   * turn; `pendingRegistries` is what makes a second call in the same turn a no-op rather than a
+   * second pass.
+   */
   queueMicrotask(() => {
     pendingRegistries.delete(registry)
     reregisterHighlights(registry)

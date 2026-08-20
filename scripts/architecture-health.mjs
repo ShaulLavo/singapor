@@ -497,14 +497,14 @@ function timerUsages(previousTimers) {
   for (const file of productionSourceFiles()) {
     const lines = readText(file).split(/\r?\n/)
     for (const [index, line] of lines.entries()) {
-      addTimersFromLine(timers, previousTimers, occurrences, file, index, line)
+      addTimersFromLine(timers, previousTimers, occurrences, file, index, line, lines)
     }
   }
 
   return timers.sort((left, right) => left.id.localeCompare(right.id))
 }
 
-function addTimersFromLine(timers, previousTimers, occurrences, file, index, line) {
+function addTimersFromLine(timers, previousTimers, occurrences, file, index, line, lines) {
   const pattern =
     /\b(setTimeout|setInterval|requestIdleCallback|requestAnimationFrame|queueMicrotask)\s*\(/g
 
@@ -520,7 +520,10 @@ function addTimersFromLine(timers, previousTimers, occurrences, file, index, lin
       file,
       line: index + 1,
       snippet,
-      justification: previous?.justification ?? 'TODO: explain why this timer is scheduler-safe.',
+      justification:
+        inlineJustification(lines, index) ??
+        previous?.justification ??
+        'TODO: explain why this timer is scheduler-safe.',
     })
   }
 }
@@ -734,6 +737,42 @@ function timerJustificationFailures(current) {
   }
 
   return failures
+}
+
+/**
+ * The `@justification` a timer carries in the comment directly above it.
+ *
+ * Read from the source rather than from the baseline so it travels with the line it explains: a
+ * baseline entry is keyed by a hash of the file, the API and the source text, so reformatting the
+ * statement silently orphans its reason and the next writer sees a timer that never had one.
+ */
+function inlineJustification(lines, index) {
+  const block = []
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const text = lines[cursor].trim()
+    if (text.length === 0 && block.length === 0) continue
+    if (!/^(\/\*\*?|\*\/?|\/\/)/.test(text)) break
+    block.unshift(text)
+  }
+  if (block.length === 0) return null
+
+  const collected = []
+  let reading = false
+  for (const raw of block) {
+    const text = raw.replace(/^\/\*\*?|^\*\/|^\*|^\/\//, '').replace(/\*\/$/, '').trim()
+    const opens = /^@justification\b/.test(text)
+    // Any other tag ends it, so a reason is never silently extended by the tag written after it.
+    if (reading && !opens && /^@\w+/.test(text)) break
+    if (opens) {
+      reading = true
+      collected.push(text.replace(/^@justification\b:?/, '').trim())
+      continue
+    }
+    if (reading) collected.push(text)
+  }
+
+  const justification = collected.join(' ').trim()
+  return justification.length > 0 ? justification : null
 }
 
 function isValidJustification(value) {

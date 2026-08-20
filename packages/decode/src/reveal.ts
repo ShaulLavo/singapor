@@ -300,6 +300,10 @@ function whenAllSettled(animations: readonly Animation[], onDone: () => void): {
     if (!canceled) onDone()
   }
 
+  /**
+   * @justification Fires the completion callback when no animation was started, so a caller hears about it in the
+   * same turn ordering either way.
+   */
   if (animations.length === 0) queueMicrotask(fire)
   else void Promise.allSettled(animations.map((animation) => animation.finished)).then(fire)
 

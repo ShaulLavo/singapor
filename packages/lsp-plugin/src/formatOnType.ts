@@ -40,6 +40,25 @@ type PendingFormatOnType = {
   readonly textVersion: number
 }
 
+/**
+ * The text one row's level is decided from, and where it sits in the document.
+ *
+ * A row belongs one level in from the row above it, unless either of them is inside a string or a
+ * comment — and which literals are open is only settled by reading from wherever they were opened.
+ * Reading from the top of the document scans the whole file on a keystroke and goes on growing with
+ * it; reading back a fixed distance costs the same in a file of any size, and the only text the two
+ * answer differently for is a literal left open for longer than that distance.
+ */
+type FormatOnTypeWindow = {
+  readonly text: string
+  /** Where `text` starts, always at a row start so the rows inside it are the document's rows. */
+  readonly start: number
+  /** The caret, in the window's own offsets. */
+  readonly caretOffset: number
+}
+
+const FORMAT_ON_TYPE_WINDOW = 4096
+
 export class FormatOnTypeController {
   private pending: PendingFormatOnType | null = null
   private scheduled = false
@@ -153,9 +172,8 @@ function formatOnTypeCaret(
   if (!selection || selection.startOffset !== selection.endOffset) return null
 
   const caretOffset = selection.headOffset
-  if (caretOffset !== edit.from + edit.text.length) return null
 
-  return closesItsOwnRow(configuration, snapshot.fullText, caretOffset) ? caretOffset : null
+  return caretOffset === edit.from + edit.text.length ? caretOffset : null
 }
 
 /** The rules for a language whose rows have levels at all; without them there is nothing to say. */
@@ -207,10 +225,10 @@ function triggerCharacters(configuration: EditorLanguageConfiguration): Readonly
  */
 function closesItsOwnRow(
   configuration: EditorLanguageConfiguration,
-  text: string,
-  caretOffset: number,
+  window: FormatOnTypeWindow,
 ): boolean {
-  const before = text.slice(text.lastIndexOf('\n', caretOffset - 1) + 1, caretOffset)
+  const rowStart = window.text.lastIndexOf('\n', window.caretOffset - 1) + 1
+  const before = window.text.slice(rowStart, window.caretOffset)
 
   return configuration.brackets.some(
     (pair) =>
@@ -226,12 +244,55 @@ function pendingFormatOnType(
   snapshot: EditorViewSnapshot,
   caretOffset: number,
 ): PendingFormatOnType | null {
+  const configuration = ruledConfiguration(snapshot.languageId)
+  if (!configuration) return null
+
+  const window = formatOnTypeWindow(snapshot, caretOffset)
+  if (!window || !closesItsOwnRow(configuration, window)) return null
+
   const [edit] = reindentEditsForRanges(
-    snapshot.fullText,
-    [{ end: caretOffset, start: caretOffset }],
+    window.text,
+    [{ end: window.caretOffset, start: window.caretOffset }],
     { languageId: snapshot.languageId, tabSize: snapshot.tabSize },
   )
   if (!edit) return null
 
-  return { caretOffset, edit, textVersion: snapshot.textVersion }
+  return {
+    caretOffset,
+    edit: { from: edit.from + window.start, text: edit.text, to: edit.to + window.start },
+    textVersion: snapshot.textVersion,
+  }
+}
+
+/**
+ * Whole rows back to the bound, and the caret's own row through to its end.
+ *
+ * The row is read to its end rather than to the caret because a language's rules are patterns over
+ * the whole of it, and a closer with anything behind it on the row is a row that describes something
+ * other than the block it sits in. A caret standing further than the bound from a row start has
+ * nothing above it this can read, and says so rather than measuring against half a row.
+ */
+function formatOnTypeWindow(
+  snapshot: EditorViewSnapshot,
+  caretOffset: number,
+): FormatOnTypeWindow | null {
+  const source = snapshot.textSnapshot
+  const length = source ? source.length : snapshot.fullText.length
+  const read = (start: number, end: number): string =>
+    source ? source.readRange(start, end) : snapshot.fullText.slice(start, end)
+
+  const from = Math.max(0, caretOffset - FORMAT_ON_TYPE_WINDOW)
+  const before = read(from, caretOffset)
+  const firstBreak = before.indexOf('\n')
+  if (from > 0 && firstBreak === -1) return null
+
+  const start = from === 0 ? 0 : from + firstBreak + 1
+  const after = read(caretOffset, Math.min(length, caretOffset + FORMAT_ON_TYPE_WINDOW))
+  const rowEnd = after.indexOf('\n')
+
+  return {
+    text: before.slice(start - from) + (rowEnd === -1 ? after : after.slice(0, rowEnd)),
+    start,
+    caretOffset: caretOffset - start,
+  }
 }

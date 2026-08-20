@@ -47,6 +47,8 @@ import {
   type EditorPasteTarget,
   type EditorPluginContext,
   type EditorReindentOptions,
+  type EditorSelectionRangeContext,
+  type EditorSelectionRangeProvider,
   type EditorSnippetMirror,
   type EditorSnippetStop,
   type EditorTrackedRanges,
@@ -194,6 +196,30 @@ describe('public API facade', () => {
 
     expect(stops.map((stop) => stop.mirrors?.length ?? 0)).toEqual([1, 0])
     expect(mirror.transform?.(' a ')).toBe('a')
+  })
+
+  it('exports the shape a source of expand-and-shrink candidates answers in', () => {
+    // A grammar-backed source of these ships in its own package and registers through an optional
+    // method on the plugin context, so nothing infers the callback's shape for it: naming the
+    // provider is how it declares one, and naming the context is how it reaches the parse the
+    // document has already paid for instead of asking for a second one of its own.
+    const structural: EditorSelectionRangeProvider = (context: EditorSelectionRangeContext) =>
+      context.folds
+        .filter((fold) => fold.startIndex <= context.offset && fold.endIndex > context.offset)
+        .map((fold) => ({ start: fold.startIndex, end: fold.endIndex }))
+
+    expect(
+      structural({
+        text: 'fn main() {}',
+        languageId: 'rust',
+        offset: 11,
+        selection: { start: 11, end: 11 },
+        folds: [
+          { startIndex: 10, endIndex: 12, startLine: 0, endLine: 0, type: 'block' },
+          { startIndex: 0, endIndex: 3, startLine: 0, endLine: 0, type: 'word' },
+        ],
+      }),
+    ).toEqual([{ start: 10, end: 12 }])
   })
 
   it('exports the language feature channel a source outside this package registers into', () => {

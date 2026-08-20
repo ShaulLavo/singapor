@@ -120,6 +120,8 @@ import {
   type EditorFeatureContributionProvider,
   type EditorGutterContribution,
   type EditorInjectedTextRowProviderContext,
+  type EditorLanguageFeatureSelector,
+  type EditorLanguageFeatureToken,
   type EditorLogError,
   type EditorLogInput,
   type EditorOverlaySide,
@@ -259,6 +261,12 @@ export class Editor {
     EditorDecorationContribution | EditorFeatureContribution,
     symbol
   >()
+  /**
+   * What the factory currently running has registered, held until it produces the contribution
+   * that would own it. A factory that fails part-way leaves no object to dispose, so without this
+   * its registrations answer for nobody and keep their ids taken against everyone else.
+   */
+  private contributionClaims: EditorDisposable[] | null = null
   private readonly commandContributions: EditorCommandContribution[] = []
   private readonly capabilityContributions: EditorCapabilityContribution[] = []
   private readonly editContributions: EditorEditContribution[] = []
@@ -1425,12 +1433,9 @@ export class Editor {
   private createViewContribution(
     provider: EditorViewContributionProvider,
   ): EditorViewContribution | null {
-    try {
-      return provider.createContribution(this.createViewContributionContext(this.container))
-    } catch (error) {
-      this.logContributionFailure('view', 'factory', error)
-      return null
-    }
+    return this.createContributionSafely('view', () =>
+      provider.createContribution(this.createViewContributionContext(this.container)),
+    )
   }
 
   private createInitialCommandContributions(
@@ -1450,12 +1455,9 @@ export class Editor {
   private createCommandContribution(
     provider: EditorCommandContributionProvider,
   ): EditorCommandContribution | null {
-    try {
-      return provider.createContribution(this.createCommandContributionContext())
-    } catch (error) {
-      this.logContributionFailure('command', 'factory', error)
-      return null
-    }
+    return this.createContributionSafely('command', () =>
+      provider.createContribution(this.createCommandContributionContext()),
+    )
   }
 
   private removeCommandContributionProvider(provider: EditorCommandContributionProvider): void {
@@ -1492,12 +1494,9 @@ export class Editor {
   private createCapabilityContribution(
     provider: EditorCapabilityContributionProvider,
   ): EditorCapabilityContribution | null {
-    try {
-      return provider.createContribution(this.createCapabilityContributionContext())
-    } catch (error) {
-      this.logContributionFailure('capability', 'factory', error)
-      return null
-    }
+    return this.createContributionSafely('capability', () =>
+      provider.createContribution(this.createCapabilityContributionContext()),
+    )
   }
 
   private removeCapabilityContributionProvider(
@@ -1536,12 +1535,9 @@ export class Editor {
   private createEditContribution(
     provider: EditorEditContributionProvider,
   ): EditorEditContribution | null {
-    try {
-      return provider.createContribution(this.createEditContributionContext())
-    } catch (error) {
-      this.logContributionFailure('edit', 'factory', error)
-      return null
-    }
+    return this.createContributionSafely('edit', () =>
+      provider.createContribution(this.createEditContributionContext()),
+    )
   }
 
   private removeEditContributionProvider(provider: EditorEditContributionProvider): void {
@@ -1585,17 +1581,14 @@ export class Editor {
     provider: EditorDecorationContributionProvider,
     owner: symbol,
   ): EditorDecorationContribution | null {
-    try {
-      const contribution = provider.createContribution(
-        this.createDecorationContributionContext(owner),
-      )
-      if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
-      return contribution
-    } catch (error) {
-      this.clearRowDecorationSourcesForOwner(owner)
-      this.logContributionFailure('decoration', 'factory', error)
-      return null
-    }
+    const contribution = this.createContributionSafely('decoration', () =>
+      provider.createContribution(this.createDecorationContributionContext(owner)),
+    )
+    // Rows are claimed against an owner rather than handed back as something to dispose, so they
+    // are swept by that owner instead of unwinding with the rest of what the factory took.
+    if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
+
+    return contribution
   }
 
   private removeDecorationContributionProvider(
@@ -1645,17 +1638,14 @@ export class Editor {
     provider: EditorFeatureContributionProvider,
     owner: symbol,
   ): EditorFeatureContribution | null {
-    try {
-      const contribution = provider.createContribution(
+    const contribution = this.createContributionSafely('feature', () =>
+      provider.createContribution(
         this.createEditorFeatureContributionContext(this.container, owner),
-      )
-      if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
-      return contribution
-    } catch (error) {
-      this.clearRowDecorationSourcesForOwner(owner)
-      this.logContributionFailure('feature', 'factory', error)
-      return null
-    }
+      ),
+    )
+    if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
+
+    return contribution
   }
 
   private removeEditorFeatureContributionProvider(
@@ -1808,6 +1798,41 @@ export class Editor {
       error: editorLogError(error),
       contribution: { kind, phase },
     })
+  }
+
+  /** Builds one contribution, unwinding whatever it registered if it never hands one back. */
+  private createContributionSafely<T>(
+    kind: EditorContributionKind,
+    create: () => T | null,
+  ): T | null {
+    // A factory is free to build a second contribution while it runs, and the inner one's claims
+    // are its own; restoring the list rather than clearing it keeps them apart.
+    const enclosing = this.contributionClaims
+    const claims: EditorDisposable[] = []
+    this.contributionClaims = claims
+    try {
+      const contribution = create()
+      if (!contribution) this.releaseContributionClaims(claims, kind)
+      return contribution
+    } catch (error) {
+      this.releaseContributionClaims(claims, kind)
+      this.logContributionFailure(kind, 'factory', error)
+      return null
+    } finally {
+      this.contributionClaims = enclosing
+    }
+  }
+
+  private claimForContribution(registration: EditorDisposable): EditorDisposable {
+    this.contributionClaims?.push(registration)
+    return registration
+  }
+
+  private releaseContributionClaims(
+    claims: readonly EditorDisposable[],
+    kind: EditorContributionKind,
+  ): void {
+    for (const claim of claims) this.disposeContributionSafely(claim, kind)
   }
 
   private disposeContributionSafely(
@@ -2284,7 +2309,7 @@ export class Editor {
       getFeature: (key) => this.getFeature(key),
       getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
       registerProvider: (token, selector, provider) =>
-        this.languageFeatures.register(token, selector, provider),
+        this.registerLanguageFeatureProvider(token, selector, provider),
       log: (event) => this.log(event),
       revealLine: (row) => this.view.scrollToRow(row),
       announce: (message) => this.announcer.status(message),
@@ -2353,7 +2378,7 @@ export class Editor {
     return {
       registerFeature: (key, feature) => this.registerFeature(key, feature),
       registerProvider: (token, selector, provider) =>
-        this.languageFeatures.register(token, selector, provider),
+        this.registerLanguageFeatureProvider(token, selector, provider),
     }
   }
 
@@ -2614,7 +2639,7 @@ export class Editor {
     command: EditorCommandId,
     handler: EditorCommandHandler,
   ): EditorDisposable {
-    return this.commandRouter.registerCommandHandler(command, handler)
+    return this.claimForContribution(this.commandRouter.registerCommandHandler(command, handler))
   }
 
   private registerFeature<T>(token: EditorCapabilityToken<T>, feature: T): EditorDisposable {
@@ -2625,7 +2650,15 @@ export class Editor {
     this.editorFeatures.set(token, feature)
     this.editorFeatureTokensById.set(token.id, token)
 
-    return disposableOnce(() => this.unregisterFeature(token, feature))
+    return this.claimForContribution(disposableOnce(() => this.unregisterFeature(token, feature)))
+  }
+
+  private registerLanguageFeatureProvider<T>(
+    token: EditorLanguageFeatureToken<T>,
+    selector: EditorLanguageFeatureSelector,
+    provider: T,
+  ): EditorDisposable {
+    return this.claimForContribution(this.languageFeatures.register(token, selector, provider))
   }
 
   private unregisterFeature<T>(token: EditorCapabilityToken<T>, feature: T): void {
@@ -2809,6 +2842,12 @@ export class Editor {
     // inside it opens a pass of its own and that pass belongs after this one.
     this.recordCursorHistory(flush)
 
+    // Every range this pass moved is moved before anything outside the editor is
+    // told about it: a listener that edits from inside the fan-out opens a pass
+    // of its own that projects the moment it closes, and edits still waiting here
+    // would then be applied over a range that later edit has already carried.
+    for (const pending of flush.changes) this.decorations.applyEdits(pending.change.edits)
+
     let timedChange = flush.latest.change
     if (flush.revealOffset !== null) {
       const revealStart = nowMs()
@@ -2838,10 +2877,6 @@ export class Editor {
     // the notifications above describe a state, and only a state can be skipped.
     for (const pending of flush.changes) {
       const recorded = pending === flush.latest ? finalChange : pending.change
-      // Ahead of the notifications for this change, so a contribution that reads
-      // the store while handling it sees offsets that address the text the
-      // change produced rather than the text it replaced.
-      this.decorations.applyEdits(recorded.edits)
       this.logSessionChange(recorded, pending.totalName)
       this.sessionChangeVersion += 1
       this.scheduleSecondarySessionChangeWork(

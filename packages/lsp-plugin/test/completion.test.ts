@@ -21,6 +21,17 @@ describe('completion helpers', () => {
     })
   })
 
+  // A quote the editor closes as it is typed reaches the document as one two-character edit, and
+  // the caret between the halves is where a module path is completed from.
+  it('detects a trigger character that arrived with its own closer', () => {
+    expect(completionTriggerFromChange(editChange('""'))).toEqual({
+      triggerKind: 2,
+      triggerCharacter: '"',
+    })
+    expect(completionTriggerFromChange(editChange('vv'))).toBeNull()
+    expect(completionTriggerFromChange(editChange('value'))).toBeNull()
+  })
+
   it('applies completion edits with a configured timing name', () => {
     const context = editContext()
     const feature = createCompletionEditFeature(context, 'testLsp.completion.accept')

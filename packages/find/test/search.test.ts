@@ -742,6 +742,33 @@ describe('searching text a line at a time', () => {
     }
   })
 
+  it('answers a group that turns a break-free construct into a break-matching one', () => {
+    // A group's opener can change what the characters inside it mean, so one that
+    // is not a plain bundle is exactly the construct nobody enumerated.
+    for (const pattern of ['(?s:a.b)', '(?s-i:a.b)', '(?is:a.b)', '(?s:a.)b']) {
+      expect(found('a\nb', regex(pattern))).toEqual([[0, 3]])
+    }
+  })
+
+  it('still reads a pattern whose groups only bundle one line at a time', () => {
+    const reads: number[] = []
+    const plain = source('alpha\nbravo')
+    const counted: FindTextSource = {
+      length: plain.length,
+      lineStartsView: plain.lineStartsView,
+      readRange: (start, end) => {
+        reads.push(end - start)
+        return plain.readRange(start, end)
+      },
+    }
+
+    expect(found('alpha\nbravo', regex('(?<!x)(?:al)(?=pha)(?<middle>p)(ha)'))).toEqual([[0, 5]])
+
+    findMatches(counted, regex('(?<!x)(?:al)(?=pha)(?<middle>p)(ha)'))
+
+    expect(Math.max(...reads)).toBeLessThanOrEqual('alpha'.length)
+  })
+
   it('still reads a break-free pattern one line at a time', () => {
     const reads: number[] = []
     const plain = source('alpha\nbravo\ncharlie')

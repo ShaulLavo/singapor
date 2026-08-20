@@ -46,6 +46,12 @@ type CompletionSession = {
   readonly isIncomplete: boolean
 }
 
+/** The updates that move where the text is drawn without moving the text or the caret in it. */
+const VIEW_MOVEMENT_KINDS: ReadonlySet<EditorViewContributionUpdateKind> = new Set([
+  'layout',
+  'viewport',
+])
+
 /** The word the caret sits in, as the snapshot being handled has it. */
 // Longer than any identifier a completion prefix could be read from, so the window never truncates
 // a word the caret is standing in.
@@ -125,7 +131,13 @@ export class CompletionController {
     }
     if (kind === 'tokens') return
     if (kind !== 'content') {
-      if (!this.reanchorSession()) this.hide()
+      if (this.reanchorSession()) return
+      // Nothing drawn yet to move, but the reader has already asked: a request still on its way was
+      // measured against a caret the view moving does not touch, so cancelling it here is how a
+      // list comes to never appear at all for a keystroke that scrolled the caret into place.
+      if (!this.completionSession && VIEW_MOVEMENT_KINDS.has(kind)) return
+
+      this.hide()
       return
     }
 

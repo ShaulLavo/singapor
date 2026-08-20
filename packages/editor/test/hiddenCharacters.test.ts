@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createLineGutterContribution } from '../../gutters/src/index.ts'
+import { createInlineMap } from '../src/inlineMap'
+import { createPieceTableSnapshot } from '../src/public/document'
 import { clearBrowserTextMetricsCache } from '../src/virtualization/browserMetrics'
 import {
   type VirtualizedTextHighlightRegistry,
@@ -377,6 +379,23 @@ describe('hidden character markers', () => {
 
     expect(unscrolled).toEqual([])
     expect(markerOffsets()).toEqual([8, 9, 10, 11])
+  })
+
+  // Phantom text stands in for no source text at all, so every column of it answers with the one
+  // buffer offset its point sits at — and a marker per column stacks them all on the same box.
+  it('marks the row’s own space rather than the ones a replacement hung off it', () => {
+    const text = 'abcde fghij'
+    advanceOf = () => 8
+    const view = mountView({ hiddenCharacters: 'show' }, text)
+    view.setInlineMap(
+      createInlineMap(createPieceTableSnapshot(text), [
+        { id: 'ghost', startIndex: 5, endIndex: 5, text: ' hi ', insertion: true },
+      ]),
+    )
+
+    expect(view.getState().mountedRows[0]?.text).toBe('abcde hi  fghij')
+    expect(markerOffsets()).toEqual([5])
+    expect(markerLefts()).toEqual(['72px'])
   })
 
   it('carries the glyph on the marker itself, with no second one from the stylesheet', () => {

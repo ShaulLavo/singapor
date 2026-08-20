@@ -238,6 +238,64 @@ describe('a completion session while the user keeps typing', () => {
     expect(editor.completionAnchorElement().style.top).toBe('-10px')
   })
 
+  // The keystroke that asks for a list is often the one that scrolls the view, so the scroll and
+  // the answer race each other. There is nothing on screen to follow yet, but the request was
+  // measured against a caret the scroll never moved.
+  it('shows the list a scroll arrived in the middle of asking for', async () => {
+    vi.useFakeTimers()
+    const editor = await connectedEditor('const va', 8)
+
+    editor.type('l')
+    await vi.advanceTimersByTimeAsync(90)
+    editor.scroll(30)
+    editor.answerCompletion([{ label: 'value' }])
+    await flushPromises()
+
+    expect(editor.completionElement().hidden).toBe(false)
+    expect(editor.completionLabels()).toEqual(['value'])
+  })
+
+  it('still asks when the scroll lands before the request has left', async () => {
+    vi.useFakeTimers()
+    const editor = await connectedEditor('const va', 8)
+
+    editor.type('l')
+    await vi.advanceTimersByTimeAsync(40)
+    editor.scroll(30)
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(editor.completionRequests()).toHaveLength(1)
+  })
+
+  // Moving the caret is the reader asking about somewhere else, which the queued question is not
+  // about — the one update kind that has to take the request with it.
+  it('drops the request the caret has moved away from', async () => {
+    vi.useFakeTimers()
+    const editor = await connectedEditor('const va', 8)
+
+    editor.type('l')
+    await vi.advanceTimersByTimeAsync(40)
+    editor.moveCaret(3)
+    await vi.advanceTimersByTimeAsync(200)
+
+    expect(editor.completionRequests()).toEqual([])
+  })
+
+  // The editor closes a quote as it is typed, so the delimiter and its closer reach the document as
+  // one edit — and it is the delimiter the module path in it is completed from.
+  it('asks on a quote the editor closed as it was typed', async () => {
+    vi.useFakeTimers()
+    const editor = await connectedEditor('import fs from ', 15)
+
+    editor.typeClosedPair('"', '"')
+    await vi.advanceTimersByTimeAsync(90)
+
+    const requests = editor.completionRequests()
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.context).toEqual({ triggerKind: 2, triggerCharacter: '"' })
+    expect(requests[0]?.position.character).toBe(16)
+  })
+
   // A trigger character is a different question, not a narrower one: the list has to go and the
   // server has to be told which character asked.
   it('replaces the list rather than narrowing it when a trigger character is typed', async () => {
@@ -574,6 +632,8 @@ function completionMatchRuns(): readonly string[] {
 type ConnectedEditor = {
   readonly applyEdits: ReturnType<typeof vi.fn<EditorEditContributionContext['applyEdits']>>
   type(character: string): void
+  /** A delimiter the editor closed as it was typed: both halves in one edit, caret between them. */
+  typeClosedPair(open: string, close: string): void
   backspace(): void
   moveCaret(offset: number): void
   selectRange(start: number, end: number): void
@@ -640,6 +700,10 @@ async function connectedEditor(
     type: (character) => {
       const at = caretOffsetOf(snapshot)
       applyChange({ from: at, to: at, text: character }, at + character.length)
+    },
+    typeClosedPair: (open, close) => {
+      const at = caretOffsetOf(snapshot)
+      applyChange({ from: at, to: at, text: open + close }, at + open.length)
     },
     backspace: () => {
       const at = caretOffsetOf(snapshot)

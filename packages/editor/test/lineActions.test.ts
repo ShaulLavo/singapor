@@ -203,6 +203,14 @@ describe('line comments', () => {
     expect(comment('a', { languageId: 'markdown' })).toBe('<!-- a -->')
   })
 
+  it('leaves a blank line uncommented where the language has only block tokens', () => {
+    expect(comment('a\n\nb', { languageId: 'markdown' })).toBe('<!-- a -->\n\n<!-- b -->')
+  })
+
+  it('uncomments a block of block markers the blank line was left out of', () => {
+    expect(comment('<!-- a -->\n\n<!-- b -->', { languageId: 'markdown' })).toBe('a\n\nb')
+  })
+
   it('takes the tokens of a language registered from outside', () => {
     const registration = registerEditorLanguageConfiguration('lua', {
       autoClosingPairs: [],

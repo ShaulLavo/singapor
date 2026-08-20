@@ -13,6 +13,7 @@ import {
   type EditorLogEvent,
   type EditorState,
 } from '../src/editor'
+import { EDITOR_OPTION_DESCRIPTORS } from '../src/editor/optionDescriptors'
 import {
   createDocumentSession,
   type DocumentSessionChange,
@@ -1020,6 +1021,21 @@ describe('Editor', () => {
       editor.setLineHeight(28)
 
       expect(editorRoot().style.getPropertyValue('--editor-row-height')).toBe('28px')
+    })
+
+    // A host driving rows from props reaches this through the registry the bindings walk, never by
+    // name, so a setter left out of that list only works for a caller holding the editor itself.
+    it('is in the registry a host binding drives options through', () => {
+      const descriptor = EDITOR_OPTION_DESCRIPTORS.find((entry) => entry.name === 'lineHeight')
+      if (!descriptor) throw new Error('lineHeight is not in the option registry')
+
+      descriptor.applyTo(editor, descriptor.validate(32))
+      expect(editorRoot().style.getPropertyValue('--editor-row-height')).toBe('32px')
+
+      // A row of no height would leave every row of the document on top of the last one, so an
+      // impossible number is answered with the height the editor would have used on its own.
+      descriptor.applyTo(editor, descriptor.validate(0))
+      expect(editorRoot().style.getPropertyValue('--editor-row-height')).toBe('24px')
     })
   })
 
@@ -2369,6 +2385,47 @@ describe('Editor', () => {
       expect(changes).toContain(null)
     })
 
+    // A factory that gives up part-way leaves no contribution behind, and so nothing that could
+    // ever hand the command back. The id would stay taken by a handler with no owner, and the next
+    // plugin asking for it would be refused for as long as the editor lived.
+    it('takes back the command a contribution registered before its factory failed', () => {
+      let orphanRan = false
+      let replacementRan = false
+      const abandoned: EditorPlugin = {
+        name: 'abandoned',
+        activate: (context) =>
+          context.registerCommandContribution({
+            createContribution: (commandContext) => {
+              commandContext.registerCommand('findNext', () => {
+                orphanRan = true
+                return true
+              })
+              throw new Error('missing dependency')
+            },
+          }),
+      }
+      const replacement: EditorPlugin = {
+        name: 'replacement',
+        activate: (context) =>
+          context.registerCommandContribution({
+            createContribution: (commandContext) => {
+              const command = commandContext.registerCommand('findNext', () => {
+                replacementRan = true
+                return true
+              })
+              return { dispose: () => command.dispose() }
+            },
+          }),
+      }
+
+      editor.dispose()
+      editor = new Editor(container, { plugins: [abandoned, replacement] })
+
+      expect(editor.dispatchCommand('findNext')).toBe(true)
+      expect(replacementRan).toBe(true)
+      expect(orphanRan).toBe(false)
+    })
+
     it('defers rapid text feature notifications while public changes stay immediate', () => {
       vi.useFakeTimers()
       const featureTexts: string[] = []
@@ -2728,9 +2785,9 @@ describe('Editor', () => {
 
       const carried = hiddenInputWindow()
 
-      expect(carried.value.startsWith('row20\n')).toBe(true)
-      expect(carried.value).not.toContain('row30')
-      expect(carried.value).not.toContain('row19')
+      expect(carried.value.startsWith('row10\n')).toBe(true)
+      expect(carried.value).not.toContain('row40')
+      expect(carried.value).not.toContain('row09')
     })
 
     it('keeps the caret in the hidden input when an already focused editor is focused again', () => {
@@ -2813,6 +2870,28 @@ describe('Editor', () => {
       expect(resolvedSelectionRanges(session)).toEqual([
         { anchor: 3, head: 3, start: 3, end: 3 },
         { anchor: 7, head: 7, start: 7, end: 7 },
+      ])
+    })
+
+    // Two carets standing closer together than the word an autocorrection rewrote: replayed as they
+    // are, the two replacements describe some of the same characters, and a batch holding those is
+    // refused outright — which loses the correction rather than applying it imperfectly. The second
+    // caret takes what the first left, so nothing is deleted twice and both still get the text.
+    it('applies a deduced replacement reaching back past the caret in front of it', () => {
+      const session = createDocumentSession('teh cat')
+      session.setSelections([
+        { anchor: 3, head: 3 },
+        { anchor: 4, head: 4 },
+      ])
+      editor.attachSession(session)
+      editor.focus()
+
+      typeIntoHiddenInput('the cat', 3)
+
+      expect(session.materializeFullText()).toBe('thehecat')
+      expect(resolvedSelectionRanges(session)).toEqual([
+        { anchor: 3, head: 3, start: 3, end: 3 },
+        { anchor: 5, head: 5, start: 5, end: 5 },
       ])
     })
 

@@ -85,6 +85,8 @@ export type {
   EditorPluginLifecycleState,
   EditorResolvedSelection,
   EditorSelectionRange,
+  EditorSelectionRangeContext,
+  EditorSelectionRangeProvider,
   EditorTrackedRanges,
   EditorViewContribution,
   EditorViewContributionContext,

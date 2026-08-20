@@ -583,6 +583,31 @@ describe('virtualized text view geometry', () => {
     }
   })
 
+  // Scrolling a long document is where an element changes lines without the text changing under it:
+  // the revision, the length and the chunking of the line it measured all survive the move, so
+  // nothing but where the row starts tells the two lines apart.
+  it('forgets a measured width when a scroll recycles the element onto another line', () => {
+    const restore = stubProportionalLayout()
+    try {
+      const lines = ['ééééé', ...Array.from({ length: 79 }, () => '漢字漢字漢')]
+      view = mountView(container, lines.join('\n'))
+      const internal = internals(view)
+      const latin = textRows(view)[0]!
+      const latinElement = latin.element
+      const latinWidth = measureRowContentWidth(internal, latin)
+      expect(latin.text).toBe('ééééé')
+
+      view.setScrollMetrics(ROW_HEIGHT * 40, ROW_HEIGHT * 40, 4_000)
+      const recycled = textRows(view).find((row) => row.element === latinElement)
+
+      expect(recycled?.text).toBe('漢字漢字漢')
+      expect(knownRowContentWidth(internal, recycled!)).not.toBe(latinWidth)
+      expect(measureRowContentWidth(internal, recycled!)).toBeGreaterThan(latinWidth)
+    } finally {
+      restore()
+    }
+  })
+
   it('grows the horizontal content width to a wide row measured width', async () => {
     const restore = stubProportionalLayout()
     try {

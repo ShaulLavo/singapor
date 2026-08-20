@@ -46,6 +46,7 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     method: 'setKeymap',
     applied: [{ enabled: false, defaultBindings: true }],
   },
+  lineHeight: { initial: 18, next: 36, method: 'setLineHeight', applied: [36] },
   rangeDecorations: {
     initial: [],
     next: [{ start: 2, end: 5, className: 'sample' }],
@@ -89,6 +90,7 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
     method: 'setTheme',
     applied: [{ backgroundColor: '#303030' }],
   },
+  wordWrap: { initial: false, next: true, method: 'setWordWrap', applied: [true] },
 }
 
 beforeEach(() => {

@@ -93,6 +93,9 @@ describe('deriving ghost text from a text edit', () => {
     }
   })
 
+  // Everything on a run is something the paint reads back, the class included: the row painter boxes
+  // a classed run into its own element, which is the only reason text nobody typed can be told apart
+  // from text they did.
   it('hangs every run off a point of its own, styled as text nobody has typed', () => {
     const ghost = computeGhostText('con', { from: 0, to: 3, text: 'const answer' }, 3)
     const specs = ghostTextInlineSpecs(ghost!)

@@ -13,8 +13,6 @@ export type HiddenInputState = {
 /** A window of the document written into the hidden input, ready to be handed to the element. */
 export type HiddenInputContent = HiddenInputState & {
   readonly direction: 'forward' | 'backward'
-  /** Where `value` starts in the document, so a caret inside it can be read back as an offset. */
-  readonly startOffset: number
 }
 
 /**
@@ -160,16 +158,19 @@ export function isEmptyDeducedInput(edit: DeducedInputEdit, previous: HiddenInpu
 }
 
 /**
- * The slice of the document the hidden input carries: the page the selection starts on, the
- * selection, and the page it ends on.
+ * The slice of the document the hidden input carries: the page before the selection, the page it
+ * starts on, the selection, the page it ends on, and the page after.
  *
  * Paging is what keeps this affordable on a large file — the alternative, handing over the whole
- * document, is what makes a naive implementation hang on open. The pages are also why a reader
- * moving line by line usually finds the next line already there instead of waiting for a rewrite.
+ * document, is what makes a naive implementation hang on open. The neighbouring pages are what make
+ * the window an interval around the caret rather than one that can end at it: standing on the first
+ * character of a page, the element would hold nothing in front of the caret, and a backward delete
+ * the browser performs on the element itself finds nothing to take and raises no event at all — so
+ * the keystroke would be lost rather than merely unread.
  *
- * A selection spanning more than the two pages is spliced with an ellipsis rather than materialized
- * whole: what is read then says a stretch was skipped, which is true, instead of taking a second to
- * say nothing.
+ * A selection spanning more than the two pages it touches is spliced with an ellipsis rather than
+ * materialized whole: what is read then says a stretch was skipped, which is true, instead of taking
+ * a second to say nothing.
  */
 export function pagedHiddenInputContent(
   snapshot: PieceTableSnapshot,
@@ -189,14 +190,14 @@ export function pagedHiddenInputContent(
   const endPage = Math.floor(offsetToPoint(snapshot, end).row / rowsPerPage)
   const pretextStart = trimmedWindowStart(
     snapshot,
-    pageStartOffset(snapshot, startPage, rowsPerPage),
+    pageStartOffset(snapshot, startPage - 1, rowsPerPage),
     start,
     trimChars,
   )
   const posttextEnd = trimmedWindowEnd(
     snapshot,
     end,
-    pageStartOffset(snapshot, endPage + 1, rowsPerPage),
+    pageStartOffset(snapshot, endPage + 2, rowsPerPage),
     trimChars,
   )
 
@@ -213,7 +214,6 @@ export function pagedHiddenInputContent(
     direction: selection.reversed ? 'backward' : 'forward',
     selectionEnd: pretext.length + selected.length,
     selectionStart: pretext.length,
-    startOffset: pretextStart,
     value: `${pretext}${selected}${posttext}`,
   }
 }

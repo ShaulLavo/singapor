@@ -255,6 +255,12 @@
   white-space: pre;
 }
 
+/* Dimmed rather than recoloured, so a suggestion reads as not-yet-written against whatever the theme
+   is painting the line in, instead of taking a colour that means something else in it. */
+.editor-ghost-text {
+  opacity: 0.5;
+}
+
 /* Laid out as one box in the text flow, and aligned to the row's top edge so a node taller than the
    line does not push the baseline the rest of the row sits on. */
 .editor-inline-widget {

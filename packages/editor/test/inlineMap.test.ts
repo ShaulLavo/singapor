@@ -262,6 +262,18 @@ describe('InlineMap insertions', () => {
     expect(segment?.cursorStops).toBe('right')
   })
 
+  it('keeps an insertion hung off the opening edge of a hidden marker', () => {
+    const text = '**bold** tail\n'
+    const map = createInlineMap(createPieceTableSnapshot(text), [
+      { id: 'open', startIndex: 0, endIndex: 2, text: '', groupId: 'bold' },
+      { id: 'close', startIndex: 6, endIndex: 8, text: '', groupId: 'bold' },
+      { id: 'ghost', startIndex: 6, endIndex: 6, text: 'SUGGEST', insertion: true },
+    ])
+
+    expect(map.ranges.map((range) => range.id)).toEqual(['open', 'ghost', 'close'])
+    expect(inlineRowForBufferRow(map, 0, '**bold** tail').text).toBe('boldSUGGEST tail')
+  })
+
   it('drops an insertion that lands inside a substitution', () => {
     const snapshot = createPieceTableSnapshot(CALL_LINE)
     const map = createInlineMap(snapshot, [

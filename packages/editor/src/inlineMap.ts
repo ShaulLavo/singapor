@@ -229,6 +229,7 @@ const normalizeInlineRanges = (
     .toSorted((left, right) => {
       return (
         left.startOffset - right.startOffset ||
+        insertionOrder(left) - insertionOrder(right) ||
         right.endOffset - left.endOffset ||
         left.id.localeCompare(right.id)
       )
@@ -243,6 +244,9 @@ const normalizeInlineRanges = (
 
   return kept
 }
+
+const insertionOrder = (range: InlineReplacementRange): number =>
+  isPhantomInlineRange(range) ? 0 : 1
 
 const resolveInlineRange = (
   snapshot: PieceTableSnapshot,

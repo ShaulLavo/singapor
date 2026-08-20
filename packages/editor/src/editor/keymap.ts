@@ -345,6 +345,11 @@ const NAVIGATION_COMMANDS = new Set<EditorCommandId>([
   'cursorPageDown',
   'cursorDocumentStart',
   'cursorDocumentEnd',
+  'editor.action.jumpToBracket',
+  // Soft wrap decides whether a long line is walked sideways or read down the page, which is a
+  // question for whoever is reading the document rather than whoever is writing it — so it is
+  // offered and withdrawn with the rest of the keys for getting through one.
+  'editor.action.toggleWordWrap',
 ])
 
 const SELECTION_COMMANDS = new Set<EditorCommandId>([
@@ -420,6 +425,14 @@ const ADVANCED_EDITING_COMMANDS = new Set<EditorCommandId>([
   'editor.action.moveLinesDownAction',
   'editor.action.insertLineBefore',
   'editor.action.insertLineAfter',
+  'editor.action.trimTrailingWhitespace',
+  'editor.action.sortLinesAscending',
+  'editor.action.sortLinesDescending',
+  'editor.action.joinLines',
+  'editor.action.duplicateSelection',
+  'editor.action.transformToUppercase',
+  'editor.action.transformToLowercase',
+  'editor.action.transformToTitlecase',
 ])
 
 const MULTI_CURSOR_COMMANDS = new Set<EditorCommandId>([

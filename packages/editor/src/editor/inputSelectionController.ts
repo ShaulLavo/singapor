@@ -3,7 +3,7 @@ import type {
   DocumentSessionChange,
   DocumentSessionSelectionRange,
 } from '../documentSession'
-import { previousGraphemeBoundary } from '../graphemes'
+import { previousDeleteBoundary } from '../graphemes'
 import { normalizeLineEndings } from '../pieceTable/lineEndings'
 import { readPieceTableTextRange } from '../pieceTable/reads'
 import {
@@ -216,6 +216,13 @@ type ColumnSelectionRun = {
 /** Any column past a row's end; `pointToOffset` clamps it back to that row's last character. */
 const LINE_END_COLUMN = Number.MAX_SAFE_INTEGER
 
+/**
+ * How much text in front of the caret a backwards delete is decided from. Wide enough for the
+ * longest joined sequence anyone types, so the boundary search never has to answer from a window it
+ * has already run out of.
+ */
+const DELETE_READ_WINDOW = 64
+
 const COLUMN_SELECTION_COMMANDS = new Set<EditorCommandId>([
   'cursorColumnSelectLeft',
   'cursorColumnSelectRight',
@@ -256,6 +263,7 @@ export class InputSelectionController {
     el.addEventListener('dragleave', this.handleDragLeave)
     el.addEventListener('drop', this.handleDrop)
     el.addEventListener('paste', this.handlePaste)
+    el.addEventListener('keydown', this.holdKeyForComposition, { capture: true })
     el.addEventListener('keydown', this.handleKeyDown)
     el.addEventListener('compositionstart', this.handleCompositionStart)
     el.addEventListener('compositionupdate', this.handleCompositionUpdate)
@@ -276,6 +284,7 @@ export class InputSelectionController {
     el.removeEventListener('dragleave', this.handleDragLeave)
     el.removeEventListener('drop', this.handleDrop)
     el.removeEventListener('paste', this.handlePaste)
+    el.removeEventListener('keydown', this.holdKeyForComposition, { capture: true })
     el.removeEventListener('keydown', this.handleKeyDown)
     el.removeEventListener('compositionstart', this.handleCompositionStart)
     el.removeEventListener('compositionupdate', this.handleCompositionUpdate)
@@ -304,7 +313,7 @@ export class InputSelectionController {
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const change = command === 'undo' ? session.undo() : session.redo()
     if (change.kind !== 'none') this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, command === 'undo' ? 'input.undo' : 'input.redo', start)
+    this.applyChange(change, command === 'undo' ? 'input.undo' : 'input.redo', start)
     return true
   }
 
@@ -326,10 +335,8 @@ export class InputSelectionController {
     if (decided) return decided
 
     const change = session.applyText(text)
-    // Plain typing keeps tracked pairs and snippet stops alive; their anchors have already shifted
-    // with the edit.
+    // Plain typing keeps tracked pairs alive; their anchors have already shifted with the edit.
     this.autoClose.advance(change.snapshot)
-    this.snippet.advance(change.snapshot)
     return change
   }
 
@@ -356,7 +363,7 @@ export class InputSelectionController {
     const target = this.singleSelection(session, snapshot)
     if (!target?.collapsed) return null
 
-    const start = this.graphemeStartBefore(snapshot, target.startOffset)
+    const start = this.deleteStartBefore(snapshot, target.startOffset)
     if (start === null) return null
 
     return this.mirrorNameEdit(session, '', start)
@@ -376,16 +383,21 @@ export class InputSelectionController {
     return resolveSelection(snapshot, only)
   }
 
-  /** Where the character a backspace at `offset` eats begins, or null when there is none. */
-  private graphemeStartBefore(snapshot: PieceTableSnapshot, offset: number): number | null {
+  /**
+   * Where the character a backspace at `offset` eats begins, or null when there is none.
+   *
+   * Asked of the boundary a delete stops at rather than the one the caret moves over, because this
+   * is what the copies are made to match: a mirrored press that took a whole family emoji where the
+   * unmirrored one takes a single member would leave the two reading differently after one press.
+   * The window is read whole so the search has room to widen — handed only the few code units it
+   * expects to need, it reports the truncated head of a cluster as a boundary of its own.
+   */
+  private deleteStartBefore(snapshot: PieceTableSnapshot, offset: number): number | null {
     if (offset === 0) return null
 
-    const window = Math.min(8, offset)
-    const from = previousGraphemeBoundary(
-      readPieceTableTextRange(snapshot, offset - window, offset),
-      window,
-    )
-    return offset - (window - from)
+    const from = Math.max(0, offset - DELETE_READ_WINDOW)
+    const text = readPieceTableTextRange(snapshot, from, offset)
+    return from + previousDeleteBoundary(text, text.length)
   }
 
   /**
@@ -406,11 +418,10 @@ export class InputSelectionController {
     const snapshot = session.getSnapshot()
     const target = this.singleSelection(session, snapshot)
     if (!target) return null
-    // A selection is removed as it stands; only a collapsed caret has to look behind itself, and
-    // what sits there is a grapheme rather than a code unit.
+    // A selection is removed as it stands; only a collapsed caret has to look behind itself.
     if (!target.collapsed) return this.mirrorSnippetEdit(session, '', null)
 
-    const start = this.graphemeStartBefore(snapshot, target.startOffset)
+    const start = this.deleteStartBefore(snapshot, target.startOffset)
     if (start === null) return null
 
     return this.mirrorSnippetEdit(session, '', start)
@@ -550,7 +561,6 @@ export class InputSelectionController {
     })
     this.linkedEditing.advance(change.snapshot)
     this.autoClose.advance(change.snapshot)
-    this.snippet.advance(change.snapshot)
     this.markSessionSelectionForNextInput()
     return change
   }
@@ -843,10 +853,9 @@ export class InputSelectionController {
     if (!range) return false
 
     const change = session.setSelection(range.start, range.end)
-    this.snippet.advance(change.snapshot)
     this.autoClose.advance(change.snapshot)
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, 'input.snippetStop')
+    this.applyChange(change, 'input.snippetStop')
     return true
   }
 
@@ -874,12 +883,19 @@ export class InputSelectionController {
   inlineSuggestionSpecs(): readonly InlineReplacementSpec[] {
     const snapshot = this.session?.getSnapshot()
 
-    return snapshot ? this.ghostText.specs(snapshot) : []
+    return snapshot ? this.ghostText.specs(snapshot, this.inlineSuggestionCaret(snapshot)) : []
   }
 
   /** Whether the suggestion on screen has to be rebuilt after a change reached the document. */
   syncInlineSuggestion(snapshot: PieceTableSnapshot): boolean {
-    return this.ghostText.needsRepaint(snapshot)
+    return this.ghostText.needsRepaint(snapshot, this.inlineSuggestionCaret(snapshot))
+  }
+
+  /** Where a suggestion may stand, which is the same place one may be offered from. */
+  private inlineSuggestionCaret(snapshot: PieceTableSnapshot): number | null {
+    const session = this.session
+
+    return session ? this.collapsedCaretOffset(session, snapshot) : null
   }
 
   applyInlineSuggestCommand(
@@ -911,11 +927,13 @@ export class InputSelectionController {
     scope: 'all' | 'word',
   ): boolean {
     const snapshot = session.getSnapshot()
+    const shownAt = this.inlineSuggestionCaret(snapshot)
     const accepted =
       scope === 'all'
-        ? this.ghostText.accept(snapshot)
+        ? this.ghostText.accept(snapshot, shownAt)
         : this.ghostText.acceptNextWord(
             snapshot,
+            shownAt,
             wordSeparatorsForLanguage(this.options.getLanguageId()),
           )
     if (!accepted) return false
@@ -927,12 +945,11 @@ export class InputSelectionController {
       selections: [{ anchor: caret, head: caret }],
     })
     this.autoClose.advance(change.snapshot)
-    this.snippet.advance(change.snapshot)
     if (accepted.rest) {
       this.ghostText.show(change.snapshot, session.materializeFullText(), accepted.rest, caret)
     }
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(
+    this.applyChange(
       mergeChangeTimings(change, selectionChange),
       scope === 'all' ? 'input.inlineSuggestCommit' : 'input.inlineSuggestWord',
       start,
@@ -972,7 +989,7 @@ export class InputSelectionController {
           this.mirrorBackspace(session) ??
           session.backspace(this.options.tabSize))
         : session.deleteSelection()
-    this.options.applySessionChange(
+    this.applyChange(
       mergeChangeTimings(change, selectionChange),
       direction === 'backward' ? 'input.backspace' : 'input.delete',
       start,
@@ -1010,7 +1027,7 @@ export class InputSelectionController {
         ? this.applyIndentToSession()
         : session.outdentSelection(this.options.tabSize)
     const merged = mergeChangeTimings(change, selectionChange)
-    this.options.applySessionChange(merged, indentTimingName(direction), start, {
+    this.applyChange(merged, indentTimingName(direction), start, {
       revealOffset: this.primarySelectionHeadOffset(merged),
     })
     return true
@@ -1042,14 +1059,9 @@ export class InputSelectionController {
     const change = session.applyEdits(action.edits, {
       selections: action.selections,
     })
-    this.options.applySessionChange(
-      mergeChangeTimings(change, selectionChange),
-      action.timingName,
-      start,
-      {
-        revealOffset: action.revealOffset,
-      },
-    )
+    this.applyChange(mergeChangeTimings(change, selectionChange), action.timingName, start, {
+      revealOffset: action.revealOffset,
+    })
     return true
   }
 
@@ -1061,7 +1073,7 @@ export class InputSelectionController {
     const change = session.setSelection(0, session.getSnapshot().length)
     this.syncCustomSelectionHighlight(0, session.getSnapshot().length)
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, 'input.selectAll', start, { syncDomSelection: false })
+    this.applyChange(change, 'input.selectAll', start, { syncDomSelection: false })
     return true
   }
 
@@ -1084,7 +1096,7 @@ export class InputSelectionController {
     ])
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, 'input.clearSecondarySelections', start, {
+    this.applyChange(change, 'input.clearSecondarySelections', start, {
       revealOffset: kept.headOffset,
       syncDomSelection: false,
     })
@@ -1119,7 +1131,7 @@ export class InputSelectionController {
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, `input.insertCursor${capitalize(direction)}`, start, {
+    this.applyChange(change, `input.insertCursor${capitalize(direction)}`, start, {
       revealOffset: firstInserted.anchor,
       syncDomSelection: false,
     })
@@ -1153,7 +1165,7 @@ export class InputSelectionController {
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, occurrenceSelectTimingName(command), start, {
+    this.applyChange(change, occurrenceSelectTimingName(command), start, {
       revealOffset: query.range.end,
       syncDomSelection: false,
     })
@@ -1194,7 +1206,7 @@ export class InputSelectionController {
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, 'input.moveSelectionToNextFindMatch', start, {
+    this.applyChange(change, 'input.moveSelectionToNextFindMatch', start, {
       revealOffset: next.end,
       syncDomSelection: false,
     })
@@ -1208,7 +1220,7 @@ export class InputSelectionController {
 
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(result.change, 'input.addNextOccurrence', start, {
+    this.applyChange(result.change, 'input.addNextOccurrence', start, {
       revealOffset: result.revealOffset,
       syncDomSelection: false,
     })
@@ -1276,7 +1288,7 @@ export class InputSelectionController {
     const change = session.setSelections(selections)
     this.markSessionSelectionForNextInput()
     this.options.view.revealOffset(primary.target.offset)
-    this.options.applySessionChange(change, primary.target.timingName, start)
+    this.applyChange(change, primary.target.timingName, start)
     return true
   }
 
@@ -1299,7 +1311,7 @@ export class InputSelectionController {
     const change = session.setSelection(caret ?? anchorOffset, caret ?? headOffset)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, timingName, start, {
+    this.applyChange(change, timingName, start, {
       revealOffset,
       syncDomSelection: false,
     })
@@ -1318,7 +1330,7 @@ export class InputSelectionController {
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, timingName, start, {
+    this.applyChange(change, timingName, start, {
       revealOffset,
       syncDomSelection: false,
     })
@@ -1338,7 +1350,7 @@ export class InputSelectionController {
     const change = session.applyEdits(edits, { selection })
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, timingName, start, {
+    this.applyChange(change, timingName, start, {
       revealOffset: this.primarySelectionHeadOffset(change),
       syncDomSelection: false,
     })
@@ -1422,10 +1434,15 @@ export class InputSelectionController {
    * window here — on the one call every selection and every change already funnels through — is
    * also what gives the diff its other half, since the text it compares against has to be the text
    * the browser was handed.
+   *
+   * Never during a composition, whatever moved: the element is where the candidate being assembled
+   * lives, and writing a value or a selection into it takes that candidate away from the reader
+   * mid-word — or, worse, leaves it and commits it wherever the write moved the caret to.
    */
   private refreshHiddenInputContent(): void {
     const session = this.session
     if (!session) return
+    if (this.inputState.compositionActive) return
 
     const snapshot = session.getSnapshot()
     const selection = session.getSelections().selections[0]
@@ -1441,6 +1458,28 @@ export class InputSelectionController {
       value: content.value,
     }
     this.transitionInputState({ type: 'hidden-input-written' })
+  }
+
+  /**
+   * The one way out of here for a change, so that the snippet being filled in is carried onto every
+   * document this controller produces.
+   *
+   * The stops are anchors and travel with the text on their own; what they cannot survive is being
+   * left behind on the snapshot they were placed in, which is how they tell an edit made here from
+   * one made anywhere else. Saying so at each edit is a rule every path has to remember, and a path
+   * that forgets does not fail loudly — the reader simply finds that Tab stopped cycling and started
+   * indenting, one keystroke after a Backspace. Undo and redo are the changes that must not be
+   * carried: they hand back a document the stops were never placed in.
+   */
+  private applyChange(
+    change: DocumentSessionChange,
+    totalName?: string,
+    totalStart?: number,
+    options?: SessionChangeOptions,
+  ): void {
+    if (change.kind !== 'undo' && change.kind !== 'redo') this.snippet.advance(change.snapshot)
+
+    this.options.applySessionChange(change, totalName, totalStart, options)
   }
 
   clearSelectionHighlight(): void {
@@ -1611,7 +1650,7 @@ export class InputSelectionController {
     const change = session.addSelection(offset)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, 'input.addCursor', start, {
+    this.applyChange(change, 'input.addCursor', start, {
       syncDomSelection: false,
     })
   }
@@ -1711,7 +1750,7 @@ export class InputSelectionController {
     const change = session.setSelection(ends.anchorOffset, ends.headOffset)
     this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, timingName, start, { syncDomSelection: false })
+    this.applyChange(change, timingName, start, { syncDomSelection: false })
   }
 
   private startColumnSelection(session: DocumentSession, offset: number, start: number): void {
@@ -1738,7 +1777,7 @@ export class InputSelectionController {
 
     // No reveal: the corner the pointer is holding is already the part of the document the user is
     // looking at, and scrolling to it would drag the text out from under the drag.
-    this.options.applySessionChange(applied.change, 'input.columnSelection', start, {
+    this.applyChange(applied.change, 'input.columnSelection', start, {
       syncDomSelection: false,
     })
   }
@@ -1760,7 +1799,7 @@ export class InputSelectionController {
     if (!applied) return false
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
-    this.options.applySessionChange(applied.change, 'input.columnSelection', start, {
+    this.applyChange(applied.change, 'input.columnSelection', start, {
       revealOffset: applied.revealOffset,
       syncDomSelection: false,
     })
@@ -1947,7 +1986,7 @@ export class InputSelectionController {
     const syncDomSelection = ends.anchorOffset === ends.headOffset
     this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, 'input.selection', start, { syncDomSelection })
+    this.applyChange(change, 'input.selection', start, { syncDomSelection })
   }
 
   /**
@@ -2033,7 +2072,7 @@ export class InputSelectionController {
     })
     this.syncCustomSelectionHighlight(move.selection.start, move.selection.end)
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, 'input.dragText', start, {
+    this.applyChange(change, 'input.dragText', start, {
       revealOffset: move.selection.end,
       syncDomSelection: false,
     })
@@ -2054,7 +2093,7 @@ export class InputSelectionController {
     const change = session.setSelection(offset)
     this.syncCustomSelectionHighlight(offset, offset)
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, 'input.selection', start, { syncDomSelection: true })
+    this.applyChange(change, 'input.selection', start, { syncDomSelection: true })
   }
 
   private stopMouseTextMoveDrag(): void {
@@ -2175,7 +2214,7 @@ export class InputSelectionController {
     const change = session.setSelection(0, session.getSnapshot().length)
     this.syncCustomSelectionHighlight(0, session.getSnapshot().length)
     this.markSessionSelectionForNextInput()
-    this.options.applySessionChange(change, timingName, start, { syncDomSelection: false })
+    this.applyChange(change, timingName, start, { syncDomSelection: false })
   }
 
   private readLineAt(offset: number): NavigationLine | null {
@@ -2210,11 +2249,7 @@ export class InputSelectionController {
         : this.applyLineBreak(session, inserted),
     )
     this.transitionInputState({ type: 'transaction-committed' })
-    this.options.applySessionChange(
-      mergeChangeTimings(textChange, selectionChange),
-      'input.beforeinput',
-      start,
-    )
+    this.applyChange(mergeChangeTimings(textChange, selectionChange), 'input.beforeinput', start)
   }
 
   private handlePaste = (event: ClipboardEvent): void => {
@@ -2257,7 +2292,7 @@ export class InputSelectionController {
     const change = textChange ? mergeChangeTimings(textChange, selectionChange) : selectionChange
     if (!change) return
 
-    this.options.applySessionChange(change, 'input.paste', start, {
+    this.applyChange(change, 'input.paste', start, {
       revealBlock: pasteRevealBlock(pasted),
       revealOffset: this.primarySelectionHeadOffset(change),
     })
@@ -2382,7 +2417,7 @@ export class InputSelectionController {
     const textChange = session.applyText(text)
     const change = mergeChangeTimings(textChange, selectionChange)
     this.transitionInputState({ type: 'transaction-committed' })
-    this.options.applySessionChange(change, 'input.drop', start, {
+    this.applyChange(change, 'input.drop', start, {
       revealBlock: pasteRevealBlock(text),
       revealOffset: this.primarySelectionHeadOffset(change),
     })
@@ -2459,7 +2494,7 @@ export class InputSelectionController {
     const change = payload.metadata.pasteOnNewLine
       ? this.deleteCaretLines(session)
       : session.deleteSelection()
-    this.options.applySessionChange(mergeChangeTimings(change, selectionChange), 'input.cut', start)
+    this.applyChange(mergeChangeTimings(change, selectionChange), 'input.cut', start)
   }
 
   /** Removal half of a cut that took whole lines, including the line-joining terminators. */
@@ -2532,6 +2567,25 @@ export class InputSelectionController {
   }
 
   /**
+   * Holds back a keystroke an input method is in the middle of, before anything bound to keys sees
+   * it.
+   *
+   * While a candidate is being assembled the key is the IME's: Backspace takes a character off the
+   * candidate, the arrows walk the candidate list, Enter accepts one. None of that is the document's,
+   * and a chord that fires anyway edits text the reader is not even looking at. The chords are
+   * registered on this element with the element being composed in underneath it, so the capture
+   * phase here is the last point where one decision can still hold the key back from all of them —
+   * a check inside each command would be a rule every command ever added has to remember. The
+   * default action is deliberately untouched, since the IME's own handling of the key is the whole
+   * reason for holding it.
+   */
+  private holdKeyForComposition = (event: KeyboardEvent): void => {
+    if (!event.isComposing && !this.inputState.compositionActive) return
+
+    event.stopPropagation()
+  }
+
+  /**
    * A key pressed somewhere that will never produce an input event of its own.
    *
    * The hidden input is left alone here: a key that lands on it reaches the document either as a
@@ -2567,7 +2621,7 @@ export class InputSelectionController {
       this.applyTypedText(session, text),
     )
     this.transitionInputState({ type: 'transaction-committed' })
-    this.options.applySessionChange(
+    this.applyChange(
       mergeChangeTimings(textChange, selectionChange),
       'input.keydownFallback',
       start,
@@ -2601,11 +2655,7 @@ export class InputSelectionController {
           )
         : this.replaceAroundSelections(session, deduced)
     this.transitionInputState({ type: 'transaction-committed' })
-    this.options.applySessionChange(
-      mergeChangeTimings(textChange, selectionChange),
-      'input.deducedText',
-      start,
-    )
+    this.applyChange(mergeChangeTimings(textChange, selectionChange), 'input.deducedText', start)
   }
 
   private replaceAroundSelections(
@@ -2616,18 +2666,29 @@ export class InputSelectionController {
     const resolved = session
       .getSelections()
       .selections.map((selection) => resolveSelection(snapshot, selection))
+      .toSorted((left, right) => left.startOffset - right.startOffset)
     const edits: TextEdit[] = []
     const selections: { readonly anchor: number; readonly head: number }[] = []
     // Same accounting as a multi-caret paste: every range is expressed against the document as it
     // stands, and every caret against the one the batch produces.
     let shift = 0
+    // A rewritten word reaches further back than the gap between two carets standing inside it, and
+    // a batch holding two edits over the same characters is refused outright — which would throw the
+    // correction away entirely rather than apply it imperfectly. Each caret takes only what the one
+    // in front of it left, so the text is replaced once and every caret still gets the insertion.
+    let replacedThrough = 0
     for (const selection of resolved) {
-      const from = clamp(selection.startOffset - deduced.replacePrevCharCnt, 0, snapshot.length)
+      const from = clamp(
+        selection.startOffset - deduced.replacePrevCharCnt,
+        replacedThrough,
+        snapshot.length,
+      )
       const to = clamp(selection.endOffset + deduced.replaceNextCharCnt, from, snapshot.length)
       edits.push({ from, text: deduced.text, to })
       const caret = from + shift + deduced.text.length
       selections.push({ anchor: caret, head: caret })
       shift += deduced.text.length - (to - from)
+      replacedThrough = to
     }
 
     return session.applyEdits(edits, { selections })
@@ -2645,11 +2706,7 @@ export class InputSelectionController {
     )
     const textChange = measureEditorPerformance('session.applyText', () => session.applyText(text))
     this.transitionInputState({ type: 'transaction-committed' })
-    this.options.applySessionChange(
-      mergeChangeTimings(textChange, selectionChange),
-      'input.composition',
-      start,
-    )
+    this.applyChange(mergeChangeTimings(textChange, selectionChange), 'input.composition', start)
   }
 
   private applyIndentToSession(): DocumentSessionChange {

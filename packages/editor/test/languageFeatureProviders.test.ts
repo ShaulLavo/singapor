@@ -248,6 +248,34 @@ describe('language feature providers', () => {
     expect(events.some((event) => event.action === 'editor.contribution.factory_failed')).toBe(true)
   })
 
+  it('takes back a source registered by a contribution that never finished being built', () => {
+    // Nothing else can drop it afterwards: the factory threw before it could return the object
+    // whose disposal is what a source is unregistered by, so the editor either unwinds the
+    // registration here or keeps asking a source no plugin admits to owning.
+    const abandoned: EditorPlugin = {
+      name: 'abandoned',
+      activate: (context) =>
+        context.registerCapabilityContribution({
+          createContribution: (capabilityContext) => {
+            capabilityContext.registerProvider!(
+              COMPLETION_SOURCES,
+              { language: '*' },
+              { name: 'orphan' },
+            )
+            throw new Error('missing dependency')
+          },
+        }),
+    }
+
+    editor = new Editor(container, {
+      plugins: [abandoned, createSourcePlugin('ambient', { language: '*' })],
+    })
+    editor.addPlugin(createConsumerPlugin(seen))
+    editor.setText('const value = 1', { languageId: 'typescript' })
+
+    expect(latestSourceNames(seen)).toEqual(['ambient'])
+  })
+
   it('drops a source when the plugin that registered it goes away', () => {
     const snippets = createSourcePlugin('snippets', { language: '*' })
     editor = new Editor(container, {

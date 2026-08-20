@@ -372,13 +372,22 @@ function skipsRules(source: ReindentSource, rules: EditorIndentationRules, row: 
  *
  * The width is the editor's, which the document itself has already had a say in; the choice between
  * tabs and spaces stays with the text, so a tabbed file stays tabbed without anyone configuring it.
+ *
+ * Which of the two the text spends is settled by however many of its rows spend each, because a
+ * command that tidies a range is not being asked to convert it: a single row pasted in from a file
+ * written the other way would otherwise rewrite every other row's indentation characters.
  */
 function indentTextForRange(source: ReindentSource, range: RowRange, tabSize: number): string {
+  let tabbed = 0
+  let spaced = 0
+
   for (let row = range.startRow; row <= range.endRow; row += 1) {
-    if (indentationOfRow(source, row).includes('\t')) return '\t'
+    const indentation = indentationOfRow(source, row)
+    if (indentation.includes('\t')) tabbed += 1
+    else if (indentation.length > 0) spaced += 1
   }
 
-  return ' '.repeat(tabSize)
+  return tabbed > spaced ? '\t' : ' '.repeat(tabSize)
 }
 
 /** A column back into text. Levels are counted in columns so a mixed file collapses onto one unit. */

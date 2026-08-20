@@ -37,7 +37,14 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
     completion: {
       contextSupport: true,
       completionItem: {
+        // The characters an item may be accepted on are withheld from a client that has not said it
+        // will act on them, and a set nobody reads is a set no server sends.
+        commitCharactersSupport: true,
         documentationFormat: ['markdown', 'plaintext'],
+        // An item that can both insert at the caret and overtype the word around it only carries
+        // both ranges for a client that says it can choose between them; undeclared, the server
+        // picks one for us and picks it before the user has decided how to accept.
+        insertReplaceSupport: true,
         labelDetailsSupport: true,
         // Servers defer the expensive parts of an item until resolve; without this they either
         // send nothing there or refuse the request. additionalTextEdits is the load-bearing one —

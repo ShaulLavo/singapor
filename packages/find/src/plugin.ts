@@ -3,6 +3,7 @@ import {
   createStringTextSnapshot,
   type DocumentSessionChange,
 } from '@singapor/core/document'
+import { projectDecorationRangeThroughEdits } from '@singapor/core/extensions'
 import type {
   EditorCapabilityContribution,
   EditorCapabilityContributionContext,
@@ -97,6 +98,7 @@ class EditorFindViewContribution implements EditorViewContribution {
   private latestSnapshot: EditorViewSnapshot
   private widget: EditorFindWidget | null = null
   private reservationObserver: MutationObserver | null = null
+  private paintedMatches: PaintedFindRanges | null = null
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -104,7 +106,7 @@ class EditorFindViewContribution implements EditorViewContribution {
   ) {
     this.latestSnapshot = context.getSnapshot()
     this.hostRegistration = controller.attachHost(
-      createFindHost(context, () => this.latestSnapshot),
+      createFindHost(context, () => this.latestSnapshot, this.trackPaintedRanges),
       context.highlightPrefix ?? EDITOR_FIND_FEATURE_ID,
     )
     this.subscription = controller.subscribe(this.handleUiEvent)
@@ -116,6 +118,15 @@ class EditorFindViewContribution implements EditorViewContribution {
     change?: DocumentSessionChange | null,
   ): void {
     this.latestSnapshot = snapshot
+    // Scrolling is the one thing that moves rows under the marks without an edit
+    // having happened yet, which is the only moment left to start following the
+    // ones it brought in front of the reader.
+    // Re-read after the line moves, not only after an edit: the set the controller is painting was
+    // copied out of these ranges, so a match promoted into the mounted rows by the scroll is still
+    // at the offset it was found at until the copy is taken again.
+    if (kind === 'viewport' || kind === 'layout') {
+      if (this.paintedMatches?.repartition(snapshot)) this.controller.refreshTrackedMatches()
+    }
     this.controller.handleViewUpdate(kind, change ?? null)
   }
 
@@ -125,7 +136,13 @@ class EditorFindViewContribution implements EditorViewContribution {
     this.reservationObserver = null
     this.widget?.dispose()
     this.widget = null
+    this.paintedMatches = null
     this.hostRegistration.dispose()
+  }
+
+  private readonly trackPaintedRanges = (ranges: readonly FindRange[]): FindTrackedRanges => {
+    this.paintedMatches = new PaintedFindRanges(this.context, this.latestSnapshot, ranges)
+    return this.paintedMatches
   }
 
   private readonly handleUiEvent = (event: EditorFindUiEvent): void => {
@@ -136,6 +153,9 @@ class EditorFindViewContribution implements EditorViewContribution {
 
     if (event.type === 'hide') {
       this.widget?.hide()
+      // Nothing reads the set once it is off screen, so leaving it here would
+      // have every scroll from now on redraw a line across it for nobody.
+      this.paintedMatches = null
       return
     }
 
@@ -276,13 +296,14 @@ function createFindFeature(controller: EditorFindController): EditorFindFeature 
 function createFindHost(
   context: EditorViewContributionContext,
   getSnapshot: () => EditorViewSnapshot,
+  trackPaintedRanges: (ranges: readonly FindRange[]) => FindTrackedRanges,
 ): EditorFindHost {
   const textSource = snapshotTextSource()
   return {
     hasDocument: () => context.hasDocument(),
     textSource: () => textSource(getSnapshot()),
     trackRanges: (ranges) => context.trackRanges?.(ranges) ?? fixedFindRanges(ranges),
-    trackPaintedRanges: (ranges) => trackPaintedFindRanges(context, getSnapshot(), ranges),
+    trackPaintedRanges,
     getSelections: () => findSelections(getSnapshot().selections),
     focusEditor: () => context.focusEditor(),
     announce: (message) => context.announce?.(message),
@@ -369,27 +390,93 @@ function fixedFindRanges(ranges: readonly FindRange[]): FindTrackedRanges {
  * either way. Handing the document every match instead costs it an anchor pair
  * each, on every keystroke — the bill deferring that re-search was supposed to
  * take off the keystroke in the first place.
+ *
+ * Which of them those are is a fact about the rows mounted at the time and not
+ * about the set, so it stops being true the moment the reader scrolls. Drawn once
+ * and left, the line would divide the screenful they have scrolled away from,
+ * and every mark now in front of them would be one nobody is following.
  */
-function trackPaintedFindRanges(
-  context: EditorViewContributionContext,
-  snapshot: EditorViewSnapshot,
-  ranges: readonly FindRange[],
-): FindTrackedRanges {
-  const span = paintedSpan(snapshot)
-  if (!span) return fixedFindRanges(ranges)
+// A match is the text the query answered for, so typing against either edge of one is not part of
+// it — unlike a scope, which is a region the reader drew and which takes in what they add at its
+// edges. The same pair decides how an offset is carried across an edit nobody was following.
+const MATCH_BIAS = { startBias: 'right', endBias: 'left' } as const
 
-  const painted = ranges.filter((range) => overlapsSpan(range, span))
-  // A match is the text the query answered for, so typing against either edge of
-  // one is not part of it — unlike a scope, which is a region the user drew and
-  // which should take in what they add at its edges.
-  const tracked =
-    painted.length === 0
-      ? null
-      : context.trackRanges?.(painted, { startBias: 'right', endBias: 'left' })
-  if (!tracked) return fixedFindRanges(ranges)
+class PaintedFindRanges implements FindTrackedRanges {
+  private span: FindRange | null = null
+  private tracked: FindTrackedRanges | null = null
+  private elsewhere: readonly FindRange[]
+  /** Text version the offsets in `elsewhere` describe, which is not always the document's. */
+  private elsewhereVersion: number
 
-  const elsewhere = ranges.filter((range) => !overlapsSpan(range, span))
-  return { resolve: () => mergeRanges(tracked.resolve(), elsewhere) }
+  public constructor(
+    private readonly context: EditorViewContributionContext,
+    snapshot: EditorViewSnapshot,
+    ranges: readonly FindRange[],
+  ) {
+    this.elsewhere = ranges
+    this.elsewhereVersion = snapshot.textVersion
+    this.partition(snapshot)
+  }
+
+  public resolve(): readonly FindRange[] {
+    if (!this.tracked) return this.elsewhere
+    return mergeRanges(this.tracked.resolve(), this.elsewhere)
+  }
+
+  /** Answers whether the line moved, so a caller only re-reads the set when there is a reason to. */
+  public repartition(snapshot: EditorViewSnapshot): boolean {
+    // A host that follows nothing has one answer for every row, so redrawing the
+    // line between them would only walk the set to reach it.
+    if (!this.context.trackRanges) return false
+    return this.partition(snapshot)
+  }
+
+  private partition(snapshot: EditorViewSnapshot): boolean {
+    const span = paintedSpan(snapshot)
+    if (!span || sameSpan(span, this.span)) return false
+
+    // Read back first: what is already followed has moved since it was handed
+    // over, and re-partitioning the offsets of the search would undo that.
+    this.carryElsewhereForward(snapshot)
+    const ranges = this.resolve()
+    const painted = ranges.filter((range) => overlapsSpan(range, span))
+    const tracked =
+      painted.length === 0 ? null : (this.context.trackRanges?.(painted, MATCH_BIAS) ?? null)
+
+    this.span = span
+    this.tracked = tracked
+    this.elsewhere = tracked ? ranges.filter((range) => !overlapsSpan(range, span)) : ranges
+    this.elsewhereVersion = snapshot.textVersion
+    return true
+  }
+
+  /**
+   * Brings the unfollowed half up to the document before any of it is promoted.
+   *
+   * Nothing follows a match the reader cannot see, so an edit that lands while they are looking
+   * elsewhere leaves those offsets describing text that has moved. Scrolling then hands one of them
+   * to the document to be followed from where it used to be, and the mark lands beside its word —
+   * the defect being followed at all was supposed to prevent, arriving one scroll later. The edits
+   * are replayed where the host can name them, and where it cannot the offsets are dropped rather
+   * than promoted: no mark is the honest answer for the moment before the re-search lands, and a
+   * mark on the wrong word is not.
+   */
+  private carryElsewhereForward(snapshot: EditorViewSnapshot): void {
+    if (snapshot.textVersion === this.elsewhereVersion) return
+    if (this.elsewhere.length === 0) {
+      this.elsewhereVersion = snapshot.textVersion
+      return
+    }
+
+    const edits = snapshot.editsSinceTextVersion?.(this.elsewhereVersion) ?? null
+    this.elsewhere = edits
+      ? this.elsewhere
+          .map((range) => projectDecorationRangeThroughEdits({ ...range, ...MATCH_BIAS }, edits))
+          .filter((range) => range !== null)
+          .map((range) => ({ end: range.end, start: range.start }))
+      : []
+    this.elsewhereVersion = snapshot.textVersion
+  }
 }
 
 // The view adds a range highlight to the rows it has mounted and to no others.
@@ -403,6 +490,10 @@ function paintedSpan(snapshot: EditorViewSnapshot): FindRange | null {
 
 function overlapsSpan(range: FindRange, span: FindRange): boolean {
   return range.end > span.start && range.start < span.end
+}
+
+function sameSpan(span: FindRange, other: FindRange | null): boolean {
+  return other !== null && span.start === other.start && span.end === other.end
 }
 
 // Navigation steps the set rather than searching it, so an entry out of order

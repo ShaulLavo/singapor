@@ -412,6 +412,7 @@ function isLineSafePattern(pattern: string): boolean {
       continue
     }
 
+    if (char === '(' && !isLineSafeGroupOpener(pattern, index)) return false
     if (char !== '\\') continue
 
     index += 1
@@ -423,6 +424,24 @@ function isLineSafePattern(pattern: string): boolean {
   }
 
   return true
+}
+
+/**
+ * Only a group that bundles what is written inside it, leaving its meaning alone.
+ *
+ * A capture, a non-capture and either lookaround are all of those. A modifier
+ * group is not: it can switch on the flag under which a dot spans a break, so the
+ * characters inside it stop saying what they say anywhere else — and reading back
+ * which flags one names is more machinery than routing it to the correct path
+ * costs. Every other spelling is one nobody here recognized, which is the same
+ * answer.
+ */
+function isLineSafeGroupOpener(pattern: string, index: number): boolean {
+  if (pattern[index + 1] !== '?') return true
+
+  const kind = pattern[index + 2]
+  // '<' opens a lookbehind or names a capture, and neither changes what matches.
+  return kind === ':' || kind === '=' || kind === '!' || kind === '<'
 }
 
 // Only a positive class naming its members outright: a negated one holds a break

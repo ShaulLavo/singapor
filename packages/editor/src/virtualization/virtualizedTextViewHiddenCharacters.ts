@@ -7,6 +7,7 @@ import {
   type ResolvedSuspiciousCharactersOptions,
   sameSuspiciousCharactersOptions,
   type SuspiciousCharacterKind,
+  type SuspiciousCharacterRange,
   suspiciousCharacterRanges,
   suspiciousCharactersEnabled,
 } from '../unicodeHighlight'
@@ -38,6 +39,12 @@ type HiddenCharacterMarker = {
 type NonWhitespaceBounds = {
   readonly first: number
   readonly last: number
+}
+
+/** `start` is where the row's own text sits in `text`, and is non-zero only on a wrapped row. */
+type SuspiciousCharacterScanLine = {
+  readonly text: string
+  readonly start: number
 }
 
 /**
@@ -279,10 +286,15 @@ function appendWhitespaceMarker(
 
   const { view, row } = context
   const offset = rowOffsetForLocalIndex(row, localIndex)
+  // Where the next column starts rather than the next offset. Text a replacement hangs off a point
+  // stands in for no source text at all, so every column of it answers with that one offset — and a
+  // mark per column would stack them on one box, over a space the document does not hold.
+  const end = rowOffsetForLocalIndex(row, localIndex + 1)
+  if (end <= offset) return
   if (!shouldShowHiddenCharacter(context, kind, localIndex, offset)) return
 
   const left = offsetToX(view, row, offset)
-  const right = offsetToX(view, row, offset + 1)
+  const right = offsetToX(view, row, end)
   markers.push({
     kind,
     offset,
@@ -309,21 +321,58 @@ function appendSuspiciousCharacterMarkers(
   const { options } = pass.suspicious
   if (!suspiciousCharactersEnabled(options)) return
 
+  const line = suspiciousCharacterScanLine(view, row)
+  // A code point the seam runs through belongs to the window before it, which reported it already:
+  // the window after opens on the trailing half and reads back onto the leading one.
+  let reportedThrough = -1
   for (const chunk of row.chunks) {
-    const mounted = { start: chunk.localStart, end: chunk.localEnd }
-    for (const range of suspiciousCharacterRanges(row.text, options, mounted)) {
-      const offset = rowOffsetForLocalIndex(row, range.start)
-      const left = offsetToX(view, row, offset)
-      const right = offsetToX(view, row, rowOffsetForLocalIndex(row, range.end))
-      markers.push({
-        kind: range.kind,
-        offset,
-        left: Math.min(left, right),
-        width: Math.abs(right - left),
-        glyph: NO_GLYPH,
-      })
+    const mounted = { start: line.start + chunk.localStart, end: line.start + chunk.localEnd }
+    for (const range of suspiciousCharacterRanges(line.text, options, mounted)) {
+      if (range.start < reportedThrough) continue
+
+      reportedThrough = range.end
+      markers.push(suspiciousCharacterMarker(view, row, line, range))
     }
   }
+}
+
+function suspiciousCharacterMarker(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  line: SuspiciousCharacterScanLine,
+  range: SuspiciousCharacterRange,
+): HiddenCharacterMarker {
+  const offset = rowOffsetForLocalIndex(row, range.start - line.start)
+  const left = offsetToX(view, row, offset)
+  const right = offsetToX(view, row, rowOffsetForLocalIndex(row, range.end - line.start))
+  return {
+    kind: range.kind,
+    offset,
+    left: Math.min(left, right),
+    width: Math.abs(right - left),
+    glyph: NO_GLYPH,
+  }
+}
+
+/**
+ * What the scan reads, and where in it this row's own text begins.
+ *
+ * A wrapped row carries a slice of a line, and a slice cuts words in half. What excuses a Cyrillic
+ * letter is the word around it being Cyrillic throughout, so a row judging its own fragment reports
+ * ordinary prose on every line long enough to wrap — the whole line has to be what the word is read
+ * out of, however little of it this row draws.
+ */
+function suspiciousCharacterScanLine(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): SuspiciousCharacterScanLine {
+  const mapping = row.inlineMapping
+  if (mapping) return { text: mapping.line.text, start: mapping.displayStartColumn }
+
+  const displayRow = view.model.rows[row.index]
+  if (!isDocumentTextDisplayRow(displayRow)) return { text: row.text, start: 0 }
+
+  return { text: displayRow.sourceText, start: displayRow.displayStartColumn }
 }
 
 function whitespaceKind(char: string): WhitespaceKind | null {

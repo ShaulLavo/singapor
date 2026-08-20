@@ -187,6 +187,34 @@ describe('reindent from the keyboard', () => {
     expect(editor.materializeFullText()).toBe(lines('function outer() {', '\trun()', '}'))
   })
 
+  it('keeps a spaced file spaced when one row arrived from somewhere else tabbed', () => {
+    const mostlySpaced = lines(
+      'function outer() {',
+      '  const x = 1',
+      '  if (ready) {',
+      '\trun()',
+      '  }',
+      '  return x',
+      '}',
+    )
+    open(mostlySpaced)
+    selectAll(mostlySpaced)
+
+    press('I', SELECTION_CHORD)
+
+    expect(editor.materializeFullText()).toBe(
+      lines(
+        'function outer() {',
+        '  const x = 1',
+        '  if (ready) {',
+        '    run()',
+        '  }',
+        '  return x',
+        '}',
+      ),
+    )
+  })
+
   it('reads an opener whose line ends in a comment that quotes an apostrophe', () => {
     const text = lines('function outer() {', "if (ready) { // don't stop", 'run()', '}', '}')
     open(text)

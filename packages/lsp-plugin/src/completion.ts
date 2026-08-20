@@ -224,14 +224,34 @@ export function completionTriggerFromChange(
   if (change.edits.length !== 1) return null
 
   const edit = change.edits[0]
-  if (!edit || edit.text.length !== 1) return null
+  if (!edit) return null
 
-  const character = edit.text
+  const character = typedCharacter(edit)
+  if (!character) return null
   if (COMPLETION_TRIGGER_CHARACTERS.has(character)) {
     return { triggerKind: 2, triggerCharacter: character }
   }
   if (isIdentifierCharacter(character)) return { triggerKind: 1 }
   return null
+}
+
+/**
+ * The character the user typed, out of an edit that may have written more than it.
+ *
+ * A delimiter that closes itself arrives as the pair in a single insertion with the caret left
+ * between the halves — which is exactly the keystroke a path or a member list is wanted for, so
+ * reading only the one-character edits would leave the quote triggers unreachable while the editor
+ * completes them. An insertion of one trigger character twice over is the whole of that shape;
+ * anything else two characters wide is text arriving from somewhere other than the keyboard.
+ */
+function typedCharacter(edit: TextEdit): string | null {
+  if (edit.text.length === 1) return edit.text
+  if (edit.from !== edit.to || edit.text.length !== 2) return null
+
+  const opener = edit.text[0] ?? ''
+  if (opener !== edit.text[1]) return null
+
+  return COMPLETION_TRIGGER_CHARACTERS.has(opener) ? opener : null
 }
 
 /**

@@ -176,10 +176,51 @@ describe('suspicious character markers', () => {
     return view
   }
 
+  /** Wrapping is what puts a row in front of a fraction of a line rather than the whole of it. */
+  function mountWrappedView(text: string, viewportWidth: number): VirtualizedTextView {
+    const view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      wrap: true,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      hiddenCharacters: 'hidden',
+    })
+    views.push(view)
+    mockViewport(view.scrollElement, viewportWidth, 200)
+    view.setText(text)
+    view.setScrollMetrics(0, 200, viewportWidth)
+    return view
+  }
+
+  /** Chunking is what puts two of a line's mounted windows either side of one character. */
+  function mountChunkedView(text: string, viewportWidth: number): VirtualizedTextView {
+    const view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      hiddenCharacters: 'hidden',
+      longLineChunkSize: 4,
+      longLineChunkThreshold: 8,
+      horizontalOverscanColumns: 0,
+    })
+    views.push(view)
+    view.setText(text)
+    view.setScrollMetrics(0, 200, viewportWidth)
+    return view
+  }
+
   function markerKinds(): string[] {
     return [
       ...container.querySelectorAll<HTMLElement>('.editor-virtualized-hidden-character-marker'),
     ].map((marker) => marker.dataset.editorHiddenCharacter ?? '')
+  }
+
+  function markerOffsets(): number[] {
+    return [
+      ...container.querySelectorAll<HTMLElement>('.editor-virtualized-hidden-character-marker'),
+    ].map((marker) => Number(marker.dataset.editorHiddenCharacterOffset))
   }
 
   // Whitespace rendering is a preference about how to read the text; this is a claim about what the
@@ -207,6 +248,28 @@ describe('suspicious character markers', () => {
     )
 
     expect(markerKinds()).toEqual([])
+  })
+
+  // What excuses a Cyrillic letter is the word around it being Cyrillic throughout, and a wrap cuts
+  // that word in half. Judging the half a row carries reports ordinary prose as an attack on every
+  // line long enough to wrap, which is most of them.
+  it('leaves a word alone that the wrap ran through the middle of', () => {
+    const view = mountWrappedView('город город город город', 64)
+
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual([
+      'город го',
+      'род горо',
+      'д город',
+    ])
+    expect(markerKinds()).toEqual([])
+  })
+
+  // The window after the seam opens on the low half of the pair and reads back onto the high one,
+  // so both windows have the same character to report and the marks stack.
+  it('marks a character split across two mounted windows once', () => {
+    mountChunkedView(`${'x'.repeat(3)}\u{1d41a}${'y'.repeat(40)}`, 96)
+
+    expect(markerOffsets()).toEqual([3])
   })
 })
 
@@ -277,3 +340,20 @@ describe('suspicious characters as an editor option', () => {
     expect(markerKinds()).toEqual(['space', 'space', 'space'])
   })
 })
+
+function mockViewport(element: HTMLElement, width: number, height: number): void {
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      bottom: height,
+      height,
+      left: 0,
+      right: width,
+      top: 0,
+      width,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }),
+  })
+}

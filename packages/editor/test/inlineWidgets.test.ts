@@ -145,6 +145,22 @@ describe('inline replacements that render their own DOM', () => {
     expect(row.element.textContent).toBe('a  b')
   })
 
+  it('dresses the mount in the run class, and re-dresses it when the run changes class', () => {
+    const mount = createMount()
+    const text = `${IMAGE_LINE}\nplain`
+    view = mountView(container, text)
+    applyReplacements(view, text, [{ ...imageSpec(mount), className: 'editor-image-widget' }])
+
+    const widget = widgetElement(rowForIndex(view, 0))
+    expect(widget.classList.contains('editor-image-widget')).toBe(true)
+
+    applyReplacements(view, text, [{ ...imageSpec(mount), className: 'editor-broken-image' }])
+
+    expect(mount.renders).toBe(1)
+    expect(widget.classList.contains('editor-image-widget')).toBe(false)
+    expect(widget.classList.contains('editor-broken-image')).toBe(true)
+  })
+
   it('spaces the columns after the replacement by the measured node, not by the placeholder', () => {
     const mount = createMount()
     view = mountView(container, `${IMAGE_LINE}\nplain`)

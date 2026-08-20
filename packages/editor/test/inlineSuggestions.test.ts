@@ -81,6 +81,33 @@ describe('inline suggestions', () => {
     expect(editor.materializeFullText()).toBe('con')
   })
 
+  // Drawn into an element of its own is the whole of what makes a suggestion legible: painted into
+  // the row's own text it is byte-identical to what the reader wrote, and there is nothing on screen
+  // saying which half is theirs.
+  it('boxes what it draws so it can be told apart from the text the reader typed', async () => {
+    await open('con', 3)
+
+    editor.setInlineSuggestion({ from: 0, to: 3, text: 'const answer' })
+    await flush()
+
+    const boxed = container.querySelector('.editor-ghost-text')
+    expect(boxed?.textContent).toBe('st answer')
+    expect(boxed?.parentElement?.textContent).toBe('const answer')
+  })
+
+  it('draws a suggestion offered where a hidden marker begins', async () => {
+    await open('**bold** tail', 0)
+    editor.setInlineReplacementProvider(() => [
+      { id: 'close', startIndex: 6, endIndex: 8, text: '' },
+    ])
+    await flush()
+
+    expect(editor.setInlineSuggestion({ from: 0, to: 6, text: '**boldSUGGEST' })).toBe(true)
+    await flush()
+
+    expect(rowTexts()).toContain('**boldSUGGEST tail')
+  })
+
   it('writes exactly what was drawn when Tab takes it', async () => {
     await open('con', 3)
     editor.setInlineSuggestion({ from: 0, to: 3, text: 'const answer' })
@@ -177,6 +204,27 @@ describe('inline suggestions', () => {
     expect(editor.materializeFullText()).toMatch(/^conx[ \t]+$/)
   })
 
+  // Every run was placed against where the caret stood, and the one thing the runs may never be is
+  // behind it. Moving the caret is also the reader saying they are doing something else, so Tab has
+  // to be the indent key again rather than a commit at an offset they have left.
+  it('takes a suggestion down once the caret has moved out from under it', async () => {
+    await open('con', 3)
+    editor.setInlineSuggestion({ from: 0, to: 3, text: 'const answer' })
+    await flush()
+
+    expect(rowTexts()).toContain('const answer')
+
+    pressKey('ArrowLeft')
+    await flush()
+
+    expect(rowTexts()).toEqual(['con'])
+
+    pressTab()
+    await flush()
+
+    expect(editor.materializeFullText()).toMatch(/^co[ \t]+n$/)
+  })
+
   it('offers nothing over a selection, where there is no one place it would be typed', async () => {
     await open('con', 3)
     editor.setSelection(0, 3)
@@ -270,11 +318,15 @@ describe('inline suggestions', () => {
   }
 
   function pressTab(modifiers: { readonly shift?: boolean } = {}): void {
+    pressKey('Tab', modifiers)
+  }
+
+  function pressKey(key: string, modifiers: { readonly shift?: boolean } = {}): void {
     document.querySelector('.editor-virtualized')?.dispatchEvent(
       new KeyboardEvent('keydown', {
         bubbles: true,
         cancelable: true,
-        key: 'Tab',
+        key,
         shiftKey: modifiers.shift === true,
       }),
     )

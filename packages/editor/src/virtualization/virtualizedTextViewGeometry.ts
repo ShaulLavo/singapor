@@ -522,6 +522,9 @@ function rowGeometryCacheKey(
   return [
     row.textRevision,
     row.chunkKey,
+    // Pins the key to a line: a row's element and its record are both recycled onto whatever line
+    // scrolls into their place, and every other part of this key survives that move intact.
+    row.startOffset,
     row.text.length,
     row.displayKind,
     row.foldMarkerKey,
@@ -559,10 +562,13 @@ function buildCalculatedRowGeometry(
 ): RowGeometry {
   const boundaries = createBoundaryBuffer(row)
   const anchors: number[] = []
-  const measurement =
-    row.text.length > KEY_COLUMN_DISTANCE ? { row, scale: rowClientRectScale(row) } : null
+  // Read whether or not this row will re-anchor on anything: the boundaries below are written in
+  // the row's own space either way, and the inverse mapping reads them back in it.
+  const scale = rowClientRectScale(row)
+  const measurement = row.text.length > KEY_COLUMN_DISTANCE ? { row, scale } : null
+  const cellWidth = cellWidthInRowSpace(view, scale)
   for (const chunk of row.chunks) {
-    appendCalculatedChunkBoundaries(boundaries, view, row, chunk, measurement, anchors)
+    appendCalculatedChunkBoundaries(boundaries, view, row, chunk, cellWidth, measurement, anchors)
   }
 
   return geometryFromBoundaries(row, boundaries, calculatedRowWidth(view, row), anchors)
@@ -629,11 +635,15 @@ function calculatedRowAnchorForX(
 // The measured advances an anchor is built from are read back in the row's own
 // space, so the estimate they are extended with has to be too: metrics are
 // probed through the host, which may scale everything it contains.
+function cellWidthInRowSpace(view: VirtualizedTextViewInternal, scale: number): number {
+  return view.metrics.characterWidth / scale
+}
+
 function calculatedCellWidth(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): number {
-  return view.metrics.characterWidth / rowClientRectScale(row)
+  return cellWidthInRowSpace(view, rowClientRectScale(row))
 }
 
 const clampChunkLocal = (chunk: VirtualizedTextChunk, local: number): number =>
@@ -654,12 +664,10 @@ function appendCalculatedChunkBoundaries(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
+  cellWidth: number,
   measurement: RowMeasurementContext | null,
   anchors: number[],
 ): void {
-  const cellWidth = measurement
-    ? view.metrics.characterWidth / measurement.scale
-    : view.metrics.characterWidth
   // Column zero at the row's inset is the anchor an unanchored row extrapolates from, so a row that
   // measures nothing keeps the plain multiplication it had.
   let anchorColumn = 0

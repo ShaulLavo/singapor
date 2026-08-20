@@ -1,5 +1,9 @@
 import { normalizeEditorEditability } from './editorDocument'
-import { normalizeRowGap, normalizeScrollMode } from '../virtualization/virtualizedTextViewHelpers'
+import {
+  normalizeRowGap,
+  normalizeRowHeight,
+  normalizeScrollMode,
+} from '../virtualization/virtualizedTextViewHelpers'
 import { normalizeHiddenCharactersMode } from '../virtualization/virtualizedTextViewHiddenCharacters'
 import {
   type EditorSuspiciousCharactersOptions,
@@ -30,6 +34,7 @@ type EditorControlledOptions = {
   readonly editability?: EditorEditability
   readonly hiddenCharacters?: HiddenCharactersMode
   readonly keymap?: EditorKeymapOptions
+  readonly lineHeight?: number
   readonly rangeDecorations?: readonly EditorRangeDecoration[]
   readonly rowGap?: number
   readonly scrollMode?: EditorScrollMode
@@ -38,6 +43,7 @@ type EditorControlledOptions = {
   readonly suspiciousCharacters?: EditorSuspiciousCharactersOptions
   readonly tabMovesFocus?: boolean
   readonly theme?: EditorTheme | null
+  readonly wordWrap?: boolean
 }
 
 export type EditorControlledOptionName = keyof EditorControlledOptions
@@ -123,6 +129,19 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) => (isRecord(input) ? (input as EditorKeymapOptions) : undefined),
     equals: Object.is,
     applyTo: (editor, keymap) => editor.setKeymap(keymap),
+  }),
+  // No default of its own: a host that names no row height gets the one the editor measures from
+  // the font it was given, which is a number nothing here could have written down.
+  defineOption({
+    name: 'lineHeight',
+    defaultValue: undefined,
+    validate: (input) => (input === undefined ? undefined : normalizeRowHeight(input as number)),
+    equals: Object.is,
+    applyTo: (editor, lineHeight) => {
+      if (lineHeight === undefined) return
+
+      editor.setLineHeight(lineHeight)
+    },
   }),
   defineOption({
     name: 'rangeDecorations',
@@ -213,6 +232,17 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) => (isRecord(input) ? (input as EditorTheme) : null),
     equals: Object.is,
     applyTo: (editor, theme) => editor.setTheme(theme),
+  }),
+  defineOption({
+    name: 'wordWrap',
+    defaultValue: false,
+    validate: (input) => (typeof input === 'boolean' ? input : undefined),
+    equals: Object.is,
+    applyTo: (editor, wordWrap) => {
+      if (wordWrap === undefined) return
+
+      editor.setWordWrap(wordWrap)
+    },
   }),
 ].map((definition, id): EditorOptionDescriptor => ({ ...definition, id }))
 

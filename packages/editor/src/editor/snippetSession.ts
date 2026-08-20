@@ -79,22 +79,25 @@ export class SnippetSession {
       return null
     }
 
-    const next = this.cursor + direction
-    if (next < 0 || next >= this.stops.length) {
-      // Walking off either end ends the session, so the next Tab indents as usual.
-      this.clear()
-      return null
+    // A stop whose anchors are gone is stepped over rather than taken as the end of the session:
+    // filling in a placeholder replaces the text any placeholder nested in it was anchored on, and
+    // the stops after that one are still exactly where the snippet put them.
+    for (
+      let next = this.cursor + direction;
+      next >= 0 && next < this.stops.length;
+      next += direction
+    ) {
+      const stop = this.stops[next]
+      const range = stop ? resolveRange(snapshot, stop.caret) : null
+      if (!range) continue
+
+      this.cursor = next
+      return range
     }
 
-    this.cursor = next
-    const stop = this.stops[next]
-    const range = stop ? resolveRange(snapshot, stop.caret) : null
-    if (!range) {
-      this.clear()
-      return null
-    }
-
-    return range
+    // Walking off either end ends the session, so the next Tab indents as usual.
+    this.clear()
+    return null
   }
 
   /**

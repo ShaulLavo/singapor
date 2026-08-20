@@ -71,6 +71,57 @@ describe('find inside a real editor', () => {
     expect(paintedText()).toEqual({ match: ['foo', 'foo'], current: ['foo'] })
   })
 
+  it('keeps its marks on their text after the reader scrolls to other matches', () => {
+    const probe = editorProbe(LONG_TEXT, [
+      createEditorFindPlugin({ seedSearchStringFromSelection: 'never' }),
+    ])
+    probe.editor.openFind()
+    typeSearch(probe.context.container, 'foo')
+    scrollTo(probe.context, 1_500)
+
+    // Typed above every row now on screen, so nothing the reader is looking at
+    // stays at the offset it was found at.
+    probe.editor.edit({ from: 0, to: 0, text: 'X' })
+
+    const onScreen = mountedMatchCount(probe.context.getSnapshot())
+    expect(onScreen).toBeGreaterThan(0)
+    expect(paintedText().match).toEqual(Array.from({ length: onScreen }, () => 'foo'))
+  })
+
+  // The mirror of the case above, and the one that matters more: a reader types and then scrolls.
+  // Nothing follows a match while it is off screen, so the offsets waiting there describe text that
+  // has since moved, and the scroll is what hands one of them to the document to be followed from
+  // where it used to be.
+  it('keeps its marks on their text when the reader edits and then scrolls', () => {
+    const probe = editorProbe(LONG_TEXT, [
+      createEditorFindPlugin({ seedSearchStringFromSelection: 'never' }),
+    ])
+    probe.editor.openFind()
+    typeSearch(probe.context.container, 'foo')
+
+    probe.editor.edit({ from: 0, to: 0, text: 'X' })
+    scrollTo(probe.context, 1_500)
+
+    const onScreen = mountedMatchCount(probe.context.getSnapshot())
+    expect(onScreen).toBeGreaterThan(0)
+    expect(paintedText().match).toEqual(Array.from({ length: onScreen }, () => 'foo'))
+  })
+
+  it('steps to a match the reader scrolled to while a re-search is outstanding', () => {
+    const probe = editorProbe(LONG_TEXT, [
+      createEditorFindPlugin({ seedSearchStringFromSelection: 'never' }),
+    ])
+    probe.editor.openFind()
+    typeSearch(probe.context.container, 'foo')
+    scrollTo(probe.context, 1_500)
+    probe.editor.setSelection(455, 455)
+
+    probe.editor.edit({ from: 0, to: 0, text: 'X' })
+    probe.editor.findNext()
+
+    expect(selectedText(probe)).toBe('foo')
+  })
+
   it('leaves a mark on the word it found when the reader types against its edge', () => {
     const probe = editorProbe('zz foo zz\n', [
       createEditorFindPlugin({ seedSearchStringFromSelection: 'never' }),
@@ -309,6 +360,20 @@ function announcements(container: HTMLElement): string[] {
 
 function mountedMatchCount(snapshot: EditorViewSnapshot): number {
   return snapshot.visibleRows.filter((row) => row.text.includes('foo')).length
+}
+
+// Scrolled the way a reader does, so the rows the view mounts are recomputed and
+// the contributions hear about it from the editor rather than from the case.
+function scrollTo(context: EditorViewContributionContext, top: number): void {
+  context.scrollElement.scrollTop = top
+  context.scrollElement.dispatchEvent(new Event('scroll'))
+}
+
+function selectedText(probe: EditorProbe): string {
+  const selection = probe.context.getSnapshot().selections[0]
+  if (!selection) return ''
+
+  return probe.editor.materializeFullText().slice(selection.startOffset, selection.endOffset)
 }
 
 // Addressed by the icon it renders, which outlives the label a toggle rewrites

@@ -122,7 +122,6 @@ describe('the document window the hidden input carries', () => {
     const content = windowFor('alpha\nbeta\ngamma', 8)
 
     expect(content.value).toBe('alpha\nbeta\ngamma')
-    expect(content.startOffset).toBe(0)
     expect(content.selectionStart).toBe(8)
     expect(content.selectionEnd).toBe(8)
     expect(content.direction).toBe('forward')
@@ -138,18 +137,30 @@ describe('the document window the hidden input carries', () => {
     expect(backward.direction).toBe('backward')
   })
 
-  it('carries the page the caret is on rather than the whole document', () => {
+  it('carries a page either side of the caret rather than the whole document', () => {
     const text = numberedRows(60)
     const caret = text.indexOf('row25')
 
     const content = windowFor(text, caret, caret, { rowsPerPage: 10 })
 
-    expect(content.value.startsWith('row20\n')).toBe(true)
-    expect(content.value.endsWith('row29\n')).toBe(true)
-    expect(content.value).not.toContain('row19')
-    expect(content.value).not.toContain('row30')
-    expect(content.startOffset).toBe(text.indexOf('row20'))
-    expect(content.startOffset + content.selectionStart).toBe(caret)
+    expect(content.value.startsWith('row10\n')).toBe(true)
+    expect(content.value.endsWith('row39\n')).toBe(true)
+    expect(content.value).not.toContain('row09')
+    expect(content.value).not.toContain('row40')
+    expect(content.value.slice(0, content.selectionStart)).toMatch(/row24\n$/)
+  })
+
+  // A reader standing on the first character of a page is the case the pages either side are for:
+  // with the window starting where the caret is, the element holds nothing to delete backwards over
+  // and the browser raises no event at all, so the keystroke is lost rather than merely unread.
+  it('keeps text in front of the caret where a page begins', () => {
+    const text = numberedRows(60)
+    const caret = text.indexOf('row20')
+
+    const content = windowFor(text, caret, caret, { rowsPerPage: 10 })
+
+    expect(content.selectionStart).toBeGreaterThan(0)
+    expect(content.value.slice(0, content.selectionStart)).toMatch(/row19\n$/)
   })
 
   it('clamps a page whose rows are long enough to stall the accessible value', () => {
@@ -161,7 +172,6 @@ describe('the document window the hidden input carries', () => {
     expect(content.selectionStart).toBe(500)
     expect(content.value.length).toBe(1000)
     expect(content.value.slice(0, 500)).toBe('x'.repeat(499) + '\n')
-    expect(content.startOffset).toBe(caret - 500)
   })
 
   it('splices a selection reaching past the two pages rather than reading all of it', () => {

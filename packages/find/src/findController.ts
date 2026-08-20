@@ -527,6 +527,11 @@ export class EditorFindController {
    * text went. A match whose text is gone resolves to nothing and stops being
    * painted.
    */
+  /** Takes the offsets again from what the host is following, after the line it follows to moved. */
+  public refreshTrackedMatches(): void {
+    this.followPendingMatches()
+  }
+
   private followPendingMatches(): void {
     const tracked = this.trackedMatches
     if (!tracked || this.matches.length === 0) return

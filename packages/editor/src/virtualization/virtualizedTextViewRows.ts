@@ -7,6 +7,7 @@ import {
   type DisplayInjectedTextRow,
   type DisplayRow,
   type InlineReplacementRender,
+  type InlineRow,
 } from '../displayTransforms'
 import { clamp } from '../style-utils'
 import {
@@ -156,7 +157,23 @@ type InlineWidgetRun = {
   readonly localStart: number
   readonly localEnd: number
   readonly render: InlineReplacementRender
+  readonly className?: string
 }
+
+/** A run that stays the text it stands for, boxed so it can be styled apart from that text. */
+type InlineClassRun = {
+  readonly id: string
+  readonly localStart: number
+  readonly localEnd: number
+  readonly className: string
+}
+
+type InlineRowRuns = {
+  readonly widgets: readonly InlineWidgetRun[]
+  readonly classes: readonly InlineClassRun[]
+}
+
+const NO_INLINE_ROW_RUNS: InlineRowRuns = { widgets: [], classes: [] }
 
 export function rowsKey(
   view: VirtualizedTextViewInternal,
@@ -530,6 +547,10 @@ function bufferRowForDisplayRow(view: VirtualizedTextViewInternal, index: number
   if (displayRow?.kind === 'text') return displayRow.bufferRow
   if (displayRow?.kind === 'block') return displayRow.anchorBufferRow
   return bufferRowForVirtualRow(view, index)
+}
+
+function inlineRowForDisplayRow(row: DisplayRow | undefined): InlineRow | undefined {
+  return isDocumentTextDisplayRow(row) ? row.inlineRow : undefined
 }
 
 function displayRowSource(row: DisplayRow | undefined): EditorGutterRowContext['source'] {
@@ -1014,9 +1035,9 @@ function updateRowTextChunks(
   mapping: RowInlineMapping | null,
   snapshot = view.virtualizer.getSnapshot(),
 ): void {
-  const runs = inlineWidgetRuns(mapping, text)
-  if (runs.length > 0) {
-    setInlineWidgetRowText(view, row, text, startOffset, mapping, runs)
+  const runs = inlineRowRuns(mapping, text)
+  if (runs.widgets.length > 0 || runs.classes.length > 0) {
+    setInlineRunRowText(view, row, text, startOffset, mapping, runs)
     return
   }
 
@@ -1203,21 +1224,20 @@ function rowHasInlineAttachments(row: MountedVirtualizedTextRow): boolean {
 }
 
 /**
- * Which of the row's replacements render themselves. The row's display columns are line-absolute in
+ * Which of the row's replacements need a box of their own — one that renders itself, one that only
+ * asks to be styled apart from the text around it. The row's display columns are line-absolute in
  * the mapping, so a wrapped row only claims the runs that fall inside the slice it renders: a run
  * cut by a wrap boundary has no single box to be, and stays the text it stands for.
  */
-function inlineWidgetRuns(
-  mapping: RowInlineMapping | null,
-  text: string,
-): readonly InlineWidgetRun[] {
-  if (!mapping) return []
+function inlineRowRuns(mapping: RowInlineMapping | null, text: string): InlineRowRuns {
+  if (!mapping) return NO_INLINE_ROW_RUNS
 
-  const runs: InlineWidgetRun[] = []
+  const widgets: InlineWidgetRun[] = []
+  const classes: InlineClassRun[] = []
   for (const segment of mapping.line.segments) {
     if (segment.kind !== 'replacement' || segment.id === undefined) continue
-    const render = segment.render
-    if (!render) continue
+    const { className, render } = segment
+    if (!render && className === undefined) continue
 
     const localStart = segment.displayStartColumn - mapping.displayStartColumn
     const localEnd = segment.displayEndColumn - mapping.displayStartColumn
@@ -1225,37 +1245,40 @@ function inlineWidgetRuns(
     // caret no side to stop on and the measured advance nothing to span.
     if (localStart < 0 || localEnd > text.length || localEnd <= localStart) continue
 
-    runs.push({ id: segment.id, localStart, localEnd, render })
+    const id = segment.id
+    const styling = className === undefined ? {} : { className }
+    if (render) widgets.push({ id, localStart, localEnd, render, ...styling })
+    else if (className !== undefined) classes.push({ id, localStart, localEnd, className })
   }
 
-  return runs
+  return { widgets, classes }
 }
 
 /**
- * Widget rows never take the chunked path: a chunk boundary falls on a fixed column stride, which
- * would cut a replacement's columns in two, and the node it renders is one box or nothing.
+ * Rows carrying a run never take the chunked path: a chunk boundary falls on a fixed column stride,
+ * which would cut a replacement's columns in two, and the box it paints into is one or nothing.
  */
-function setInlineWidgetRowText(
+function setInlineRunRowText(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
   mapping: RowInlineMapping | null,
-  runs: readonly InlineWidgetRun[],
+  runs: InlineRowRuns,
 ): void {
-  const placements = runs.map((run) => inlineWidgetPlacement(view, run))
+  const placements = runs.widgets.map((run) => inlineWidgetPlacement(view, run))
   const chunk = row.chunks[0]
-  if (chunk && reusesInlineWidgetRowText(row, chunk, text, placements)) {
+  if (chunk && reusesInlineRunRowText(row, chunk, text, placements, runs.classes)) {
     syncDirectRowChunk(row, text, startOffset, mapping, chunk.parts, chunk.textNode)
     return
   }
 
-  const rendered = createRenderedChunkParts(
+  const rendered = createInlineRunParts(
     row.element.ownerDocument,
     text,
-    0,
     characterWidth(view),
     placements,
+    runs.classes,
   )
   row.element.replaceChildren(...rendered.nodes)
   setTextRenderMode(row, 'widget')
@@ -1263,28 +1286,158 @@ function setInlineWidgetRowText(
 }
 
 /**
+ * The row's text, with every styled run boxed in a span of its own. The parts still point at the
+ * text nodes inside those boxes, so a column inside a run measures, hit-tests and paints exactly as
+ * one outside it does — the box changes what the run looks like, not what it is.
+ */
+function createInlineRunParts(
+  document: Document,
+  text: string,
+  cellWidth: number,
+  placements: readonly InlineWidgetPlacement[],
+  classes: readonly InlineClassRun[],
+): RenderedChunkParts {
+  const nodes: Node[] = []
+  const parts: VirtualizedTextChunkPart[] = []
+  let cursor = 0
+
+  for (const run of classes) {
+    appendInlineRunSlice(
+      document,
+      nodes,
+      parts,
+      text,
+      cursor,
+      run.localStart,
+      cellWidth,
+      placements,
+    )
+    appendInlineClassRun(document, nodes, parts, text, run, cellWidth)
+    cursor = run.localEnd
+  }
+
+  appendInlineRunSlice(document, nodes, parts, text, cursor, text.length, cellWidth, placements)
+  return { nodes, parts, textNode: firstRowTextNode(parts) ?? document.createTextNode('') }
+}
+
+function appendInlineRunSlice(
+  document: Document,
+  nodes: Node[],
+  parts: VirtualizedTextChunkPart[],
+  text: string,
+  localStart: number,
+  localEnd: number,
+  cellWidth: number,
+  placements: readonly InlineWidgetPlacement[],
+): void {
+  if (localEnd <= localStart) return
+
+  const rendered = createRenderedChunkParts(
+    document,
+    text.slice(localStart, localEnd),
+    localStart,
+    cellWidth,
+    placements.filter(
+      (placement) => placement.localStart >= localStart && placement.localEnd <= localEnd,
+    ),
+  )
+  nodes.push(...rendered.nodes)
+  parts.push(...rendered.parts)
+}
+
+function appendInlineClassRun(
+  document: Document,
+  nodes: Node[],
+  parts: VirtualizedTextChunkPart[],
+  text: string,
+  run: InlineClassRun,
+  cellWidth: number,
+): void {
+  const boxed = createRenderedChunkParts(
+    document,
+    text.slice(run.localStart, run.localEnd),
+    run.localStart,
+    cellWidth,
+  )
+  const element = document.createElement('span')
+  element.className = run.className
+  element.dataset.editorInlineRun = run.id
+  element.append(...boxed.nodes)
+
+  nodes.push(element)
+  parts.push(...boxed.parts)
+}
+
+function firstRowTextNode(parts: readonly VirtualizedTextChunkPart[]): Text | null {
+  for (const part of parts) {
+    if (part.kind === 'text') return part.node
+  }
+
+  return null
+}
+
+/**
  * Reuse is what keeps a widget out of the DOM churn a scroll frame otherwise causes, so it asks the
  * row itself rather than a key: the mounted nodes are still where this row put them, in the columns
  * these runs claim. A node another row has since taken fails on its parent.
  */
-function reusesInlineWidgetRowText(
+function reusesInlineRunRowText(
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
   text: string,
   placements: readonly InlineWidgetPlacement[],
+  classes: readonly InlineClassRun[],
 ): boolean {
   if (row.text !== text || row.textRenderMode !== 'widget' || row.chunks.length !== 1) return false
 
   const mounted = chunk.parts.filter((part) => part.kind === 'widget')
   if (mounted.length !== placements.length) return false
 
-  return placements.every((placement, index) => {
+  const reused = placements.every((placement, index) => {
     const part = mounted[index]
     if (!part || part.element !== placement.element) return false
     if (part.localStart !== placement.localStart || part.localEnd !== placement.localEnd)
       return false
     return part.element.parentNode === row.element
   })
+
+  return reused && reusesInlineClassRuns(row, chunk, classes)
+}
+
+/**
+ * A box is rebuilt rather than remounted, so all that has to still hold is which run it was built
+ * for: everything else about it is the text the row has already been found to be painting.
+ */
+function reusesInlineClassRuns(
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+  classes: readonly InlineClassRun[],
+): boolean {
+  const boxes = inlineClassRunElements(row, chunk)
+  if (boxes.length !== classes.length) return false
+
+  return classes.every((run, index) => {
+    const box = boxes[index]
+    if (!box) return false
+    return box.dataset.editorInlineRun === run.id && box.className === run.className
+  })
+}
+
+/** The boxes the row's text parts sit in, in the order the row paints them. */
+function inlineClassRunElements(
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+): readonly HTMLElement[] {
+  const boxes: HTMLElement[] = []
+
+  for (const part of chunk.parts) {
+    if (part.kind !== 'text') continue
+    const parent = part.node.parentElement
+    if (!parent || parent === row.element) continue
+    if (boxes.at(-1) !== parent) boxes.push(parent)
+  }
+
+  return boxes
 }
 
 /**
@@ -1299,7 +1452,14 @@ function inlineWidgetPlacement(
 ): InlineWidgetPlacement {
   const widgets = inlineWidgets(view)
   const host = widgets.hosts.get(run.id) ?? mountInlineWidget(view, widgets, run)
+  applyInlineWidgetClass(host.element, run.className)
   return { localStart: run.localStart, localEnd: run.localEnd, element: host.element }
+}
+
+/** The run's own class rides alongside the mount's, and is re-read because the mount outlives it. */
+function applyInlineWidgetClass(element: HTMLSpanElement, className: string | undefined): void {
+  const next = className === undefined ? INLINE_WIDGET_CLASS : `${INLINE_WIDGET_CLASS} ${className}`
+  if (element.className !== next) element.className = next
 }
 
 function inlineWidgets(view: VirtualizedTextViewInternal): InlineWidgets {
@@ -1317,7 +1477,7 @@ function mountInlineWidget(
   run: InlineWidgetRun,
 ): InlineWidgetHost {
   const element = view.scrollElement.ownerDocument.createElement('span')
-  element.className = INLINE_WIDGET_CLASS
+  applyInlineWidgetClass(element, run.className)
   element.dataset.editorInlineWidget = run.id
   // Nothing in the row is editable, but a browser still finds caret positions inside any node it can
   // descend into, and the replacement is one indivisible stop.
@@ -1840,6 +2000,9 @@ function isRowCurrent(
 
   const text = lineText(view, item.index)
   if (row.text !== text) return false
+  // Display text alone does not say what is behind it: a run that changed only how it paints — the
+  // box it asks for, the node it renders — leaves every column of the row exactly where it was.
+  if (row.inlineMapping?.line !== inlineRowForDisplayRow(displayRow)) return false
   if (row.chunkKey !== rowChunkKey(view, text, snapshot)) return false
   if (row.rowDecorationKey !== rowDecorationKey(view, item.index)) return false
 

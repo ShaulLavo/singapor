@@ -116,6 +116,8 @@ export function ghostTextInlineSpecs(ghost: GhostText): readonly InlineReplaceme
     text: part.text,
     insertion: true,
     kind: 'ghost-text',
+    // Styled per run rather than through `kind`, which restyles the whole row: what is on offer has
+    // to read as unwritten while the line it hangs off keeps reading as the reader's own text.
     className: 'editor-ghost-text',
     // The caret belongs in front of what is on offer, never inside it: the run is the document as it
     // would be, and arrowing into text nobody has typed has nowhere to go.
@@ -124,15 +126,19 @@ export function ghostTextInlineSpecs(ghost: GhostText): readonly InlineReplaceme
 }
 
 /**
- * The suggestion that is showing, and the document it was derived from.
+ * The suggestion that is showing, with the document and the caret it was derived from.
  *
  * Validity is snapshot object identity, exactly as the snippet session's is: a suggestion describes
  * one state of the text, and any edit — typed, undone, or from another view — leaves it describing a
- * document that no longer exists. Rather than trying to salvage it, the session goes quiet and
- * whoever produced the suggestion is free to offer another.
+ * document that no longer exists. The caret is the other half of that state and expires it just as
+ * hard: every run was placed relative to where the caret stood, so once it has moved the offer is
+ * about a position the reader has left, and taking it would write the text somewhere they are not
+ * looking. Rather than trying to salvage either, the session goes quiet and whoever produced the
+ * suggestion is free to offer another.
  */
 export class GhostTextSession {
   private validForSnapshot: PieceTableSnapshot | null = null
+  private validForCaret: number | null = null
   private ghost: GhostText | null = null
   private painted: GhostText | null = null
 
@@ -140,13 +146,14 @@ export class GhostTextSession {
   show(snapshot: PieceTableSnapshot, text: string, suggestion: TextEdit, caret: number): boolean {
     const ghost = computeGhostText(text, suggestion, caret)
     this.validForSnapshot = ghost ? snapshot : null
+    this.validForCaret = ghost ? caret : null
     this.ghost = ghost
     return ghost !== null
   }
 
   /** The runs to paint, remembering them as what the map now holds. */
-  specs(snapshot: PieceTableSnapshot): readonly InlineReplacementSpec[] {
-    const ghost = this.current(snapshot)
+  specs(snapshot: PieceTableSnapshot, caret: number | null): readonly InlineReplacementSpec[] {
+    const ghost = this.current(snapshot, caret)
     this.painted = ghost
 
     return ghost ? ghostTextInlineSpecs(ghost) : []
@@ -158,13 +165,13 @@ export class GhostTextSession {
    * The map that carries the runs is rebuilt from its providers, not edited in place, so a suggestion
    * that has just expired or been re-offered has to say so or the previous one keeps its columns.
    */
-  needsRepaint(snapshot: PieceTableSnapshot): boolean {
-    return this.current(snapshot) !== this.painted
+  needsRepaint(snapshot: PieceTableSnapshot, caret: number | null): boolean {
+    return this.current(snapshot, caret) !== this.painted
   }
 
   /** The whole suggestion, taken; null when none is showing. */
-  accept(snapshot: PieceTableSnapshot): AcceptedGhostText | null {
-    const ghost = this.current(snapshot)
+  accept(snapshot: PieceTableSnapshot, caret: number | null): AcceptedGhostText | null {
+    const ghost = this.current(snapshot, caret)
     if (!ghost) return null
 
     this.clear()
@@ -178,8 +185,12 @@ export class GhostTextSession {
    * is re-derived from the text the accepted word produced rather than from a plan made before it —
    * including the last word, where re-deriving it leaves nothing and the session falls quiet.
    */
-  acceptNextWord(snapshot: PieceTableSnapshot, wordSeparators: string): AcceptedGhostText | null {
-    const ghost = this.current(snapshot)
+  acceptNextWord(
+    snapshot: PieceTableSnapshot,
+    caret: number | null,
+    wordSeparators: string,
+  ): AcceptedGhostText | null {
+    const ghost = this.current(snapshot, caret)
     const part = ghost?.parts[0]
     if (!ghost || !part) return null
 
@@ -193,11 +204,12 @@ export class GhostTextSession {
 
   clear(): void {
     this.validForSnapshot = null
+    this.validForCaret = null
     this.ghost = null
   }
 
-  private current(snapshot: PieceTableSnapshot): GhostText | null {
-    if (this.validForSnapshot !== snapshot) this.clear()
+  private current(snapshot: PieceTableSnapshot, caret: number | null): GhostText | null {
+    if (this.validForSnapshot !== snapshot || this.validForCaret !== caret) this.clear()
 
     return this.ghost
   }

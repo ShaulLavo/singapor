@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { EditorCommandId } from '../src/editor/commands'
 import type { EditorOptions, HighlightRegistry } from '../src/editor/types'
 import {
   childContainingNode,
@@ -12,9 +13,12 @@ import {
   type EditorDisplayProjection,
 } from '../src/editor/displayProjectionRegistry'
 import {
+  defaultEditorCommandPacks,
   defaultEditorKeyBindings,
   defaultEditorKeymapLayers,
+  editorCommandPackForCommand,
   editorKeyBindings,
+  editorKeymapLayersForBindings,
   editorKeymapLayersForCommandPacks,
   filterEditorKeymapLayersByCommandPacks,
   readonlySafeEditorCommandPacks,
@@ -353,6 +357,41 @@ describe('default editor keybindings', () => {
     ['linux', 'cursorColumnSelectPageDown', { alt: true, key: 'PageDown', mod: true, shift: true }],
   ] as const)('leaves %s a chord for %s', (platform, command, hotkey) => {
     expect(defaultEditorKeyBindings(platform)).toContainEqual({ command, hotkey })
+  })
+
+  // Both helpers answer through the classification, so a command belonging to no pack is dropped
+  // from a host's own layer however many packs the host turned on — and dropped silently, because
+  // a filter that kept nothing looks from outside like one that had nothing to keep.
+  it('keeps a host layer bound to the commands the editor ships no key of its own for', () => {
+    const commands: readonly EditorCommandId[] = [
+      'editor.action.jumpToBracket',
+      'editor.action.toggleWordWrap',
+      'editor.action.trimTrailingWhitespace',
+      'editor.action.sortLinesAscending',
+      'editor.action.sortLinesDescending',
+      'editor.action.joinLines',
+      'editor.action.duplicateSelection',
+      'editor.action.transformToUppercase',
+      'editor.action.transformToLowercase',
+      'editor.action.transformToTitlecase',
+    ]
+    const bindings = commands.map((command, index) => ({
+      hotkey: { alt: true, key: `F${index + 1}` },
+      command,
+    }))
+
+    for (const command of commands) {
+      expect(editorCommandPackForCommand(command)).not.toBeNull()
+    }
+    expect(
+      filterEditorKeymapLayersByCommandPacks(
+        [{ id: 'host', source: 'app', bindings }],
+        defaultEditorCommandPacks,
+      ).flatMap((layer) => layer.bindings),
+    ).toEqual(bindings)
+    expect(editorKeymapLayersForBindings(bindings).flatMap((layer) => layer.bindings)).toEqual(
+      expect.arrayContaining(bindings),
+    )
   })
 
   it('keeps column selection in a keymap a host has narrowed to packs', () => {

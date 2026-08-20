@@ -328,6 +328,26 @@ describe('the cursor a multi-cursor gesture continues from', () => {
     expect(cursorRanges(session)).toEqual([{ anchor: 4, head: 9 }])
   })
 
+  // Escape is bound to closing find, which is the only key that reaches this at all. An editor
+  // running without a find plugin has nothing registered under that command, and the reader who
+  // built the run from the keyboard still has to be able to put it away with the same key.
+  it('collapses the run on Escape with no find installed', () => {
+    const session = createDocumentSession('foo\nfoo\nfoo')
+    session.setSelection(1)
+    editor.attachSession(session)
+
+    pressEditorKey('d', primaryModifier())
+    pressEditorKey('d', primaryModifier())
+    expect(cursorRanges(session)).toEqual([
+      { anchor: 0, head: 3 },
+      { anchor: 4, head: 7 },
+    ])
+
+    pressEditorKey('Escape')
+
+    expect(cursorRanges(session)).toEqual([{ anchor: 4, head: 7 }])
+  })
+
   it('is scrolled back into view when the run collapses onto it', () => {
     const rows = Array.from({ length: 60 }, (_, row) => `row ${row}`)
     const session = createDocumentSession(rows.join('\n'))

@@ -179,8 +179,9 @@ export type WrapMap = {
 }
 
 /**
- * Which display edge of an injected run the caret may rest on. It settles only the direction-free
- * case: a caret that is already travelling follows its direction past the whole run either way.
+ * Which display edge of an injected run the caret may rest on. Only a position with no direction of
+ * its own needs telling: every other one at that point is the edge of a range, and a range takes the
+ * side that leaves the run outside it.
  */
 export type InlineCursorStops = 'both' | 'left' | 'right' | 'none'
 
@@ -397,7 +398,7 @@ export function sourceColumnToInlineColumn(
         ? segment.displayStartColumn + (target - segment.sourceStartColumn)
         : inlineReplacementDisplayColumn(segment, target, bias)
 
-    return injectedRunCaretColumn(row, displayColumn, bias)
+    return injectedRunSideColumn(row, displayColumn, bias)
   }
 
   return row.text.length
@@ -407,8 +408,8 @@ export function sourceColumnToInlineColumn(
  * Hidden replacements are zero-width in display space, so several source columns share one display
  * column and the inverse is genuinely ambiguous there. The rule is: `before` and `nearest` resolve to
  * the earliest source column for that display column, `after` to the latest. Horizontal motion
- * therefore passes the bias matching its direction. `display -> source -> display` is always the
- * identity; `source -> display -> source` is not, at a hidden boundary.
+ * therefore passes the bias matching its direction. `display -> source -> display` is the identity
+ * across a hidden run; `source -> display -> source` is not, at a hidden boundary.
  */
 export function inlineColumnToSourceColumn(
   row: InlineRow,
@@ -581,6 +582,7 @@ const normalizeInlineReplacements = (
     .toSorted((left, right) => {
       return (
         left.startColumn - right.startColumn ||
+        insertionOrder(left) - insertionOrder(right) ||
         right.endColumn - left.endColumn ||
         left.id.localeCompare(right.id)
       )
@@ -597,12 +599,26 @@ const normalizeInlineReplacements = (
 }
 
 /**
- * An injected run owns no source column, so the caret's source position cannot say which side of one
- * it belongs on. Direction settles it while the caret is travelling; standing still, the runs' own
- * cursor stops do, and a run that stops on neither side hands the choice to whatever follows it —
+ * Phantom text hung off a point stands in front of whatever begins at that point, and — covering no
+ * source column — cannot overlap it. Ordering it ahead of a span starting on the same column is what
+ * keeps a hint or a suggestion offered at the opening edge of a replaced span, which is where a
+ * construct's own markers sit, from being read as a range inside that span and dropped.
+ */
+const insertionOrder = (replacement: InlineReplacement): number =>
+  replacement.insertion === true ? 0 : 1
+
+/**
+ * Which side of the injected runs standing at a display column a source column belongs on.
+ *
+ * A run owns no source column, so it falls outside every source range: one that opens at the point
+ * opens past the runs, one that closes there stops in front of them. That is what keeps a decoration,
+ * a find match or a syntax token from spreading over text the document does not hold.
+ *
+ * Only a direction-free position — a caret standing still — has a real choice, and the runs' own
+ * cursor stops make it. A run that stops on neither side hands the choice to whatever follows it,
  * which is how padding between two hint parts never traps the caret inside the hint.
  */
-const injectedRunCaretColumn = (row: InlineRow, column: number, bias: TransformBias): number => {
+const injectedRunSideColumn = (row: InlineRow, column: number, bias: TransformBias): number => {
   let past = column
   let stop: number | null = null
 
@@ -614,8 +630,8 @@ const injectedRunCaretColumn = (row: InlineRow, column: number, bias: TransformB
     if (stop === null && injectedRunStopsRight(segment)) stop = past
   }
 
-  if (bias === 'before') return column
-  if (bias === 'after') return past
+  if (bias === 'before') return past
+  if (bias === 'after') return column
   return stop ?? column
 }
 

@@ -847,7 +847,8 @@ function blockCommentLinesAction(
   tokens: EditorBlockCommentTokens,
 ): EditorEditActionResult {
   const map = createLineMap(text)
-  const ranges = rowsForSelections(map, selections).map((row) => lineContentRange(map, row))
+  const rows = commentedRows(map, rowsForSelections(map, selections))
+  const ranges = rows.map((row) => lineContentRange(map, row))
   const uncommentParts = ranges.map((range) => blockUncommentParts(text, range, tokens))
   const edits = shouldUncommentBlockRanges(uncommentParts)
     ? uncommentParts

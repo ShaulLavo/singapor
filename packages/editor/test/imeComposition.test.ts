@@ -201,6 +201,47 @@ describe('IME composition', () => {
     expect(preedit()).toBeNull()
   })
 
+  // Backspace, the arrows and Enter all mean something to the input method while a candidate is
+  // being assembled, and the editor binds every one of them. A chord that fires anyway edits text
+  // the reader is not looking at, and then the candidate commits into whatever it left behind.
+  it('leaves the keys a composition owns to the input method', () => {
+    editor.setSelection(6, 6, { reveal: false })
+    editorInput().dispatchEvent(compositionEvent('compositionstart'))
+    editorInput().dispatchEvent(compositionEvent('compositionupdate', 'にほん'))
+
+    const backspace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace',
+    })
+    editorInput().dispatchEvent(backspace)
+
+    expect(editor.materializeFullText()).toBe(TEXT)
+    expect(backspace.defaultPrevented).toBe(false)
+
+    editorInput().dispatchEvent(compositionEvent('compositionend', 'にほん'))
+
+    expect(editor.materializeFullText().startsWith('const にほんline0')).toBe(true)
+  })
+
+  // The element is where the candidate lives, so anything written into it mid-composition is
+  // written over the reader's half-finished word — or moves the caret the IME is about to commit at.
+  it('leaves the candidate in the input when the selection moves under it', () => {
+    editor.setSelection(6, 6, { reveal: false })
+    editorInput().dispatchEvent(compositionEvent('compositionstart'))
+    editorInput().dispatchEvent(compositionEvent('compositionupdate', 'にほん'))
+
+    const input = editorInput()
+    const composed = `${TEXT.slice(0, 6)}にほん${TEXT.slice(6)}`
+    input.value = composed
+    input.setSelectionRange(9, 9)
+
+    editor.setSelection(0, 0, { reveal: false })
+
+    expect(input.value).toBe(composed)
+    expect(input.selectionStart).toBe(9)
+  })
+
   it('takes the preedit down when the reader deletes their way out of a composition', () => {
     editor.setSelection(6, 6, { reveal: false })
 

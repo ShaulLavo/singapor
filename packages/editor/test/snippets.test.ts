@@ -159,6 +159,57 @@ describe('snippet insertion', () => {
     expect(selectedText()).toBe('delay')
   })
 
+  // Every stop after the one being filled in is still exactly where the snippet put it, so a
+  // placeholder that was replaced whole — taking a nested one down with it — is something to step
+  // over rather than the end of the session.
+  it('reaches the stops after one whose placeholder was replaced whole', () => {
+    insertSnippet('setTimeout(${1:() => {\n\t${2:body}\n}}, ${3:delay})')
+
+    type('x')
+
+    expect(editor.materializeFullText()).toBe('setTimeout(x, delay)')
+
+    pressTab()
+
+    expect(selectedText()).toBe('delay')
+  })
+
+  // A delete and a line break are as much part of filling in a placeholder as typing is, and a
+  // session that quietly ends on one leaves the reader pressing Tab for a stop and getting an
+  // indent — with nothing on screen to say the snippet is over.
+  it('keeps cycling through a backspace inside a stop', () => {
+    insertSnippet('log(${1:message}, ${2:level})')
+
+    type('a', 'b')
+    editor.dispatchCommand('deleteBackward')
+    pressTab()
+
+    expect(editor.materializeFullText()).toBe('log(a, level)')
+    expect(selectedText()).toBe('level')
+  })
+
+  it('keeps cycling through a line break inside a stop', () => {
+    insertSnippet('log(${1:message}, ${2:level})')
+
+    type('a', '\n')
+    pressTab()
+
+    expect(selectedText()).toBe('level')
+  })
+
+  // The copies are rewritten from whatever the stop is left holding, so a mirrored delete that took
+  // a different amount than the plain one would leave the two disagreeing after a single press.
+  it('takes as much out of a copy as a backspace takes out of the stop', () => {
+    insertSnippet('let ${1:name} = $1')
+
+    // The accent is its own code point here: a backspace over one takes only the accent, where
+    // one over the single character that also spells this word takes the whole letter.
+    type('cafe\u0301')
+    editor.dispatchCommand('deleteBackward')
+
+    expect(editor.materializeFullText()).toBe('let cafe = cafe')
+  })
+
   it('writes a transformed mirror into the document', () => {
     insertSnippet('class ${1:my thing} {}\n// ${1/(.*)/${1:/pascalcase}/}')
 

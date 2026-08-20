@@ -41,13 +41,13 @@ export class EditorCommandRouter {
 
   dispatch(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
     const registeredResult = this.runRegisteredCommand(command, context)
-    if (registeredResult !== null) {
-      if (command === 'closeFind' && !registeredResult) {
-        return this.handlers.clearSecondarySelections(context)
-      }
-
-      return registeredResult
-    }
+    if (registeredResult === true) return true
+    // Escape spells one intention — put back whatever the last thing was — and arrives here as the
+    // find command because that is what claims the key. Collapsing a run of cursors is the other
+    // thing it has to be able to undo, and asking whether anything answered for find first is the
+    // whole of the order between them: a host that ships no find at all still has the key.
+    if (command === 'closeFind') return this.handlers.clearSecondarySelections(context)
+    if (registeredResult !== null) return registeredResult
 
     if (command === 'undo') return this.handlers.history('undo', context)
     if (command === 'redo') return this.handlers.history('redo', context)

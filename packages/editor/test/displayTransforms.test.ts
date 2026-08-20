@@ -335,11 +335,31 @@ describe('injected inline runs', () => {
     ])
   })
 
-  it('lets a travelling caret clear the run in the direction it is going', () => {
+  it('leaves the run outside a source range that meets it at its point', () => {
     const row = createInlineRow('foo(1)', [injected('hint', 4, 'arg:')])
+    const painted = (start: number, end: number): readonly number[] => [
+      sourceColumnToInlineColumn(row, start, 'before'),
+      sourceColumnToInlineColumn(row, end, 'after'),
+    ]
 
-    expect(sourceColumnToInlineColumn(row, 4, 'before')).toBe(4)
-    expect(sourceColumnToInlineColumn(row, 4, 'after')).toBe(8)
+    expect(painted(0, 4)).toEqual([0, 4])
+    expect(painted(4, 6)).toEqual([8, 10])
+  })
+
+  it('keeps a run offered at the opening edge of a hidden span', () => {
+    const row = createInlineRow('**bold** tail', [
+      hidden('open', 0, 2),
+      hidden('close', 6, 8),
+      injected('ghost', 6, 'SUGGEST'),
+    ])
+
+    expect(row.text).toBe('boldSUGGEST tail')
+  })
+
+  it('drops a run offered inside a hidden span', () => {
+    const row = createInlineRow('**bold** tail', [hidden('open', 0, 2), injected('ghost', 1, 'X')])
+
+    expect(row.text).toBe('bold** tail')
   })
 
   it('parks a standing caret on the side the run stops', () => {

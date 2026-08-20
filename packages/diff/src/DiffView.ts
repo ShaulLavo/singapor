@@ -98,7 +98,7 @@ export class DiffView {
   private panes: MountedPane[] = []
   private paneGroup: ResizablePaneGroup | null = null
   private hunkRows: ReadonlyMap<number, number> = new Map()
-  private expandedHunksByPath = new Map<string, Set<number>>()
+  private expandedRegionsByPath = new Map<string, Set<string>>()
   private disposeScrollSync: (() => void) | null = null
   private syncingScroll = false
   private paneSelection: PaneSelection | null = null
@@ -224,7 +224,7 @@ export class DiffView {
 
   private renderSplitFile(file: DiffFile): void {
     const projection = createSplitProjection(file, {
-      expandedHunks: this.expandedHunksForFile(file),
+      expandedRegions: this.expandedRegionsForFile(file),
     })
     this.hunkRows = projection.hunkRows
     const split = this.root.ownerDocument.createElement('div')
@@ -277,7 +277,7 @@ export class DiffView {
 
   private renderStackedFile(file: DiffFile): void {
     const projection = createStackedProjection(file, {
-      expandedHunks: this.expandedHunksForFile(file),
+      expandedRegions: this.expandedRegionsForFile(file),
     })
     this.hunkRows = projection.hunkRows
     const pane = this.createPane(this.content, 'stacked', projection.rows, file)
@@ -502,12 +502,12 @@ export class DiffView {
   private toggleRowHunk(row: DiffRenderRow | undefined): void {
     if (row?.type !== 'hunk') return
     if (!row.expandable) return
-    if (row.hunkIndex === undefined) return
+    if (row.expandKey === undefined) return
 
     const file = this.selectedFile()
     if (!file) return
 
-    toggleSetValue(this.mutableExpandedHunksForFile(file), row.hunkIndex)
+    toggleSetValue(this.mutableExpandedRegionsForFile(file), row.expandKey)
     this.updateSelectedFilePanes(file)
   }
 
@@ -529,7 +529,7 @@ export class DiffView {
     }
 
     const projection = createSplitProjection(file, {
-      expandedHunks: this.expandedHunksForFile(file),
+      expandedRegions: this.expandedRegionsForFile(file),
     })
     this.hunkRows = projection.hunkRows
     this.updatePaneRows(left, projection.leftRows, file)
@@ -544,7 +544,7 @@ export class DiffView {
     }
 
     const projection = createStackedProjection(file, {
-      expandedHunks: this.expandedHunksForFile(file),
+      expandedRegions: this.expandedRegionsForFile(file),
     })
     this.hunkRows = projection.hunkRows
     this.updatePaneRows(pane, projection.rows, file)
@@ -724,16 +724,16 @@ export class DiffView {
     this.panes = []
   }
 
-  private expandedHunksForFile(file: DiffFile): ReadonlySet<number> {
-    return this.expandedHunksByPath.get(file.path) ?? new Set()
+  private expandedRegionsForFile(file: DiffFile): ReadonlySet<string> {
+    return this.expandedRegionsByPath.get(file.path) ?? new Set()
   }
 
-  private mutableExpandedHunksForFile(file: DiffFile): Set<number> {
-    const existing = this.expandedHunksByPath.get(file.path)
+  private mutableExpandedRegionsForFile(file: DiffFile): Set<string> {
+    const existing = this.expandedRegionsByPath.get(file.path)
     if (existing) return existing
 
-    const next = new Set<number>()
-    this.expandedHunksByPath.set(file.path, next)
+    const next = new Set<string>()
+    this.expandedRegionsByPath.set(file.path, next)
     return next
   }
 
@@ -1198,7 +1198,7 @@ function lineStartsForLines(lines: readonly string[]): readonly number[] {
   return starts
 }
 
-function toggleSetValue(set: Set<number>, value: number): void {
+function toggleSetValue<T>(set: Set<T>, value: T): void {
   if (set.delete(value)) return
 
   set.add(value)

@@ -199,12 +199,88 @@ describe('diff projections', () => {
       newFile: { path: 'note.txt', text: 'one\ntwo\nTHREE\nfour\nfive\n' },
       contextLines: 0,
     })
+    const key = createStackedProjection(file).rows[0]?.expandKey
     const projection = createStackedProjection(file, {
-      expandedHunks: new Set([0]),
+      expandedRegions: new Set([key ?? '']),
     })
 
     expect(projection.rows[0]?.text).toBe('Hide 2 unmodified lines')
     expect(projection.rows.slice(1, 3).map((row) => row.text)).toEqual(['one', 'two'])
+  })
+
+  it('keeps the unmodified tail after the last hunk reachable', () => {
+    const file = createTextDiff({
+      oldFile: { path: 'note.txt', text: 'one\ntwo\nthree\nfour\nfive\n' },
+      newFile: { path: 'note.txt', text: 'ONE\ntwo\nthree\nfour\nfive\n' },
+      contextLines: 0,
+    })
+    const collapsed = createStackedProjection(file)
+    const expanded = createStackedProjection(file, {
+      expandedRegions: new Set([collapsed.rows.at(-1)?.expandKey ?? '']),
+    })
+
+    expect(collapsed.rows.at(-1)).toMatchObject({
+      expandable: true,
+      skippedLines: 4,
+      text: 'Show 4 unmodified lines',
+      type: 'hunk',
+    })
+    expect(expanded.rows.at(-5)?.text).toBe('Hide 4 unmodified lines')
+    expect(expanded.rows.slice(-4).map((row) => row.text)).toEqual(['two', 'three', 'four', 'five'])
+    expect(expanded.rows.at(-1)?.newLineNumber).toBe(5)
+  })
+
+  it('pairs the unmodified tail across split panes', () => {
+    const file = createTextDiff({
+      oldFile: { path: 'note.txt', text: 'one\ntwo\nthree\n' },
+      newFile: { path: 'note.txt', text: 'ONE\ntwo\nthree\n' },
+      contextLines: 0,
+    })
+    const tail = createSplitProjection(file).leftRows.at(-1)
+    const projection = createSplitProjection(file, {
+      expandedRegions: new Set([tail?.expandKey ?? '']),
+    })
+
+    expect(projection.leftRows).toHaveLength(projection.rightRows.length)
+    expect(projection.leftRows.slice(-2).map((row) => row.oldLineNumber)).toEqual([2, 3])
+    expect(projection.rightRows.slice(-2).map((row) => row.newLineNumber)).toEqual([2, 3])
+  })
+
+  it('keeps expansion state on its own region when the file is re-diffed', () => {
+    const oldText = numberedText(12)
+    const before = diffAtLines(oldText, [10])
+    const beforeRows = createStackedProjection(before).rows
+    const tailKey = beforeRows.at(-1)?.expandKey
+    // Same path, re-diffed with an extra change near the top. Ordinals shift, so
+    // the tail's state must follow the tail and not the gap that inherits its index.
+    const after = diffAtLines(oldText, [2, 10])
+    const separators = createStackedProjection(after, {
+      expandedRegions: new Set([tailKey ?? '']),
+    }).rows.filter((row) => row.type === 'hunk')
+
+    expect(before.hunks).toHaveLength(1)
+    expect(after.hunks).toHaveLength(2)
+    expect(beforeRows.at(-1)).toMatchObject({ skippedLines: 2, type: 'hunk' })
+    expect(separators.map((row) => row.skippedLines)).toEqual([1, 7, 2])
+    expect(separators.map((row) => row.expanded)).toEqual([false, false, true])
+  })
+
+  it('omits the unmodified tail when the file content is unavailable', () => {
+    const [file] = parseGitPatch(
+      [
+        'diff --git a/x.ts b/x.ts',
+        '--- a/x.ts',
+        '+++ b/x.ts',
+        '@@ -10,2 +10,2 @@',
+        ' ctx',
+        '-old',
+        '+new',
+        '',
+      ].join('\n'),
+    )
+
+    expect(file).toBeDefined()
+    expect(createStackedProjection(file!).rows.at(-1)?.type).not.toBe('hunk')
   })
 
   it('does not render raw hunk headers if they appear in parsed line content', () => {
@@ -246,12 +322,18 @@ describe('diff projections', () => {
 
     expect(file.oldLines).toHaveLength(10_001)
     expect(file.hunks).toHaveLength(1)
-    expect(projection.leftRows).toHaveLength(2)
-    expect(projection.rightRows).toHaveLength(2)
+    expect(projection.leftRows).toHaveLength(3)
+    expect(projection.rightRows).toHaveLength(3)
     expect(projection.leftRows[0]).toMatchObject({
       expandable: true,
       skippedLines: targetLine - 1,
       text: `Show ${targetLine - 1} unmodified lines`,
+      type: 'hunk',
+    })
+    expect(projection.leftRows[2]).toMatchObject({
+      expandable: true,
+      skippedLines: 10_000 - targetLine,
+      text: `Show ${10_000 - targetLine} unmodified lines`,
       type: 'hunk',
     })
     expect(projection.leftRows[1]).toMatchObject({
@@ -266,6 +348,22 @@ describe('diff projections', () => {
     })
   })
 })
+
+function numberedText(lines: number): string {
+  return `${Array.from({ length: lines }, (_value, index) => `line ${index + 1}`).join('\n')}\n`
+}
+
+function diffAtLines(oldText: string, changed: readonly number[]) {
+  const newText = changed.reduce(
+    (text, line) => text.replace(`line ${line}\n`, `LINE ${line}\n`),
+    oldText,
+  )
+  return createTextDiff({
+    contextLines: 0,
+    oldFile: { path: 'note.txt', text: oldText },
+    newFile: { path: 'note.txt', text: newText },
+  })
+}
 
 function createLargeSingleLineDiff(targetLine: number) {
   return createTextDiff({

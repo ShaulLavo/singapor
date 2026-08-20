@@ -98,6 +98,8 @@ export type DiffRenderRow = {
   readonly hunkIndex?: number
   readonly expanded?: boolean
   readonly expandable?: boolean
+  /** Stable identity of the collapsed region a `hunk` row stands for. */
+  readonly expandKey?: string
   readonly skippedLines?: number
   readonly inlineRanges?: readonly DiffInlineRange[]
 }

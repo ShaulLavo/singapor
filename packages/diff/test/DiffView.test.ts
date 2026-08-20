@@ -133,6 +133,23 @@ describe('DiffView split panes', () => {
     expect(view.style.cursor).toBe('')
   })
 
+  it('toggles the unmodified tail after the last hunk', () => {
+    const { container } = renderDiffView({
+      file: suffixSkippedDiff(),
+      mode: 'stacked',
+    })
+    const pane = queryPane(container, 'stacked')
+    const view = queryVirtualizedView(pane)
+
+    expect(pane.textContent).toContain('Show 2 unmodified lines')
+
+    clickVirtualizedRow(view, 2)
+
+    expect(pane.textContent).toContain('Hide 2 unmodified lines')
+    expect(pane.textContent).toContain('beta')
+    expect(pane.textContent).toContain('gamma')
+  })
+
   it('applies configured editor theme variables to panes', () => {
     const { container } = renderDiffView({
       theme: {
@@ -363,6 +380,14 @@ function prefixSkippedDiff() {
   })
 }
 
+function suffixSkippedDiff() {
+  return createTextDiff({
+    contextLines: 0,
+    oldFile: { path: 'note.txt', text: 'alpha\nbeta\ngamma\n' },
+    newFile: { path: 'note.txt', text: 'ALPHA\nbeta\ngamma\n' },
+  })
+}
+
 function typescriptDiff() {
   return createTextDiff({
     contextLines: 0,
@@ -387,6 +412,13 @@ function queryVirtualizedView(container: HTMLElement): HTMLElement {
   const view = container.querySelector<HTMLElement>('.editor-virtualized')
   if (!view) throw new Error('Expected virtualized diff view')
   return view
+}
+
+function clickVirtualizedRow(view: HTMLElement, row: number): void {
+  const element = view.querySelector<HTMLElement>(`[data-editor-virtual-row="${row}"]`)
+  if (!element) throw new Error(`Expected virtual row ${row}`)
+  element.dispatchEvent(pointerEvent('mousedown', 0))
+  element.dispatchEvent(pointerEvent('click', 0))
 }
 
 function clickVirtualizedGutter(view: HTMLElement, y: number): void {

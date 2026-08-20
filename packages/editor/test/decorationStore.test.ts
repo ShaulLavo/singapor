@@ -370,6 +370,23 @@ describe('decoration store ownership', () => {
 
     expect(() => store.add({ owner: 'find', start: 0, end: 3 })).toThrow(/surface/)
   })
+
+  // What the editor reaches for when the document these were measured in is replaced: every surface
+  // goes, and the owners start again from nothing rather than from a set that says it is unchanged.
+  it('empties every surface at once, and asks for a repaint of what is registered next', () => {
+    const store = new EditorDecorationStore()
+    const specs = [{ owner: 'find', start: 0, end: 3, text: {} }]
+    store.replaceOwner('find', specs)
+    store.add({ owner: 'lsp', start: 1, end: 2, row: { className: 'error' } })
+    store.add({ owner: 'lsp', start: 1, end: 2, minimap: { color: 'red', position: 'inline' } })
+
+    store.clear()
+
+    expect(offsetsOf(store)).toEqual([])
+    expect(store.decorationsInRange('row', 0, 100)).toEqual([])
+    expect(store.decorationsInRange('minimap', 0, 100)).toEqual([])
+    expect(store.replaceOwner('find', [...specs])).toBe(true)
+  })
 })
 
 function trackWordThrough(

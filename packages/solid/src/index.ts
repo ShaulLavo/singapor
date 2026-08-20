@@ -23,6 +23,7 @@ import {
   type EditorSelectionRevealTarget,
   type EditorSetTextOptions,
   type EditorState,
+  type EditorSuspiciousCharactersOptions,
 } from '@singapor/core/editor'
 import type { DocumentSessionChange, TextSnapshot } from '@singapor/core/document'
 import type { EditorSyntaxLanguageId } from '@singapor/core/syntax'
@@ -52,22 +53,32 @@ export type SolidEditorOptions = Omit<
   | 'editability'
   | 'hiddenCharacters'
   | 'keymap'
+  | 'lineHeight'
   | 'onChange'
   | 'rangeDecorations'
   | 'rowGap'
   | 'scrollMode'
+  | 'suspiciousCharacters'
+  | 'tabMovesFocus'
   | 'theme'
+  | 'wordWrap'
 > & {
   readonly document?: SolidEditorReactiveValue<SolidEditorDocument | null | undefined>
   readonly editability?: SolidEditorReactiveValue<EditorEditability | undefined>
   readonly theme?: SolidEditorReactiveValue<EditorTheme | null | undefined>
   readonly hiddenCharacters?: SolidEditorReactiveValue<HiddenCharactersMode | undefined>
   readonly keymap?: SolidEditorReactiveValue<EditorKeymapOptions | undefined>
+  readonly lineHeight?: SolidEditorReactiveValue<number | undefined>
   readonly rangeDecorations?: SolidEditorReactiveValue<readonly EditorRangeDecoration[] | undefined>
   readonly rowGap?: SolidEditorReactiveValue<number | undefined>
   readonly scrollMode?: SolidEditorReactiveValue<EditorScrollMode | undefined>
   readonly selection?: SolidEditorReactiveValue<SolidEditorSelection | null | undefined>
   readonly scrollPosition?: SolidEditorReactiveValue<EditorScrollPosition | null | undefined>
+  readonly suspiciousCharacters?: SolidEditorReactiveValue<
+    EditorSuspiciousCharactersOptions | undefined
+  >
+  readonly tabMovesFocus?: SolidEditorReactiveValue<boolean | undefined>
+  readonly wordWrap?: SolidEditorReactiveValue<boolean | undefined>
   readonly onChange?: EditorChangeHandler
 }
 
@@ -214,6 +225,7 @@ function createConstructorOptions(
     editability,
     hiddenCharacters,
     keymap,
+    lineHeight,
     onChange,
     plugins,
     rangeDecorations,
@@ -221,7 +233,10 @@ function createConstructorOptions(
     scrollMode,
     scrollPosition: _scrollPosition,
     selection: _selection,
+    suspiciousCharacters,
+    tabMovesFocus,
     theme,
+    wordWrap,
     ...constructorOptions
   } = options
 
@@ -231,10 +246,14 @@ function createConstructorOptions(
       editability: readReactive(editability),
       hiddenCharacters: readReactive(hiddenCharacters),
       keymap: readReactive(keymap),
+      lineHeight: readReactive(lineHeight),
       rangeDecorations: readReactive(rangeDecorations),
       rowGap: readReactive(rowGap),
       scrollMode: readReactive(scrollMode),
+      suspiciousCharacters: readReactive(suspiciousCharacters),
+      tabMovesFocus: readReactive(tabMovesFocus),
       theme: readReactive(theme) ?? undefined,
+      wordWrap: readReactive(wordWrap),
       plugins: [createSolidSyncPlugin(runtime), ...(plugins ?? [])],
       onChange: (state, change) => {
         syncChange(runtime, state, change)

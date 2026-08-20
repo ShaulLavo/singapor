@@ -285,14 +285,73 @@ function firstMatchAtOrAfter(
   for (const range of ranges) {
     if (range.end < offset) continue
 
-    // A range cut at the offset keeps whole lines under it, so the anchors and
-    // the word boundaries still answer for the line the reader sees.
-    const clipped = { start: Math.max(range.start, offset), end: range.end }
-    const found = findMatches(source, query, [clipped], options.captureMatches ?? false, 1)
-    if (found[0]) return found[0]
+    const found = firstMatchInRange(source, query, range, offset, options)
+    if (found) return found
   }
 
   return null
+}
+
+// Walked forward a line at a time from the cursor's line, the mirror of
+// lastMatchInRange. The range is never cut at the offset: a pattern resumed
+// there simply begins a fresh match at the cursor — 'pha' inside 'alpha' for
+// `\w+` — and a range no listing of the document holds is one the reader was
+// never shown and Replace must never rewrite. What the offset decides is which
+// matches are kept, not where the scan starts.
+function firstMatchInRange(
+  source: FindTextSource,
+  query: FindQuery,
+  range: FindRange,
+  offset: number,
+  options: FindMatchFromOptions,
+): FindMatch | null {
+  if (isLineCrossingQuery(query)) return firstMatchInWindow(source, query, range, offset, options)
+
+  const lineStartsView = source.lineStartsView
+  for (
+    let index = lineStartsView.indexForOffset(Math.max(range.start, offset));
+    index < lineStartsView.length;
+    index += 1
+  ) {
+    const lineStart = lineStartsView.at(index)
+    if (lineStart === undefined || lineStart > range.end) return null
+
+    // Lines in front of the cursor are skipped rather than searched: a match
+    // that cannot hold a break cannot reach out of the line it starts on, so
+    // none of them could answer at or after the offset anyway.
+    const line = {
+      start: Math.max(range.start, lineStart),
+      end: Math.min(range.end, lineEndAt(source, index)),
+    }
+    const found =
+      line.end < line.start ? null : firstMatchInWindow(source, query, line, offset, options)
+    if (found) return found
+  }
+
+  return null
+}
+
+// The first match in one window at or after the offset, listed the way the
+// document is listed so the two agree on where a match begins.
+function firstMatchInWindow(
+  source: FindTextSource,
+  query: FindQuery,
+  range: FindRange,
+  offset: number,
+  options: FindMatchFromOptions,
+): FindMatch | null {
+  // Uncapped for the same reason the backward walk is: the cap bounds what gets
+  // painted, and what stands at the cursor is being asked for regardless of
+  // where the paint budget ran out.
+  const found = findMatches(
+    source,
+    query,
+    [range],
+    options.captureMatches ?? false,
+    FIND_REPLACE_ALL_LIMIT,
+  )
+
+  return found.find((match) => match.start >= offset) ?? null
 }
 
 function lastMatchBefore(
@@ -468,7 +527,7 @@ function compileFindQuery(query: FindQuery): CompiledFindQuery | null {
   // Flags describe the haystack, and only a line-crossing search is ever handed
   // one holding a break: a per-line slice bounds `^` and `$` by itself, so `m`
   // there would only claim breaks the slice does not contain.
-  const flags = `g${query.matchCase ? '' : 'i'}${lineCrossing ? 'm' : ''}u`
+  const flags = `g${query.matchCase ? '' : 'i'}${lineCrossing ? 'm' : ''}`
 
   // The fast path may never case-fold the haystack: folding is not
   // length-preserving (U+0130 'İ' lowercases to two code units), so an index
@@ -478,13 +537,39 @@ function compileFindQuery(query: FindQuery): CompiledFindQuery | null {
   const canUseSimpleSearch =
     !query.isRegex && (query.matchCase || !queryIsCaseSensitiveByContent(query.searchString))
 
+  const regex = compileRegex(source, flags)
+  if (!regex) return null
+
+  return {
+    regex,
+    simpleSearch: canUseSimpleSearch ? query.searchString : null,
+    wholeWord: query.wholeWord,
+    lineCrossing,
+  }
+}
+
+/**
+ * The pattern under the unicode flag where it takes it, and without it where it
+ * does not.
+ *
+ * Wanted, because `u` is what makes a surrogate pair one character to a dot and
+ * `\p{...}` mean anything at all. Not required, because its grammar rejects
+ * spellings the flagless one accepts — an identity escape of a character that
+ * needs none (`\-`, `\ `), a brace or bracket standing for itself, a legacy
+ * back-reference — and every one of those is what escaping a search by hand
+ * produces. A rejected pattern is not reported anywhere the user can see it: it
+ * reaches them as "No results", indistinguishable from text that is not there.
+ */
+function compileRegex(source: string, flags: string): RegExp | null {
   try {
-    return {
-      regex: new RegExp(source, flags),
-      simpleSearch: canUseSimpleSearch ? query.searchString : null,
-      wholeWord: query.wholeWord,
-      lineCrossing,
-    }
+    return new RegExp(source, `${flags}u`)
+  } catch {
+    // Ignored: whether the pattern is invalid outright or only invalid under the
+    // stricter grammar is what the second construction answers.
+  }
+
+  try {
+    return new RegExp(source, flags)
   } catch {
     return null
   }

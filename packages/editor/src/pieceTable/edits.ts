@@ -33,13 +33,12 @@ type BatchBoundaries = {
   readonly ends: ReadonlyMap<number, number>
 }
 
-// Counted rather than a set membership test, because an edit is not allowed to
-// cover itself: a collapsed edit both starts and ends at its own offset.
-const coveredByAnother = (
-  boundaries: ReadonlyMap<number, number>,
-  offset: number,
-  self: boolean,
-): boolean => (boundaries.get(offset) ?? 0) - (self ? 1 : 0) > 0
+// Counted rather than a set membership test because several siblings may share
+// a boundary, and only over the range edits: a collapsed edit consumes nothing
+// at the offset it sits on, and snapEditToCodePoints moves it off that offset
+// anyway, so crediting it with a surrogate half leaves the half behind.
+const coveredByAnother = (boundaries: ReadonlyMap<number, number>, offset: number): boolean =>
+  (boundaries.get(offset) ?? 0) > 0
 
 // An edit only corrupts the buffer when it leaves half a surrogate pair behind,
 // and it only does that when the replacement text does not put the missing half
@@ -57,7 +56,7 @@ const orphansSurrogateAtStart = (
   if (!splitsSurrogatePair(snapshot, edit.from)) return false
   // A sibling edit ending here consumes the leading half, so the pair leaves the
   // document whole rather than in halves.
-  if (coveredByAnother(boundaries.ends, edit.from, edit.to === edit.from)) return false
+  if (coveredByAnother(boundaries.ends, edit.from)) return false
   return !isLowSurrogate(edit.text.charCodeAt(0))
 }
 
@@ -67,7 +66,7 @@ const orphansSurrogateAtEnd = (
   boundaries: BatchBoundaries,
 ): boolean => {
   if (!splitsSurrogatePair(snapshot, edit.to)) return false
-  if (coveredByAnother(boundaries.starts, edit.to, edit.from === edit.to)) return false
+  if (coveredByAnother(boundaries.starts, edit.to)) return false
   return !isHighSurrogate(edit.text.charCodeAt(edit.text.length - 1))
 }
 
@@ -148,6 +147,10 @@ const countBoundaries = (
 ): ReadonlyMap<number, number> => {
   const counts = new Map<number, number>()
   for (const edit of edits) {
+    // Collapsed edits are left out entirely — see coveredByAnother — which is
+    // also why no edit can be counted at its own boundary any more.
+    if (edit.from === edit.to) continue
+
     const offset = offsetOf(edit)
     counts.set(offset, (counts.get(offset) ?? 0) + 1)
   }

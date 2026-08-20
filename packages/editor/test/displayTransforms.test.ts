@@ -12,6 +12,7 @@ import {
   type InlineCursorStops,
   type InlineReplacement,
   inlineColumnToSourceColumn,
+  isDocumentTextDisplayRow,
   sourceColumnToInlineColumn,
   sourceRangeToInlineRanges,
   tabPointToBufferPoint,
@@ -398,7 +399,7 @@ describe('inline display rows', () => {
       inlineReplacements: () => [],
     })
 
-    expect(rows.map((row) => row.kind === 'text' && row.inlineSegments)).toEqual([
+    expect(rows.map((row) => isDocumentTextDisplayRow(row) && row.inlineRow)).toEqual([
       undefined,
       undefined,
     ])

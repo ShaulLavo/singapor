@@ -109,6 +109,36 @@ describe('editor search', () => {
     ).toHaveLength(3)
   })
 
+  it('still answers a pattern the unicode grammar refuses to compile', () => {
+    // Unicode mode is stricter than the grammar these patterns were written
+    // against: an identity escape of a character that needs no escaping, a
+    // brace or bracket standing for itself, a legacy back-reference. Every one
+    // of them is what a user gets from escaping a search by hand, and every one
+    // of them compiles without the flag — so refusing them means answering "No
+    // results" for text that is plainly there, with nothing on screen saying the
+    // pattern was rejected rather than unmatched.
+    for (const [pattern, text] of [
+      ['\\-', 'a-b'],
+      ['a\\ b', 'a b'],
+      ['\\<div\\>', '<div>'],
+      ['x{', 'x{'],
+      ['}', '}'],
+      [']', ']'],
+      ['a{,3}', 'a{,3}'],
+    ] as const) {
+      expect(ranges(findMatches(source(text), regexQuery(pattern)))).not.toEqual([])
+    }
+
+    // The flag is still what a pattern that needs it gets: a property escape
+    // means nothing without it, and a surrogate pair is one character under it.
+    expect(ranges(findMatches(source('a1'), regexQuery('\\p{Nd}')))).toEqual([[1, 2]])
+    expect(ranges(findMatches(source('a😀b'), regexQuery('.')))).toEqual([
+      [0, 1],
+      [1, 3],
+      [3, 4],
+    ])
+  })
+
   it('anchors ^ and $ to the line a per-line haystack was cut from', () => {
     const text = 'alpha\nbravo\nalpha'
 

@@ -697,6 +697,7 @@ export type EditorPluginHostEvents = {
   onPluginDeactivated?(name: string, durationMs: number): void
   onPluginDeactivateFailed?(name: string, error: unknown, durationMs: number): void
   onPluginDisposed?(name: string): void
+  onPluginDisposeFailed?(name: string, error: unknown, durationMs: number): void
   onViewContributionProviderAdded?(provider: EditorViewContributionProvider): void
   onViewContributionProviderRemoved?(provider: EditorViewContributionProvider): void
   onDecorationContributionProviderAdded?(provider: EditorDecorationContributionProvider): void
@@ -1239,8 +1240,14 @@ export class EditorPluginHost implements EditorDisposable {
 
     this.deactivatePlugin(plugin)
     this.installedPlugins.delete(plugin)
+    const start = nowMs()
     try {
       plugin.dispose?.(this.context)
+    } catch (error) {
+      // Teardown has to survive a plugin that throws on its way out: an escaping error would abort
+      // the loop in dispose(), stranding every plugin behind it and everything the host's owner
+      // unwinds after it.
+      this.events.onPluginDisposeFailed?.(pluginName(plugin), error, nowMs() - start)
     } finally {
       installedPlugin.installationDisposable?.dispose()
     }
@@ -1598,8 +1605,13 @@ export class EditorPluginHost implements EditorDisposable {
     if (index === -1) return
 
     this.injectedTextRowProviders.splice(index, 1)
-    this.injectedTextRowProviderInvalidationDisposables.get(provider)?.dispose()
-    this.injectedTextRowProviderInvalidationDisposables.delete(provider)
+    // Every lease on the same provider shares one invalidation subscription, so only the last one
+    // out may close it — releasing it earlier would leave the surviving registrations deaf to the
+    // provider's own change events.
+    if (!this.injectedTextRowProviders.includes(provider)) {
+      this.injectedTextRowProviderInvalidationDisposables.get(provider)?.dispose()
+      this.injectedTextRowProviderInvalidationDisposables.delete(provider)
+    }
     this.events.onInjectedTextRowProvidersChanged?.()
   }
 

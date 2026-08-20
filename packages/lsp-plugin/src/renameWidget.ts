@@ -103,6 +103,9 @@ export function createRenameWidgetController(options: RenameWidgetOptions): Rena
       element.remove()
     },
     prompt({ anchor, currentName }) {
+      // A prompt already open is dismissed first, because dismissing it hides the element and takes
+      // the anchor out of the page — done afterwards it would undo the showing it comes with.
+      close(null)
       applyTheme(element, options.themeSource)
       element.style.display = 'block'
       surface.place(anchor)
@@ -112,7 +115,6 @@ export function createRenameWidgetController(options: RenameWidgetOptions): Rena
       input.select()
 
       return new Promise<string | null>((resolve) => {
-        close(null)
         settle = resolve
       })
     },

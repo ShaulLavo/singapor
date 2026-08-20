@@ -284,6 +284,45 @@ describe('built-in paste handlers', () => {
   })
 })
 
+/**
+ * The other gesture that arrives as a transfer, and the one whose caret has to be taken back down
+ * by hand: the element a drop lands on is the one element a browser never fires dragleave at.
+ */
+describe('drop', () => {
+  it('takes its aiming caret back down when the transfer carries nothing to insert', () => {
+    const opened = open('alpha bravo', 'typescript')
+    mockEditorViewport(editorRoot(), 200, 200)
+    opened.select({ anchor: 0, head: 0 })
+
+    editorRoot().dispatchEvent(dragEvent('dragover', transferDouble(new Map(), []), 56))
+
+    expect(caretTransform()).toBe('translate(56px, 0px)')
+
+    // An image dragged in from the desktop, which nothing here has registered to read.
+    editorRoot().dispatchEvent(
+      dragEvent('drop', transferDouble(new Map(), [imageFile('shot.png')]), 56),
+    )
+
+    expect(opened.text()).toBe('alpha bravo')
+    // Back on the selection, which is the only cursor the document actually has.
+    expect(caretTransform()).toBe('translate(0px, 0px)')
+  })
+
+  it('leaves the caret on the text a drop it accepted inserted', () => {
+    const opened = open('alpha bravo', 'typescript')
+    mockEditorViewport(editorRoot(), 200, 200)
+    opened.select({ anchor: 0, head: 0 })
+
+    editorRoot().dispatchEvent(dragEvent('dragover', transferDouble(new Map(), []), 56))
+    editorRoot().dispatchEvent(
+      dragEvent('drop', transferDouble(new Map([['text/plain', 'X']]), []), 56),
+    )
+
+    expect(opened.text()).toBe('alpha bXravo')
+    expect(caretTransform()).toBe('translate(64px, 0px)')
+  })
+})
+
 function constantHandler(text: string): EditorPasteHandler {
   return {
     handlePaste: (context) => context.targets.map(() => text),
@@ -344,6 +383,46 @@ function dispatch(type: string, clipboardData: DataTransfer): void {
   editorInput().dispatchEvent(event)
 }
 
+function dragEvent(type: string, dataTransfer: DataTransfer, clientX: number): DragEvent {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX,
+    clientY: 10,
+  }) as DragEvent
+  Object.defineProperty(event, 'dataTransfer', { configurable: true, value: dataTransfer })
+  return event
+}
+
 function editorInput(): HTMLTextAreaElement {
   return document.querySelector('.editor-virtualized-input') as HTMLTextAreaElement
+}
+
+function editorRoot(): HTMLElement {
+  return document.querySelector('.editor-virtualized') as HTMLElement
+}
+
+/** Where the editor is drawing the caret, which is how a drop target shows itself. */
+function caretTransform(): string {
+  return (document.querySelector('.editor-virtualized-caret') as HTMLElement).style.transform
+}
+
+/** happy-dom lays nothing out, so the box a pointer is hit-tested against arrives through here. */
+function mockEditorViewport(element: HTMLElement, width: number, height: number): void {
+  Object.defineProperty(element, 'clientHeight', { configurable: true, value: height })
+  Object.defineProperty(element, 'scrollHeight', { configurable: true, value: height })
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      bottom: height,
+      height,
+      left: 0,
+      right: width,
+      top: 0,
+      width,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }),
+  })
 }

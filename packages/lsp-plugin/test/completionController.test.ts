@@ -159,6 +159,29 @@ describe('accepting a completion', () => {
 
     expect(editor.applyEdits).not.toHaveBeenCalled()
   })
+
+  // A range spanning lines is a document this client never asked about, and there is no route by
+  // which such an item can be applied: on screen it is a row that eats a keystroke and does nothing.
+  it('never offers a row for an item whose range it cannot apply', async () => {
+    vi.useFakeTimers()
+    const editor = await connectedEditor('const va', 8)
+
+    editor.type('l')
+    await vi.advanceTimersByTimeAsync(90)
+    editor.answerCompletion([
+      {
+        label: 'value',
+        textEdit: {
+          range: { start: { line: 0, character: 6 }, end: { line: 1, character: 2 } },
+          newText: 'value',
+        },
+      },
+      { label: 'valueOf' },
+    ])
+    await flushPromises()
+
+    expect(editor.completionLabels()).toEqual(['valueOf'])
+  })
 })
 
 describe('a completion session while the user keeps typing', () => {
@@ -450,6 +473,32 @@ describe('a list the user has moved the focus in', () => {
       { anchor: 13, head: 13 },
     )
   })
+
+  // Every keystroke re-ranks the list and shows it again, so the row that happened to be on top a
+  // moment ago is not a choice anyone made — keeping the focus on it hands Enter an item the reader
+  // watched the list demote.
+  it('follows the ranking while the focus is still where the list put it', async () => {
+    vi.useFakeTimers()
+    const editor = await connectedEditor('const x = a.t', 13)
+
+    editor.type('o')
+    await vi.advanceTimersByTimeAsync(90)
+    editor.answerCompletion([{ label: 'toJSON' }, { label: 'toString' }])
+    await flushPromises()
+    expect(editor.completionLabels()).toEqual(['toJSON', 'toString'])
+    expect(editor.focusedCompletionLabel()).toBe('toJSON')
+
+    editor.type('s')
+
+    expect(editor.completionLabels()).toEqual(['toString', 'toJSON'])
+    expect(editor.focusedCompletionLabel()).toBe('toString')
+    editor.pressKey('Enter')
+    expect(editor.applyEdits).toHaveBeenCalledWith(
+      [{ from: 12, to: 15, text: 'toString' }],
+      COMPLETION_ACCEPT_TIMING_NAME,
+      { anchor: 20, head: 20 },
+    )
+  })
 })
 
 describe('asking for a list without typing', () => {
@@ -554,12 +603,25 @@ describe('a list whose document is no longer the open one', () => {
     expect(completion.applyCompletion).not.toHaveBeenCalled()
     completion.dispose()
   })
+
+  // Swallowing the key on the way out costs the reader the newline they pressed it for, and nothing
+  // was accepted in its place — the same bargain the commit characters already keep.
+  it('leaves Enter to the editor when there is no item it can apply', async () => {
+    vi.useFakeTimers()
+    const completion = await standaloneCompletion([{ label: 'value' }])
+
+    completion.openAnotherDocument()
+    const event = completion.pressEnter()
+
+    expect(event.defaultPrevented).toBe(false)
+    completion.dispose()
+  })
 })
 
 type StandaloneCompletion = {
   readonly applyCompletion: ReturnType<typeof vi.fn>
   openAnotherDocument(): void
-  pressEnter(): void
+  pressEnter(): KeyboardEvent
   dispose(): void
 }
 
@@ -604,9 +666,9 @@ async function standaloneCompletion(
       active = openDocument('file:///src/other.ts', 'const val')
     },
     pressEnter: () => {
-      element.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-      )
+      const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      element.dispatchEvent(event)
+      return event
     },
     dispose: () => controller.dispose(),
   }

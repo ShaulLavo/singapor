@@ -372,7 +372,7 @@ function recordStyleProperties(element: HTMLElement): readonly string[] {
         return value
       }
 
-      return (...args: readonly unknown[]) => {
+      return (...args: unknown[]) => {
         touched.push(String(args[0]))
         return (value as (...values: readonly unknown[]) => unknown).apply(target, args)
       }

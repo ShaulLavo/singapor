@@ -2,6 +2,7 @@ import type { TextSnapshot } from '../documentTextSnapshot'
 import type { FoldRange } from '../syntax/session'
 import type { TextEdit } from '../tokens'
 import type { VirtualizedFoldMarker } from '../virtualization/virtualizedTextView'
+import { MANUAL_FOLD_TYPE } from './foldOperations'
 
 export type FoldRangeRejection = {
   readonly kind: 'invalid-range' | 'overlap'
@@ -91,9 +92,11 @@ export function projectSyntaxFoldsThroughEdit(
 
   const offsetDelta = edit.text.length - (edit.to - edit.from)
   const lineDelta = editLineDelta(edit, previousText)
-  const projected = folds.map((fold) =>
-    projectFoldRangeThroughEdit(fold, edit, offsetDelta, lineDelta),
-  )
+  const projected: FoldRange[] = []
+  for (const fold of folds) {
+    const next = projectFoldRangeThroughEdit(fold, edit, offsetDelta, lineDelta)
+    if (next) projected.push(next)
+  }
 
   if (foldRangesEqual(folds, projected)) return null
   return projected
@@ -159,19 +162,25 @@ function foldRangeEqual(left: FoldRange, right: FoldRange): boolean {
   )
 }
 
+/**
+ * Null for a region the edit leaves nothing to carry: what remains of a range whose boundary the edit
+ * crossed is a guess, and a parse is what corrects a guess. A hand-drawn region never gets that
+ * correction, so it goes with the text it was drawn over rather than staying on rows it no longer
+ * describes, heading a chevron that hides live lines when the reader clicks it.
+ */
 function projectFoldRangeThroughEdit(
   fold: FoldRange,
   edit: TextEdit,
   offsetDelta: number,
   lineDelta: number,
-): FoldRange {
+): FoldRange | null {
   if (edit.to <= fold.startIndex) return shiftFoldRange(fold, offsetDelta, lineDelta)
   if (edit.from >= fold.endIndex) return fold
   if (edit.from > fold.startIndex && edit.to < fold.endIndex) {
     return resizeFoldRangeEnd(fold, offsetDelta, lineDelta)
   }
 
-  return fold
+  return fold.type === MANUAL_FOLD_TYPE ? null : fold
 }
 
 function shiftFoldRange(fold: FoldRange, offsetDelta: number, lineDelta: number): FoldRange {

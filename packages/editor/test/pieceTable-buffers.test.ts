@@ -13,6 +13,11 @@ import {
   findBufferLineBreakOffset,
   getBufferText,
 } from '../src/pieceTable/buffers.ts'
+import { deleteFromPieceTable, insertIntoPieceTable } from '../src/pieceTable/edits.ts'
+import { offsetToPoint, pointToOffset } from '../src/pieceTable/positions.ts'
+import { materializePieceTableFullText } from '../src/pieceTable/reads.ts'
+import { createPieceTableSnapshot } from '../src/pieceTable/snapshot.ts'
+import type { PieceTableSnapshot } from '../src/pieceTable/pieceTableTypes.ts'
 
 describe('piece table buffers', () => {
   it('counts line breaks inside an optional range', () => {
@@ -63,7 +68,9 @@ describe('piece table buffers', () => {
     const piece = appended.pieces[0]!
 
     expect(appended.buffers.chunks).not.toBe(buffers.chunks)
-    expect(buffers.chunks.has(piece.buffer)).toBe(false)
+    // `get` is the membership question PieceBufferChunks declares: no text for the id means the
+    // pre-append map never carried the appended chunk.
+    expect(buffers.chunks.get(piece.buffer)).toBeUndefined()
     expect(getBufferText(appended.buffers, piece.buffer)).toBe('abc')
   })
 
@@ -216,6 +223,108 @@ describe('piece table buffers', () => {
     expect(reallocations).toBeLessThanOrEqual(Math.ceil(Math.log2(pushes)) + 2)
   })
 })
+
+// A buffer id is a sequence number, and undo rolls that sequence back, so an id
+// minted on a branch the user walked away from is minted again for different
+// text on the branch they kept. These pin that the '\n' index describes the
+// buffer the snapshot in hand actually holds, not the one a discarded branch
+// put under the same id.
+describe('piece table line index across a branched history', () => {
+  it('re-scans a buffer id re-minted on another branch', () => {
+    const base = createPieceTableSnapshot('one\ntwo\nthree')
+    // The first render builds the index Map, which every later snapshot then
+    // inherits by spread — without it the branches would not share one.
+    renderEveryOffset(base)
+
+    const abandoned = insertIntoPieceTable(base, 8, 'x\ny')
+    renderEveryOffset(abandoned)
+
+    // Undo: the earlier snapshot comes back, rolling the buffer sequence back
+    // with it, and the next edit re-mints the id the abandoned branch used.
+    const kept = insertIntoPieceTable(base, 9, 'QQQ')
+
+    expect(materializePieceTableFullText(kept)).toBe('one\ntwo\ntQQQhree')
+    expect(offsetToPoint(kept, 11)).toEqual({ row: 2, column: 3 })
+    renderEveryOffset(kept)
+  })
+
+  // The deterministic case above is one path through a much larger space: any
+  // undo followed by an edit re-mints ids. Seeded rather than random so a
+  // failure names the exact history that produced it.
+  it('keeps every offset mapped after a fuzzed history of edits and undos', () => {
+    const nextRandom = seededRandom(0x5eed)
+    let undone: PieceTableSnapshot[] = []
+    let redoable: PieceTableSnapshot[] = []
+    let snapshot = createPieceTableSnapshot('alpha\nbeta\ngamma\n')
+    renderEveryOffset(snapshot)
+
+    for (let step = 0; step < 200; step += 1) {
+      const roll = nextRandom()
+      const at = Math.floor(nextRandom() * (snapshot.length + 1))
+
+      if (roll < 0.4) {
+        undone.push(snapshot)
+        redoable = []
+        snapshot = insertIntoPieceTable(snapshot, at, INSERTIONS[at % INSERTIONS.length]!)
+      } else if (roll < 0.6 && snapshot.length > 0) {
+        undone.push(snapshot)
+        redoable = []
+        const from = Math.min(at, snapshot.length - 1)
+        const length = Math.min(1 + Math.floor(nextRandom() * 3), snapshot.length - from)
+        snapshot = deleteFromPieceTable(snapshot, from, length)
+      } else if (roll < 0.85) {
+        const previous = undone.pop()
+        if (!previous) continue
+
+        redoable.push(snapshot)
+        snapshot = previous
+      } else {
+        const next = redoable.pop()
+        if (!next) continue
+
+        undone.push(snapshot)
+        snapshot = next
+      }
+
+      renderEveryOffset(snapshot)
+    }
+  })
+})
+
+// Same length, different break positions: a re-minted id whose replacement text
+// is the same size is the case a length comparison cannot notice.
+const INSERTIONS = ['z\nz', 'zzz', '\nzz', 'zz\n', 'zzzz\n']
+
+// xorshift32: enough spread for a mix of insert/delete/undo/redo, and the same
+// mix on every machine that runs the suite.
+const seededRandom = (seed: number): (() => number) => {
+  let state = seed
+  return () => {
+    state ^= state << 13
+    state ^= state >>> 17
+    state ^= state << 5
+    return ((state >>> 0) % 100000) / 100000
+  }
+}
+
+// Every offset mapped both ways, checked against the text itself: a stale index
+// shows up as a row that does not exist, a column that does not add up, or a
+// point that no longer names the offset it came from.
+const renderEveryOffset = (snapshot: PieceTableSnapshot): void => {
+  const text = materializePieceTableFullText(snapshot)
+
+  let row = 0
+  let lineStart = 0
+  for (let offset = 0; offset <= text.length; offset += 1) {
+    expect(offsetToPoint(snapshot, offset)).toEqual({ row, column: offset - lineStart })
+    expect(pointToOffset(snapshot, { row, column: offset - lineStart })).toBe(offset)
+
+    if (text.charCodeAt(offset) === 0x0a) {
+      row += 1
+      lineStart = offset + 1
+    }
+  }
+}
 
 // Independent scan the indexed binary search is checked against.
 const nthLineBreakOffset = (text: string, start: number, ordinal: number): number | null => {

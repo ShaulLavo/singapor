@@ -163,6 +163,58 @@ describe('find replace one', () => {
   )
 
   findTest(
+    'replaces a whole match rather than the tail of the one the caret sits inside',
+    {
+      text: 'alpha beta',
+      selection: 2,
+      options: { seedSearchStringFromSelection: 'never', cursorMoveOnType: false },
+    },
+    (harness) => {
+      harness.openFindReplace()
+      harness.clickRegex()
+      harness.typeSearch('\\w+')
+      harness.typeReplacement('X')
+      assertFindState(harness, {
+        matches: [
+          [0, 5],
+          [6, 10],
+        ],
+        current: null,
+        selection: [2, 2],
+        count: '? of 2',
+        toggles: ['regex'],
+      })
+
+      // The caret is inside the first painted match, which nothing moves it off:
+      // a selection-kind update is not a re-search. What Replace selects has to
+      // be one of the two ranges the reader is being shown.
+      harness.pressReplaceEnter()
+      assertFindState(harness, {
+        matches: [
+          [0, 5],
+          [6, 10],
+        ],
+        current: [6, 10],
+        selection: [6, 10],
+        count: '2 of 2',
+        text: 'alpha beta',
+      })
+
+      harness.pressReplaceEnter()
+      assertFindState(harness, {
+        matches: [
+          [0, 5],
+          [6, 7],
+        ],
+        current: [0, 5],
+        selection: [0, 5],
+        count: '1 of 2',
+        text: 'alpha X',
+      })
+    },
+  )
+
+  findTest(
     'selects the match the cursor is only in front of, and replaces it on the next press',
     {
       text: 'foo foo',
@@ -195,6 +247,50 @@ describe('find replace one', () => {
         selection: [0, 3],
         count: '1 of 1',
         text: 'foo bar',
+      })
+    },
+  )
+})
+
+describe('find across a document swap', () => {
+  findTest(
+    'drops a scope taken from the document that was closed',
+    {
+      text: 'head\nfoo mid\ntail\n',
+      selection: [5, 12],
+      options: { seedSearchStringFromSelection: 'never' },
+    },
+    (harness) => {
+      harness.openFind()
+      harness.clickScope()
+      harness.typeSearch('foo')
+      assertFindState(harness, {
+        matches: [[5, 8]],
+        current: [5, 8],
+        selection: [5, 8],
+        scope: [[5, 12]],
+        count: '1 of 1',
+        toggles: ['inSelection'],
+      })
+
+      harness.openDocument('foo aaa\nbbb foo\nccc foo\n')
+
+      // The ranges the scope was held by belong to the buffer that just went
+      // away. Resolved against the one that replaced it they land on text the
+      // user never marked, so the search that used to be confined to a selection
+      // is now confined to a region nobody drew — and Replace All would rewrite
+      // inside it.
+      assertFindState(harness, {
+        matches: [
+          [0, 3],
+          [12, 15],
+          [20, 23],
+        ],
+        current: null,
+        selection: [0, 0],
+        scope: null,
+        count: '? of 3',
+        toggles: [],
       })
     },
   )
@@ -302,6 +398,57 @@ describe('find match search from an offset', () => {
     expect(range(findPreviousMatchFrom(source, crossing, 4))).toEqual([0, 3])
   })
 
+  it('answers with a match the listing holds, not one begun at the cursor', () => {
+    const source = stringSource('alpha beta')
+    const words: FindQuery = {
+      searchString: '\\w+',
+      isRegex: true,
+      matchCase: true,
+      wholeWord: false,
+    }
+
+    // A caret inside a painted match is a state the reader can sit in. Scanning
+    // from it lets a greedy pattern start a fresh match there, and 'pha' is in
+    // nobody's match set — least of all the one being painted, which is what a
+    // Replace then rewrites away from.
+    expect(findMatches(source, words).map(range)).toEqual([
+      [0, 5],
+      [6, 10],
+    ])
+    expect(range(findNextMatchFrom(source, words, 2))).toEqual([6, 10])
+    expect(range(nextMatchAfter(findMatches(source, words), 2, true))).toEqual([6, 10])
+  })
+
+  it('answers an anchored pattern the cursor sits past the start of', () => {
+    const source = stringSource('alpha beta')
+    const anchored: FindQuery = {
+      searchString: '^\\w+',
+      isRegex: true,
+      matchCase: true,
+      wholeWord: false,
+    }
+
+    // Resumed at the cursor, `^` can no longer match where it does, so the one
+    // match in the text is answered with nothing at all rather than by wrapping
+    // onto it.
+    expect(range(findNextMatchFrom(source, anchored, 2))).toEqual([0, 5])
+  })
+
+  it('reads no further back than the line the cursor is on', () => {
+    const lines = Array.from({ length: 400 }, (_, row) => `row ${row} alpha`)
+    const text = lines.join('\n')
+    const cursor = text.indexOf('row 300')
+    const reads: FindRangeTuple[] = []
+
+    expect(
+      range(findNextMatchFrom(recordingSource(text, reads), plainQuery('alpha'), cursor)),
+    ).toEqual([cursor + 8, cursor + 13])
+    // Whole lines rather than a slice cut at the cursor, but only lines from the
+    // cursor's own onward: the 300 in front of it are not what the press asked
+    // about.
+    expect(reads).toEqual([[cursor, cursor + lines[300]!.length]])
+  })
+
   it('answers only from the ranges it was given', () => {
     const source = stringSource('foo foo foo')
     const query = plainQuery('foo')
@@ -353,6 +500,20 @@ function stringSource(text: string): FindTextSource {
 
 function plainQuery(searchString: string): FindQuery {
   return { searchString, isRegex: false, matchCase: true, wholeWord: false }
+}
+
+// What a scan asked the document for: a match on its own reads the same however
+// much text was walked to reach it.
+function recordingSource(text: string, reads: FindRangeTuple[]): FindTextSource {
+  const recorded = stringSource(text)
+  return {
+    length: recorded.length,
+    readRange: (start, end) => {
+      reads.push([start, end])
+      return recorded.readRange(start, end)
+    },
+    lineStartsView: recorded.lineStartsView,
+  }
 }
 
 function range(match: FindMatch | null): FindRangeTuple | null {

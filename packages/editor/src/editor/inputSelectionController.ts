@@ -328,7 +328,7 @@ export class InputSelectionController {
     // beforeinput line break; both routes must indent identically.
     if (text === '\n') return this.applyLineBreak(session, text)
 
-    const mirrored = this.mirrorSnippetText(session, text) ?? this.mirrorTypedText(session, text)
+    const mirrored = this.mirrorTypedText(session, text)
     if (mirrored) return mirrored
 
     const decided = this.autoCloseChange(session, text)
@@ -341,32 +341,66 @@ export class InputSelectionController {
   }
 
   /**
-   * Typed text carried into every other range that has to hold the same name as the one it lands in.
+   * The one door an edit knocks on before it is written straight through the session.
    *
-   * Null for anything that is not a rename: a language in which nothing is mirrored, several
-   * cursors, an edit reaching outside the name — and a keystroke that ends the name, which dissolves
-   * the link and then types as usual.
+   * Everything a mirror is depends on the edit that moves it being the batch that rebuilds it: a
+   * stop's copies are anchored on the very text a replacement takes away, and a tag pair that hears
+   * only half of a rename no longer scans as a pair, so it can never re-link either. An edit written
+   * without the batch does not fail — it leaves both untracked for the rest of the session, and
+   * every keystroke after it goes unmirrored. So typing, deleting, cutting, pasting, dropping and a
+   * suggestion being accepted all come through here rather than each remembering the rule.
+   *
+   * Null for an edit that is not one of those: several cursors, an edit reaching outside the stop or
+   * the name, a language in which nothing is mirrored — all of which then edit as usual.
    */
+  private mirroredEdit(
+    session: DocumentSession,
+    from: number,
+    to: number,
+    text: string,
+  ): DocumentSessionChange | null {
+    // One cursor, because a mirror is written somewhere the reader is not looking: with several of
+    // them there is no one range whose text the copies are supposed to be reading.
+    if (!this.singleSelection(session, session.getSnapshot())) return null
+
+    return (
+      this.mirrorSnippetEdit(session, from, to, text) ??
+      this.mirrorNameEdit(session, from, to, text)
+    )
+  }
+
+  /** Typed text carried into the ranges holding what the range it lands in holds. */
   private mirrorTypedText(session: DocumentSession, text: string): DocumentSessionChange | null {
     if (text.length === 0) return null
 
-    return this.mirrorNameEdit(session, text, null)
+    const target = this.singleSelection(session, session.getSnapshot())
+    if (!target) return null
+
+    return this.mirroredEdit(session, target.startOffset, target.endOffset, text)
+  }
+
+  /** The same, for a key or a gesture that removes exactly what is selected. */
+  private mirrorSelectionDelete(session: DocumentSession): DocumentSessionChange | null {
+    const target = this.singleSelection(session, session.getSnapshot())
+    if (!target || target.collapsed) return null
+
+    return this.mirroredEdit(session, target.startOffset, target.endOffset, '')
   }
 
   /**
-   * The same rename carried into the ranges holding the name, for an edit that removes text rather
-   * than adding it. A deletion the partner never hears leaves the pair permanently mismatched, and
-   * a mismatched pair no longer scans as one, so it can never re-link either.
+   * The same again for Backspace, which is the one delete that has to look behind itself: a
+   * collapsed caret names no text, and what it takes is the character in front of it.
    */
-  private mirrorBackspace(session: DocumentSession): DocumentSessionChange | null {
+  private mirrorBackspaceDelete(session: DocumentSession): DocumentSessionChange | null {
     const snapshot = session.getSnapshot()
     const target = this.singleSelection(session, snapshot)
-    if (!target?.collapsed) return null
+    if (!target) return null
+    if (!target.collapsed) return this.mirrorSelectionDelete(session)
 
     const start = this.deleteStartBefore(snapshot, target.startOffset)
     if (start === null) return null
 
-    return this.mirrorNameEdit(session, '', start)
+    return this.mirroredEdit(session, start, target.startOffset, '')
   }
 
   /** The one selection an edit that rewrites text elsewhere can reason about, resolved. */
@@ -401,53 +435,25 @@ export class InputSelectionController {
   }
 
   /**
-   * Typed text carried into the other places the snippet writes the stop it lands in.
+   * One batch that writes `text` over `[start, end)` and rewrites every copy of the active stop from
+   * the text the stop is left holding, or null for an edit that is not the stop being filled in.
    *
    * A stop written twice is one value shown twice, so the copies have to read the same while the
    * word is being typed rather than once the caret leaves: text that is plainly wrong for as long
-   * as it takes to type a name is the thing a reader notices.
-   */
-  private mirrorSnippetText(session: DocumentSession, text: string): DocumentSessionChange | null {
-    if (text.length === 0) return null
-
-    return this.mirrorSnippetEdit(session, text, null)
-  }
-
-  /** The same copies kept true for the keystroke that takes a character back out of the stop. */
-  private mirrorSnippetBackspace(session: DocumentSession): DocumentSessionChange | null {
-    const snapshot = session.getSnapshot()
-    const target = this.singleSelection(session, snapshot)
-    if (!target) return null
-    // A selection is removed as it stands; only a collapsed caret has to look behind itself.
-    if (!target.collapsed) return this.mirrorSnippetEdit(session, '', null)
-
-    const start = this.deleteStartBefore(snapshot, target.startOffset)
-    if (start === null) return null
-
-    return this.mirrorSnippetEdit(session, '', start)
-  }
-
-  /**
-   * One batch that edits the active stop and rewrites every copy of it from the text the stop is
-   * left holding, or null for a keystroke that is not the stop being filled in.
-   *
-   * Batched for the reason a rename is: the copies are not something the reader typed, so the
-   * keystroke that caused them has to be the one that takes them back.
+   * as it takes to type a name is the thing a reader notices. Batched for the reason a rename is:
+   * the copies are not something the reader typed, so the keystroke that caused them has to be the
+   * one that takes them back.
    */
   private mirrorSnippetEdit(
     session: DocumentSession,
+    start: number,
+    end: number,
     text: string,
-    replaceFrom: number | null,
   ): DocumentSessionChange | null {
     const snapshot = session.getSnapshot()
     const stop = this.snippet.activeStop(snapshot)
     if (!stop || stop.mirrors.length === 0) return null
 
-    const target = this.singleSelection(session, snapshot)
-    if (!target) return null
-
-    const start = replaceFrom ?? target.startOffset
-    const end = target.endOffset
     // Only an edit the stop wholly contains is the stop's own text changing. One that reaches past
     // either end is the reader editing the document around the snippet, and copying that would put
     // text they never typed into the stop's copies.
@@ -517,30 +523,23 @@ export class InputSelectionController {
 
   private mirrorNameEdit(
     session: DocumentSession,
+    start: number,
+    end: number,
     text: string,
-    replaceFrom: number | null,
   ): DocumentSessionChange | null {
     const wordPattern = editorLanguageConfiguration(this.options.getLanguageId())?.wordPattern
     if (!wordPattern) return null
 
     const snapshot = session.getSnapshot()
-    const selections = session.getSelections().selections
-    if (selections.length !== 1) return null
-
-    const only = selections[0]
-    if (!only) return null
-
-    const target = resolveSelection(snapshot, only)
-    const start = replaceFrom ?? target.startOffset
     const read = (from: number, to: number) => readPieceTableTextRange(snapshot, from, to)
-    const ranges = this.linkedEditingRanges(snapshot, read, target)
+    const ranges = this.linkedEditingRanges(snapshot, read, start, end)
     if (!ranges) return null
 
-    const reference = referenceRangeFor(ranges, start, target.endOffset)
+    const reference = referenceRangeFor(ranges, start, end)
     if (!reference) return null
 
     const mirrored = linkedEditingChange({
-      end: target.endOffset,
+      end,
       ranges,
       read,
       reference,
@@ -572,13 +571,14 @@ export class InputSelectionController {
   private linkedEditingRanges(
     snapshot: PieceTableSnapshot,
     read: (from: number, to: number) => string,
-    target: ResolvedSelection,
+    start: number,
+    end: number,
   ): readonly LinkedEditingRange[] | null {
     const tracked = this.linkedEditing.ranges(snapshot)
-    if (tracked && referenceRangeFor(tracked, target.startOffset, target.endOffset)) return tracked
+    if (tracked && referenceRangeFor(tracked, start, end)) return tracked
 
     this.linkedEditing.clear()
-    const scanned = linkedEditingRangesAround(read, snapshot.length, target.startOffset)
+    const scanned = linkedEditingRangesAround(read, snapshot.length, start)
     if (!scanned) return null
 
     this.linkedEditing.start(snapshot, scanned)
@@ -940,11 +940,21 @@ export class InputSelectionController {
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const selectionChange = this.selectionChangeBeforeEdit()
-    const caret = accepted.edit.from + accepted.edit.text.length
-    const change = session.applyEdits([accepted.edit], {
-      selections: [{ anchor: caret, head: caret }],
-    })
-    this.autoClose.advance(change.snapshot)
+    const { edit } = accepted
+    // The suggestion is reduced to what the document does not already say, so an accept inside a
+    // placeholder or a tag name lands as a range edit reaching to the end of it rather than as the
+    // whole name — which is still that name changing, and still has to carry its copies with it.
+    const mirrored = this.mirroredEdit(session, edit.from, edit.to, edit.text)
+    const acceptedCaret = edit.from + edit.text.length
+    const change =
+      mirrored ??
+      session.applyEdits([edit], {
+        selections: [{ anchor: acceptedCaret, head: acceptedCaret }],
+      })
+    if (!mirrored) this.autoClose.advance(change.snapshot)
+    // Read back off the batch, which may have moved the whole document under the caret by rewriting
+    // a copy that sits above it.
+    const caret = this.primarySelectionHeadOffset(change) ?? acceptedCaret
     if (accepted.rest) {
       this.ghostText.show(change.snapshot, session.materializeFullText(), accepted.rest, caret)
     }
@@ -985,10 +995,9 @@ export class InputSelectionController {
     const change =
       direction === 'backward'
         ? (this.deleteAutoClosedPair(session) ??
-          this.mirrorSnippetBackspace(session) ??
-          this.mirrorBackspace(session) ??
+          this.mirrorBackspaceDelete(session) ??
           session.backspace(this.options.tabSize))
-        : session.deleteSelection()
+        : (this.mirrorSelectionDelete(session) ?? session.deleteSelection())
     this.applyChange(
       mergeChangeTimings(change, selectionChange),
       direction === 'backward' ? 'input.backspace' : 'input.delete',
@@ -1135,13 +1144,23 @@ export class InputSelectionController {
       revealOffset: firstInserted.anchor,
       syncDomSelection: false,
     })
+    // Counted off the session after the change rather than off the cursors the press asked for, the
+    // way the occurrence keys are: a cursor a neighbour already reaches is merged away on the way
+    // in, so the request overcounts — and a press whose every cursor was absorbed changed nothing
+    // at all, which is a sentence the reader should not hear.
+    const before = new Set(resolved.map(selectionKey))
+    const settled = this.resolvedSelections()
+    const added = settled.filter((selection) => !before.has(selectionKey(selection)))
+    const landed = added[0]
+    if (!landed) return true
+
     // Where it landed, not only that it landed: one press puts a cursor on a row that may be off
     // screen, and a count on its own leaves the reader to go looking for it with the arrow keys.
-    const point = offsetToPoint(session.getSnapshot(), firstInserted.anchor)
+    const point = offsetToPoint(session.getSnapshot(), landed.headOffset)
     this.options.announcer.status(
-      inserted.length === 1
+      added.length === 1
         ? `Cursor added at line ${point.row + 1}, column ${point.column + 1}`
-        : `${inserted.length} cursors added, ${selections.length} in total`,
+        : `${added.length} cursors added, ${settled.length} in total`,
     )
     return true
   }
@@ -1477,7 +1496,9 @@ export class InputSelectionController {
     totalStart?: number,
     options?: SessionChangeOptions,
   ): void {
-    if (change.kind !== 'undo' && change.kind !== 'redo') this.snippet.advance(change.snapshot)
+    if (change.kind !== 'undo' && change.kind !== 'redo') {
+      this.snippet.advance(change.snapshot, change.edits)
+    }
 
     this.options.applySessionChange(change, totalName, totalStart, options)
   }
@@ -1594,7 +1615,15 @@ export class InputSelectionController {
     // was never the document's at all.
     this.options.view.setCompositionPreedit('')
     this.transitionInputState({ type: 'composition-end' })
-    if (!shouldCommit) return
+    if (!shouldCommit) {
+      // The document is already right — the text arrived as a beforeinput and was written from
+      // there — but the hidden input is not: every refresh between the compositionstart and here
+      // returned rather than write over a candidate the reader was still assembling. Nothing else
+      // writes that baseline, so leaving it a composition behind makes the next edit the editor
+      // cannot name diff against text the browser stopped holding, and type the composition again.
+      this.refreshHiddenInputContent()
+      return
+    }
 
     this.applyCompositionText(text, eventStartMs(event))
   }
@@ -2405,16 +2434,29 @@ export class InputSelectionController {
 
     // Normalized for the same reason as the pasted payload above.
     const text = normalizeLineEndings(dropPlainText(event))
-    if (text.length === 0) return
+    if (text.length === 0) {
+      // The drag was claimed on its way across the text, whatever it turned out to be carrying, and
+      // claiming it put a caret under the pointer to aim the drop with. Nothing else takes that
+      // caret back down: the drop element is the one element a browser never fires dragleave at,
+      // so a drop that inserts nothing would leave the caret standing where the pointer left it
+      // while the selection it is drawn instead of is somewhere else entirely.
+      this.syncSessionSelectionHighlight()
+      return
+    }
 
     const offset = this.textOffsetFromPoint(event.clientX, event.clientY)
-    if (offset === null) return
+    if (offset === null) {
+      this.syncSessionSelectionHighlight()
+      return
+    }
 
     this.transitionInputState({ text, type: 'drop-pending' })
     const start = eventStartMs(event)
     const selectionChange = session.setSelection(offset)
     this.markSessionSelectionForNextInput()
-    const textChange = session.applyText(text)
+    // After the caret has been put where the text landed, which is the range this insertion runs
+    // over: text dropped into a placeholder or a tag name is that name changing like any other.
+    const textChange = this.mirroredEdit(session, offset, offset, text) ?? session.applyText(text)
     const change = mergeChangeTimings(textChange, selectionChange)
     this.transitionInputState({ type: 'transaction-committed' })
     this.applyChange(change, 'input.drop', start, {
@@ -2493,7 +2535,7 @@ export class InputSelectionController {
     event.preventDefault()
     const change = payload.metadata.pasteOnNewLine
       ? this.deleteCaretLines(session)
-      : session.deleteSelection()
+      : (this.mirrorSelectionDelete(session) ?? session.deleteSelection())
     this.applyChange(mergeChangeTimings(change, selectionChange), 'input.cut', start)
   }
 
@@ -2515,6 +2557,15 @@ export class InputSelectionController {
   ): DocumentSessionChange {
     const resolved = this.resolvedSelections()
     if (metadata?.pasteOnNewLine && resolved.every((selection) => selection.collapsed)) {
+      // A payload taken off several carets is both things at once — line-shaped, and one fragment
+      // per caret — and read as only the first of them every caret takes the whole of it, which
+      // grows the document by the square of the cursor count. The fragments are what the copy was
+      // built to hand back, so they are handed back here, each to the line its caret is on.
+      const lines = this.caretLines(resolved)
+      if (lines.length > 1 && metadata.perSelection.length === lines.length) {
+        return this.applyDistributedLinePaste(session, metadata.perSelection, lines)
+      }
+
       return this.applyLinePaste(session, text, resolved)
     }
     // Cursor i takes fragment i only while the counts still line up. Under any other count the
@@ -2524,7 +2575,15 @@ export class InputSelectionController {
       return this.applyDistributedPaste(session, metadata.perSelection, resolved)
     }
 
-    return applyPasteText(session, text)
+    // A payload pasted over a placeholder is that placeholder being filled in, by a gesture rather
+    // than a keystroke; the copies of it have to be rewritten from the text it leaves behind either
+    // way, and an unmirrored paste takes their anchors with it.
+    const only = resolved.length === 1 ? resolved[0] : null
+    const mirrored = only
+      ? this.mirroredEdit(session, only.startOffset, only.endOffset, text)
+      : null
+
+    return mirrored ?? applyPasteText(session, text)
   }
 
   /**
@@ -2542,6 +2601,32 @@ export class InputSelectionController {
       const caret = start + text.length * (index + 1)
       return { anchor: caret, head: caret }
     })
+    return applyPasteEdits(session, edits, selections)
+  }
+
+  /**
+   * The same distribution as below, aimed at line starts rather than at the cursors themselves.
+   *
+   * Splicing each fragment in where its caret happens to stand would put a whole line into the
+   * middle of the word the caret is in — the very thing the line paste above exists to avoid — and
+   * the fragments were taken off lines to begin with.
+   */
+  private applyDistributedLinePaste(
+    session: DocumentSession,
+    texts: readonly string[],
+    lines: readonly NavigationLine[],
+  ): DocumentSessionChange {
+    const edits: TextEdit[] = []
+    const selections: { readonly anchor: number; readonly head: number }[] = []
+    let shift = 0
+    for (const [index, line] of lines.entries()) {
+      const fragment = texts[index] ?? ''
+      edits.push({ from: line.start, text: fragment, to: line.start })
+      const caret = line.start + shift + fragment.length
+      selections.push({ anchor: caret, head: caret })
+      shift += fragment.length
+    }
+
     return applyPasteEdits(session, edits, selections)
   }
 
@@ -3037,6 +3122,11 @@ function surroundedSelection(
   const end = selection.endOffset + shift
 
   return selection.reversed ? { anchor: end, head: start } : { anchor: start, head: end }
+}
+
+/** What tells one cursor from another when a set of them is compared across a change. */
+function selectionKey(selection: ResolvedSelection): string {
+  return `${selection.anchorOffset}:${selection.headOffset}`
 }
 
 /** An empty range is asked for often enough here — a stop with no default — to answer for one. */

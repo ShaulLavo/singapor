@@ -220,7 +220,7 @@ function tokenTypeAtCaret(
     } else if (delimiters.line && probe.startsWith(delimiters.line, index)) {
       index = probe.length
       type = 'comment'
-    } else if (quote !== undefined) {
+    } else if (quote !== undefined && !continuesWord(probe, index)) {
       index = offsetPastQuoted(probe, index, quote)
       type = 'string'
     } else {
@@ -232,6 +232,22 @@ function tokenTypeAtCaret(
   }
 
   return 'other'
+}
+
+/**
+ * Whether a delimiter standing here is really the tail of a word.
+ *
+ * `It's` in markup text content is the case that matters: read as a literal still being typed, that
+ * apostrophe owns the rest of the line and every pair typed after it is refused. A literal does not
+ * open against a word character — which is the reading `shouldAutoClose` already applies to the
+ * apostrophe as it is typed, so the two agree on `don't` whether the caret is before it or after it.
+ *
+ * A prefixed literal does open against one: a tagged template, a Python f-string. Those read as
+ * ordinary text here, which costs a pair offered inside a literal on the row that opens it, against
+ * a suppression withheld on every line of prose that contains an apostrophe.
+ */
+function continuesWord(text: string, index: number): boolean {
+  return isWordCharacter(text[index - 1] ?? null)
 }
 
 /**
@@ -267,9 +283,9 @@ function offsetPast(text: string, from: number, token: string): number {
  * Just past the closing delimiter, or the end of the line for a run nothing closes.
  *
  * An unpartnered delimiter reads as a string still being typed, which is what it is in a language
- * whose quotes only ever delimit strings. In a markup language an apostrophe in prose reads the same
- * way and suppresses auto-close for the rest of that line; telling the two apart needs to know
- * whether the offset sits in an attribute or in text content, which nothing here is told.
+ * whose quotes only ever delimit strings. An apostrophe in markup text content would read the same
+ * way and suppress auto-close for the rest of that line, which is why the scan above never brings
+ * one that continues a word this far.
  */
 function offsetPastQuoted(text: string, from: number, quote: string): number {
   for (let index = from + quote.length; index < text.length; index += 1) {

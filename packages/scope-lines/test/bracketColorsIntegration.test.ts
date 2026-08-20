@@ -82,13 +82,11 @@ describe('bracket colours inside a real editor', () => {
     }
   })
 
-  // A finished parse reaches view contributions on the first update the editor publishes after it,
-  // rather than on one of its own, so the caret move stands in for whatever the reader does next.
+  // Nothing but the load: a reader who opens a file and reads it without touching anything is the
+  // whole audience for the colours, so the parse has to reach the view contributions on its own.
   async function openDocument(): Promise<void> {
     editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text: TEXT })
     await flushSyntaxDebounce()
-    editor.setSelection(0, 0)
-    await flushMicrotasks()
   }
 })
 

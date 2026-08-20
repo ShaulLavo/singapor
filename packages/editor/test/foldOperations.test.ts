@@ -1,9 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createFoldGutterPlugin, createLineGutterPlugin } from '../../gutters/src/index.ts'
+import {
+  createFoldGutterContribution,
+  createLineGutterContribution,
+} from '../../gutters/src/index.ts'
 import { Editor } from '../src/editor'
 import type { EditorLogEvent, EditorPlugin } from '../src/plugins'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import type { FoldRange } from '../src/syntax'
+
+/**
+ * The gutter package types itself against the published `@singapor/core` facade, so the plugin
+ * objects its own `create*Plugin` helpers build carry dist's `EditorPlugin` — a nominally different
+ * type from the src one this Editor takes. The contributions are plain structural types that do
+ * cross that line, so they are registered here through the same one-line wrapper the package uses.
+ */
+function lineGutterPlugin(): EditorPlugin {
+  const contribution = createLineGutterContribution()
+  return {
+    name: 'line-gutter',
+    activate: (context) => context.registerGutterContribution(contribution),
+  }
+}
+
+function foldGutterPlugin(): EditorPlugin {
+  const contribution = createFoldGutterContribution()
+  return {
+    name: 'fold-gutter',
+    activate: (context) => context.registerGutterContribution(contribution),
+  }
+}
 
 /**
  * Two top-level blocks, one of them nested, then flat rows no provider describes — room for a region
@@ -123,7 +148,7 @@ describe('fold operations', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     editor = new Editor(container, {
-      plugins: [createLineGutterPlugin(), createFoldGutterPlugin(), logCollectorPlugin(logEvents)],
+      plugins: [lineGutterPlugin(), foldGutterPlugin(), logCollectorPlugin(logEvents)],
     })
     editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text: TEXT })
     editor.setSyntaxFolds(PROVIDED_FOLDS)
@@ -196,6 +221,34 @@ describe('fold operations', () => {
     expect(manualFoldKeys()).toHaveLength(1)
     expect(visibleText()).toContain('body one')
     expect(visibleText()).not.toContain('body three')
+  })
+
+  it('drops a drawn region when a deletion runs up to the row it ends on', () => {
+    expect(drawRegion(9, 11)).toBe(true)
+    expect(editor.dispatchCommand('editor.unfold')).toBe(true)
+
+    // The deletion stops exactly where the region does, so both of its edges move at once. Nothing
+    // restates a hand-drawn region, so a region kept here would keep the extent it was drawn with.
+    editor.setSelection(rowEnd(9), rowEnd(11))
+    editor.dispatchCommand('deleteBackward')
+
+    expect(editor.materializeFullText()).toContain('header one\nheader two')
+    expect(manualFoldKeys()).toEqual([])
+    expect(editor.fold(rowStart(9))).toBe(false)
+    expect(visibleText()).toContain('header two')
+  })
+
+  it('drops a drawn region when a deletion runs over the row it starts on', () => {
+    expect(drawRegion(9, 11)).toBe(true)
+    expect(editor.dispatchCommand('editor.unfold')).toBe(true)
+
+    editor.setSelection(rowEnd(8), rowEnd(10))
+    editor.dispatchCommand('deleteBackward')
+
+    expect(editor.materializeFullText()).toContain('}\nbody two')
+    // Row 9 is another region's text now, and a control there would head rows nobody drew over.
+    expect(manualFoldKeys()).toEqual([])
+    expect(editor.fold(rowStart(9))).toBe(false)
   })
 
   it('leaves a region already collapsed out of the work it reports doing', () => {

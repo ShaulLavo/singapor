@@ -254,6 +254,12 @@ function typedCharacter(edit: TextEdit): string | null {
   return COMPLETION_TRIGGER_CHARACTERS.has(opener) ? opener : null
 }
 
+/** The text a request went out with, which is the frame every range on an item is read in. */
+export type CompletionApplicationDocument = {
+  readonly text: string
+  readonly offset: number
+}
+
 /**
  * The document an accepted item is applied against.
  *
@@ -261,9 +267,7 @@ function typedCharacter(edit: TextEdit): string | null {
  * that text. `caretOffset` is where the caret has reached since — rarely the same place, because the
  * widget stays up while the user keeps typing.
  */
-export type CompletionApplicationRequest = {
-  readonly text: string
-  readonly offset: number
+export type CompletionApplicationRequest = CompletionApplicationDocument & {
   readonly caretOffset: number
 }
 
@@ -289,6 +293,23 @@ export function completionApplication(
     selection: { anchor: first.start, head: first.end },
     snippetStops: snippetStopRanges(snippet, insertionOffset),
   }
+}
+
+/**
+ * Whether an item could be applied at all against the text it was answered for.
+ *
+ * The ranges an item carries are positions in that text, and one that spans lines or that the caret
+ * was never inside describes a document this client did not ask about. Nothing downstream can rescue
+ * such an item, so a row for it would be one the reader can press Enter on and get nothing for.
+ */
+export function completionItemApplies(
+  request: CompletionApplicationDocument,
+  item: lsp.CompletionItem,
+): boolean {
+  const textEdit = completionTextEdit(item)
+  if (!textEdit) return true
+
+  return completionEditRange(request, textEdit.range) !== null
 }
 
 export function completionAnchorRange(
@@ -479,7 +500,28 @@ function syncSelectedRows(
   classNames: CompletionWidgetClassNames,
 ): void {
   const rows = element.querySelectorAll<HTMLElement>(`.${classNames.item}`)
-  for (const row of rows) syncSelectedRow(row, rowIndex(row) === selectedIndex)
+  for (const row of rows) {
+    const selected = rowIndex(row) === selectedIndex
+    syncSelectedRow(row, selected)
+    if (selected) scrollRowIntoView(element, row)
+  }
+}
+
+/**
+ * Keeps the focused row inside the box.
+ *
+ * A hundred rows are offered in a box a dozen of them fit in, and the widget never takes the focus,
+ * so there is no scrollport the browser is moving on anyone's behalf: walking off the bottom edge —
+ * or wrapping to the end with a single ArrowUp — would leave a list with no highlight in it while
+ * Enter commits a row that was never on screen.
+ */
+function scrollRowIntoView(element: HTMLElement, row: HTMLElement): void {
+  const top = row.offsetTop
+  const bottom = top + row.offsetHeight
+  if (top < element.scrollTop) element.scrollTop = top
+  else if (bottom > element.scrollTop + element.clientHeight) {
+    element.scrollTop = bottom - element.clientHeight
+  }
 }
 
 function syncSelectedRow(row: HTMLElement, selected: boolean): void {
@@ -552,7 +594,7 @@ function completionTextEdit(item: lsp.CompletionItem): lsp.TextEdit | null {
  * characters to be measured against.
  */
 function completionEditRange(
-  request: CompletionApplicationRequest,
+  request: CompletionApplicationDocument,
   range: lsp.Range,
 ): { readonly start: number; readonly end: number } | null {
   if (range.start.line !== range.end.line) return null

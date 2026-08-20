@@ -5,6 +5,13 @@ import { guessedTabSize } from '../src/editor/indentationGuess'
 import { createDocumentSession } from '../src/public/document'
 import type { EditorPlugin, EditorViewSnapshot } from '../src/public/extensions'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import { editorElement } from './editorElement'
+
+/**
+ * The element the editor listens on. `Editor.el` is private and neither the public API nor
+ * src/public/testing.ts hands it back, yet these tests have to dispatch on that exact element or
+ * the input pipeline never sees the event — hence the bracket access.
+ */
 
 /**
  * A file's own indentation width, driven through the keyboard and through what plugins are handed,
@@ -88,7 +95,7 @@ describe('indentation width read off the document', () => {
     editor.setText(source.replace('|', ''), { languageId: 'typescript' })
     editor.setSelection(caret, caret)
 
-    editor.el.dispatchEvent(lineBreak())
+    editorElement(editor).dispatchEvent(lineBreak())
     const text = editor.materializeFullText()
     return /^[ \t]*/.exec(text.slice(caret + 1))?.[0] ?? ''
   }

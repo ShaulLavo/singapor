@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  occurrenceHighlightRanges,
-  occurrenceQueryAtCaret,
-} from '../src/occurrenceHighlights'
+import { occurrenceHighlightRanges, occurrenceQueryAtCaret } from '../src/occurrenceHighlights'
 import type { EditorVisibleRowSnapshot } from '../src/plugins'
 
 /** Builds the mounted rows for `lines`, numbering offsets as the editor does (newline included). */

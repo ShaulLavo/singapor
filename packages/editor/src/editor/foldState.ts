@@ -39,6 +39,15 @@ type CollapseInheritance = {
   readonly rowSpanDelta: number
 }
 
+/**
+ * The collapses an incoming set of ranges carries, and the ones it took away: a collapse no range
+ * carries is one no gesture can reach, so a collapse withheld here is withheld for good.
+ */
+type CollapseInheritanceResult = {
+  readonly byFoldKey: Map<string, CollapsedRegion>
+  readonly withheld: ReadonlySet<CollapsedRegion>
+}
+
 /** Where a fold or a rendered marker says a region begins and how far it reaches. */
 type CollapseTarget = {
   readonly key: string
@@ -164,10 +173,13 @@ export class EditorFoldState {
   private adoptFolds(folds: readonly FoldRange[]): void {
     const snapshot = this.getSnapshot()
     const resolved = snapshot ? liveCollapsedRegions(snapshot, this.collapsedRegions) : []
+    const inheritance = inheritCollapsedRegions(folds, resolved, this.getCaretRows())
 
     this.projectedFolds = folds
-    this.collapsedRegions = resolved.map((entry) => entry.region)
-    this.collapsedRegionsByFoldKey = inheritCollapsedRegions(folds, resolved, this.getCaretRows())
+    this.collapsedRegions = resolved
+      .map((entry) => entry.region)
+      .filter((region) => !inheritance.withheld.has(region))
+    this.collapsedRegionsByFoldKey = inheritance.byFoldKey
     this.syncFoldView()
   }
 
@@ -293,9 +305,10 @@ function inheritCollapsedRegions(
   folds: readonly FoldRange[],
   resolved: readonly ResolvedCollapsedRegion[],
   caretRows: readonly number[],
-): Map<string, CollapsedRegion> {
+): CollapseInheritanceResult {
   const inherited = new Map<string, CollapsedRegion>()
-  if (resolved.length === 0) return inherited
+  const withheld = new Set<CollapsedRegion>()
+  if (resolved.length === 0) return { byFoldKey: inherited, withheld }
 
   const regionsByStartRow = groupByStartRow(resolved, (entry) => entry.startRow)
   const foldsByStartRow = groupByStartRow(
@@ -305,13 +318,16 @@ function inheritCollapsedRegions(
 
   for (const [row, regions] of regionsByStartRow) {
     for (const pair of pairedByNearestRowSpan(foldsByStartRow.get(row) ?? EMPTY_FOLDS, regions)) {
-      if (reachesOverCaret(pair, caretRows)) continue
+      if (reachesOverCaret(pair, caretRows)) {
+        withheld.add(pair.entry.region)
+        continue
+      }
 
       inherited.set(foldRangeKey(pair.fold), pair.entry.region)
     }
   }
 
-  return inherited
+  return { byFoldKey: inherited, withheld }
 }
 
 /**

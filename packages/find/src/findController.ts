@@ -420,8 +420,13 @@ export class EditorFindController {
     // followed through the edit first.
     if (this.replacing) return
     // Nothing to follow across a document swap: the ranges being tracked belong
-    // to the buffer that was just replaced.
+    // to the buffer that was just replaced. A scope among them is the one that
+    // cannot simply be dropped on the floor — resolved against the new buffer it
+    // answers with offsets of text the user never marked, and a search confined
+    // to those is a Replace All rewriting inside a region nobody drew.
     if (kind === 'document') {
+      this.scope = null
+      this.state = { ...this.state, inSelection: false }
       this.research(false)
       return
     }

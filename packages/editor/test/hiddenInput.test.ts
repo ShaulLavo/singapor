@@ -38,10 +38,11 @@ function windowFor(
 
 describe('deducing an edit from the hidden input', () => {
   it('reads a typed character out of the value the browser left behind', () => {
-    const deduced = deduceHiddenInputEdit(hiddenInputState('abc', 3), hiddenInputState('abcX', 4))
+    const previous = hiddenInputState('abc', 3)
+    const deduced = deduceHiddenInputEdit(previous, hiddenInputState('abcX', 4))
 
     expect(deduced).toEqual({ replaceNextCharCnt: 0, replacePrevCharCnt: 0, text: 'X' })
-    expect(isEmptyDeducedInput(deduced)).toBe(false)
+    expect(isEmptyDeducedInput(deduced, previous)).toBe(false)
   })
 
   it('clamps the shared prefix by the caret, so a repeated character is not absorbed into it', () => {

@@ -61,7 +61,8 @@ export type ManualFoldSpan = FoldRowSpan & {
   readonly endIndex: number
 }
 
-const MANUAL_FOLD_TYPE = 'manual'
+/** What marks a range as hand-drawn, for the projection that has to treat one differently. */
+export const MANUAL_FOLD_TYPE = 'manual'
 
 const NO_FOLDS: readonly FoldRange[] = []
 

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor/Editor'
+import { createDocumentSession } from '../src/public/document'
 import { EditorAnnouncer } from '../src/editor/announce'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import { editorElement } from './editorElement'
 
 /**
  * The channel, and the actions that put something on it.
@@ -155,13 +157,34 @@ describe('what the editor announces', () => {
   })
 
   it('counts the cursors when one press adds several', () => {
-    open('alpha\nbeta\ngamma', 1)
-    editor.dispatchCommand('editor.action.insertCursorBelow')
+    // Two cursors with a row to spare under each, so the press has somewhere to put both.
+    openWithCursors('alpha\nbeta\ngamma\ndelta', [1, 12])
 
     editor.dispatchCommand('editor.action.insertCursorBelow')
 
-    // A different sentence needs no swap; it lands back in the half the first one was cleared from.
     expect(regionTexts(container, 'status')[0]).toBe('2 cursors added, 4 in total')
+  })
+
+  // The cursors a press asks for are merged as the set goes in, so what it asked for is not what it
+  // added. Counting the request tells the reader about cursors that are not there — and where every
+  // one of them was absorbed, about a press that did nothing at all.
+  it('counts the cursors a press actually left behind', () => {
+    openWithCursors('alpha\nbeta\ngamma', [1])
+
+    editor.dispatchCommand('editor.action.insertCursorBelow')
+    editor.dispatchCommand('editor.action.insertCursorBelow')
+
+    // The second press asks for a cursor on line 2 and one on line 3; the first is already there.
+    expect(regionTexts(container, 'status')[0]).toBe('Cursor added at line 3, column 2')
+  })
+
+  it('says nothing when every cursor a press asked for was already there', () => {
+    openWithCursors('alpha\nbeta\ngamma', [1, 7])
+
+    expect(editor.dispatchCommand('editor.action.insertCursorAbove')).toBe(true)
+
+    // Nothing was said at all, so the channel has not even put its regions in the page yet.
+    expect(regionTexts(container, 'status')).toEqual([])
   })
 
   it('says how many occurrences a selection just claimed', () => {
@@ -221,7 +244,24 @@ describe('what the editor announces', () => {
   function open(text: string, caret: number): void {
     editor.openDocument({ documentId: 'main.ts', text })
     editor.setSelection(caret, caret)
-    mockViewport(editor.el, 80, 60)
+    mockViewport(scrollElement(), 80, 60)
+  }
+
+  /** The same, for the cases that need the editor to already hold more than one cursor. */
+  function openWithCursors(text: string, carets: readonly number[]): void {
+    const session = createDocumentSession(text)
+    session.setSelections(carets.map((caret) => ({ anchor: caret, head: caret })))
+    editor.attachSession(session, { documentId: 'main.ts' })
+    mockViewport(scrollElement(), 80, 60)
+  }
+
+  /**
+   * The element the view scrolls, which is what a viewport has to be mocked on. It is private on
+   * Editor and no testing seam exposes it, and the class it carries is shared with every other
+   * virtualized view a host may mount, so a DOM query could answer with the wrong one.
+   */
+  function scrollElement(): HTMLElement {
+    return editorElement(editor)
   }
 })
 

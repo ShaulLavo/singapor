@@ -114,6 +114,9 @@ export type PieceTableBufferOptions = {
   // by the caller (see createPieceTableSnapshot).
   readonly lineEnding?: DocumentLineEnding
   readonly byteOrderMark?: string
+  // For callers that ingested the text themselves: the folded text no longer
+  // carries the evidence, so their own finding is the only source left.
+  readonly containsUnusualLineTerminators?: boolean
 }
 
 export type AppendChunksToBuffersResult = {
@@ -153,6 +156,13 @@ export const countLineBreaks = (text: string, start = 0, end = text.length): num
 // grows. One lazily extended '\n' offset index per buffer therefore serves
 // every snapshot that references the buffer, including undo history, and
 // turns per-piece line-break scans from O(piece bytes) into O(log breaks).
+//
+// Append-only holds along one line of history, not across a branch. A buffer id
+// is a sequence number, and undo restores a snapshot that rolls the sequence
+// back, so the next edit re-mints an id a discarded branch already filled with
+// different text — while the index Map, propagated by spread, still carries the
+// dead branch's offsets under that id. So the cached entry names the string it
+// scanned and is only reused for that string or a growth of it.
 const bufferLineIndex = (
   buffers: PieceTableBuffers,
   buffer: PieceBufferId,
@@ -163,15 +173,23 @@ const bufferLineIndex = (
   }
   holder.lineIndexes ??= new Map()
 
-  let index = holder.lineIndexes.get(buffer)
+  const cached = holder.lineIndexes.get(buffer)
+  let index = cached && describesPrefixOf(cached, text) ? cached : undefined
   if (!index) {
-    index = { offsets: new Uint32Array(0), count: 0, scannedLength: 0 }
+    index = { offsets: new Uint32Array(0), count: 0, scannedLength: 0, text }
     holder.lineIndexes.set(buffer, index)
   }
   if (index.scannedLength < text.length) extendBufferLineIndex(index, text)
 
   return index
 }
+
+// Offsets depend on nothing but the content they were scanned from, so an entry
+// stays valid exactly while `text` still opens with that content. The reference
+// check answers the common case without touching a character; the prefix
+// comparison only runs once per tail growth, over at most one chunk.
+const describesPrefixOf = (index: PieceBufferLineIndex, text: string): boolean =>
+  index.text === text || (text.length > index.text.length && text.startsWith(index.text))
 
 const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void => {
   let at = text.indexOf('\n', index.scannedLength)
@@ -181,6 +199,7 @@ const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void 
   }
 
   index.scannedLength = text.length
+  index.text = text
 }
 
 // Four bytes per offset: a 5M-line document costs 20MB of index here, and the
@@ -371,6 +390,7 @@ export const createInitialBuffers = (
     prioritySeed: options.prioritySeed ?? DEFAULT_PIECE_TABLE_PRIORITY_SEED,
     lineEnding: options.lineEnding ?? DEFAULT_DOCUMENT_LINE_ENDING,
     byteOrderMark: options.byteOrderMark ?? '',
+    containsUnusualLineTerminators: options.containsUnusualLineTerminators ?? false,
   }
 }
 

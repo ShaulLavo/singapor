@@ -92,7 +92,7 @@ function inlineReplacementPlugin(seen: (readonly EditorSyntaxCapture[])[]): Edit
       context.registerInlineReplacementProvider?.((replacementContext) => {
         seen.push(replacementContext.captures)
         return []
-      }) ?? null,
+      }),
   }
 }
 

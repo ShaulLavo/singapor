@@ -1,9 +1,14 @@
 import { EDITOR_OPTION_DESCRIPTORS, type EditorControlledOptionName } from '@singapor/core'
-import { Editor } from '@singapor/core/editor'
+import { Editor, type EditorScrollPosition } from '@singapor/core/editor'
 import type { EditorTheme } from '@singapor/core/rendering'
 import { createReaction, createRoot, createSignal, getListener, type Accessor } from 'solid-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createEditor, type SolidEditorController, type SolidEditorOptions } from '../src'
+import {
+  createEditor,
+  type SolidEditorController,
+  type SolidEditorOptions,
+  type SolidEditorSelection,
+} from '../src'
 
 class MockHighlight extends Set<Range> {}
 
@@ -130,15 +135,44 @@ describe('controlled options', () => {
     })
   }
 
+  // Deliberately uncast: the loop above reaches every option through a computed key, which types
+  // as nothing in particular, so an option this type never re-declared as a reactive value still
+  // passes it. Written out by name, an option left with its plain editor type stops compiling —
+  // and a host that works around that by passing a plain value gets an effect with nothing to
+  // track, so the option is applied once at mount and never again.
+  it('accepts an accessor for every option, including those the editor types as plain values', async () => {
+    const [wordWrap, setWordWrap] = createSignal(false)
+    const mounted = mountInRoot(() =>
+      createEditor({
+        document: () => DOCUMENT,
+        lineHeight: () => OPTION_SAMPLES.lineHeight.initial as number,
+        suspiciousCharacters: () => ({ ambiguous: true, invisible: true }),
+        tabMovesFocus: () => false,
+        wordWrap,
+      }),
+    )
+    await flushEffects()
+    const instance = mounted.controller.editor()
+    expect(instance).not.toBeNull()
+    const spy = vi.spyOn(instance as Editor, 'setWordWrap')
+
+    setWordWrap(true)
+    await flushEffects()
+
+    expect(spy.mock.calls).toContainEqual([true])
+
+    mounted.dispose()
+  })
+
   it('applies every option again to the editor a second mount creates', async () => {
     const selection = OPTION_SAMPLES.selection
     const scrollPosition = OPTION_SAMPLES.scrollPosition
     const mounted = mountInRoot(() =>
       createEditor({
         document: () => DOCUMENT,
-        selection: () => selection.next,
-        scrollPosition: () => scrollPosition.next,
-      } as SolidEditorOptions),
+        selection: () => selection.next as SolidEditorSelection,
+        scrollPosition: () => scrollPosition.next as EditorScrollPosition,
+      }),
     )
     await flushEffects()
     const first = mounted.controller.editor()
@@ -163,9 +197,7 @@ describe('controlled options', () => {
       return OPTION_SAMPLES.rowGap.next as number
     }
     const [theme, setTheme] = createSignal<EditorTheme>(OPTION_SAMPLES.theme.initial as EditorTheme)
-    const mounted = mountInRoot(() =>
-      createEditor({ document: () => DOCUMENT, rowGap, theme } as SolidEditorOptions),
-    )
+    const mounted = mountInRoot(() => createEditor({ document: () => DOCUMENT, rowGap, theme }))
     await flushEffects()
     const readsBeforeThemeChange = rowGapReads
 
@@ -191,7 +223,7 @@ describe('controlled options', () => {
 
     createRoot((dispose) => {
       disposeRoot = dispose
-      controller = createEditor({ document: () => DOCUMENT, rowGap } as SolidEditorOptions)
+      controller = createEditor({ document: () => DOCUMENT, rowGap })
       createReaction(() => undefined)(() => {
         controller.mount(document.createElement('div'))
       })
@@ -208,7 +240,7 @@ function optionsWith(
   name: EditorControlledOptionName,
   value: Accessor<unknown>,
 ): SolidEditorOptions {
-  return { document: () => DOCUMENT, [name]: value } as SolidEditorOptions
+  return { document: () => DOCUMENT, [name]: value }
 }
 
 function mountInRoot(create: () => SolidEditorController): MountedEditor {

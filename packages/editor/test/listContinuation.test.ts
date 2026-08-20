@@ -2,6 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor/Editor'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import { editorElement } from './editorElement'
+
+/**
+ * The element the editor listens on. `Editor.el` is private and neither the public API nor
+ * src/public/testing.ts hands it back, yet these tests have to dispatch on that exact element or
+ * the input pipeline never sees the event — hence the bracket access.
+ */
 
 /**
  * List continuation driven through the input path a browser actually uses for Enter, because the only
@@ -59,7 +66,8 @@ describe('list continuation on Enter', () => {
   function press(text: string, caret: number, presses = 1): string {
     open(text, 'markdown')
     editor.setSelection(caret)
-    for (let index = 0; index < presses; index += 1) editor.el.dispatchEvent(lineBreakEvent())
+    for (let index = 0; index < presses; index += 1)
+      editorElement(editor).dispatchEvent(lineBreakEvent())
 
     return editor.materializeFullText()
   }
@@ -137,7 +145,7 @@ describe('list continuation on Enter', () => {
     open('- alpha', 'markdown')
     editor.setSelection(2, 7)
 
-    editor.el.dispatchEvent(lineBreakEvent())
+    editorElement(editor).dispatchEvent(lineBreakEvent())
 
     expect(editor.materializeFullText()).toBe('- \n')
   })
@@ -146,7 +154,7 @@ describe('list continuation on Enter', () => {
     open('/**\n * ', 'typescript')
     editor.setSelection(7)
 
-    editor.el.dispatchEvent(lineBreakEvent())
+    editorElement(editor).dispatchEvent(lineBreakEvent())
 
     expect(editor.materializeFullText()).toBe('/**\n * \n * ')
   })
@@ -155,7 +163,7 @@ describe('list continuation on Enter', () => {
     open('- alpha', 'markdown')
     editor.setSelection(7)
 
-    editor.el.dispatchEvent(enterKeyEvent())
+    editorElement(editor).dispatchEvent(enterKeyEvent())
 
     expect(editor.materializeFullText()).toBe('- alpha\n- ')
   })

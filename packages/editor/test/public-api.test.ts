@@ -82,6 +82,9 @@ type RequiredFields<T> = {
   [K in keyof T]-?: object extends Pick<T, K> ? never : K
 }[keyof T]
 
+/** The keys a consumer may leave out, so that a field turning required shows up as a break too. */
+type OptionalFields<T> = Exclude<keyof T, RequiredFields<T>>
+
 describe('public API facade', () => {
   it('exports reviewed root entrypoints without internal debug surfaces', () => {
     const snapshot = createPieceTableSnapshot('abc')
@@ -285,14 +288,15 @@ describe('public API facade', () => {
   it('exports every field a selection set a workspace package hands back must carry', () => {
     // @singapor/tree-sitter builds whole sets and returns them for the editor to adopt, so a field
     // that is not optional here is one its own build has to fill in.
-    const required: RequiredFields<SelectionSet<number>>[] = [
-      'selections',
-      'lastAddedIndex',
-      'normalized',
-    ]
+    const required: RequiredFields<SelectionSet<number>>[] = ['selections', 'normalized']
+    // A hand-assembled set may name no last-added cursor — every reader goes through
+    // `lastAddedSelectionIndex`, which falls back to the document-first one — but a set built here
+    // does name it, so the field has to stay exported and stay optional.
+    const optional: OptionalFields<SelectionSet<number>>[] = ['lastAddedIndex', 'normalizedFor']
     const built = createSelectionSet([])
 
-    expect(required).toHaveLength(3)
+    expect(required).toHaveLength(2)
+    expect(optional).toHaveLength(2)
     expect(built.lastAddedIndex).toBe(0)
   })
 

@@ -134,6 +134,43 @@ describe('piece table surrogate pair snapping', () => {
     expect(snapBatchEditRanges(snapshot, edits)).toEqual(edits)
   })
 
+  it('does not credit a collapsed sibling with consuming a surrogate half', () => {
+    // Two carets landing on the same mid-pair offset, which is what a
+    // multi-cursor insert produces when both cursors sit inside one emoji.
+    // Each used to see the other as the edit that swallowed the leading half,
+    // so neither moved and both wrote between the halves.
+    const snapshot = createPieceTableSnapshot(EMOJI_TEXT)
+    const edits = [
+      { from: 2, to: 2, text: 'X' },
+      { from: 2, to: 2, text: 'Y' },
+    ]
+
+    expect(
+      hasLoneSurrogate(materializePieceTableFullText(applyBatchToPieceTable(snapshot, edits))),
+    ).toBe(false)
+    expect(snapBatchEditRanges(snapshot, edits)).toEqual([
+      { from: 1, to: 1, text: 'X' },
+      { from: 1, to: 1, text: 'Y' },
+    ])
+  })
+
+  it('snaps a range whose only cover is a collapsed edit that moves away', () => {
+    // The collapsed edit is credited with the half, then moves off it, leaving
+    // the range describing a pair it splits. Snapping has to be a fixed point,
+    // or the ranges reported to the session are not the ranges it applied.
+    const snapshot = createPieceTableSnapshot('ab\u{1F600}cd')
+    const applied = snapBatchEditRanges(snapshot, [
+      { from: 3, to: 5, text: '' },
+      { from: 3, to: 3, text: 'X' },
+    ])
+
+    expect(applied).toEqual([
+      { from: 2, to: 2, text: 'X' },
+      { from: 2, to: 5, text: '' },
+    ])
+    expect(snapBatchEditRanges(snapshot, applied)).toEqual(applied)
+  })
+
   it('reports the ranges it applied, not the ranges it was handed', () => {
     const snapshot = createPieceTableSnapshot(EMOJI_TEXT)
     const applied = snapBatchEditRanges(snapshot, [{ from: 1, to: 2, text: 'X' }])

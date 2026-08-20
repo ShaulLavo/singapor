@@ -298,9 +298,9 @@ function endRowForSelection(
 /**
  * One replace edit per row whose leading whitespace is not what the rules ask for.
  *
- * The range's first ruled row is the level the rest is measured from: the range is being made
- * self-consistent, not moved somewhere else, so a block that is uniformly too deep stays where the
- * user put it.
+ * The nearest ruled row at or above the range is the level the rest is measured from: the range is
+ * being made self-consistent, not moved somewhere else, so a block that is uniformly too deep stays
+ * where the user put it.
  */
 function reindentEdits(
   source: ReindentSource,
@@ -308,7 +308,7 @@ function reindentEdits(
   range: RowRange,
   options: EditorEditActionOptions,
 ): readonly TextEdit[] {
-  const baseRow = firstRuledRow(source, rules, range)
+  const baseRow = referenceRow(source, rules, range)
   if (baseRow === null || baseRow >= range.endRow) return []
 
   const tabSize = normalizeTabSize(options.tabSize)
@@ -337,12 +337,29 @@ function reindentEdits(
   return edits
 }
 
-function firstRuledRow(
+/**
+ * The row the rest of the range is measured from.
+ *
+ * The search goes up, not down. A range already reaches one row past the selection to find this row,
+ * and a row the rules skip is not one to measure from — a blank row separating a statement from the
+ * closer being typed under it is the ordinary case. Walking down into the range instead would take
+ * the reference off a row the user asked to have corrected, which is how a caret under a blank row
+ * comes back with nothing to do at all. Rows passed on the way up are ones the loop below skips
+ * anyway, so nothing outside the range can move.
+ *
+ * Only a range with nothing ruled above it falls back to looking inside itself, because a document
+ * that opens with blank rows has no other level to offer.
+ */
+function referenceRow(
   source: ReindentSource,
   rules: EditorIndentationRules,
   range: RowRange,
 ): number | null {
-  for (let row = range.startRow; row <= range.endRow; row += 1) {
+  for (let row = range.startRow; row >= 0; row -= 1) {
+    if (!skipsRules(source, rules, row)) return row
+  }
+
+  for (let row = range.startRow + 1; row <= range.endRow; row += 1) {
     if (!skipsRules(source, rules, row)) return row
   }
 

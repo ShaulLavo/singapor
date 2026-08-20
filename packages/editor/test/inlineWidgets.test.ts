@@ -105,6 +105,45 @@ function widgetElement(row: MountedVirtualizedTextRow): HTMLElement {
   return element
 }
 
+type StubbedResizeObserver = { readonly callback: () => void; readonly targets: Element[] }
+
+/** Hands back the observers the view creates, so a test can deliver a resize on its own terms. */
+function stubResizeObservers(): readonly StubbedResizeObserver[] {
+  const observers: StubbedResizeObserver[] = []
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      private readonly entry: StubbedResizeObserver
+
+      constructor(callback: () => void) {
+        this.entry = { callback, targets: [] }
+        observers.push(this.entry)
+      }
+
+      observe(target: Element): void {
+        this.entry.targets.push(target)
+      }
+
+      unobserve(): void {}
+
+      disconnect(): void {}
+    },
+  )
+
+  return observers
+}
+
+function caretX(container: HTMLElement): number {
+  const caret = container.querySelector('.editor-virtualized-caret')
+  if (!(caret instanceof HTMLElement)) throw new Error('no caret painted')
+  return Number.parseFloat(caret.style.transform.replace(/^translate\(/, ''))
+}
+
+/** Long enough for the repaint a settled replacement asks for, which leaves the frame first. */
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 40))
+}
+
 /** The advance the row gives the replacement, read at the two boundaries it painted. */
 function widgetAdvance(view: VirtualizedTextView, row: MountedVirtualizedTextRow): number {
   const internal = internals(view)
@@ -172,27 +211,7 @@ describe('inline replacements that render their own DOM', () => {
   })
 
   it('re-spaces the row when the mounted node changes size after it was measured', () => {
-    const observers: { callback: () => void; targets: Element[] }[] = []
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        private readonly entry: { callback: () => void; targets: Element[] }
-
-        constructor(callback: () => void) {
-          this.entry = { callback, targets: [] }
-          observers.push(this.entry)
-        }
-
-        observe(target: Element): void {
-          this.entry.targets.push(target)
-        }
-
-        unobserve(): void {}
-
-        disconnect(): void {}
-      },
-    )
-
+    const observers = stubResizeObservers()
     const mount = createMount()
     view = mountView(container, `${IMAGE_LINE}\nplain`)
     applyReplacements(view, `${IMAGE_LINE}\nplain`, [imageSpec(mount)])
@@ -208,6 +227,32 @@ describe('inline replacements that render their own DOM', () => {
     }
 
     expect(widgetAdvance(view, row)).toBeCloseTo(140, 6)
+  })
+
+  /**
+   * Every other place that drops the row caches is inside a pass that goes on to repaint. A
+   * replacement settling on its size is reached from a resize delivery with nothing behind it, so
+   * without a pass of its own the caret keeps the pixels it was last painted at until the next
+   * keystroke happens to move it.
+   */
+  it('repaints what is positioned in pixels when the mounted node changes size', async () => {
+    const observers = stubResizeObservers()
+    const mount = createMount()
+    view = mountView(container, `${IMAGE_LINE}\nplain`)
+    applyReplacements(view, `${IMAGE_LINE}\nplain`, [imageSpec(mount)])
+    // Past the replacement rather than inside it, which would reveal the source text and unmount it.
+    view.setSelection(IMAGE_LINE.length, IMAGE_LINE.length)
+
+    const widget = widgetElement(rowForIndex(view, 0))
+    const before = caretX(container)
+
+    sizeElement(widget, WIDGET_WIDTH + 200)
+    for (const observer of observers) {
+      if (observer.targets.includes(widget)) observer.callback()
+    }
+    await settle()
+
+    expect(caretX(container) - before).toBeCloseTo(200, 6)
   })
 
   it('resolves a boundary the browser found inside the node to the replaced span', () => {

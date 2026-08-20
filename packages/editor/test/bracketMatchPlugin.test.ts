@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { createBracketMatchPlugin } from '../src/bracketMatchPlugin'
+import type { EditorCommandId } from '../src/editor/commands'
 import type {
   EditorCommandContribution,
-  EditorCommandId,
+  EditorCommandContributionProvider,
   EditorPluginContext,
   EditorViewContribution,
   EditorViewContributionContext,
@@ -139,7 +140,15 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
     textVersion: 1,
     tokens: [],
     totalHeight: 20,
-    viewport: { endRow: 1, scrollLeft: 0, scrollTop: 0, startRow: 0 },
+    viewport: {
+      clientHeight: 20,
+      clientWidth: 80,
+      scrollHeight: 20,
+      scrollLeft: 0,
+      scrollTop: 0,
+      scrollWidth: 80,
+      visibleRange: { end: 1, start: 0 },
+    },
     visibleRows: [],
   }
 }
@@ -156,7 +165,7 @@ function activate(snapshotOptions: SnapshotOptions = {}) {
   const context = {
     registerBlockProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
-    registerCommandContribution: vi.fn((provider) => {
+    registerCommandContribution: vi.fn((provider: EditorCommandContributionProvider) => {
       const created: EditorCommandContribution | null = provider.createContribution({
         registerCommand: (command, handler) => {
           commands.set(command, () => handler({}))
@@ -177,9 +186,16 @@ function activate(snapshotOptions: SnapshotOptions = {}) {
     }),
   } as unknown as EditorPluginContext
 
+  // Read through a function: the assignment happens inside registerViewContribution's callback,
+  // which control-flow analysis in this body does not see, so an inline read still narrows to the
+  // initial null.
+  function requireContribution(): EditorViewContribution {
+    if (!contribution) throw new Error('bracket match plugin registered no view contribution')
+    return contribution
+  }
+
   createBracketMatchPlugin().activate(context)
-  const created = contribution
-  if (!created) throw new Error('bracket match plugin registered no view contribution')
+  const created = requireContribution()
 
   return {
     contribution: created,

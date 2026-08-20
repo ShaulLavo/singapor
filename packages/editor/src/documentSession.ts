@@ -300,6 +300,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       normalized: true,
       lineEnding: ingested.lineEnding,
       byteOrderMark: ingested.byteOrderMark,
+      containsUnusualLineTerminators: ingested.containsUnusualLineTerminators,
     })
     const selections = createInitialSelectionSet(snapshot, createSelectionIdFactory())
     this.history = createEditorHistory<
@@ -956,6 +957,7 @@ class StaticDocumentSession implements DocumentSession {
       normalized: true,
       lineEnding: ingested.lineEnding,
       byteOrderMark: ingested.byteOrderMark,
+      containsUnusualLineTerminators: ingested.containsUnusualLineTerminators,
     })
     this.textSnapshot = createDocumentTextSnapshot(this.snapshot, ingested.text)
     this.selections = createSelectionSet(

@@ -93,7 +93,18 @@ type RegisteredEditorColor = {
 
 const registeredEditorColors = new Map<EditorColorId, RegisteredEditorColor>()
 const editorColorRulesByDocument = new WeakMap<Document, SharedStyleRules>()
-const liveEditorColorRules = new Set<SharedStyleRules>()
+// The variables a theme wrote for ids the registry did not know, so clearing that theme can find
+// them again — the registry walk cannot, and an id that is still unregistered by then would
+// otherwise leave its value behind for the next theme to inherit.
+const unregisteredEditorColorVariables = new WeakMap<HTMLElement, readonly string[]>()
+// A colour can be registered long after a document has been themed, so the sheets already built have
+// to be reachable from here — but only for as long as their documents are. A sheet holds its
+// document, so holding the sheet strongly would pin every document an editor was ever themed in:
+// harmless for a host with one, a detached tree per pop-out for a host that prints or opens windows.
+const liveEditorColorRules = new Set<WeakRef<SharedStyleRules>>()
+const collectedEditorColorRules = new FinalizationRegistry<WeakRef<SharedStyleRules>>((ref) => {
+  liveEditorColorRules.delete(ref)
+})
 
 /**
  * Declares a themable colour and returns the CSS value that reads it, so the caller styles with the
@@ -112,7 +123,15 @@ export function registerEditorColor(id: EditorColorId, defaults?: EditorColorDef
   }
   if (!existing) registeredEditorColors.set(id, registered)
 
-  for (const rules of liveEditorColorRules) {
+  for (const ref of liveEditorColorRules) {
+    // Collection is what normally drops an entry; deref covers the window between the sheet dying
+    // and the registry getting round to saying so.
+    const rules = ref.deref()
+    if (!rules) {
+      liveEditorColorRules.delete(ref)
+      continue
+    }
+
     acquireEditorColorRule(rules, registered)
     rules.flush()
   }
@@ -214,12 +233,18 @@ export function applyEditorTheme(
     setOptionalEditorColor(element, id, theme.syntax?.[key])
   }
 
-  // Only registered ids are applied: an id nobody registered has no agreed variable name, and
-  // clearing the theme again would have nothing to look for.
+  // A contributed id is themed by name, often before the package that registers it has finished
+  // loading, so the value is written whether or not the id is known yet — both sides derive the
+  // variable from the id the same way, so a registration that lands later finds the value already
+  // sitting on the element. Registration is only needed for clearing, which walks the registry, so
+  // the variables written for ids it has never heard of are remembered against the element instead.
   if (theme.colors) {
+    const unregistered: string[] = []
     for (const [id, value] of Object.entries(theme.colors)) {
-      if (registeredEditorColors.has(id)) setOptionalEditorColor(element, id, value)
+      setOptionalEditorColor(element, id, value)
+      if (!registeredEditorColors.has(id)) unregistered.push(editorColorVariable(id))
     }
+    if (unregistered.length > 0) unregisteredEditorColorVariables.set(element, unregistered)
   }
 
   if (theme.type) {
@@ -274,6 +299,13 @@ export function editorThemesEqual(
 
 function clearEditorTheme(element: HTMLElement): void {
   for (const { variable } of registeredEditorColors.values()) element.style.removeProperty(variable)
+
+  const unregistered = unregisteredEditorColorVariables.get(element)
+  if (unregistered) {
+    for (const variable of unregistered) element.style.removeProperty(variable)
+    unregisteredEditorColorVariables.delete(element)
+  }
+
   element.removeAttribute(EDITOR_THEME_TYPE_ATTRIBUTE)
 }
 
@@ -359,7 +391,9 @@ function ensureEditorColorRules(doc: Document): void {
 
   const rules = new SharedStyleRules(doc)
   editorColorRulesByDocument.set(doc, rules)
-  liveEditorColorRules.add(rules)
+  const ref = new WeakRef(rules)
+  liveEditorColorRules.add(ref)
+  collectedEditorColorRules.register(rules, ref)
   for (const registered of registeredEditorColors.values())
     acquireEditorColorRule(rules, registered)
   rules.flush()
@@ -377,12 +411,13 @@ function acquireEditorColorRule(rules: SharedStyleRules, registered: RegisteredE
  * transform re-derives itself when the colour it reads is overridden — the engine recomputes
  * `color-mix` and `var` fallbacks on its own, with no recompute path of ours to keep correct.
  *
- * Every theme type is emitted at once: first the rules that follow the viewer's own preference, then
- * the same values keyed by declared type, so a theme that names its type overrides that preference
- * for its own editor. That order is the whole mechanism — the selectors weigh the same, so the ones
- * written last are the ones that win.
+ * Every theme type is emitted at once: first the unconditional fallback, then the rules that follow
+ * the viewer's own preference, then the same values keyed by declared type, so a theme that names
+ * its type overrides that preference for its own editor. That order is the whole mechanism — the
+ * selectors weigh the same, so the ones written last are the ones that win.
  */
 function editorColorDefaultRules(registered: RegisteredEditorColor): string {
+  const fallbackRules: string[] = []
   const preferenceRules: string[] = []
   const attributeRules: string[] = []
 
@@ -391,23 +426,27 @@ function editorColorDefaultRules(registered: RegisteredEditorColor): string {
     if (value === undefined) continue
 
     const declaration = `${registered.variable}: ${compileEditorColorValue(value)};`
-    preferenceRules.push(editorColorPreferenceRule(type, declaration))
+    const rule = `[${EDITOR_COLORS_ATTRIBUTE}] { ${declaration} }`
+    const condition = editorColorPreferenceCondition(type)
+    if (condition === null) fallbackRules.push(rule)
+    else preferenceRules.push(`@media (${condition}) { ${rule} }`)
     attributeRules.push(
       `[${EDITOR_THEME_TYPE_ATTRIBUTE}='${EDITOR_THEME_TYPE_ATTRIBUTE_VALUES[type]}'] { ${declaration} }`,
     )
   }
 
-  return [...preferenceRules, ...attributeRules].join('\n')
+  return [...fallbackRules, ...preferenceRules, ...attributeRules].join('\n')
 }
 
 // The shipped palette is dark, so dark is what an editor nobody has configured has to resolve to:
 // an unconditional light default would leave every registered colour disagreeing with the surface
-// it is painted on until a theme arrives.
-function editorColorPreferenceRule(type: EditorThemeType, declaration: string): string {
-  const rule = `[${EDITOR_COLORS_ATTRIBUTE}] { ${declaration} }`
-  if (type === 'light') return `@media (prefers-color-scheme: light) { ${rule} }`
-  if (type === 'highContrast') return `@media (forced-colors: active) { ${rule} }`
-  return rule
+// it is painted on until a theme arrives. Every other type asks for its canvas by media query, and
+// a media query buys no specificity — which is why the caller writes the unconditional rule before
+// them rather than after, where it would win back the preference it is only the fallback for.
+function editorColorPreferenceCondition(type: EditorThemeType): string | null {
+  if (type === 'light') return 'prefers-color-scheme: light'
+  if (type === 'highContrast') return 'forced-colors: active'
+  return null
 }
 
 // A high contrast surface is a sharpened version of one of the other two rather than a third

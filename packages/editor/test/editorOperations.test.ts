@@ -20,6 +20,7 @@ function createViewContributionPlugin(kinds: EditorViewContributionUpdateKind[])
           update: (_snapshot, kind) => {
             kinds.push(kind)
           },
+          dispose: () => {},
         }),
       }),
   }

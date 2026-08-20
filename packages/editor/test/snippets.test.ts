@@ -6,6 +6,7 @@ import { parseSnippet, snippetInitialSelection } from '../src/editor/snippet'
 import type { EditorEditContributionContext, EditorPlugin } from '../src/plugins'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import { resolveSelection } from '../src/selections'
+import { editorElement } from './editorElement'
 
 /**
  * Snippets reaching the document the way a completion source delivers them: a plugin registers an
@@ -93,16 +94,19 @@ describe('snippet insertion', () => {
     )
   }
 
-  const pressTab = () => {
+  const pressTab = (shiftKey = false) => {
     const root = document.querySelector('.editor-virtualized')
     root?.dispatchEvent(
-      new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Tab' }),
+      new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Tab', shiftKey }),
     )
   }
 
   const type = (...characters: readonly string[]) => {
     for (const character of characters) {
-      editor.el.dispatchEvent(
+      // The scroll element is where the input handlers are bound. It is private on Editor and no
+      // testing seam exposes it, and its class is shared with every other virtualized view a
+      // host may mount, so a DOM query could answer with the wrong one.
+      editorElement(editor).dispatchEvent(
         new InputEvent('beforeinput', {
           bubbles: true,
           cancelable: true,
@@ -111,6 +115,16 @@ describe('snippet insertion', () => {
         }),
       )
     }
+  }
+
+  /** A paste of plain text, arriving the only way one ever does: as an event on the input. */
+  const paste = (text: string) => {
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(event, 'clipboardData', {
+      configurable: true,
+      value: { getData: (format: string) => (format === 'text/plain' ? text : '') },
+    })
+    document.querySelector('.editor-virtualized-input')?.dispatchEvent(event)
   }
 
   /** Where the last keystroke left the caret. */
@@ -186,6 +200,28 @@ describe('snippet insertion', () => {
 
     expect(editor.materializeFullText()).toBe('log(a, level)')
     expect(selectedText()).toBe('level')
+  })
+
+  // Filling a placeholder in replaces the characters its stop is anchored on, and a stop nothing
+  // copies has no batch to re-anchor it. Walking back over one that reports itself gone used to end
+  // the session outright, which takes every stop behind it out of reach with it.
+  it('walks back to a placeholder that has already been filled in', () => {
+    insertSnippet('log(${1:message}, ${2:level}, ${3:extra})')
+
+    type('a')
+    pressTab()
+
+    expect(selectedText()).toBe('level')
+
+    pressTab(true)
+
+    expect(selectedText()).toBe('a')
+
+    pressTab()
+    pressTab()
+
+    expect(editor.materializeFullText()).toBe('log(a, level, extra)')
+    expect(selectedText()).toBe('extra')
   })
 
   it('keeps cycling through a line break inside a stop', () => {
@@ -303,6 +339,33 @@ describe('snippet insertion', () => {
       { from: 0, to: 4, text: 'x' },
       { from: 5, to: 5, text: 'x' },
     ])
+  })
+
+  // Filling a placeholder in is a gesture as often as it is a keystroke, and every one of them has
+  // to be the batch that rewrites the copies: a paste that writes straight through takes the
+  // anchors the copies are tracked by with it, and every keystroke after it goes unmirrored too.
+  it('rewrites the copies for a paste over the stop', () => {
+    insertSnippet('let ${1:name} = $1')
+
+    type('a', 'b', 'c')
+    editor.setSelection(4, 7)
+    paste('zz')
+
+    expect(editor.materializeFullText()).toBe('let zz = zz')
+
+    type('!')
+
+    expect(editor.materializeFullText()).toBe('let zz! = zz!')
+  })
+
+  it('rewrites the copies for a forward delete inside the stop', () => {
+    insertSnippet('let ${1:name} = $1')
+
+    type('a', 'b', 'c')
+    editor.setSelection(5, 6)
+    editor.dispatchCommand('deleteForward')
+
+    expect(editor.materializeFullText()).toBe('let ac = ac')
   })
 
   it('still moves to the next stop once a stop has been mirrored', () => {

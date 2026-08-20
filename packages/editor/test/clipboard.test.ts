@@ -286,6 +286,42 @@ describe('clipboard', () => {
       expect(editor.getState().cursor).toEqual({ row: 1, column: 0 })
     })
 
+    // A payload taken off several carets is line-shaped and one fragment per caret at the same
+    // time. Read as only the first of those, every caret takes the whole payload — which grows the
+    // document by the square of the cursor count and puts each line back in several places.
+    it('hands every caret back the line it copied', () => {
+      const clipboard = createClipboard()
+      const session = createDocumentSession('one\ntwo\nthree')
+      session.setSelections([
+        { anchor: 0, head: 0 },
+        { anchor: 4, head: 4 },
+      ])
+      editor.attachSession(session)
+      clipboard.copy()
+
+      clipboard.paste()
+
+      expect(editor.materializeFullText()).toBe('one\none\ntwo\ntwo\nthree')
+      expect(selectionHeads(session)).toEqual([4, 12])
+    })
+
+    // The fragments were taken off whole lines, so they go back at line starts: spliced in where
+    // the caret happens to stand, a line lands in the middle of the word the caret is in.
+    it('lands each fragment at the start of its caret line rather than at the caret', () => {
+      const clipboard = createClipboard()
+      const session = createDocumentSession('one\ntwo\nthree')
+      session.setSelections([
+        { anchor: 1, head: 1 },
+        { anchor: 5, head: 5 },
+      ])
+      editor.attachSession(session)
+      clipboard.copy()
+
+      clipboard.paste()
+
+      expect(editor.materializeFullText()).toBe('one\none\ntwo\ntwo\nthree')
+    })
+
     it('leaves every caret on its own line once the lines above it have grown', () => {
       const clipboard = createClipboard()
       const session = createDocumentSession('one\ntwo\nthree')

@@ -10,6 +10,7 @@ import {
 } from './autoClose'
 
 const paren = { close: ')', open: '(' } as const
+const brace = { close: '}', open: '{' } as const
 const single = { close: "'", open: "'", quote: true } as const
 const double = { close: '"', open: '"', quote: true } as const
 const backtick = { close: '`', open: '`', quote: true } as const
@@ -150,6 +151,21 @@ describe('shouldAutoClose', () => {
 
     it('closes in code that merely follows a string', () => {
       expect(shouldAutoClose(paren, at('f("a", '))).toBe(true)
+    })
+
+    // An apostrophe inside a word is punctuation, and reading it as a literal still being typed
+    // withdraws auto-close from the rest of a line of markup text content.
+    it('closes after an apostrophe that sits inside a word', () => {
+      expect(shouldAutoClose(brace, at("      <p>It's a test</p>", '', 'tsx'))).toBe(true)
+      expect(shouldAutoClose(paren, at("<p>It's a test</p>", '', 'html'))).toBe(true)
+      expect(shouldAutoClose(double, at("<p>It's a test</p>", '', 'tsx'))).toBe(true)
+    })
+
+    // The other half of the same reading: a delimiter that opens against punctuation or a blank is
+    // one, so a string being typed still suppresses the pairs typed into it.
+    it('does not close inside a single-quoted string still being typed', () => {
+      expect(shouldAutoClose(paren, at("const s = 'don", '', 'tsx'))).toBe(false)
+      expect(shouldAutoClose(paren, at("<div class='wide", '', 'html'))).toBe(false)
     })
   })
 })

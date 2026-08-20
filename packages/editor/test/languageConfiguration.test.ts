@@ -8,6 +8,13 @@ import {
   type EditorLanguageConfiguration,
 } from '../src/public/extensions'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import { editorElement } from './editorElement'
+
+/**
+ * The element the editor listens on. `Editor.el` is private and neither the public API nor
+ * src/public/testing.ts hands it back, yet these tests have to dispatch on that exact element or
+ * the input pipeline never sees the event — hence the bracket access.
+ */
 
 /**
  * Language rules driven through the keyboard: a real beforeinput line break on the editor, so what
@@ -185,7 +192,7 @@ describe('language configuration', () => {
     editor.setText(source.replace('|', ''), { languageId })
     editor.setSelection(caret, caret)
 
-    editor.el.dispatchEvent(lineBreak())
+    editorElement(editor).dispatchEvent(lineBreak())
     return editor.materializeFullText()
   }
 
@@ -221,7 +228,7 @@ describe('language configuration', () => {
     editor.setText('', { languageId: 'TypeScript' })
     editor.setSelection(0, 0)
 
-    editor.el.dispatchEvent(
+    editorElement(editor).dispatchEvent(
       new InputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,

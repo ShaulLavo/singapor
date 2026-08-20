@@ -108,6 +108,30 @@ describe('createStickyScrollPlugin', () => {
     expect(stickyLineView(testContext)).toBeNull()
   })
 
+  /**
+   * Two scopes opening on one row is everyday code — `useMemo(() => ({...}), [user])` is an arrow
+   * function and an object literal both starting on the row of the `const` — and the stack holds one
+   * row for it, not one per scope, at the moment the row leaves and not a row earlier.
+   */
+  it('holds one slot for two scopes that open on the same row', () => {
+    const registration = registeredProvider(createStickyScrollPlugin())
+    const testContext = context({ ...scrolledSnapshot(60), foldMarkers: sameRowFoldMarkers() })
+
+    registration?.createContribution(testContext)
+
+    expect(mirroredLines(testContext)).toEqual(['function outer() {', '  if (a) {'])
+    expect(stickyLineView(testContext)?.style.height).toBe('40px')
+  })
+
+  it('renders nothing for those two while their row is still on screen', () => {
+    const registration = registeredProvider(createStickyScrollPlugin())
+    const testContext = context({ ...snapshot(), foldMarkers: sameRowFoldMarkers() })
+
+    registration?.createContribution(testContext)
+
+    expect(stickyRoot(testContext)?.hidden).toBe(true)
+  })
+
   it('leaves out a scope hidden inside a collapsed fold', () => {
     const registration = registeredProvider(createStickyScrollPlugin())
     const [outer, inner] = foldMarkers()
@@ -444,6 +468,24 @@ function foldMarkers(): readonly VirtualizedFoldMarker[] {
       endRow: 4,
       collapsed: false,
     },
+  ]
+}
+
+/** The fixture's regions plus one more opening on row 0, the way a query pairs two nodes there. */
+function sameRowFoldMarkers(): readonly VirtualizedFoldMarker[] {
+  const starts = lineStarts()
+  const [outer, inner] = foldMarkers()
+  return [
+    outer!,
+    {
+      key: 'query:same-row',
+      startOffset: outer!.startOffset,
+      endOffset: lineEnd(starts, 4),
+      startRow: 0,
+      endRow: 4,
+      collapsed: false,
+    },
+    inner!,
   ]
 }
 

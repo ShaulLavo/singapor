@@ -198,6 +198,12 @@ const measuredRowWidths = new WeakMap<HTMLElement, RowContentWidthCache>()
  * and its advance is a property of the node, not of whichever row currently hosts it.
  */
 const inlineWidgetWidths = new WeakMap<HTMLElement, number>()
+/**
+ * Bumped whenever any of those advances moves, and carried in the row geometry key so that a row
+ * hosting a replacement retires everything keyed against it. Global rather than per element,
+ * because the key is built from the row and a row does not know which nodes it is standing on.
+ */
+let inlineWidgetWidthRevision = 0
 
 export function isSimpleRowText(text: string): boolean {
   for (let index = 0; index < text.length; index += 1) {
@@ -307,6 +313,7 @@ export function setInlineWidgetMeasuredWidth(element: HTMLElement, width: number
   if (inlineWidgetWidths.get(element) === width) return false
 
   inlineWidgetWidths.set(element, width)
+  inlineWidgetWidthRevision += 1
   return true
 }
 
@@ -591,6 +598,9 @@ function rowGeometryCacheKey(
     row.rowDecorationKey,
     // Inline-kind classes restyle the row's font, so measured boundaries die with them.
     row.inlineKindsClassName,
+    // A replacement that settles on its real size moves every column after it, and the row's own
+    // text is unchanged when it does — nothing else in this key notices.
+    inlineWidgetWidthRevision,
     row.leftBlockLaneWidth,
     row.rightBlockLaneWidth,
     view.tabSize,
@@ -1444,6 +1454,10 @@ function controlCharacterInfo(code: number): ControlCharacterInfo | null {
 }
 
 function oneCellControlCharacterLabel(code: number): string | null {
+  // A tab is laid out, not labelled: `tab-size` under `white-space: pre` expands it to the column
+  // the geometry counts it as, and a `␉` in its place would shrink an indent by a whole tab stop
+  // per level the moment a replacement made the row take this path.
+  if (code === 9) return null
   if (code >= 0 && code <= 31) return String.fromCodePoint(0x2400 + code)
   if (code === 127) return '\u2421'
   return null

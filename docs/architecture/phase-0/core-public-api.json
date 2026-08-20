@@ -2098,6 +2098,12 @@
         },
         {
           "kind": "unknown",
+          "name": "pieceTableContainsUnusualLineTerminators",
+          "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "pieceTableSnapshotsHaveSameText",
           "source": "packages/editor/src/pieceTable/index.ts",
           "via": "packages/editor/src/public/document.ts"

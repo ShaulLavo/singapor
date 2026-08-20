@@ -4,6 +4,7 @@ import { createPieceTableSnapshot } from '../../src'
 import type {
   EditorDisposable,
   EditorHighlighterProvider,
+  EditorPlugin,
   EditorPluginContext,
 } from '../../src/plugins'
 import { createShikiHighlighterPlugin, type ShikiWorkerOwner } from '../../src/shiki'
@@ -37,7 +38,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'App.tsx',
       languageId: 'typescript',
-      text,
+      fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -55,7 +56,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'App.jsx',
       languageId: 'javascript',
-      text,
+      fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -67,13 +68,15 @@ describe('createShikiHighlighterPlugin', () => {
   })
 
   it('keeps explicit language overrides ahead of extension inference', () => {
-    const provider = activateHighlighterProvider({ languages: { typescript: 'typescript' } })
+    const provider = activateHighlighterProvider({
+      languages: { typescript: 'typescript' },
+    })
     const text = 'const el = <div className="x" />'
 
     provider.createSession({
       documentId: 'App.tsx',
       languageId: 'typescript',
-      text,
+      fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -101,9 +104,12 @@ describe('createShikiHighlighterPlugin', () => {
   it('re-registers a fresh provider when the theme changes and honors unsubscribe', () => {
     let listener: (() => void) | null = null
     const unsubscribe = vi.fn()
-    const registrations: { provider: EditorHighlighterProvider; disposed: boolean }[] = []
-    const context = {
-      registerHighlighter: (provider: EditorHighlighterProvider) => {
+    const registrations: {
+      provider: EditorHighlighterProvider
+      disposed: boolean
+    }[] = []
+    const context: Partial<EditorPluginContext> = {
+      registerHighlighter: (provider) => {
         const registration = { provider, disposed: false }
         registrations.push(registration)
         return {
@@ -112,14 +118,16 @@ describe('createShikiHighlighterPlugin', () => {
           },
         }
       },
-    } satisfies Partial<EditorPluginContext>
+    }
 
-    const disposables = createShikiHighlighterPlugin({
-      onThemeChanged: (nextListener) => {
-        listener = nextListener
-        return unsubscribe
-      },
-    }).activate(context as EditorPluginContext)
+    const disposables = toDisposables(
+      createShikiHighlighterPlugin({
+        onThemeChanged: (nextListener) => {
+          listener = nextListener
+          return unsubscribe
+        },
+      }).activate(context as EditorPluginContext),
+    )
 
     expect(registrations).toHaveLength(1)
     expect(listener).not.toBeNull()
@@ -152,7 +160,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'index.ts',
       languageId: 'typescript',
-      text,
+      fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -192,7 +200,7 @@ describe('createShikiHighlighterPlugin', () => {
     provider.createSession({
       documentId: 'index.ts',
       languageId: 'typescript',
-      text,
+      fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -214,7 +222,7 @@ describe('createShikiHighlighterPlugin', () => {
       provider.createSession({
         documentId: 'index.ts',
         languageId: 'typescript',
-        text,
+        fullText: text,
         snapshot: createPieceTableSnapshot(text),
       }),
     ).toThrow('Shiki theme registrations require a non-empty name')
@@ -225,12 +233,12 @@ function activateHighlighterProvider(
   options: Parameters<typeof createShikiHighlighterPlugin>[0] = {},
 ): EditorHighlighterProvider {
   let provider: EditorHighlighterProvider | null = null
-  const context = {
+  const context: Partial<EditorPluginContext> = {
     registerHighlighter: (nextProvider) => {
       provider = nextProvider
       return { dispose: () => undefined }
     },
-  } satisfies Partial<EditorPluginContext>
+  }
 
   createShikiHighlighterPlugin(options).activate(context as EditorPluginContext)
   if (!provider) throw new Error('Expected Shiki plugin to register a highlighter')
@@ -240,12 +248,17 @@ function activateHighlighterProvider(
 function activateWithDisposables(
   options: Parameters<typeof createShikiHighlighterPlugin>[0] = {},
 ): readonly EditorDisposable[] {
-  const context = {
+  const context: Partial<EditorPluginContext> = {
     registerHighlighter: () => ({ dispose: () => undefined }),
-  } satisfies Partial<EditorPluginContext>
+  }
 
-  const result = createShikiHighlighterPlugin(options).activate(context as EditorPluginContext)
+  return toDisposables(
+    createShikiHighlighterPlugin(options).activate(context as EditorPluginContext),
+  )
+}
+
+function toDisposables(result: ReturnType<EditorPlugin['activate']>): readonly EditorDisposable[] {
   if (!result) return []
-  if (Array.isArray(result)) return result
-  return [result]
+  // `dispose` only exists on the single-disposable arm of the activate() union.
+  return 'dispose' in result ? [result] : result
 }

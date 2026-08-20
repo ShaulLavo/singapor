@@ -1,6 +1,9 @@
 import { detectPlatform } from '@tanstack/hotkeys'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createFoldGutterPlugin, createLineGutterPlugin } from '../../gutters/src/index.ts'
+import {
+  createFoldGutterContribution,
+  createLineGutterContribution,
+} from '../../gutters/src/index.ts'
 import { Editor } from '../src/editor'
 import { EDITOR_FOLD_LEVELS, type EditorCommandId } from '../src/editor/commands'
 import { foldNesting, isEditorFoldCommand } from '../src/editor/foldOperations'
@@ -11,6 +14,7 @@ import {
   filterEditorKeymapLayersByCommandPacks,
   readonlySafeEditorCommandPacks,
 } from '../src/editor/keymap'
+import type { EditorPlugin } from '../src/plugins'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxResult,
@@ -22,6 +26,28 @@ import {
   setHighlightRegistry,
 } from '../src/public/testing'
 import type { FoldRange } from '../src/syntax'
+
+/**
+ * The gutter package types itself against the published `@singapor/core` facade, so the plugin
+ * objects its own `create*Plugin` helpers build carry dist's `EditorPlugin` — a nominally different
+ * type from the src one this Editor takes. The contributions are plain structural types that do
+ * cross that line, so they are registered here through the same one-line wrapper the package uses.
+ */
+function lineGutterPlugin(): EditorPlugin {
+  const contribution = createLineGutterContribution()
+  return {
+    name: 'line-gutter',
+    activate: (context) => context.registerGutterContribution(contribution),
+  }
+}
+
+function foldGutterPlugin(): EditorPlugin {
+  const contribution = createFoldGutterContribution()
+  return {
+    name: 'fold-gutter',
+    activate: (context) => context.registerGutterContribution(contribution),
+  }
+}
 
 /**
  * Two top-level blocks, one of them nested, and a flat tail no provider describes — which is where a
@@ -259,7 +285,7 @@ describe('fold commands', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     editor = new Editor(container, {
-      plugins: [createLineGutterPlugin(), createFoldGutterPlugin()],
+      plugins: [lineGutterPlugin(), foldGutterPlugin()],
     })
   })
 
@@ -528,6 +554,33 @@ describe('fold commands', () => {
 
       expect(visibleText()).toContain('  }')
       expect(editor.getState().cursor).toEqual({ row: 3, column: 0 })
+    })
+
+    // A collapse withheld from the range that restated it sits on no range at all, so nothing the
+    // reader presses reaches it. Letting it go is the only reading that does not shut the region
+    // again the moment the caret moves on and the next parse lands.
+    it('keeps no collapse behind when a restated region gives way to the caret', async () => {
+      await open(TREE_TEXT, [blockFold(TREE_TEXT, 0, 1)])
+      editor.setSelection(rowStart(TREE_TEXT, 3))
+      expect(editor.fold(rowStart(TREE_TEXT, 0))).toBe(true)
+
+      editor.setSyntaxFolds([blockFold(TREE_TEXT, 0, 5)])
+
+      expect(editor.unfoldAll()).toBe(false)
+    })
+
+    it('leaves the region the caret was in open once the caret has moved away', async () => {
+      await open(TREE_TEXT, [blockFold(TREE_TEXT, 0, 1)])
+      editor.setSelection(rowStart(TREE_TEXT, 3))
+      expect(editor.fold(rowStart(TREE_TEXT, 0))).toBe(true)
+      editor.setSyntaxFolds([blockFold(TREE_TEXT, 0, 5)])
+      expect(visibleText()).toContain('  }')
+
+      // The reader leaves, and the next parse names the same rows the way another provider would.
+      editor.setSelection(rowStart(TREE_TEXT, 6))
+      editor.setSyntaxFolds([{ ...blockFold(TREE_TEXT, 0, 5), type: 'indent' }])
+
+      expect(visibleText()).toContain('  }')
     })
 
     it('keeps a collapse the reader made over the caret when a parse restates it', async () => {

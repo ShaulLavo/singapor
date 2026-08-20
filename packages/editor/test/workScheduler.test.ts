@@ -101,14 +101,14 @@ describe('EditorWorkScheduler', () => {
     const first = createDeferred<string>()
     const second = createDeferred<string>()
     const applied: string[] = []
-    let firstSignal: AbortSignal | null = null
+    const captured: { firstSignal: AbortSignal | null } = { firstSignal: null }
     const scheduler = new EditorWorkScheduler()
 
     scheduler.schedule({
       key: 'editor.syntax.document',
       taskClass: 'background-derived',
       run: (context) => {
-        firstSignal = context.signal
+        captured.firstSignal = context.signal
         return first.promise
       },
       apply: (result) => applied.push(result),
@@ -122,7 +122,7 @@ describe('EditorWorkScheduler', () => {
     })
     flushSchedulerTicks(1)
 
-    expect(firstSignal?.aborted).toBe(true)
+    expect(captured.firstSignal?.aborted).toBe(true)
     first.resolve('first')
     await flushMicrotasks()
     expect(applied).toEqual([])
@@ -138,7 +138,7 @@ describe('EditorWorkScheduler', () => {
     const applied: string[] = []
     const events: EditorWorkEvent[] = []
     let cancelled = false
-    let signal: AbortSignal | null = null
+    const captured: { signal: AbortSignal | null } = { signal: null }
     const scheduler = new EditorWorkScheduler({ onEvent: (event) => events.push(event) })
 
     scheduler.schedule({
@@ -146,7 +146,7 @@ describe('EditorWorkScheduler', () => {
       taskClass: 'idle-cache',
       budgetMs: 20,
       run: (context) => {
-        signal = context.signal
+        captured.signal = context.signal
         return deferred.promise
       },
       apply: (result) => applied.push(result),
@@ -157,7 +157,7 @@ describe('EditorWorkScheduler', () => {
 
     flushSchedulerTicks(1)
     vi.advanceTimersByTime(20)
-    expect(signal?.aborted).toBe(true)
+    expect(captured.signal?.aborted).toBe(true)
     expect(cancelled).toBe(true)
     expect(events.at(-1)).toMatchObject({ type: 'timed-out', reason: 'budget-timeout' })
 

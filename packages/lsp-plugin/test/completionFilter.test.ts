@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import { createCompletionWidgetController, rankCompletionItems } from '../src/completion'
+import {
+  createCompletionWidgetController,
+  rankCompletionItems,
+  type CompletionWidgetController,
+} from '../src/completion'
 import { fuzzyMatch, looseFuzzyMatch } from '../src/fuzzyMatch'
 
 const WIDGET_NAMESPACE = 'test-filter'
@@ -93,6 +97,34 @@ describe('the completion widget', () => {
     expect(labelTexts()).toEqual(['#include'])
     expect(markedRuns()).toEqual(['inc'])
   })
+
+  // A hundred rows are offered in a box a handful of them fit in, and the widget never takes the
+  // focus, so nothing native follows the arrow keys down it: the highlight would walk off the edge
+  // and Enter would commit a row nobody could see.
+  it('scrolls the row the arrow keys reached into the box', () => {
+    const controller = showWidget(
+      Array.from({ length: 60 }, (_, index) => ({ label: `val${index}` })),
+    )
+    layOutRows(24, 120)
+
+    // Up from the top row wraps to the end, which is as far as the box has to travel.
+    controller.moveSelection(-1)
+    expect(widgetElement().scrollTop).toBe(60 * 24 - 120)
+
+    controller.moveSelection(1)
+    expect(widgetElement().scrollTop).toBe(0)
+  })
+
+  it('leaves the box where it is while the focus stays inside it', () => {
+    const controller = showWidget(
+      Array.from({ length: 60 }, (_, index) => ({ label: `val${index}` })),
+    )
+    layOutRows(24, 120)
+
+    controller.moveSelection(3)
+
+    expect(widgetElement().scrollTop).toBe(0)
+  })
 })
 
 function watchedItem(label: string, scored: string[]): lsp.CompletionItem {
@@ -105,7 +137,7 @@ function watchedItem(label: string, scored: string[]): lsp.CompletionItem {
   }
 }
 
-function showWidget(items: readonly lsp.CompletionItem[]): void {
+function showWidget(items: readonly lsp.CompletionItem[]): CompletionWidgetController {
   const controller = createCompletionWidgetController({
     document,
     themeSource: document.createElement('div'),
@@ -113,6 +145,28 @@ function showWidget(items: readonly lsp.CompletionItem[]): void {
     onSelect: vi.fn(),
   })
   controller.show({ anchor: new DOMRect(10, 20, 1, 16), items })
+  return controller
+}
+
+/** The layout the environment does not do: rows of a height, in a box that shows some of them. */
+function layOutRows(rowHeightPx: number, visibleHeightPx: number): void {
+  Object.defineProperty(widgetElement(), 'clientHeight', {
+    configurable: true,
+    value: visibleHeightPx,
+  })
+  const rows = document.querySelectorAll<HTMLElement>(
+    `.editor-${WIDGET_NAMESPACE}-completion [role="option"]`,
+  )
+  for (const [index, row] of rows.entries()) {
+    Object.defineProperty(row, 'offsetTop', { configurable: true, value: index * rowHeightPx })
+    Object.defineProperty(row, 'offsetHeight', { configurable: true, value: rowHeightPx })
+  }
+}
+
+function widgetElement(): HTMLElement {
+  const element = document.querySelector<HTMLElement>(`.editor-${WIDGET_NAMESPACE}-completion`)
+  if (!element) throw new Error('missing completion widget')
+  return element
 }
 
 function labelTexts(): readonly string[] {

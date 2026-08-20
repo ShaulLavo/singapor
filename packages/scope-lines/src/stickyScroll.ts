@@ -22,12 +22,6 @@ type ResolvedStickyScrollOptions = {
   readonly maxLineCount: number
 }
 
-/** A scope reaching into the viewport, with the slot in the stack its header row would occupy. */
-type StickyScrollCandidate = {
-  readonly marker: VirtualizedFoldMarker
-  readonly slotTop: number
-}
-
 type StickyScrollHeader = {
   /** Header rows of the enclosing scopes, outermost first. */
   readonly rows: readonly number[]
@@ -293,19 +287,27 @@ function stickyScrollHeader(
   const rows: number[] = []
   let top = 0
   let bottom = 0
-  for (const candidate of stickyScrollCandidates(snapshot, geometry)) {
-    const headerRowTop = contentRowTop(geometry, candidate.marker.startRow)
-    const scopeBottom = contentRowBottom(geometry, candidate.marker.endRow)
+  for (const marker of stickyScrollCandidates(snapshot, geometry)) {
+    // Scopes that open on one row — an arrow function and the object it returns — head the same row,
+    // so the first of them to be accepted has already said everything the stack can say about it.
+    if (rows.at(-1) === marker.startRow) continue
+
+    const headerRowTop = contentRowTop(geometry, marker.startRow)
+    const scopeBottom = contentRowBottom(geometry, marker.endRow)
+    // The slot is the one this scope would actually be given, which is the next free row of the
+    // stack: a slot counted from containment depth instead skips ahead over every enclosing scope
+    // the filters below rejected, and a slot the stack never reaches admits its scope too early.
+    const slotTop = rows.length * geometry.rowHeight
     // A slot above the row it would stand in for is a slot for a row still on screen, which needs no
     // stand-in; a slot below the end of its scope belongs to a scope already behind us.
-    if (candidate.slotTop <= headerRowTop - geometry.scrollTop) continue
-    if (candidate.slotTop > scopeBottom - geometry.scrollTop) continue
+    if (slotTop <= headerRowTop - geometry.scrollTop) continue
+    if (slotTop > scopeBottom - geometry.scrollTop) continue
 
     if (rows.length === 0) top = headerRowTop
     // Each scope accepted after the first is nested in the one before it, so the last one accepted is
     // the first to end — and the stack travels with whichever ends first.
     bottom = scopeBottom
-    rows.push(candidate.marker.startRow)
+    rows.push(marker.startRow)
     if (rows.length === options.maxLineCount) break
   }
 
@@ -315,29 +317,27 @@ function stickyScrollHeader(
 }
 
 /**
- * Scopes reaching into the viewport, outermost first, each one slotted a row below the scope that
- * contains it.
+ * Scopes reaching into the viewport, outermost first, for the header to slot in that order.
  *
- * Fold ranges never cross, so the ones still open at a given range are exactly its ancestors and
- * their count is its nesting depth. A scope inside a collapsed one is dropped: the rows it heads are
- * not on screen to be headed, even in the window where the marker set and the hidden rows disagree.
+ * Fold ranges never cross, so the ones still open at a given range are exactly its ancestors. A
+ * scope inside a collapsed one is dropped: the rows it heads are not on screen to be headed, even in
+ * the window where the marker set and the hidden rows disagree.
  */
 function stickyScrollCandidates(
   snapshot: EditorViewSnapshot,
   geometry: StickyScrollRowGeometry,
-): readonly StickyScrollCandidate[] {
-  const candidates: StickyScrollCandidate[] = []
+): readonly VirtualizedFoldMarker[] {
+  const candidates: VirtualizedFoldMarker[] = []
   const open: VirtualizedFoldMarker[] = []
 
   for (const marker of visibleFoldMarkers(snapshot, geometry)) {
     while (open.length > 0 && open.at(-1)!.endOffset <= marker.startOffset) open.pop()
 
     const insideCollapsed = open.some((ancestor) => ancestor.collapsed)
-    const slotTop = open.length * geometry.rowHeight
     open.push(marker)
     if (marker.collapsed || insideCollapsed) continue
 
-    candidates.push({ marker, slotTop })
+    candidates.push(marker)
   }
 
   return candidates

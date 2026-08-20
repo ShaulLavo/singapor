@@ -49,9 +49,15 @@ export type PieceTableBuffers = {
   // so a host can round-trip it on save. See pieceTable/lineEndings.ts.
   readonly lineEnding: DocumentLineEnding
   readonly byteOrderMark: string
+  // Ingestion folded U+2028/U+2029 into real line breaks, so the document is no
+  // longer byte-identical to the one the host handed us. Recorded rather than
+  // acted on: the fold is not reversible, and only the host can decide whether
+  // a warning is owed. See pieceTable/lineEndings.ts.
+  readonly containsUnusualLineTerminators: boolean
   // Lazily built '\n' offset index per buffer, shared across snapshots via
-  // spread copies. Buffers are append-only, so cached prefixes stay valid
-  // for every historical snapshot; see bufferLineIndex in buffers.ts.
+  // spread copies. Each entry records the text it scanned, because a buffer id
+  // rolled back by undo can be re-minted for text a discarded branch never had;
+  // see bufferLineIndex in buffers.ts.
   readonly lineIndexes?: Map<PieceBufferId, PieceBufferLineIndex>
 }
 
@@ -61,6 +67,10 @@ export type PieceBufferLineIndex = {
   offsets: Uint32Array
   count: number
   scannedLength: number
+  // The exact chunk string these offsets were scanned from. A buffer id is a
+  // sequence number and undo rolls that sequence back, so the id alone does not
+  // identify text; this is what tells a re-minted id from a grown one.
+  text: string
 }
 
 export type PieceBufferChunks = {

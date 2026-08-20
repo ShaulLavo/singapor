@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createFoldGutterPlugin, createLineGutterPlugin } from '../../gutters/src/index.ts'
+import {
+  createFoldGutterContribution,
+  createLineGutterContribution,
+} from '../../gutters/src/index.ts'
 import { Editor } from '../src/editor'
 import type { EditorPlugin } from '../src/plugins'
 import {
@@ -13,6 +16,28 @@ import {
   setHighlightRegistry,
 } from '../src/public/testing'
 import type { FoldRange } from '../src/syntax'
+
+/**
+ * The gutter package types itself against the published `@singapor/core` facade, so the plugin
+ * objects its own `create*Plugin` helpers build carry dist's `EditorPlugin` — a nominally different
+ * type from the src one this Editor takes. The contributions are plain structural types that do
+ * cross that line, so they are registered here through the same one-line wrapper the package uses.
+ */
+function lineGutterPlugin(): EditorPlugin {
+  const contribution = createLineGutterContribution()
+  return {
+    name: 'line-gutter',
+    activate: (context) => context.registerGutterContribution(contribution),
+  }
+}
+
+function foldGutterPlugin(): EditorPlugin {
+  const contribution = createFoldGutterContribution()
+  return {
+    name: 'fold-gutter',
+    activate: (context) => context.registerGutterContribution(contribution),
+  }
+}
 
 const TEXT = 'a\nb\nif (x) {\n  y();\n}\nz();'
 const BLOCK_START = TEXT.indexOf('{')
@@ -144,6 +169,8 @@ function createRowRecorderPlugin(rows: { latest: readonly string[] }): EditorPlu
     activate: (context) =>
       context.registerViewContribution({
         createContribution: () => ({
+          // Nothing of the view is held onto, so there is nothing to release.
+          dispose: () => undefined,
           update: (snapshot) => {
             rows.latest = snapshot.visibleRows
               .filter((row) => row.kind === 'text')
@@ -225,7 +252,7 @@ describe('fold collapse durability', () => {
     document.body.appendChild(container)
     rows.latest = []
     editor = new Editor(container, {
-      plugins: [createLineGutterPlugin(), createFoldGutterPlugin(), createRowRecorderPlugin(rows)],
+      plugins: [lineGutterPlugin(), foldGutterPlugin(), createRowRecorderPlugin(rows)],
     })
   })
 

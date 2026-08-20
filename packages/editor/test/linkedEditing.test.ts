@@ -5,6 +5,7 @@ import { Editor } from '../src/editor/Editor'
 import { registerEditorLanguageConfiguration } from '../src/editor/languageConfiguration'
 import type { EditorDisposable } from '../src/plugins'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import { editorElement } from './editorElement'
 
 /**
  * Renaming a tag, driven through the real input path: beforeinput events on the editor, the
@@ -67,7 +68,10 @@ describe('linked editing', () => {
   }
 
   const type = (...characters: readonly string[]) => {
-    for (const character of characters) editor.el.dispatchEvent(insert(character))
+    // The scroll element is where the input handlers are bound. It is private on Editor and no
+    // testing seam exposes it, and its class is shared with every other virtualized view a host may
+    // mount, so a DOM query could answer with the wrong one.
+    for (const character of characters) editorElement(editor).dispatchEvent(insert(character))
   }
 
   it('carries a typed character into the closing tag', () => {
@@ -162,6 +166,17 @@ describe('linked editing', () => {
 
     // A deletion the partner never hears leaves a mismatched pair, and a
     // mismatched pair no longer scans as one, so it can never re-link.
+    expect(editor.materializeFullText()).toBe('<div>hi</div>')
+  })
+
+  // The same key by the other name: a forward delete takes exactly what a backspace over the same
+  // selection takes, so the two cannot disagree about whether the partner hears it.
+  it('carries a forward delete into the closing tag', () => {
+    open('tsx', '<divx>hi</divx>')
+    editor.setSelection(4, 5)
+
+    editor.dispatchCommand('deleteForward')
+
     expect(editor.materializeFullText()).toBe('<div>hi</div>')
   })
 
@@ -332,6 +347,23 @@ describe('linked editing', () => {
     type('s')
 
     expect(editor.materializeFullText()).toBe('<Foo.Bars>hi</Foo.Bars>')
+  })
+
+  // A completion taken in the opening tag is that tag being renamed, whoever wrote the characters.
+  // Written straight through it leaves the pair mismatched, and a mismatched pair no longer scans
+  // as one — so nothing the reader types afterwards can ever reach the closing tag again.
+  it('carries an accepted suggestion into the closing tag', () => {
+    open('tsx', '<div>hi</div>')
+    editor.setSelection(4, 4)
+
+    editor.setInlineSuggestion({ from: 1, to: 4, text: 'divider' })
+    expect(editor.dispatchCommand('editor.action.inlineSuggest.commit')).toBe(true)
+
+    expect(editor.materializeFullText()).toBe('<divider>hi</divider>')
+
+    type('X')
+
+    expect(editor.materializeFullText()).toBe('<dividerX>hi</dividerX>')
   })
 
   it('ends the link once the name stops being one word', () => {

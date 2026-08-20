@@ -1,7 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createFoldGutterPlugin, createLineGutterPlugin } from '../../gutters/src/index.ts'
+import {
+  createFoldGutterContribution,
+  createLineGutterContribution,
+} from '../../gutters/src/index.ts'
 import { Editor } from '../src/editor'
+import type { EditorPlugin } from '../src/plugins'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+
+/**
+ * The gutter package types itself against the published `@singapor/core` facade, so the plugin
+ * objects its own `create*Plugin` helpers build carry dist's `EditorPlugin` — a nominally different
+ * type from the src one this Editor takes. The contributions are plain structural types that do
+ * cross that line, so they are registered here through the same one-line wrapper the package uses.
+ */
+function lineGutterPlugin(): EditorPlugin {
+  const contribution = createLineGutterContribution()
+  return {
+    name: 'line-gutter',
+    activate: (context) => context.registerGutterContribution(contribution),
+  }
+}
+
+function foldGutterPlugin(): EditorPlugin {
+  const contribution = createFoldGutterContribution()
+  return {
+    name: 'fold-gutter',
+    activate: (context) => context.registerGutterContribution(contribution),
+  }
+}
 
 const highlightsMap = new Map<string, Highlight>()
 const mockRegistry = {
@@ -97,7 +123,7 @@ describe('fold ranges without a grammar', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     editor = new Editor(container, {
-      plugins: [createLineGutterPlugin(), createFoldGutterPlugin()],
+      plugins: [lineGutterPlugin(), foldGutterPlugin()],
       ...options,
     })
   }

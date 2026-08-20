@@ -328,7 +328,10 @@ describe('grammar state stabilization', () => {
     // Verify the final line is tokenized as code, not as template content
     const afterLine = tokenizer.getSnapshot().lines[2]!
     expect(afterLine.text).toBe('const after = true')
-    expect(afterLine.tokens.some((t) => t.content === 'const')).toBe(true)
+    // Report the tokens rather than a bare `false`. This assertion has failed once under the root
+    // runner and never in 25 isolated runs, and which way it failed is the whole question: one
+    // token holding the line means the grammar answered nothing, several means it answered wrong.
+    expect(afterLine.tokens.map((t) => t.content)).toContain('const')
   })
 
   it('template literal: nested ${} expression preserves depth', async () => {

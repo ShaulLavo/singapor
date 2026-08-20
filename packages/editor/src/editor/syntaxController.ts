@@ -641,19 +641,25 @@ export class EditorSyntaxController {
     const nextTokens = this.highlighterSession
       ? this.currentTokens
       : this.syntaxTokensForResult(result.tokens, loadResult.range)
+    // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
+    // window that does not cover the viewport would pair brackets across the part it never parsed
+    // and report the rest of the document as being in the host language.
+    const applyScopeFacts = this.shouldApplySyntaxFolds(loadResult)
+    // Ahead of the tokens, because adopting them is the only notification this pass sends the view
+    // contributions: a bracket list assigned after it is a parse late to everyone reading the
+    // snapshot, and on a document nobody touches after opening it that means never.
+    if (applyScopeFacts) {
+      this.currentBrackets = result.brackets
+      this.currentInjections = result.injections
+    }
     if (!this.highlighterSession) this.setTokens(nextTokens)
     if (loadResult.range) this.rememberSyntaxRange(loadResult.range, result)
     if (!this.highlighterSession && loadResult.range && !this.pendingWarm) {
       this.warmSyntaxAroundRange(documentVersion, loadResult.range)
     }
-    if (this.shouldApplySyntaxFolds(loadResult)) {
+    if (applyScopeFacts) {
       this.options.setSyntaxFolds(result.folds)
       this.options.setSyntaxCaptures?.(result.captures)
-      // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
-      // window that does not cover the viewport would pair brackets across the part it never parsed
-      // and report the rest of the document as being in the host language.
-      this.currentBrackets = result.brackets
-      this.currentInjections = result.injections
     }
     this.options.notifyChange(null)
     return true

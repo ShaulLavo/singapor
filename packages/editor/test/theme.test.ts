@@ -1,3 +1,5 @@
+import { setFlagsFromString } from 'node:v8'
+import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor'
@@ -48,6 +50,13 @@ function themeElement(): HTMLElement {
   return element
 }
 
+// Nothing short of a real collection can tell a registry that pins the documents it has themed apart
+// from one that lets them go, and the runner does not hand out `gc` on its own.
+const collectGarbage: () => void = (() => {
+  setFlagsFromString('--expose-gc')
+  return runInNewContext('gc') as () => void
+})()
+
 function generatedColorRules(): string {
   return [...document.head.querySelectorAll('style')]
     .map((element) => element.textContent ?? '')
@@ -85,11 +94,22 @@ describe('registered editor colors', () => {
     expect(editorRoot().style.getPropertyValue('--editor-test-contributed-cleared')).toBe('')
   })
 
-  it('ignores ids nobody registered', () => {
+  it('keeps a contributed id whose package registers it after the theme was applied', () => {
+    const element = themeElement()
+
+    applyEditorTheme(element, { colors: { 'test.contributed.late': '#654321' } })
+    registerEditorColor('test.contributed.late')
+
+    expect(element.style.getPropertyValue('--editor-test-contributed-late')).toBe('#654321')
+  })
+
+  it('clears a contributed id that no package ever registered', () => {
     const element = themeElement()
 
     applyEditorTheme(element, { colors: { 'test.unregistered': '#444444' } })
+    expect(element.style.getPropertyValue('--editor-test-unregistered')).toBe('#444444')
 
+    applyEditorTheme(element, null)
     expect(element.style.getPropertyValue('--editor-test-unregistered')).toBe('')
   })
 
@@ -161,6 +181,23 @@ describe('registered color defaults', () => {
     expect(rules).toContain(
       "[data-editor-theme-type='high-contrast'] { --editor-test-defaults-per-type: #cccccc; }",
     )
+  })
+
+  it('writes the unconditional dark default before the light preference overrides it', () => {
+    registerEditorColor('test.defaults.order', { light: '#a1a1a1', dark: '#b1b1b1' })
+
+    applyEditorTheme(themeElement(), null)
+
+    const rules = generatedColorRules()
+    const base = rules.indexOf('[data-editor-colors] { --editor-test-defaults-order: #b1b1b1; }')
+    const preference = rules.indexOf(
+      '@media (prefers-color-scheme: light) { [data-editor-colors] { --editor-test-defaults-order: #a1a1a1; } }',
+    )
+    expect(base).toBeGreaterThanOrEqual(0)
+    expect(preference).toBeGreaterThanOrEqual(0)
+    // Both selectors weigh the same and a media query buys no specificity, so the fallback has to be
+    // written before the preference it is only the fallback for.
+    expect(base).toBeLessThan(preference)
   })
 
   it('borrows the dark default for high contrast rather than the light one', () => {
@@ -253,6 +290,24 @@ describe('registered color defaults', () => {
     applyEditorTheme(element, null)
 
     expect(generatedColorRules()).toContain('--editor-test-recovery-torn-out: #0b0b0b;')
+  })
+
+  it('lets a document it has generated rules for be collected once the host drops it', async () => {
+    registerEditorColor('test.retention.popOut', { dark: '#0d0d0d' })
+
+    const themed = ((): WeakRef<Document> => {
+      // A pop-out window or a per-print iframe is themed once and then thrown away, so the registry
+      // must not be the reason its whole detached tree stays alive.
+      const doc = document.implementation.createHTMLDocument('pop-out')
+      applyEditorTheme(doc.createElement('div'), null)
+      return new WeakRef(doc)
+    })()
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    collectGarbage()
+    collectGarbage()
+
+    expect(themed.deref()).toBeUndefined()
   })
 
   it('names the variable of an id the same way wherever it is read', () => {

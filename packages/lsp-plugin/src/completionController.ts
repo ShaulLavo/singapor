@@ -12,6 +12,7 @@ import {
   LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE,
   completionAnchorRange,
   completionApplication,
+  completionItemApplies,
   completionListResult,
   completionPrefix,
   completionTriggerFromChange,
@@ -96,6 +97,10 @@ export class CompletionController {
   private completionAbort: AbortController | null = null
   private completionRequestId = 0
   private completionSession: CompletionSession | null = null
+  // Whether the row on the widget is one the reader put there. The list is re-ranked and re-shown on
+  // every keystroke, so the item that happened to be on top a moment ago is nobody's choice, and
+  // carrying it across a rebuild is how the focus comes to sit on an item the reader watched fall.
+  private selectionChosen = false
   private caret: CompletionCaret | null = null
   private languageId: EditorViewSnapshot['languageId'] = null
   private disposed = false
@@ -107,6 +112,9 @@ export class CompletionController {
       themeSource: this.context.scrollElement,
       classNamespace: options.completionWidgetClassNamespace,
       onSelect: () => {
+        // The pointer chose the row it landed on, and a list that survives an acceptance it could
+        // not apply owes that choice the same standing an arrow key would have given it.
+        this.selectionChosen = true
         this.acceptCompletion()
       },
     })
@@ -153,6 +161,7 @@ export class CompletionController {
   public hide(): void {
     this.cancelCompletionRequest()
     this.completionSession = null
+    this.selectionChosen = false
     this.completion.hide()
   }
 
@@ -245,7 +254,10 @@ export class CompletionController {
     this.completion.show({
       anchor: rect,
       items,
-      selectedIndex: focusedCompletionIndex(items, this.completion.selectedItem()),
+      selectedIndex: focusedCompletionIndex(
+        items,
+        this.selectionChosen ? this.completion.selectedItem() : null,
+      ),
     })
     return true
   }
@@ -357,7 +369,11 @@ export class CompletionController {
     const caret = this.caret
     if (!caret) return this.hide()
 
-    const ranked = rankCompletionItems(result.items, caret.prefix)
+    // Judged once, here, rather than at every acceptance: what an item can be applied against is the
+    // text the request went out with, and that text is the session's for as long as it lives.
+    const requestDocument = { text: active.fullText, offset }
+    const items = result.items.filter((item) => completionItemApplies(requestDocument, item))
+    const ranked = rankCompletionItems(items, caret.prefix)
     if (ranked.length === 0) return this.hide()
 
     this.completionSession = {
@@ -365,7 +381,7 @@ export class CompletionController {
       offset,
       // The word the answer is about, which is what a session lives or dies by from here on.
       wordStart: caret.wordStart,
-      items: result.items,
+      items,
       isIncomplete: result.isIncomplete,
     }
     if (!this.showRankedItems(ranked, caret)) this.hide()
@@ -482,22 +498,22 @@ export class CompletionController {
 
     if (event.key === 'ArrowDown') {
       this.consumeCompletionKey(event)
-      this.completion.moveSelection(1)
+      this.moveSelection(1)
       return
     }
     if (event.key === 'ArrowUp') {
       this.consumeCompletionKey(event)
-      this.completion.moveSelection(-1)
+      this.moveSelection(-1)
       return
     }
     if (event.key === 'PageDown') {
       this.consumeCompletionKey(event)
-      this.completion.moveSelection(8)
+      this.moveSelection(8)
       return
     }
     if (event.key === 'PageUp') {
       this.consumeCompletionKey(event)
-      this.completion.moveSelection(-8)
+      this.moveSelection(-8)
       return
     }
     if (event.key === 'Escape') {
@@ -518,8 +534,15 @@ export class CompletionController {
     }
     if (event.key !== 'Enter' && event.key !== 'Tab') return
 
-    this.consumeCompletionKey(event)
-    this.acceptCompletion()
+    // Swallowed only once the item is in, as a commit character is: an Enter taken for an acceptance
+    // that never happened is a newline the reader pressed for and did not get.
+    if (this.acceptCompletion()) this.consumeCompletionKey(event)
+  }
+
+  /** Moving the focus is the reader claiming the row, which a rebuilt list has to honour. */
+  private moveSelection(delta: number): void {
+    this.selectionChosen = true
+    this.completion.moveSelection(delta)
   }
 
   private consumeCompletionKey(event: KeyboardEvent): void {
@@ -529,7 +552,8 @@ export class CompletionController {
 }
 
 /**
- * Where the row the user was reading goes in a list that has just been rebuilt.
+ * Where the row the user chose goes in a list that has just been rebuilt, given `focused` only when
+ * they chose one at all.
  *
  * A truncated list is asked again while it is on screen, and the answer arrives as items of its own,
  * so the choice has to be recognised by label rather than by identity. Dropping back to the top would

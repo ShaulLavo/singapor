@@ -72,6 +72,13 @@ export type FindHarness = {
   typeReplacement(value: string): void
   /** An edit made in the document, which find hears about rather than causes. */
   typeInDocument(offset: number, value: string): void
+  /**
+   * Another document opened in the same editor, the way a host swaps one in.
+   *
+   * A fresh buffer, not an edit of the old one: whatever was being tracked
+   * against the buffer that just went away is now being tracked against nothing.
+   */
+  openDocument(text: string): void
   pressEnter(): void
   pressShiftEnter(): void
   pressReplaceEnter(): void
@@ -172,6 +179,7 @@ type FindTextStore = {
   snapshot(): TextSnapshot
   trackRanges(ranges: readonly FindRange[]): FindTrackedRanges
   applyEdits(edits: readonly TextEdit[]): void
+  openDocument(text: string): void
 }
 
 // The buffer the editor keeps, edited the way the editor edits it: a replace has
@@ -185,6 +193,12 @@ function createFindTextStore(initial: string): FindTextStore {
     trackRanges: (ranges) => trackedPieceTableRanges(() => table, ranges),
     applyEdits: (edits) => {
       table = applyBatchToPieceTable(table, edits)
+      snapshot = createDocumentTextSnapshot(table)
+    },
+    // A table of its own, as a newly opened document gets: nothing taken against
+    // the old one has anything to answer from here.
+    openDocument: (text) => {
+      table = createPieceTableSnapshot(text)
       snapshot = createDocumentTextSnapshot(table)
     },
   }
@@ -336,6 +350,11 @@ function createFindHarness(fixture: FindFixture): FindHarness {
       store.applyEdits([{ from: offset, to: offset, text: value }])
       selections = [resolveSelection(offset + value.length)]
       controller.handleViewUpdate('content', null)
+    },
+    openDocument: (text) => {
+      store.openDocument(text)
+      selections = [resolveSelection(0)]
+      controller.handleViewUpdate('document', null)
     },
     pressEnter: () => pressKey(searchInput(container), 'Enter', false),
     pressShiftEnter: () => pressKey(searchInput(container), 'Enter', true),

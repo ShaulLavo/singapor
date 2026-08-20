@@ -11,6 +11,7 @@ import { parseSnippet, snippetInitialSelection } from '../src/editor/snippet'
 import type { EditorEditContributionContext, EditorPlugin } from '../src/plugins'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import { resolveSelection } from '../src/selections'
+import { editorElement } from './editorElement'
 
 /**
  * Inline suggestions the way a source delivers them: a text edit handed to the editor, drawn in the
@@ -137,6 +138,30 @@ describe('inline suggestions', () => {
     await flush()
 
     expect(selectedText()).toBe('level')
+  })
+
+  // A suggestion is reduced to what the document does not already say, so one taken inside a
+  // placeholder lands as an edit against the end of that placeholder rather than as the whole of
+  // it. Written straight through, it falls outside the stop it filled in and every keystroke after
+  // it is refused as an edit somewhere else in the document.
+  it('carries a suggestion taken inside a stop into the copies of that stop', async () => {
+    await open('', 0)
+    insertSnippet('${1:x} = new ${1:x}()')
+    type('b')
+
+    expect(editor.materializeFullText()).toBe('b = new b()')
+
+    editor.setInlineSuggestion({ from: 0, to: 1, text: 'bar' })
+    await flush()
+
+    pressTab()
+    await flush()
+
+    expect(editor.materializeFullText()).toBe('bar = new bar()')
+
+    type('z')
+
+    expect(editor.materializeFullText()).toBe('barz = new barz()')
   })
 
   it('indents when nothing is on offer', async () => {
@@ -286,7 +311,7 @@ describe('inline suggestions', () => {
       // Tab stays where it was: the whole suggestion is taken through the key that already indents,
       // which is the only way that key can still indent when nothing is on offer.
       const tab = defaultEditorKeyBindings(platform).find(
-        (binding) => binding.hotkey.key === 'Tab' && !binding.hotkey.shift,
+        ({ hotkey }) => typeof hotkey !== 'string' && hotkey.key === 'Tab' && !hotkey.shift,
       )
       expect(tab?.command).toBe('indentSelection')
     }
@@ -309,10 +334,17 @@ describe('inline suggestions', () => {
       anchor: selection.start,
       head: selection.end,
     })
+    // The caret visits the occurrence it can type into; every other occurrence of the same stop
+    // rides along as a copy of it, which is what a completion source hands over.
     contributed.startSnippetSession(
       parsed.stops.flatMap((stop) => {
-        const range = stop.ranges[0]
-        return range ? [{ end: range.end, start: range.start }] : []
+        const caret = stop.ranges.findIndex((range) => !range.transform)
+        const range = stop.ranges[caret]
+        if (!range) return []
+
+        const mirrors = stop.ranges.filter((_value, index) => index !== caret)
+        const { end, start } = range
+        return [mirrors.length > 0 ? { end, mirrors, start } : { end, start }]
       }),
     )
   }
@@ -333,7 +365,10 @@ describe('inline suggestions', () => {
   }
 
   function type(text: string): void {
-    editor.el.dispatchEvent(
+    // The scroll element is where the input handlers are bound. It is private on Editor and no
+    // testing seam exposes it, and its class is shared with every other virtualized view a host may
+    // mount, so a DOM query could answer with the wrong one.
+    editorElement(editor).dispatchEvent(
       new InputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,

@@ -255,11 +255,16 @@ const TAG_ON_ENTER_RULES: readonly EditorOnEnterRule[] = [
  * The character classes excluded after an opener are the string delimiters: `"{"` is a brace in a
  * string literal and must not open a block, and a scan of the line is the only thing available
  * here — there is no parse tree at this level.
+ *
+ * A switch label is its own anchored alternative rather than another opener reached through the
+ * leading run, because that run will happily spend the first half of an identifier: `lowercase:`
+ * ends in a label word without being one, and prettier leaves a wrapped property name alone with its
+ * colon on exactly that shape. The label words only ever begin a line.
  */
 const CODE_INDENTATION_RULES: EditorIndentationRules = {
   decreaseIndentPattern: /^\s*(?:[)\]}]|(?:case\b.*|default)\s*:)/,
   increaseIndentPattern:
-    /^((?!\/\/).)*(?:\{[^}"'`]*|\([^)"'`]*|\[[^\]"'`]*|(?:case\b.*|default)\s*:)\s*$/,
+    /^(?:((?!\/\/).)*(?:\{[^}"'`]*|\([^)"'`]*|\[[^\]"'`]*)|\s*(?:case\b.*|default)\s*:)\s*$/,
 }
 
 /** Indentation for the data and style languages, where only a delimiter opens a block. */

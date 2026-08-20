@@ -165,6 +165,20 @@ function requireViewContributionContext(
   return context
 }
 
+function requireBlockMountContext(
+  context: EditorBlockMountContext | null,
+): EditorBlockMountContext {
+  if (!context) throw new Error('missing block mount context')
+  return context
+}
+
+function requireDecorationContributionContext(
+  context: EditorDecorationContributionContext | null,
+): EditorDecorationContributionContext {
+  if (!context) throw new Error('missing decoration contribution context')
+  return context
+}
+
 function createTestLanguagePlugin(): EditorPlugin {
   return {
     name: 'test-language-placeholder',
@@ -1945,7 +1959,7 @@ describe('Editor', () => {
       expect(events.at(-1)?.snapshot?.totalHeight).toBe(76)
 
       measuredHeight = 52
-      blockContext?.requestMeasure()
+      requireBlockMountContext(blockContext).requestMeasure()
       await flushTimers()
 
       expect(mountCount).toBe(1)
@@ -2089,7 +2103,7 @@ describe('Editor', () => {
       expect(codeRows.map((row) => row.style.paddingRight)).toEqual(['24px', '24px'])
 
       outputHeight = 128
-      outputContext?.requestMeasure()
+      requireBlockMountContext(outputContext).requestMeasure()
       await flushTimers()
 
       expect(
@@ -2137,7 +2151,7 @@ describe('Editor', () => {
       expect(thirdRow?.style.paddingLeft).toBe('')
 
       measuredWidth = 12
-      blockContext?.requestMeasure()
+      requireBlockMountContext(blockContext).requestMeasure()
       await flushTimers()
 
       expect(firstRow?.style.paddingLeft).toBe('16px')
@@ -2518,11 +2532,12 @@ describe('Editor', () => {
       editor.dispose()
       editor = new Editor(container, { defaultText: 'one\ntwo', plugins: [plugin] })
 
-      featureContext?.setRowDecorations(
+      const feature = requireDecorationContributionContext(featureContext)
+      feature.setRowDecorations(
         'first',
         new Map([[0, { className: 'first-row', gutterClassName: 'first-gutter' }]]),
       )
-      featureContext?.setRowDecorations(
+      feature.setRowDecorations(
         'second',
         new Map([
           [0, { className: 'second-row', gutterClassName: 'second-gutter' }],
@@ -2534,7 +2549,7 @@ describe('Editor', () => {
       expect(firstRow?.className).toContain('first-row')
       expect(firstRow?.className).toContain('second-row')
 
-      featureContext?.clearRowDecorations('first')
+      feature.clearRowDecorations('first')
 
       expect(firstRow?.className).not.toContain('first-row')
       expect(firstRow?.className).toContain('second-row')
@@ -2558,9 +2573,10 @@ describe('Editor', () => {
       editor.dispose()
       editor = new Editor(container, { defaultText: 'one', plugins: [plugin] })
 
-      featureContext?.setRowDecorations('first', new Map([[0, { className: 'first-row' }]]))
-      featureContext?.setRowDecorations('second', new Map([[0, { className: 'second-row' }]]))
-      featureContext?.setRowDecorations('first', new Map([[0, { className: 'updated-row' }]]))
+      const feature = requireDecorationContributionContext(featureContext)
+      feature.setRowDecorations('first', new Map([[0, { className: 'first-row' }]]))
+      feature.setRowDecorations('second', new Map([[0, { className: 'second-row' }]]))
+      feature.setRowDecorations('first', new Map([[0, { className: 'updated-row' }]]))
 
       const className = container.querySelector<HTMLElement>(
         '[data-editor-virtual-row="0"]',

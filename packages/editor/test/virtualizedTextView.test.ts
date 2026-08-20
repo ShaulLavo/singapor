@@ -1745,7 +1745,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row token highlights at row-local offsets across repeated typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
@@ -1776,7 +1776,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row token highlights static when adopting projected tokens repeatedly', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
@@ -1910,7 +1910,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static after a newline followed by rapid typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
@@ -1998,7 +1998,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static while alternating newlines and typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
@@ -2033,7 +2033,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static through repeated mixed inserts above them', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
@@ -3289,6 +3289,34 @@ describe('VirtualizedTextView inline map', () => {
 
     expect(view.offsetAtLineBoundary(12, 'start')).toBe(8)
     expect(view.offsetAtLineBoundary(12, 'end')).toBe(20)
+  })
+
+  it('paints a tab as a tab on a row an inline replacement made complex', () => {
+    const indented = '\t\tconst answer = 42'
+    view.setText(indented)
+    view.setScrollMetrics(0, 100)
+    const plain = view.getState().mountedRows[0]!.element.textContent
+
+    view.setInlineMap(
+      createInlineMap(createPieceTableSnapshot(indented), [
+        {
+          id: 'ghost',
+          startIndex: indented.length,
+          endIndex: indented.length,
+          text: ' // 42',
+          insertion: true,
+          className: 'editor-ghost-text',
+        },
+      ]),
+    )
+
+    const rendered = view.getState().mountedRows[0]!.element.textContent
+
+    expect(plain).toContain('\t\t')
+    // The indent is laid out by `tab-size`, so a `␉` in its place would pull the line left by a
+    // whole tab stop per level the instant the ghost text appeared.
+    expect(rendered).not.toContain('\u2409')
+    expect(rendered).toContain('\t\tconst answer = 42')
   })
 
   it('ignores an inline map built against different text', () => {

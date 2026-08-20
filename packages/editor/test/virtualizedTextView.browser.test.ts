@@ -7,6 +7,7 @@ import {
 
 import { VirtualizedTextView } from '../src/virtualization'
 import { projectTokensThroughEdit } from '../src/editor/tokenProjection'
+import type { EditorToken } from '../src/public/syntax'
 
 describe.skipIf(typeof globalThis.Highlight === 'undefined')(
   'VirtualizedTextView native browser geometry',
@@ -195,7 +196,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
         selectionHighlightName: 'native-token-test',
       })
       let text = 'aa\nbb\ncc'
-      let tokens = [
+      let tokens: readonly EditorToken[] = [
         { start: 0, end: 2, style: { color: '#ff0000' } },
         { start: 3, end: 5, style: { color: '#ff0000' } },
         { start: 6, end: 8, style: { color: '#ff0000' } },

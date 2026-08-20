@@ -48,6 +48,7 @@ import {
   rowHeight,
   rowTop,
   scrollableHeight,
+  updateVirtualizerRows,
   visibleLineCount,
 } from './virtualizedTextViewLayout'
 import type {
@@ -105,6 +106,7 @@ const PARKED_HOISTED_BLOCK_TOP_PX = -1_000_000
 const hoistedBlockSurfacesByView = new WeakMap<VirtualizedTextViewInternal, HoistedBlockSurfaces>()
 const INLINE_WIDGET_CLASS = 'editor-inline-widget'
 const inlineWidgetsByView = new WeakMap<VirtualizedTextViewInternal, InlineWidgets>()
+const pendingInlineWidgetRepaints = new WeakMap<VirtualizedTextViewInternal, () => void>()
 
 type RowUpdatePass = {
   readonly cursorBufferRow: number | null
@@ -1514,6 +1516,43 @@ function applyInlineWidgetWidth(
   // replacement rendered does. An image that finished loading would otherwise keep the columns
   // after it where they were laid out at its placeholder size.
   clearRowGeometryCaches(view)
+  // Dropping the caches is only half of it. Every other place that drops them is inside a pass that
+  // goes on to repaint; this one is reached from a resize delivery with nothing behind it, so the
+  // caret and the horizontal extent would keep the numbers they were last painted with until the
+  // next keystroke happened to ask for them again.
+  scheduleInlineWidgetRepaint(view)
+}
+
+/**
+ * Coalesced and deferred, because the width arrives either inside a resize delivery — where
+ * repainting immediately re-enters the observer that is still running — or inside the row paint
+ * that mounted the node, which would re-enter the render pass writing that row. A burst of
+ * replacements settling together is one pass either way.
+ */
+function scheduleInlineWidgetRepaint(view: VirtualizedTextViewInternal): void {
+  if (pendingInlineWidgetRepaints.has(view)) return
+
+  const win = view.scrollElement.ownerDocument.defaultView
+  if (!win) return
+
+  /**
+   * @justification Leaving the current frame is the entire content of this delay: it is what keeps
+   * the repaint out of the resize delivery and out of the row paint that ask for it. The one
+   * outstanding handle per view makes a second request in the same frame a no-op, and
+   * `cancelInlineWidgetRepaint` withdraws it when the view goes away.
+   */
+  const handle = win.setTimeout(() => {
+    pendingInlineWidgetRepaints.delete(view)
+    resetContentWidthScan(view)
+    view.lastRenderedRowsKey = ''
+    updateVirtualizerRows(view)
+  }, 0)
+  pendingInlineWidgetRepaints.set(view, () => win.clearTimeout(handle))
+}
+
+function cancelInlineWidgetRepaint(view: VirtualizedTextViewInternal): void {
+  pendingInlineWidgetRepaints.get(view)?.()
+  pendingInlineWidgetRepaints.delete(view)
 }
 
 /**
@@ -1538,6 +1577,7 @@ function retireInlineWidgets(view: VirtualizedTextViewInternal): void {
 }
 
 export function disposeInlineWidgets(view: VirtualizedTextViewInternal): void {
+  cancelInlineWidgetRepaint(view)
   const widgets = inlineWidgetsByView.get(view)
   if (!widgets) return
 

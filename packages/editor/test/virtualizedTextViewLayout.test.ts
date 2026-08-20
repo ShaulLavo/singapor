@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { BlockRow, DisplayRow, DisplayTextRow } from '../src/displayTransforms'
 import { createStringTextSnapshot } from '../src/documentTextSnapshot'
-import type { FixedRowVirtualizerSnapshot } from '../src/virtualization/fixedRowVirtualizer'
+import {
+  FixedRowVirtualizer,
+  type FixedRowVirtualizerSnapshot,
+} from '../src/virtualization/fixedRowVirtualizer'
 import { createLineStartOffsetIndex } from '../src/virtualization/lineStartIndex'
 import {
   createRowHeightIndex,
@@ -372,11 +375,13 @@ function layoutView(fields: LayoutFields): VirtualizedTextViewInternal {
 }
 
 function throwingVirtualizer(): VirtualizedTextViewInternal['virtualizer'] {
-  return {
-    getSnapshot: () => {
+  // A real virtualizer with its snapshot read poisoned: these layout paths must answer from the
+  // model, never by asking the virtualizer for a snapshot.
+  return Object.assign(new FixedRowVirtualizer({ count: 0, rowHeight: 20 }), {
+    getSnapshot: (): FixedRowVirtualizerSnapshot => {
       throw new Error('unexpected virtualizer snapshot read')
     },
-  } as VirtualizedTextViewInternal['virtualizer']
+  })
 }
 
 function fixedSnapshot(
@@ -419,6 +424,8 @@ function textRow(
     sourceText,
     sourceStartColumn: startOffset,
     sourceEndColumn: endOffset,
+    displayStartColumn: startOffset,
+    displayEndColumn: endOffset,
     wrapSegment,
   }
 }

@@ -229,7 +229,7 @@ function grammarSelectionRangePlugin(): EditorPlugin {
     activate: (context) =>
       context.registerSelectionRangeProvider?.(({ folds }) =>
         folds.map((fold) => ({ start: fold.startIndex, end: fold.endIndex })),
-      ) ?? null,
+      ),
   }
 }
 

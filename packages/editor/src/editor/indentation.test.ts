@@ -106,6 +106,19 @@ describe('lineBreakIndent', () => {
     })
   })
 
+  // A property name prettier has left alone with its colon ends in the label word without being one,
+  // and indenting under it would push the rest of the object a level deeper.
+  it('does not read a switch label out of the middle of a name', () => {
+    const names = ['lowercase:', 'uppercase:', 'showcase:', 'testcase:', 'isDefault:', 'mydefault:']
+
+    for (const line of names.map((name) => `  ${name}`)) {
+      expect(lineBreakIndent(options({ lineTextBeforeCaret: line })), line).toEqual({
+        insert: '\n  ',
+        trailing: '',
+      })
+    }
+  })
+
   describe('block comments', () => {
     it('opens a leader and pushes the closer down', () => {
       const result = lineBreakIndent(

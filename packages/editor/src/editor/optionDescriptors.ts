@@ -68,8 +68,11 @@ type EditorOptionDefinition<K extends EditorControlledOptionName> = {
    * `undefined` arrives here rather than being filtered out earlier, because its meaning is
    * per-option: where the setter is also the reset path it asks for the editor default, and
    * everywhere else it says this host does not control the option at all.
+   *
+   * Reports whether the value reached the editor, which is the only thing the change tracker can
+   * safely remember: a value it turned away left the editor on whatever it had before.
    */
-  applyTo(editor: Editor, value: EditorControlledOptions[K]): void
+  applyTo(editor: Editor, value: EditorControlledOptions[K]): boolean
 }
 
 export type EditorOptionDescriptor<
@@ -104,9 +107,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
       input === undefined ? undefined : normalizeEditorEditability(input as EditorEditability),
     equals: Object.is,
     applyTo: (editor, editability) => {
-      if (editability === undefined) return
+      if (editability === undefined) return false
 
       editor.setEditability(editability)
+      return true
     },
   }),
   defineOption({
@@ -118,9 +122,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
         : normalizeHiddenCharactersMode(input as HiddenCharactersMode),
     equals: Object.is,
     applyTo: (editor, hiddenCharacters) => {
-      if (hiddenCharacters === undefined) return
+      if (hiddenCharacters === undefined) return false
 
       editor.setHiddenCharacters(hiddenCharacters)
+      return true
     },
   }),
   defineOption({
@@ -128,7 +133,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     defaultValue: undefined,
     validate: (input) => (isRecord(input) ? (input as EditorKeymapOptions) : undefined),
     equals: Object.is,
-    applyTo: (editor, keymap) => editor.setKeymap(keymap),
+    applyTo: (editor, keymap) => {
+      editor.setKeymap(keymap)
+      return true
+    },
   }),
   // No default of its own: a host that names no row height gets the one the editor measures from
   // the font it was given, which is a number nothing here could have written down.
@@ -138,9 +146,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) => (input === undefined ? undefined : normalizeRowHeight(input as number)),
     equals: Object.is,
     applyTo: (editor, lineHeight) => {
-      if (lineHeight === undefined) return
+      if (lineHeight === undefined) return false
 
       editor.setLineHeight(lineHeight)
+      return true
     },
   }),
   defineOption({
@@ -153,9 +162,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     },
     equals: Object.is,
     applyTo: (editor, rangeDecorations) => {
-      if (rangeDecorations === undefined) return
+      if (rangeDecorations === undefined) return false
 
       editor.setRangeDecorations(rangeDecorations)
+      return true
     },
   }),
   defineOption({
@@ -164,9 +174,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) => (input === undefined ? undefined : normalizeRowGap(input as number)),
     equals: Object.is,
     applyTo: (editor, rowGap) => {
-      if (rowGap === undefined) return
+      if (rowGap === undefined) return false
 
       editor.setRowGap(rowGap)
+      return true
     },
   }),
   defineOption({
@@ -175,7 +186,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) =>
       input === undefined ? undefined : normalizeScrollMode(input as EditorScrollMode),
     equals: Object.is,
-    applyTo: (editor, scrollMode) => editor.setScrollMode(scrollMode),
+    applyTo: (editor, scrollMode) => {
+      editor.setScrollMode(scrollMode)
+      return true
+    },
   }),
   defineOption({
     name: 'selection',
@@ -183,9 +197,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) => validateSelection(input),
     equals: (left, right) => selectionsEqual(left, right),
     applyTo: (editor, selection) => {
-      if (!selection) return
+      if (!selection) return false
 
       editor.setSelection(selection.anchor, selection.head, selectionRevealTarget(selection))
+      return true
     },
   }),
   // After the selection, whose reveal scrolls: a host driving both wants the position it asked
@@ -196,9 +211,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) => validateScrollPosition(input),
     equals: (left, right) => scrollPositionsEqual(left, right),
     applyTo: (editor, scrollPosition) => {
-      if (!scrollPosition) return
+      if (!scrollPosition) return false
 
       editor.setScrollPosition(scrollPosition)
+      return true
     },
   }),
   defineOption({
@@ -210,9 +226,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
         : undefined,
     equals: sameSuspiciousCharactersOptions,
     applyTo: (editor, suspiciousCharacters) => {
-      if (suspiciousCharacters === undefined) return
+      if (suspiciousCharacters === undefined) return false
 
       editor.setSuspiciousCharacters(suspiciousCharacters)
+      return true
     },
   }),
   defineOption({
@@ -221,9 +238,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) => (typeof input === 'boolean' ? input : undefined),
     equals: Object.is,
     applyTo: (editor, tabMovesFocus) => {
-      if (tabMovesFocus === undefined) return
+      if (tabMovesFocus === undefined) return false
 
       editor.setTabMovesFocus(tabMovesFocus)
+      return true
     },
   }),
   defineOption({
@@ -231,7 +249,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     defaultValue: null,
     validate: (input) => (isRecord(input) ? (input as EditorTheme) : null),
     equals: Object.is,
-    applyTo: (editor, theme) => editor.setTheme(theme),
+    applyTo: (editor, theme) => {
+      editor.setTheme(theme)
+      return true
+    },
   }),
   defineOption({
     name: 'wordWrap',
@@ -239,9 +260,10 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     validate: (input) => (typeof input === 'boolean' ? input : undefined),
     equals: Object.is,
     applyTo: (editor, wordWrap) => {
-      if (wordWrap === undefined) return
+      if (wordWrap === undefined) return false
 
       editor.setWordWrap(wordWrap)
+      return true
     },
   }),
 ].map((definition, id): EditorOptionDescriptor => ({ ...definition, id }))
@@ -257,8 +279,11 @@ export function createEditorOptionSync(): EditorOptionSync {
       const previous = applied[descriptor.id]
       if (previous && descriptor.equals(previous.value, value)) return
 
-      applied[descriptor.id] = { value }
-      descriptor.applyTo(editor, value)
+      // Only what the editor took is worth remembering. A descriptor that turns a value away —
+      // `undefined` from a host that has stopped controlling the option — leaves the editor on the
+      // last value it did take, and recording the refused one instead would let an `equals` that
+      // reads `undefined` as the default swallow the host's next request to turn the option back on.
+      if (descriptor.applyTo(editor, value)) applied[descriptor.id] = { value }
     },
     // A new editor knows none of the values this tracker recorded for the previous one.
     reset: () => {

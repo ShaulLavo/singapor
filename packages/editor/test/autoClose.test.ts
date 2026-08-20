@@ -4,6 +4,13 @@ import type { DocumentSessionChange } from '../src/documentSession'
 import { Editor } from '../src/editor/Editor'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import { resolveSelection } from '../src/selections'
+import { editorElement } from './editorElement'
+
+/**
+ * The element the editor listens on. `Editor.el` is private and neither the public API nor
+ * src/public/testing.ts hands it back, yet these tests have to dispatch on that exact element or
+ * the input pipeline never sees the event — hence the bracket access.
+ */
 
 /**
  * Auto-closing pairs driven through the real input path: a beforeinput event on the editor, the
@@ -67,7 +74,7 @@ describe('auto-closing pairs', () => {
   })
 
   const type = (...characters: readonly string[]) => {
-    for (const character of characters) editor.el.dispatchEvent(insert(character))
+    for (const character of characters) editorElement(editor).dispatchEvent(insert(character))
   }
 
   /** Both ends of the one selection the last keystroke left behind, as offsets. */
@@ -94,7 +101,9 @@ describe('auto-closing pairs', () => {
   // same route a typed character does or none of the typing behaviours apply to it.
   it('closes a pair for a character deduced from the hidden input', () => {
     editor.focus()
-    const input = editor.el.querySelector('.editor-virtualized-input') as HTMLTextAreaElement
+    const input = editorElement(editor).querySelector(
+      '.editor-virtualized-input',
+    ) as HTMLTextAreaElement
     input.value = '('
     input.setSelectionRange(1, 1)
     input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -177,7 +186,7 @@ describe('auto-closing pairs', () => {
   // blank indented line between them.
   it('expands into a block when Enter is pressed inside a pair', () => {
     type('(')
-    editor.el.dispatchEvent(lineBreak())
+    editorElement(editor).dispatchEvent(lineBreak())
 
     expect(editor.materializeFullText()).toBe('(\n    \n)')
     expect(editor.getState().cursor).toMatchObject({ column: 4, row: 1 })
@@ -187,7 +196,7 @@ describe('auto-closing pairs', () => {
     editor.setText('    foo')
     editor.setSelection(7, 7)
 
-    editor.el.dispatchEvent(lineBreak())
+    editorElement(editor).dispatchEvent(lineBreak())
 
     expect(editor.materializeFullText()).toBe('    foo\n    ')
   })
@@ -196,7 +205,7 @@ describe('auto-closing pairs', () => {
     editor.setText('  if (x) {', { languageId: 'typescript' })
     editor.setSelection(10, 10)
 
-    editor.el.dispatchEvent(lineBreak())
+    editorElement(editor).dispatchEvent(lineBreak())
 
     expect(editor.materializeFullText()).toBe('  if (x) {\n      ')
   })
@@ -205,7 +214,7 @@ describe('auto-closing pairs', () => {
     editor.setText('\tif (x) {', { languageId: 'typescript' })
     editor.setSelection(9, 9)
 
-    editor.el.dispatchEvent(lineBreak())
+    editorElement(editor).dispatchEvent(lineBreak())
 
     expect(editor.materializeFullText()).toBe('\tif (x) {\n\t\t')
   })
@@ -214,7 +223,7 @@ describe('auto-closing pairs', () => {
     editor.setText('foo')
     editor.setSelection(3, 3)
 
-    editor.el.dispatchEvent(lineBreak())
+    editorElement(editor).dispatchEvent(lineBreak())
 
     expect(editor.materializeFullText()).toBe('foo\n')
   })

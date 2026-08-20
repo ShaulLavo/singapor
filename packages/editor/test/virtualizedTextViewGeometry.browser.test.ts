@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import '../src/style.css'
 
+import { createInlineMap, type InlineReplacementSpec } from '../src/inlineMap'
+import { createPieceTableSnapshot } from '../src/public/document'
 import { VirtualizedTextView } from '../src/virtualization'
 import { clearBrowserTextMetricsCache } from '../src/virtualization/browserMetrics'
 import {
@@ -212,3 +214,108 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
     })
   },
 )
+
+const WIDGET_LINE = 'a ![img](x.png) b'
+const WIDGET_START = 2
+const WIDGET_END = 15
+/** What the node is worth when it mounts, and what it settles on once its content arrives. */
+const MOUNTED_WIDTH = 61.5
+const SETTLED_WIDTH = 261.5
+
+/**
+ * A replacement that grows after it is painted is every image, chart and colour swatch a provider
+ * hands over: the node mounts at whatever its placeholder is worth and reaches its real size a
+ * frame or a network round trip later. Only a real engine lays the row out around it, so only here
+ * can the extent and the caret be checked against the pixels the row actually occupies.
+ */
+describe.skipIf(typeof globalThis.Highlight === 'undefined')(
+  'virtualized text view geometry after an inline replacement settles on its size',
+  () => {
+    let container: HTMLElement
+    let view: VirtualizedTextView | null
+    let boxes: HTMLElement[]
+
+    const text = `${WIDGET_LINE}\nplain`
+
+    const imageSpec = (): InlineReplacementSpec => ({
+      id: 'image',
+      startIndex: WIDGET_START,
+      endIndex: WIDGET_END,
+      text: 'IMG',
+      render: (host: HTMLElement) => {
+        const box = host.ownerDocument.createElement('span')
+        box.style.display = 'inline-block'
+        box.style.height = '16px'
+        box.style.width = `${MOUNTED_WIDTH}px`
+        host.append(box)
+        boxes.push(box)
+        return { dispose: () => {} }
+      },
+    })
+
+    beforeEach(() => {
+      boxes = []
+      container = document.createElement('div')
+      container.style.height = '120px'
+      container.style.width = '600px'
+      document.body.appendChild(container)
+      clearBrowserTextMetricsCache()
+      view = new VirtualizedTextView(container, { rowHeight: 20, overscan: 0 })
+      view.setText(text)
+      view.setScrollMetrics(0, 120, 600)
+      view.setInlineMap(createInlineMap(createPieceTableSnapshot(text), [imageSpec()]))
+    })
+
+    afterEach(() => {
+      view?.dispose()
+      container.remove()
+      clearBrowserTextMetricsCache()
+      view = null
+    })
+
+    it('grows the horizontal extent with the node', async () => {
+      await settleContentWidth(view!)
+      const mounted = paintedRowWidth(view!)
+
+      boxes[0]!.style.width = `${SETTLED_WIDTH}px`
+      await settleContentWidth(view!)
+
+      // Everything past the replacement is unreachable without this: a row is `contain: layout
+      // paint size`, so the extent is what the reader can scroll to, not just what fits.
+      expect(paintedRowWidth(view!)).toBeCloseTo(mounted + (SETTLED_WIDTH - MOUNTED_WIDTH), 0)
+      expect(view!.getState().contentWidth).toBeCloseTo(paintedRowWidth(view!), 0)
+    })
+
+    it('moves the caret with the columns the node pushed along', async () => {
+      view!.setSelection(WIDGET_LINE.length, WIDGET_LINE.length)
+      const before = caretX(container)
+
+      boxes[0]!.style.width = `${SETTLED_WIDTH}px`
+
+      await expect
+        .poll(() => caretX(container))
+        .toBeCloseTo(before + (SETTLED_WIDTH - MOUNTED_WIDTH), 0)
+    })
+  },
+)
+
+/** Measuring the extent is deferred work, so it arrives at the painted width a frame or two late. */
+async function settleContentWidth(view: VirtualizedTextView): Promise<void> {
+  await expect
+    .poll(() => Math.abs(view.getState().contentWidth - paintedRowWidth(view)))
+    .toBeLessThan(1)
+}
+
+/** What the row paints, read off the engine rather than counted in columns. */
+function paintedRowWidth(view: VirtualizedTextView): number {
+  const row = view.getState().mountedRows[0]!.element
+  const painted = row.ownerDocument.createRange()
+  painted.selectNodeContents(row)
+  return painted.getBoundingClientRect().right - row.getBoundingClientRect().left
+}
+
+function caretX(container: HTMLElement): number {
+  const caret = container.querySelector('.editor-virtualized-caret')
+  if (!(caret instanceof HTMLElement)) throw new Error('no caret painted')
+  return caret.getBoundingClientRect().left - container.getBoundingClientRect().left
+}

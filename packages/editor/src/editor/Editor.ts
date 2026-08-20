@@ -599,6 +599,8 @@ export class Editor {
       onPluginDeactivateFailed: (name, error, durationMs) =>
         this.logPluginFailure('editor.plugin.deactivate_failed', name, error, durationMs),
       onPluginDisposed: (name) => this.recordPluginLifecycle('disposed', name),
+      onPluginDisposeFailed: (name, error, durationMs) =>
+        this.logPluginFailure('editor.plugin.dispose_failed', name, error, durationMs),
       onHighlighterProvidersChanged: () => this.syntax.reloadHighlighterAndSyntax(),
       onSyntaxProvidersChanged: () => this.syntax.reloadSyntaxSession(),
       onViewContributionProviderAdded: (provider) => this.addViewContributionProvider(provider),
@@ -1254,6 +1256,7 @@ export class Editor {
   }
 
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
+    const replacingDocument = this.session !== null
     const attachment = this.document.attachSession(session, options)
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
@@ -1265,6 +1268,8 @@ export class Editor {
     this.syncViewEditability()
     this.adoptDocumentTabSize(attachment.fullText)
     this.setDocument({ text: attachment.fullText, tokens: [] })
+    // A host handing over its own session is replacing the document just as much as opening one is.
+    if (replacingDocument) this.forgetOutgoingDocumentProjections()
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
@@ -1284,6 +1289,7 @@ export class Editor {
     this.document.clear()
     this.syntax.clearDocument()
     this.inputSelection.clearSelectionHighlight()
+    this.forgetOutgoingDocumentProjections()
     this.view.setEditable(false)
     this.setContent('')
     this.applyDocumentScrollPosition()
@@ -1312,14 +1318,24 @@ export class Editor {
     this.syntax.dispose()
     this.detachSession()
     this.logLifecycleSummary()
-    this.pluginHost.dispose()
-    this.view.dispose()
+    // The view owns listeners on window and document, so it has to come down even when a plugin
+    // takes the host with it. The host contains a throwing dispose per plugin; this catches what
+    // escapes that — a throwing installation disposable, or a host-owned registration.
+    try {
+      this.pluginHost.dispose()
+    } finally {
+      this.view.dispose()
+    }
   }
 
   private resetOwnedDocument(
     document: EditorOpenDocumentOptions,
     options: ResetOwnedDocumentOptions,
   ): number {
+    // Asked before the swap, because afterwards there is a document either way. An owner that
+    // registered ranges before the editor ever held one meant them for the document it was waiting
+    // for, and that document is the one arriving here.
+    const replacingDocument = this.session !== null
     const attachment = this.document.resetOwnedDocument(document, options)
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
@@ -1331,11 +1347,32 @@ export class Editor {
     this.syncViewEditability()
     this.adoptDocumentTabSize(attachment.fullText)
     this.setDocument({ text: attachment.fullText, tokens: [] })
+    // After the text is in, so what is rebuilt here is measured against the document that arrived.
+    if (replacingDocument) this.forgetOutgoingDocumentProjections()
     this.applyRangeDecorations()
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
     return attachment.documentVersion
+  }
+
+  /**
+   * Lets go of what the document being replaced was the only thing giving meaning to.
+   *
+   * A replacement is not an edit, so nothing carries these across it the way the flush carries a
+   * decoration through a keystroke. A range registered over the old text would be redrawn across
+   * whatever characters now sit at those offsets, and would then keep being carried by every later
+   * edit; an editor walked through a hundred files would never shed the ranges of the ninety-nine
+   * behind it. A suggestion is the same story with a shorter fuse: the view only refuses a map
+   * describing text of another length, so a replacement of the same length paints the old
+   * document's ghost text into the new one.
+   *
+   * The owners hear about the new document immediately after this and restate whatever still
+   * applies to it, which is the only account of it that can be right.
+   */
+  private forgetOutgoingDocumentProjections(): void {
+    this.decorations.clear()
+    this.setInlineSuggestion(null)
   }
 
   /**
@@ -1722,6 +1759,7 @@ export class Editor {
     action:
       | 'editor.plugin.activation_failed'
       | 'editor.plugin.deactivate_failed'
+      | 'editor.plugin.dispose_failed'
       | 'editor.plugin.install_failed'
       | 'editor.plugin.update_failed',
     name: string,

@@ -9,6 +9,7 @@ import {
 } from '../src/editor/keymap'
 import { EDITOR_OPTION_DESCRIPTORS } from '../src/editor/optionDescriptors'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import { editorElement } from './editorElement'
 
 /**
  * Tab is the only key a page has for walking between its controls, and this editor binds it. Every
@@ -186,7 +187,10 @@ describe('tab-focus mode', () => {
 
   function pressKey(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
     const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key, ...init })
-    editor.el.dispatchEvent(event)
+    // The scroll element is where the input handlers are bound. It is private on Editor and no
+    // testing seam exposes it, and its class is shared with every other virtualized view a host may
+    // mount, so a DOM query could answer with the wrong one.
+    editorElement(editor).dispatchEvent(event)
     return event
   }
 

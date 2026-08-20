@@ -101,6 +101,17 @@ function inputCorner(): string {
   return `translate(${input.style.left}, ${input.style.top})`
 }
 
+/** What the browser leaves in the element when it writes into it: new text, and a caret past it. */
+function writeIntoInput(
+  input: HTMLTextAreaElement,
+  start: number,
+  end: number,
+  text: string,
+): void {
+  input.value = `${input.value.slice(0, start)}${text}${input.value.slice(end)}`
+  input.setSelectionRange(start + text.length, start + text.length)
+}
+
 function compositionEvent(type: string, data = ''): CompositionEvent {
   const event = new Event(type, { bubbles: true }) as CompositionEvent
   Object.defineProperty(event, 'data', { configurable: true, value: data })
@@ -199,6 +210,37 @@ describe('IME composition', () => {
 
     expect(editor.materializeFullText().startsWith('const 日本line0')).toBe(true)
     expect(preedit()).toBeNull()
+  })
+
+  // Every refresh between compositionstart and compositionend returns rather than write over the
+  // candidate the reader is assembling, so a composition committed through beforeinput leaves the
+  // editor's copy of the element a whole composition behind — and the next edit it cannot name is
+  // read as the difference between text the browser stopped holding and text it does.
+  it('takes the hidden input back to the document when a beforeinput commits the composition', () => {
+    editor.setSelection(6, 6, { reveal: false })
+    const input = editorInput()
+    const caret = input.selectionStart
+
+    input.dispatchEvent(compositionEvent('compositionstart'))
+    input.dispatchEvent(compositionEvent('compositionupdate', '日本'))
+    // The candidate is in the element itself the whole time: that is where the reader is typing it.
+    writeIntoInput(input, caret, caret, '日本')
+    input.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: '日本',
+        inputType: 'insertFromComposition',
+      }),
+    )
+    input.dispatchEvent(compositionEvent('compositionend', '日本'))
+
+    // An autocorrection, a dead key, a dictated phrase: an input event with nothing readable on it,
+    // answered by diffing the element against the copy the editor holds.
+    writeIntoInput(input, input.selectionStart, input.selectionEnd, 'x')
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }))
+
+    expect(editor.materializeFullText().startsWith('const 日本xline0')).toBe(true)
   })
 
   // Backspace, the arrows and Enter all mean something to the input method while a candidate is

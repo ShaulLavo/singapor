@@ -56,6 +56,9 @@ export const createPieceTableSnapshot = (
     ...options,
     lineEnding: ingested ? ingested.lineEnding : options.lineEnding,
     byteOrderMark: ingested ? ingested.byteOrderMark : options.byteOrderMark,
+    containsUnusualLineTerminators: ingested
+      ? ingested.containsUnusualLineTerminators
+      : options.containsUnusualLineTerminators,
   })
   const originalPiece = createOriginalPiece(buffers)
   const root = originalPiece

@@ -20,6 +20,13 @@ import {
 import { registerEditorLanguageConfiguration } from '../src/editor/languageConfiguration'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import type { ResolvedSelection } from '../src/selections'
+import { editorElement } from './editorElement'
+
+/**
+ * The element the editor listens on. `Editor.el` is private and neither the public API nor
+ * src/public/testing.ts hands it back, yet these tests have to dispatch on that exact element or
+ * the input pipeline never sees the event — hence the bracket access.
+ */
 
 /**
  * Reindent driven the way it is reached: the chord, the command router and the piece table. The rows
@@ -64,7 +71,7 @@ class MockHighlight extends Set<Range> {}
 function pressOn(editor: Editor, keyName: string, chord: Chord): void {
   const mac = detectPlatform() === 'mac'
 
-  editor.el.dispatchEvent(
+  editorElement(editor).dispatchEvent(
     new KeyboardEvent('keydown', {
       bubbles: true,
       cancelable: true,
@@ -373,6 +380,75 @@ describe('reindent asked for by offset', () => {
   it('reaches the last row a range spans and not only its first', () => {
     expect(reindented(32, 44)).toBe(
       lines('function outer() {', 'if (ready) {', '  run()', '  more()', '}', '}'),
+    )
+  })
+})
+
+describe('reindent measured across rows the rules skip', () => {
+  // The row above is what a range is measured from, and a blank one says nothing about a level. The
+  // shapes here are the ones an editor hands over by itself: a closer typed under a blank row, and a
+  // selection that starts one.
+  it('corrects a closer typed under a blank row', () => {
+    const text = lines('function f() {', '    return 1', '', '    }')
+
+    expect(
+      applyEdits(
+        text,
+        reindentEditsForRanges(text, [{ end: text.length, start: text.length }], {
+          languageId: 'typescript',
+          tabSize: 4,
+        }),
+      ),
+    ).toBe(lines('function f() {', '    return 1', '', '}'))
+  })
+
+  it('measures a selection whose first row is blank from the row above it', () => {
+    const text = lines('function f() {', '', 'return 1', 'return 2', '}', '')
+    const start = text.indexOf('return 1')
+
+    expect(
+      applyEdits(
+        text,
+        reindentEditsForRanges(text, [{ end: start + 'return 1\nreturn 2'.length, start }], {
+          languageId: 'typescript',
+          tabSize: 2,
+        }),
+      ),
+    ).toBe(lines('function f() {', '', '  return 1', '  return 2', '}', ''))
+  })
+
+  // Nothing above to look at, so the range has to fall back to the first ruled row inside it.
+  it('reindents a document that opens with a blank row', () => {
+    const text = lines('', 'function f() {', 'run()', '}')
+
+    expect(run('editor.action.reindentlines', text, 'typescript')).toBe(
+      lines('', 'function f() {', '  run()', '}'),
+    )
+  })
+})
+
+describe('reindent and a switch label', () => {
+  // Prettier wraps a long value onto its own row, leaving a property name alone with its colon. A
+  // switch label read out of the middle of `lowercase` would open a block there and push the rest of
+  // the object one level deeper.
+  const WRAPPED = lines('const x = {', '  lowercase:', '    "a",', '  b: 1,', '}')
+
+  it('does not carry the rows after a wrapped property a level deeper', () => {
+    // The wrapped value lands on the object's own level, which is as far as a rule reading one line
+    // at a time can see — nothing marks a continuation. What a label read out of `lowercase` would
+    // do is worse and further-reaching: every row under it, the object's closer included, deepens.
+    expect(run('editor.action.reindentlines', WRAPPED, 'typescript')).toBe(
+      lines('const x = {', '  lowercase:', '  "a",', '  b: 1,', '}'),
+    )
+  })
+
+  it('still opens a block under a label of its own', () => {
+    // A label both closes the previous one and opens its own body, so it keeps the column its
+    // `switch` has and only the statements under it move.
+    const text = lines('switch (x) {', "case 'a':", 'run()', 'break', '}')
+
+    expect(run('editor.action.reindentlines', text, 'typescript')).toBe(
+      lines('switch (x) {', "case 'a':", '  run()', '  break', '}'),
     )
   })
 })

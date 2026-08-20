@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { Editor } from '../src/editor/Editor'
+import { resetEditorInstanceCount } from '../src/public/testing'
 import {
   createDocumentSession,
   createEditorBufferSession,
@@ -716,3 +719,73 @@ function appliedLength(source: string, edits: readonly TextEdit[]): number {
     source,
   ).length
 }
+
+/**
+ * The editor's own document, swapped out from under everything the previous one was measured
+ * against. A replacement is not an edit, so nothing here is carried across it — whatever the old
+ * document gave meaning to has to be taken back rather than reinterpreted.
+ */
+describe('replacing the document an editor owns', () => {
+  let container: HTMLElement
+  let editor: Editor
+
+  beforeEach(() => {
+    resetEditorInstanceCount()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    editor = new Editor(container, {})
+  })
+
+  afterEach(() => {
+    editor.dispose()
+    container.remove()
+  })
+
+  // The lengths match on purpose: the view drops a map describing text of another length, and that
+  // check is the only thing that ever took an expired suggestion off screen.
+  it('takes back an inline suggestion offered against the document it replaced', async () => {
+    await open('aaaaaaa', 7)
+    expect(editor.setInlineSuggestion({ from: 0, to: 7, text: 'aaaaaaaGHOST' })).toBe(true)
+    await flushEditor()
+    expect(ghostText()).toBe('GHOST')
+
+    editor.setText('xx\nxxxx')
+    await flushEditor()
+
+    expect(ghostText()).toBe(null)
+    expect(rowTexts()).toEqual(['xx', 'xxxx'])
+  })
+
+  it('takes it back when another document is opened over the one it was offered against', async () => {
+    await open('con', 3)
+    editor.setInlineSuggestion({ from: 0, to: 3, text: 'const answer' })
+    await flushEditor()
+    expect(ghostText()).toBe('st answer')
+
+    editor.openDocument({ documentId: 'other.ts', text: 'zzz' })
+    await flushEditor()
+
+    expect(ghostText()).toBe(null)
+    expect(rowTexts()).toEqual(['zzz'])
+  })
+
+  async function open(text: string, caret: number): Promise<void> {
+    editor.openDocument({ documentId: 'main.ts', text })
+    editor.setSelection(caret, caret)
+    await flushEditor()
+  }
+
+  function ghostText(): string | null {
+    return container.querySelector('.editor-ghost-text')?.textContent ?? null
+  }
+
+  function rowTexts(): readonly (string | null)[] {
+    return [...container.querySelectorAll('.editor-virtualized-row')].map((row) => row.textContent)
+  }
+
+  async function flushEditor(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+})

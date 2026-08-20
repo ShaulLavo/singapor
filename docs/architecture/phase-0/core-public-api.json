@@ -100,6 +100,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorAutoClosingPair",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorBlock",
           "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
@@ -108,6 +114,12 @@
           "kind": "type",
           "name": "EditorBlockAnchor",
           "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorBlockCommentTokens",
+          "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -166,6 +178,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorBracketPair",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorBufferSession",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -198,6 +216,30 @@
           "kind": "type",
           "name": "EditorChangeHandler",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorColorDefaults",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorColorId",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorColorTransform",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorColorValue",
+          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -244,8 +286,32 @@
         },
         {
           "kind": "type",
+          "name": "EditorCommentTokens",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorControlledOptionName",
+          "source": "packages/editor/src/editor/optionDescriptors.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorControlledSelection",
+          "source": "packages/editor/src/editor/optionDescriptors.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorCursorLineHighlightOptions",
           "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorDecoration",
+          "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -263,6 +329,24 @@
         {
           "kind": "type",
           "name": "EditorDecorationContributionProvider",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorDecorationRange",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorDecorationSpec",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorDecorationSurface",
           "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -340,7 +424,19 @@
         },
         {
           "kind": "type",
+          "name": "EditorEnterAction",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorFindFeature",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorFoldingRules",
           "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -388,6 +484,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorIndentationRules",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorInjectedTextRow",
           "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
@@ -426,6 +528,24 @@
           "kind": "type",
           "name": "EditorKeymapOptions",
           "source": "packages/editor/src/editor/keymap.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorLanguageConfiguration",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorLanguageFeatureSelector",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorLanguageFeatureToken",
+          "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -508,14 +628,32 @@
         },
         {
           "kind": "type",
+          "name": "EditorOnEnterRule",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorOpenDocumentOptions",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
           "kind": "type",
+          "name": "EditorOptionDescriptor",
+          "source": "packages/editor/src/editor/optionDescriptors.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorOptions",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorOptionSync",
+          "source": "packages/editor/src/editor/optionDescriptors.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -599,6 +737,12 @@
         {
           "kind": "type",
           "name": "EditorState",
+          "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSuspiciousCharactersOptions",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -754,6 +898,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorThemeType",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorTimingMeasurement",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -768,6 +918,12 @@
           "kind": "type",
           "name": "EditorTokenStyle",
           "source": "packages/editor/src/tokens.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorTrackedRanges",
+          "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -934,6 +1090,18 @@
         },
         {
           "kind": "type",
+          "name": "SuspiciousCharacterKind",
+          "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SuspiciousCharacterRange",
+          "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "TextEdit",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -1066,8 +1234,20 @@
         },
         {
           "kind": "unknown",
+          "name": "createEditorLanguageFeatureToken",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "createEditorLoggingPlugin",
           "source": "packages/editor/src/logging/index.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createEditorOptionSync",
+          "source": "packages/editor/src/editor/optionDescriptors.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1162,6 +1342,12 @@
         },
         {
           "kind": "unknown",
+          "name": "darkenEditorColor",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "defaultEditorCommandPacks",
           "source": "packages/editor/src/editor/keymap.ts",
           "via": "packages/editor/src/index.ts"
@@ -1246,14 +1432,38 @@
         },
         {
           "kind": "unknown",
+          "name": "EDITOR_OPTION_DESCRIPTORS",
+          "source": "packages/editor/src/editor/optionDescriptors.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "Editor",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
           "kind": "unknown",
+          "name": "editorColorReference",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorColorValue",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "editorCommandPackForCommand",
           "source": "packages/editor/src/editor/keymap.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "EditorDecorationStore",
+          "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1294,6 +1504,12 @@
         },
         {
           "kind": "unknown",
+          "name": "editorLanguageConfiguration",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "editorThemesEqual",
           "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
@@ -1308,6 +1524,12 @@
           "kind": "unknown",
           "name": "findBracketMatchAtCaret",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "firstEditorColor",
+          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1332,6 +1554,12 @@
           "kind": "unknown",
           "name": "isEditorSyntaxLanguage",
           "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "lightenEditorColor",
+          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1378,6 +1606,12 @@
         },
         {
           "kind": "unknown",
+          "name": "projectDecorationRangeThroughEdits",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "readonlySafeEditorCommandPacks",
           "source": "packages/editor/src/editor/keymap.ts",
           "via": "packages/editor/src/index.ts"
@@ -1386,6 +1620,18 @@
           "kind": "unknown",
           "name": "readPieceTableTextRange",
           "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "registerEditorColor",
+          "source": "packages/editor/src/public/rendering.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "registerEditorLanguageConfiguration",
+          "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1404,6 +1650,18 @@
           "kind": "unknown",
           "name": "styleForTreeSitterCapture",
           "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "suspiciousCharacterRanges",
+          "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "transparentEditorColor",
+          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1912,6 +2170,18 @@
         },
         {
           "kind": "type",
+          "name": "BracketLevel",
+          "source": "packages/editor/src/editor/bracketMatching.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "BracketLevelOptions",
+          "source": "packages/editor/src/editor/bracketMatching.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "BracketMatch",
           "source": "packages/editor/src/editor/bracketMatching.ts",
           "via": "packages/editor/src/editor.ts"
@@ -2392,6 +2662,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorSuspiciousCharactersOptions",
+          "source": "packages/editor/src/unicodeHighlight.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorSyntaxProvider",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/editor.ts"
@@ -2512,6 +2788,18 @@
         },
         {
           "kind": "type",
+          "name": "SuspiciousCharacterKind",
+          "source": "packages/editor/src/unicodeHighlight.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SuspiciousCharacterRange",
+          "source": "packages/editor/src/unicodeHighlight.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "TextOffsetRange",
           "source": "packages/editor/src/mergeConflicts.ts",
           "via": "packages/editor/src/editor.ts"
@@ -2519,6 +2807,12 @@
         {
           "kind": "unknown",
           "name": "bracketJumpTargetOffset",
+          "source": "packages/editor/src/editor/bracketMatching.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "collectBracketLevels",
           "source": "packages/editor/src/editor/bracketMatching.ts",
           "via": "packages/editor/src/editor.ts"
         },
@@ -2719,6 +3013,12 @@
           "name": "setHighlightRegistry",
           "source": "packages/editor/src/editor/runtime.ts",
           "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "suspiciousCharacterRanges",
+          "source": "packages/editor/src/unicodeHighlight.ts",
+          "via": "packages/editor/src/editor.ts"
         }
       ],
       "source": "packages/editor/src/editor.ts",
@@ -2726,6 +3026,24 @@
     },
     {
       "exports": [
+        {
+          "kind": "type",
+          "name": "EditorAutoClosingPair",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorBlockCommentTokens",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorBracketPair",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
         {
           "kind": "type",
           "name": "EditorCapabilityContribution",
@@ -2776,6 +3094,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorCommentTokens",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorDecoration",
+          "source": "packages/editor/src/editor/decorationStore.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorDecorationContribution",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -2790,6 +3120,24 @@
           "kind": "type",
           "name": "EditorDecorationContributionProvider",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorDecorationRange",
+          "source": "packages/editor/src/editor/decorationStore.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorDecorationSpec",
+          "source": "packages/editor/src/editor/decorationStore.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorDecorationSurface",
+          "source": "packages/editor/src/editor/decorationStore.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -2818,8 +3166,20 @@
         },
         {
           "kind": "type",
+          "name": "EditorEnterAction",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorFindFeature",
           "source": "packages/editor/src/editor/findFeature.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorFoldingRules",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -2866,6 +3226,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorIndentationRules",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorInjectedTextRow",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -2891,6 +3257,24 @@
         {
           "kind": "type",
           "name": "EditorInlineReplacementProvider",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorLanguageConfiguration",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorLanguageFeatureSelector",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorLanguageFeatureToken",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
@@ -2956,7 +3340,31 @@
         },
         {
           "kind": "type",
+          "name": "EditorOnEnterRule",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorOverlaySide",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPasteContext",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPasteHandler",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPasteTarget",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
@@ -2980,6 +3388,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorReindentOptions",
+          "source": "packages/editor/src/editor/reindent.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorResolvedSelection",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -2987,6 +3401,36 @@
         {
           "kind": "type",
           "name": "EditorSelectionRange",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSelectionRangeContext",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSelectionRangeProvider",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSnippetMirror",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSnippetStop",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorTrackedRanges",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
@@ -3040,6 +3484,12 @@
         },
         {
           "kind": "unknown",
+          "name": "createEditorLanguageFeatureToken",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "EDITOR_FIND_FEATURE_ID",
           "source": "packages/editor/src/editor/findFeature.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -3060,6 +3510,48 @@
           "kind": "unknown",
           "name": "EDITOR_MINIMAP_FEATURE",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "EDITOR_PASTE_HANDLER_ID",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "EDITOR_PASTE_HANDLER",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "EditorDecorationStore",
+          "source": "packages/editor/src/editor/decorationStore.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorLanguageConfiguration",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "projectDecorationRangeThroughEdits",
+          "source": "packages/editor/src/editor/decorationStore.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "registerEditorLanguageConfiguration",
+          "source": "packages/editor/src/editor/languageConfiguration.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "reindentEditsForRanges",
+          "source": "packages/editor/src/editor/reindent.ts",
           "via": "packages/editor/src/public/extensions.ts"
         }
       ],
@@ -3508,6 +4000,30 @@
         },
         {
           "kind": "type",
+          "name": "EditorColorDefaults",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorColorId",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorColorTransform",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorColorValue",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorCursorLineHighlightOptions",
           "source": "packages/editor/src/virtualization/index.ts",
           "via": "packages/editor/src/public/rendering.ts"
@@ -3532,6 +4048,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorThemeType",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
           "name": "FixedSize",
           "source": "packages/editor/src/editorBlocks.ts",
           "via": "packages/editor/src/public/rendering.ts"
@@ -3545,6 +4067,12 @@
         {
           "kind": "type",
           "name": "InlineColumnRange",
+          "source": "packages/editor/src/displayTransforms.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "InlineCursorStops",
           "source": "packages/editor/src/displayTransforms.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
@@ -3570,6 +4098,12 @@
           "kind": "type",
           "name": "InlineReplacementRange",
           "source": "packages/editor/src/inlineMap.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "InlineReplacementRender",
+          "source": "packages/editor/src/displayTransforms.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
         {
@@ -3640,7 +4174,31 @@
         },
         {
           "kind": "unknown",
+          "name": "darkenEditorColor",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorColorReference",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorColorValue",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "editorThemesEqual",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "firstEditorColor",
           "source": "packages/editor/src/theme.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
@@ -3658,7 +4216,19 @@
         },
         {
           "kind": "unknown",
+          "name": "lightenEditorColor",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "mergeEditorThemes",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "registerEditorColor",
           "source": "packages/editor/src/theme.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
@@ -3666,6 +4236,12 @@
           "kind": "unknown",
           "name": "revealInlineMap",
           "source": "packages/editor/src/inlineMap.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "transparentEditorColor",
+          "source": "packages/editor/src/theme.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
         {

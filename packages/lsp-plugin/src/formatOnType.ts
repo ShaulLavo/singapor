@@ -119,6 +119,11 @@ export class FormatOnTypeController {
     if (this.scheduled) return
 
     this.scheduled = true
+    /**
+     * @justification Coalesces the re-indents a single keystroke can queue into one pass at the end
+     * of the turn, so the edit lands before the frame the character was typed in is painted;
+     * `scheduled` is what makes a second call in that turn a no-op rather than a second pass.
+     */
     queueMicrotask(() => {
       this.scheduled = false
       this.applyPending()

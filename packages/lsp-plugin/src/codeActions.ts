@@ -169,6 +169,11 @@ export class CodeActionController {
 
   private schedule(): void {
     this.clear()
+    /**
+     * @justification Debounces a question to the language server against the caret and the
+     * diagnostics, not against rendering, and `clear()` withdraws it on every further change — so a
+     * fix is never computed against text the reader has already moved past.
+     */
     this.timer = setTimeout(() => {
       this.timer = null
       void this.request()

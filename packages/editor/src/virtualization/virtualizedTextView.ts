@@ -894,11 +894,21 @@ export class VirtualizedTextView {
     }
 
     if (typeof win.requestIdleCallback === 'function') {
+      /**
+       * @justification Measuring every row's width is the work the horizontal scroll extent needs
+       * and nothing on screen is waiting for, so it is deliberately given whatever the frame has
+       * left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when
+       * the content it would measure has already changed.
+       */
       const handle = win.requestIdleCallback(run)
       this.cancelContentWidthMeasurement = () => win.cancelIdleCallback(handle)
       return
     }
 
+    /**
+     * @justification The same deferral for an engine with no idle callback. Zero rather than a
+     * delay, because the point is only to leave the current frame, and the same cancel withdraws it.
+     */
     const handle = win.setTimeout(run, 0)
     this.cancelContentWidthMeasurement = () => win.clearTimeout(handle)
   }

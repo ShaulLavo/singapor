@@ -245,6 +245,29 @@ async function flushSyntaxDebounce(): Promise<void> {
   await flushMicrotasks()
 }
 
+/**
+ * Runs the syntax debounce until `sample` stops moving, for a test that counts the work the
+ * debounce produced.
+ *
+ * One 160ms window is the debounce and nothing more. It is enough on an idle machine and not
+ * enough on a loaded one, where a straggling query lands after the count is taken and is read as
+ * an extra query the next phase made. Waiting on the count itself rather than on a longer clock
+ * is what makes that impossible instead of unlikely; it throws rather than returning a number
+ * nobody should trust if the work never settles.
+ */
+async function flushSyntaxUntilSettled(sample: () => number): Promise<number> {
+  let previous = -1
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await flushSyntaxDebounce()
+    const current = sample()
+    if (current === previous) return current
+    previous = current
+  }
+
+  throw new Error(`syntax work never settled: ${sample()} after 40 debounce windows`)
+}
+
 function createInsertEvent(data: string): InputEvent {
   return new InputEvent('beforeinput', {
     bubbles: true,
@@ -6125,8 +6148,7 @@ describe('Editor', () => {
       const initialToken = tokenSnapshotFromLastEvent(events)[0]
 
       editor.setScrollPosition({ top: 300_000, left: 0 })
-      await flushSyntaxDebounce()
-      const rangeCountAfterScrollAway = ranges.length
+      const rangeCountAfterScrollAway = await flushSyntaxUntilSettled(() => ranges.length)
 
       editor.setScrollPosition({ top: 0, left: 0 })
       await flushSyntaxDebounce()

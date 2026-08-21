@@ -316,8 +316,19 @@ const renderEveryOffset = (snapshot: PieceTableSnapshot): void => {
   let row = 0
   let lineStart = 0
   for (let offset = 0; offset <= text.length; offset += 1) {
-    expect(offsetToPoint(snapshot, offset)).toEqual({ row, column: offset - lineStart })
-    expect(pointToOffset(snapshot, { row, column: offset - lineStart })).toBe(offset)
+    const point = { row, column: offset - lineStart }
+    const mapped = offsetToPoint(snapshot, offset)
+    const back = pointToOffset(snapshot, point)
+
+    // Compared by hand, and handed to expect() only when they disagree. This runs for every
+    // offset of every snapshot in a 200-step history, so an expect() per offset is ~60k
+    // assertions — enough to put the fuzzed case over its timeout on a loaded runner, which is
+    // how it first failed. A mismatch still reports through expect(), so a failure reads the
+    // same; it just costs nothing while there is nothing to say.
+    if (mapped.row !== point.row || mapped.column !== point.column) {
+      expect({ offset, point: mapped }).toEqual({ offset, point })
+    }
+    if (back !== offset) expect({ point, offset: back }).toEqual({ point, offset })
 
     if (text.charCodeAt(offset) === 0x0a) {
       row += 1

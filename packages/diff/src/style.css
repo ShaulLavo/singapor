@@ -32,10 +32,18 @@
 
 /*
  * A diff editor is a real `Editor`, so it carries `.editor` (Editor.ts:428) and the whole
- * `--editor-*` block that comes with it (editor/style.css:20-60). These four are declared at
- * (0,2,0) with `!important` so the diff's own background/foreground win; everything the block does
- * not name — caret colour, cursor-line colours, every `--editor-syntax-*` — is deliberately left to
- * `.editor`, which is where a diff should read them from. See §C10.
+ * `--editor-*` block that comes with it (editor/style.css:20-60). These three are declared at
+ * (0,2,0) with `!important` so the diff's own background wins; everything the block does not name —
+ * caret colour, cursor-line colours, every `--editor-syntax-*` — is deliberately left to `.editor`,
+ * which is where a diff should read them from. See §C10.
+ *
+ * `!important` here is doing something sharper than winning a specificity contest, and that is the
+ * reason to name as few properties as possible: `applyEditorTheme` writes the `--editor-*` colours
+ * as INLINE declarations (theme.ts:318), and a stylesheet `!important` outranks a normal inline
+ * one. So every variable listed here stops tracking the editor colour theme entirely. The three
+ * that remain mean to — a diff paints its own surface. The gutter *foreground* did not: it pinned
+ * every diff's line numbers to `#71717a` whatever theme was loaded, while the same numbers in an
+ * ordinary editor followed it. It is off this list and resolved on the cell instead.
  *
  * `.editor-diff-view` is stamped by the HOST, on the element it mounts the editor into. Nothing in
  * this package puts it there any more — `DiffView`, which used to, is gone. A host that omits it
@@ -51,7 +59,6 @@
     --editor-diff-gutter-background,
     var(--editor-diff-background, #1e1e1e)
   ) !important;
-  --editor-gutter-foreground: var(--editor-diff-gutter-foreground, #71717a) !important;
 }
 
 /*
@@ -113,7 +120,10 @@
 .editor-diff-gutter {
   align-items: center;
   box-sizing: border-box;
-  color: var(--editor-gutter-foreground, #71717a);
+  /* The diff's own hook first, then the editor colour theme, then the package default — rather
+     than forcing `--editor-gutter-foreground` above, which would outrank the theme's inline value
+     and leave the numbers a fixed grey. */
+  color: var(--editor-diff-gutter-foreground, var(--editor-gutter-foreground, #71717a));
   display: grid;
   font-variant-numeric: tabular-nums;
   grid-template-columns: var(--editor-diff-gutter-columns, minmax(0, 1fr) minmax(0, 1fr) 12px);

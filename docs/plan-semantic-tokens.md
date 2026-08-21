@@ -1240,11 +1240,17 @@ for the handle.
 `textDocument.semanticTokens` block from the caller's choices — `requests` (`full`, `full.delta`,
 `range`), `tokenTypes`, `tokenModifiers`, `formats`, `multilineTokenSupport`, `augmentsSyntaxTokens` —
 and its whole purpose is that **what it can produce is exactly what the shipped decoder honours**.
-Three flags are absent by construction rather than defaulted, and each absence is a term of the
-contract: §C1 forbids `overlappingTokenSupport: true`, so it is not a settable option; §C1 gates
-`multilineTokenSupport` on Milestone 5's exit criterion, so the builder rejects it until then; and §C3
+Two flags are absent by construction rather than defaulted, and each absence is a term of the
+contract: §C1 forbids `overlappingTokenSupport: true`, so it is not a settable option; and §C3
 de-scopes `dynamicRegistration` on both sides, so the builder does not offer it at all. This is the
 mechanism that stops the client declaring a flag it cannot honour, which a real server will act on.
+
+`multilineTokenSupport` was a third such absence when this section was first written, gated by §C1 on
+Milestone 5's exit criterion. **That criterion passed and the gate was opened**, so the builder now
+takes it as an ordinary option and emits the key only when a caller asks — see the milestone entry
+and the §C1 row. It stays opt-in rather than default-on because it is a statement about the host's
+pipeline as much as the editor's: a host that re-derives spans from `{line, character}` pairs of its
+own may not be able to honour it even where the paint layer can.
 
 **The builder is the editor's whole contribution to §C3's content, and the host calls it.** This plan
 does not choose `tokenTypes`, does not answer `augmentsSyntaxTokens`, and does not decide how many

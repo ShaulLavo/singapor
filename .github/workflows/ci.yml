@@ -40,5 +40,13 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      # Six packages carry a `browser (chromium)` vitest project alongside their happy-dom one —
+      # geometry and cascade assertions happy-dom cannot answer. They need a real browser.
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+
+      # Serialised on purpose. Each browser project starts its own vitest server, and running six
+      # of them at once on a two-core runner fights over ports and gets killed (exit 130) rather
+      # than reporting a real failure. Turbo still caches, so this is only slow on a cold branch.
       - name: Test
-        run: bun run test
+        run: bun run test -- --concurrency=1

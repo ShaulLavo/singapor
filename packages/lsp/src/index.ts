@@ -3,8 +3,22 @@ export {
   defaultClientCapabilities,
   documentSyncModeFromCapabilities,
   documentSyncOptionsFromCapabilities,
+  mergeClientCapabilities,
 } from './capabilities'
-export { LspClient, type LspClientConfig, type LspClientState } from './client'
+export {
+  SEMANTIC_TOKEN_MODIFIERS,
+  SEMANTIC_TOKEN_TYPES,
+  semanticTokensClientCapability,
+  type SemanticTokensClientCapabilityOptions,
+  type SemanticTokenFormat,
+  type SemanticTokensRequestOptions,
+} from './semanticTokens'
+export {
+  LspClient,
+  type LspClientConfig,
+  type LspClientState,
+  type RequestOptions as LspRequestOptions,
+} from './client'
 export {
   createLspContentChanges,
   createLspContentChangesInSnapshot,

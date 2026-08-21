@@ -101,6 +101,7 @@
   },
   "devDependencies": {
     "@singapor/core": "workspace:*",
+    "@singapor/find": "workspace:*",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "happy-dom": "^20.10.3",
     "oxfmt": "0.54.0",

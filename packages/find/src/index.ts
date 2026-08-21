@@ -8,4 +8,5 @@ export {
   type EditorFindContributionProviders,
   type EditorFindFeature,
 } from './plugin'
+export { FIND_HIGHLIGHT_Z_INDEX } from './findController'
 export type { EditorFindOptions } from './types'

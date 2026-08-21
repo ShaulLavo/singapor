@@ -64,7 +64,9 @@ describe('formatSignatureHelp', () => {
     const help: lsp.SignatureHelp = {
       activeParameter: 1,
       activeSignature: 0,
-      signatures: [signature('add(a: number, b: number)', [{ label: 'a: number' }, { label: 'b: number' }])],
+      signatures: [
+        signature('add(a: number, b: number)', [{ label: 'a: number' }, { label: 'b: number' }]),
+      ],
     }
 
     expect(formatSignatureHelp(help)?.markdown).toBe('add(a: number, **b: number**)')
@@ -85,7 +87,9 @@ describe('formatSignatureHelp', () => {
     const help: lsp.SignatureHelp = {
       activeParameter: 0,
       activeSignature: 0,
-      signatures: [{ documentation: 'Adds numbers.', label: 'add(a)', parameters: [{ label: 'a' }] }],
+      signatures: [
+        { documentation: 'Adds numbers.', label: 'add(a)', parameters: [{ label: 'a' }] },
+      ],
     }
 
     expect(formatSignatureHelp(help)?.markdown).toBe('add(**a**)\n\nAdds numbers.')

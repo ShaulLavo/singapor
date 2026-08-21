@@ -115,6 +115,13 @@ export const DIAGNOSTIC_STYLES: Record<
     backgroundColor: DIAGNOSTIC_ERROR_BACKGROUND,
     color: DIAGNOSTIC_ERROR,
     textDecoration: `underline wavy ${DIAGNOSTIC_ERROR_UNDERLINE}`,
+    // The only diagnostic style that declares a `color`, and therefore the only one that contends
+    // for one. Left implicit it sat at 0 alongside every syntax token highlight, so whether an
+    // error's red text survived over a syntax-coloured identifier came down to which style key the
+    // document's shared registry had seen first — a function of session history. Declaring it puts
+    // the error above the semantic layer at 1 and below the current find match at 3, which is the
+    // order the four producers are meant to paint in.
+    zIndex: 2,
   },
   warning: { backgroundColor: DIAGNOSTIC_WARNING_BACKGROUND },
   information: { backgroundColor: DIAGNOSTIC_INFORMATION_BACKGROUND },

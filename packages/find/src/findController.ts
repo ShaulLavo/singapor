@@ -30,13 +30,31 @@ import type { EditorFindOptions } from './types'
 // These three overlap by construction — the current match is always also a
 // match, and both sit inside the scope — so their stacking is declared rather
 // than left to the order the groups happen to reach the highlight registry in.
-const FIND_MATCH_STYLE = { backgroundColor: 'rgba(234, 179, 8, 0.34)', zIndex: 2 }
+//
+// The numbers are exported because they are half of a cross-package agreement: the highlight
+// priority space is one namespace that four subsystems write into, and `current` is the only find
+// style that declares a `color`, so it is the only one that contends with syntax tokens, semantic
+// tokens and error diagnostics at all. A regression test elsewhere asserts the relative order of
+// all four, and it can only do that by reading these rather than by restating them.
+export const FIND_HIGHLIGHT_Z_INDEX = {
+  scope: 1,
+  match: 2,
+  current: 3,
+} as const
+
+const FIND_MATCH_STYLE = {
+  backgroundColor: 'rgba(234, 179, 8, 0.34)',
+  zIndex: FIND_HIGHLIGHT_Z_INDEX.match,
+}
 const FIND_CURRENT_STYLE = {
   backgroundColor: 'rgba(245, 158, 11, 0.72)',
   color: '#111827',
-  zIndex: 3,
+  zIndex: FIND_HIGHLIGHT_Z_INDEX.current,
 }
-const FIND_SCOPE_STYLE = { backgroundColor: 'rgba(59, 130, 246, 0.22)', zIndex: 1 }
+const FIND_SCOPE_STYLE = {
+  backgroundColor: 'rgba(59, 130, 246, 0.22)',
+  zIndex: FIND_HIGHLIGHT_Z_INDEX.scope,
+}
 
 // Seeding stops here rather than pushing a multi-megabyte selection through the
 // find input and searching for it.

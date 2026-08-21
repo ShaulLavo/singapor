@@ -19,6 +19,17 @@ export {
   type LanguageServerDiagnosticSeverity,
 } from './diagnostics'
 export {
+  SemanticTokenLayerOwner,
+  type LanguageServerSemanticTokensDocument,
+  type LanguageServerSemanticTokensOptions,
+} from './semanticTokens'
+export {
+  decodeSemanticTokens,
+  type SemanticTokenDecodeDocument,
+  type SemanticTokenDecodeDrops,
+  type SemanticTokenDecodeResult,
+} from './semanticTokenDecoder'
+export {
   documentUriToFileName,
   fileNameToDocumentUri,
   pathOrUriToDocumentUri,

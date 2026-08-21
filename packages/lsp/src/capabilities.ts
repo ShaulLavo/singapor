@@ -24,6 +24,17 @@ const CODE_ACTION_KINDS: lsp.CodeActionKind[] = [
   'source.fixAll',
 ]
 
+/**
+ * What every client of this package declares, before a host adds anything of its own.
+ *
+ * There is deliberately **no `textDocument.semanticTokens` block here**, and adding one would be a
+ * mistake rather than a convenience. The content of that block is the host's — a real server
+ * computes its advertised legend as the intersection of its own token types with the ones the
+ * client declared, which makes the declared block an input to the server rather than a local table
+ * — and declaring it at all commits every server the client speaks to to computing tokens. A host
+ * that paints no semantic colour would be paying for answers nobody draws. Hosts that do want them
+ * build a block with `semanticTokensClientCapability()` and pass it in as `capabilities`.
+ */
 export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
   general: {
     positionEncodings: ['utf-16'],

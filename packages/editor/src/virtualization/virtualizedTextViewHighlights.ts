@@ -274,6 +274,7 @@ export function setRangeHighlight(
   group.highlight.priority = style.zIndex ?? 0
   if (canSkipRangeHighlightUpdate(view, group, nextRanges, style)) return
 
+  if (!sameHighlightStyle(group.style, style)) view.rangeHighlightRuleVersion += 1
   group.ranges = nextRanges
   group.style = style
   group.signature = staleRangeHighlightSignature()
@@ -307,6 +308,7 @@ export function clearRangeHighlight(view: VirtualizedTextViewInternal, name: str
   group.highlight.clear()
   unregisterRangeHighlight(view, group)
   view.rangeHighlightGroups.delete(name)
+  view.rangeHighlightRuleVersion += 1
   rebuildStyleRules(view)
   scheduleHighlightRepaintNudge(view.highlightRegistry)
 }
@@ -1159,6 +1161,7 @@ function getOrCreateRangeHighlightGroup(
     signature: '',
   }
   view.rangeHighlightGroups.set(name, group)
+  view.rangeHighlightRuleVersion += 1
   return group
 }
 
@@ -1451,6 +1454,14 @@ export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
   // (sharedTokenHighlights), written once here per batch. The per-view style element only
   // carries range/decoration highlight rules, which are specific to this view's ranges.
   getSharedTokenHighlights(view.scrollElement.ownerDocument, view.highlightRegistry)?.flush()
+
+  // A range rule reads only a group's name and its style, so a call that moved ranges around cannot
+  // have changed any of them. Without this, a repaint that pushes N groups rebuilds every rule N
+  // times — quadratic in the live group count, on the keystroke path, to arrive at the same string.
+  // The element's connection is only ever toggled by the rule set going empty or non-empty, which
+  // is itself a version change, so skipping the sync along with the rebuild is safe.
+  if (view.rangeHighlightRuleVersion === view.renderedRangeHighlightRuleVersion) return
+  view.renderedRangeHighlightRuleVersion = view.rangeHighlightRuleVersion
 
   const rules: string[] = []
   for (const group of view.rangeHighlightGroups.values()) {

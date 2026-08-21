@@ -4,6 +4,7 @@ import {
   LspClient,
   LspWorkspace,
   type LspManagedTransport,
+  type LspNotificationHandler,
   type LspWebSocketTransportOptions,
   type LspWorkerLike,
 } from '@singapor/lsp'
@@ -17,6 +18,21 @@ export type LspConnectionOptions = {
   readonly rootUri: lsp.DocumentUri | null
   readonly initializationOptions: unknown
   readonly timeoutMs: number
+  /**
+   * Merged over `defaultClientCapabilities()` by the client itself, so a host declares only what it
+   * adds. This is how a host turns on a feature the defaults deliberately leave off —
+   * `textDocument.semanticTokens` among them, which no server sends without being asked.
+   */
+  readonly capabilities?: lsp.ClientCapabilities
+  /**
+   * Load-bearing rather than cosmetic: at least one real server branches on the client name and
+   * withholds a request from clients it does not recognise. The value is the host's to pick.
+   */
+  readonly clientInfo?: lsp.InitializeParams['clientInfo']
+  /**
+   * Merged around the connection's own handlers rather than replacing them. See createClient.
+   */
+  readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   createTransport(): LspManagedTransport | Promise<LspManagedTransport>
 }
 
@@ -59,15 +75,23 @@ export class LspConnection {
   }
 
   private createClient(): LspClient {
+    const hostHandlers = this.options.notificationHandlers
     return new LspClient({
       rootUri: this.options.rootUri,
       workspaceFolders: null,
       workspace: this.workspace,
       timeoutMs: this.options.timeoutMs,
       initializationOptions: this.options.initializationOptions,
+      capabilities: this.options.capabilities,
+      clientInfo: this.options.clientInfo,
+      // Host handlers are merged *around* the connection's own rather than replacing them: the
+      // whole diagnostics feature hangs off publishDiagnostics, so a host that happens to want that
+      // notification too must not be able to take it away. Its handler runs after ours.
       notificationHandlers: {
-        'textDocument/publishDiagnostics': (_client, params) => {
+        ...hostHandlers,
+        'textDocument/publishDiagnostics': (client, params, message) => {
           this.callbacks.onPublishDiagnostics(params)
+          hostHandlers?.['textDocument/publishDiagnostics']?.(client, params, message)
           return true
         },
       },

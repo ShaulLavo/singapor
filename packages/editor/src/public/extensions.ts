@@ -16,6 +16,20 @@ export type {
   EditorDecorationSpec,
   EditorDecorationSurface,
 } from '../editor/decorationStore'
+export {
+  createSemanticTokenLayer,
+  SEMANTIC_TOKEN_Z_INDEX,
+  type SemanticTokenLayer,
+  type SemanticTokenLayerController,
+  type SemanticTokenLayerOptions,
+} from '../semanticTokenLayer'
+export type {
+  SemanticTokenDropReason,
+  SemanticTokenPayload,
+  SemanticTokenPushResult,
+  SemanticTokenRangeRequest,
+  SemanticTokenSpan,
+} from '../syntax'
 export { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '../editor/findFeature'
 export type { EditorFindFeature } from '../editor/findFeature'
 export {

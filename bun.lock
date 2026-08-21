@@ -52,7 +52,7 @@
     },
     "packages/diff": {
       "name": "@singapor/diff",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "dependencies": {
         "@singapor/core": "workspace:*",
         "diff": "^9.0.0",

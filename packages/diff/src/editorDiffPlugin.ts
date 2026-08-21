@@ -137,8 +137,16 @@ class DiffPluginRuntime {
     // terminal, so `schedule()` returns an inactive handle forever and the diff would render
     // permanently uncoloured after a remove-then-re-add. The core supports that cycle
     // (`Editor.setPlugins`), so the controller's lifetime is the activation's, not the plugin's.
-    if (this.syntax.isDisposed()) this.syntax = this.createSyntaxController()
-    if (this.file) this.syntax.setFile(this.file, this.rows)
+    //
+    // Only a *replacement* controller needs the file pushed into it. Doing it unconditionally
+    // re-parses a file the surviving controller is already holding — and when the host sets the
+    // file before constructing the editor, which is the natural order, that means cancelling an
+    // in-flight parse to start an identical one. Under shiki that is two worker owners for one
+    // file.
+    if (this.syntax.isDisposed()) {
+      this.syntax = this.createSyntaxController()
+      if (this.file) this.syntax.setFile(this.file, this.rows)
+    }
 
     const disposables: EditorDisposable[] = [
       context.registerGutterContribution(

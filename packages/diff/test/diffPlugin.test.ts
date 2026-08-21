@@ -295,6 +295,25 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
     expect(parsedTexts).toContain('one\ntwo\n')
   })
 
+  it('disposes a shiki worker owner even when the parse is cancelled mid-flight', async () => {
+    // The tree-sitter backend has no `dispose` at all, which is why every other syntax test here
+    // is blind to this: only the shiki path owns a worker. Superseding the file while
+    // `createShikiWorkerOwner` is still in flight used to strand the owner, because its disposal
+    // was registered *after* the staleness check that bails. `setFile` cancels on every call, so
+    // clicking through a file tree leaked one owner per click.
+    const { plugin } = mountDiff({
+      file: typescriptDiff(),
+      syntaxBackend: { kind: 'shiki', shikiTheme: 'github-light' },
+      syntaxHighlight: true,
+    })
+
+    // Supersede before the awaited service resolves.
+    plugin.setFile(otherPathDiff())
+    await flushUntil(() => shikiMock.owner.dispose.mock.calls.length > 0)
+
+    expect(shikiMock.owner.dispose).toHaveBeenCalled()
+  })
+
   it('creates tree-sitter sessions from diff syntax service requests', async () => {
     const sessionOptions: EditorSyntaxSessionOptions[] = []
     mountDiff({

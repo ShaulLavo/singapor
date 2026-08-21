@@ -137,9 +137,18 @@ export class DiffSyntaxController {
     sessions: { dispose(): void }[],
   ): Promise<readonly DiffSyntaxTokenSource[] | null> {
     const service = await diffSyntaxService(diffSyntaxBackend(this.options.backend), file)
-    if (!context.isCurrent()) return null
     if (!service) return null
+
+    // Registered before the staleness check, and disposed here if the check fails. Creating a
+    // shiki service spins up a worker owner, and this `await` is a window the task can be
+    // cancelled in — `setFile` cancels on every call, so clicking through a file tree would
+    // otherwise strand one owner per click with nothing left holding a reference to it. The
+    // tree-sitter path hides this in tests because its service has no `dispose` at all.
     if (service.dispose) sessions.push({ dispose: () => service.dispose?.() })
+    if (!context.isCurrent()) {
+      disposeMutableSessions(sessions)
+      return null
+    }
 
     const sources: DiffSyntaxTokenSource[] = []
     for (const document of syntaxDocumentsForFile(file, this.options.side)) {

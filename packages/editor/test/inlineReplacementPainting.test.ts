@@ -17,6 +17,9 @@ import type { EditorPlugin } from '../src/plugins'
 
 const TEXT = '## Summary\nplain\n'
 const TOKEN_STYLE = { color: '#ff0000' }
+const HEADING_TOKENS = [{ start: 0, end: 10, style: TOKEN_STYLE }]
+
+let tokens: typeof HEADING_TOKENS = HEADING_TOKENS
 
 const highlightsMap = new Map<string, Set<AbstractRange>>()
 const mockRegistry = {
@@ -33,6 +36,7 @@ describe('token painting over inline replacements', () => {
   let editor: Editor
 
   beforeEach(() => {
+    tokens = HEADING_TOKENS
     highlightsMap.clear()
     // @ts-expect-error happy-dom has no Highlight constructor
     globalThis.Highlight = MockHighlight
@@ -76,6 +80,56 @@ describe('token painting over inline replacements', () => {
     expect(container.querySelector('.editor-inline-heading-marker-2')).toBeNull()
   })
 
+  it('renders phantom text at a point the document never gained', async () => {
+    editor.openDocument({ documentId: 'x.md', languageId: 'markdown', text: TEXT })
+    await flush()
+    editor.setInlineReplacementProvider(() => [
+      { id: 'hint', startIndex: 3, endIndex: 3, text: 'name:', insertion: true },
+    ])
+    await flush()
+
+    const rows = [...container.querySelectorAll('.editor-virtualized-row')]
+    expect(rows.map((row) => row.textContent)).toContain('## name:Summary')
+    expect(editor.materializeFullText()).toBe(TEXT)
+  })
+
+  it('boxes a run carrying a class so it can be styled apart from the text', async () => {
+    await openWithPhantomHint({ className: 'editor-inlay-hint' })
+
+    const boxed = container.querySelector('.editor-inlay-hint')
+    expect(boxed?.textContent).toBe('name:')
+    expect(boxed?.parentElement?.textContent).toBe('## name:Summary')
+  })
+
+  it('leaves a run unboxed when it asks for no class of its own', async () => {
+    await openWithPhantomHint({})
+
+    const row = container.querySelector('.editor-virtualized-row')
+    expect(row?.textContent).toBe('## name:Summary')
+    expect(row?.querySelector('[data-editor-inline-run]')).toBeNull()
+  })
+
+  it('keeps a token meeting a run at its point clear of the run', async () => {
+    tokens = [
+      { start: 0, end: 3, style: TOKEN_STYLE },
+      { start: 3, end: 10, style: { color: '#00ff00' } },
+    ]
+    await openWithPhantomHint({})
+
+    const painted = paintedRanges().map((range) => [range.start, range.end, range.text])
+    expect(painted).toContainEqual([0, 3, '## name:Summary'])
+    expect(painted).toContainEqual([8, 15, '## name:Summary'])
+  })
+
+  async function openWithPhantomHint(styling: { className?: string }): Promise<void> {
+    editor.openDocument({ documentId: 'x.md', languageId: 'markdown', text: TEXT })
+    await flush()
+    editor.setInlineReplacementProvider(() => [
+      { id: 'hint', startIndex: 3, endIndex: 3, text: 'name:', insertion: true, ...styling },
+    ])
+    await flush()
+  }
+
   async function openWithHeadingReplacement(): Promise<void> {
     editor.openDocument({ documentId: 'x.md', languageId: 'markdown', text: TEXT })
     await flush()
@@ -113,8 +167,8 @@ function highlighterPlugin(): EditorPlugin {
     activate: (context) =>
       context.registerHighlighter({
         createSession: () => ({
-          refresh: async () => ({ tokens: [{ start: 0, end: 10, style: TOKEN_STYLE }] }),
-          applyChange: async () => ({ tokens: [{ start: 0, end: 10, style: TOKEN_STYLE }] }),
+          refresh: async () => ({ tokens }),
+          applyChange: async () => ({ tokens }),
           dispose: () => undefined,
         }),
       }),

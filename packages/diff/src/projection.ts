@@ -16,8 +16,15 @@ type ChangeBlock = {
   readonly additions: readonly DiffHunkLine[]
 }
 
+type SkippedRange = {
+  readonly oldStart: number
+  readonly newStart: number
+  readonly count: number
+}
+
 type DiffProjectionOptions = {
-  readonly expandedHunks?: ReadonlySet<number>
+  /** Keys of the collapsed regions to render expanded, taken from `DiffRenderRow.expandKey`. */
+  readonly expandedRegions?: ReadonlySet<string>
 }
 
 export function createSplitProjection(
@@ -31,29 +38,22 @@ export function createSplitProjection(
   let previousNewEnd = 0
 
   for (const [hunkIndex, hunk] of file.hunks.entries()) {
-    const separator = hunkSeparatorRow(
-      file,
-      hunk,
-      previousOldEnd,
-      previousNewEnd,
-      hunkIndex,
-      options,
-    )
+    const range = skippedRangeBeforeHunk(hunk, previousOldEnd, previousNewEnd)
+    const separator = separatorRow(file, range, hunkIndex, options)
     if (separator) pushSplitHunkSeparator(leftRows, rightRows, separator)
     hunkRows.set(hunkIndex, separator ? leftRows.length - 1 : leftRows.length)
-    if (separator?.expanded)
-      pushSplitExpandedRows(
-        file,
-        leftRows,
-        rightRows,
-        hunk,
-        previousOldEnd,
-        previousNewEnd,
-        hunkIndex,
-      )
+    if (separator?.expanded) pushSplitExpandedRows(file, leftRows, rightRows, range, hunkIndex)
     pushSplitHunkRows(leftRows, rightRows, hunk.lines, hunkIndex)
     previousOldEnd = hunkEndLine(hunk.oldStart, hunk.oldLines)
     previousNewEnd = hunkEndLine(hunk.newStart, hunk.newLines)
+  }
+
+  const trailing = trailingSkippedRange(file, previousOldEnd, previousNewEnd)
+  const trailingSeparator = separatorRow(file, trailing, undefined, options)
+  if (trailingSeparator) {
+    pushSplitHunkSeparator(leftRows, rightRows, trailingSeparator)
+    if (trailingSeparator.expanded)
+      pushSplitExpandedRows(file, leftRows, rightRows, trailing, undefined)
   }
 
   if (leftRows.length === 0) pushNoChangesRows(leftRows, rightRows)
@@ -70,21 +70,21 @@ export function createStackedProjection(
   let previousNewEnd = 0
 
   for (const [hunkIndex, hunk] of file.hunks.entries()) {
-    const separator = hunkSeparatorRow(
-      file,
-      hunk,
-      previousOldEnd,
-      previousNewEnd,
-      hunkIndex,
-      options,
-    )
+    const range = skippedRangeBeforeHunk(hunk, previousOldEnd, previousNewEnd)
+    const separator = separatorRow(file, range, hunkIndex, options)
     if (separator) rows.push(separator)
     hunkRows.set(hunkIndex, separator ? rows.length - 1 : rows.length)
-    if (separator?.expanded)
-      pushStackedExpandedRows(file, rows, hunk, previousOldEnd, previousNewEnd, hunkIndex)
+    if (separator?.expanded) pushStackedExpandedRows(file, rows, range, hunkIndex)
     pushStackedHunkRows(rows, hunk.lines, hunkIndex)
     previousOldEnd = hunkEndLine(hunk.oldStart, hunk.oldLines)
     previousNewEnd = hunkEndLine(hunk.newStart, hunk.newLines)
+  }
+
+  const trailing = trailingSkippedRange(file, previousOldEnd, previousNewEnd)
+  const trailingSeparator = separatorRow(file, trailing, undefined, options)
+  if (trailingSeparator) {
+    rows.push(trailingSeparator)
+    if (trailingSeparator.expanded) pushStackedExpandedRows(file, rows, trailing, undefined)
   }
 
   if (rows.length === 0) rows.push(emptyRow('No changes'))
@@ -117,12 +117,9 @@ function pushSplitExpandedRows(
   file: DiffFile,
   leftRows: DiffRenderRow[],
   rightRows: DiffRenderRow[],
-  hunk: DiffHunk,
-  previousOldEnd: number,
-  previousNewEnd: number,
-  hunkIndex: number,
+  range: SkippedRange,
+  hunkIndex: number | undefined,
 ): void {
-  const range = expandedRange(hunk, previousOldEnd, previousNewEnd)
   for (let index = 0; index < range.count; index += 1) {
     leftRows.push(expandedSideRow(file.oldLines, range.oldStart + index, 'old', hunkIndex))
     rightRows.push(expandedSideRow(file.newLines, range.newStart + index, 'new', hunkIndex))
@@ -192,12 +189,9 @@ function pushStackedHunkRows(
 function pushStackedExpandedRows(
   file: DiffFile,
   rows: DiffRenderRow[],
-  hunk: DiffHunk,
-  previousOldEnd: number,
-  previousNewEnd: number,
-  hunkIndex: number,
+  range: SkippedRange,
+  hunkIndex: number | undefined,
 ): void {
-  const range = expandedRange(hunk, previousOldEnd, previousNewEnd)
   for (let index = 0; index < range.count; index += 1) {
     rows.push(
       expandedBothRow(file.newLines, range.oldStart + index, range.newStart + index, hunkIndex),
@@ -220,7 +214,7 @@ function renderRowFromLine(
   line: DiffHunkLine,
   type: 'context' | 'addition' | 'deletion',
   side: 'old' | 'new' | 'both',
-  hunkIndex: number,
+  hunkIndex: number | undefined,
   inlineRanges: readonly DiffInlineRange[] = [],
 ): DiffRenderRow {
   return {
@@ -242,28 +236,34 @@ function isRawHunkHeader(text: string): boolean {
   return /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(text.trim())
 }
 
-function hunkSeparatorRow(
+function separatorRow(
   file: DiffFile,
-  hunk: DiffHunk,
-  previousOldEnd: number,
-  previousNewEnd: number,
-  hunkIndex: number,
+  range: SkippedRange,
+  hunkIndex: number | undefined,
   options: DiffProjectionOptions,
 ): DiffRenderRow | null {
-  const skippedLines = skippedUnmodifiedLines(hunk, previousOldEnd, previousNewEnd)
-  if (skippedLines <= 0) return null
+  if (range.count <= 0) return null
 
-  const expanded = options.expandedHunks?.has(hunkIndex) ?? false
-  const expandable = skippedRangeAvailable(file, hunk, previousOldEnd, previousNewEnd)
-  const label = hunkSeparatorText(skippedLines, expandable, expanded)
+  const expandKey = regionKey(range)
+  const expanded = options.expandedRegions?.has(expandKey) ?? false
+  const expandable = skippedRangeAvailable(file, range)
+  const label = hunkSeparatorText(range.count, expandable, expanded)
   return {
     expanded,
     expandable,
+    expandKey,
     type: 'hunk',
     text: label,
     hunkIndex,
-    skippedLines,
+    skippedLines: range.count,
   }
+}
+
+// A collapsed region is identified by where it starts on both sides rather than
+// by its ordinal, so expansion state cannot land on an unrelated region when the
+// same path is re-diffed into a different set of hunks.
+function regionKey(range: SkippedRange): string {
+  return `${range.oldStart}:${range.newStart}`
 }
 
 function hunkSeparatorText(lines: number, expandable: boolean, expanded: boolean): string {
@@ -272,31 +272,54 @@ function hunkSeparatorText(lines: number, expandable: boolean, expanded: boolean
   return `${expanded ? 'Hide' : 'Show'} ${suffix}`
 }
 
-function skippedRangeAvailable(
-  file: DiffFile,
-  hunk: DiffHunk,
-  previousOldEnd: number,
-  previousNewEnd: number,
-): boolean {
-  const range = expandedRange(hunk, previousOldEnd, previousNewEnd)
+function skippedRangeAvailable(file: DiffFile, range: SkippedRange): boolean {
   if (range.count <= 0) return false
   if (range.oldStart < 1 || range.newStart < 1) return false
   if (range.oldStart + range.count - 1 > file.oldLines.length) return false
   return range.newStart + range.count - 1 <= file.newLines.length
 }
 
-function expandedRange(hunk: DiffHunk, previousOldEnd: number, previousNewEnd: number) {
-  const oldStart = previousOldEnd + 1
-  const newStart = previousNewEnd + 1
-  const count = skippedUnmodifiedLines(hunk, previousOldEnd, previousNewEnd)
-  return { count, newStart, oldStart }
+function skippedRangeBeforeHunk(
+  hunk: DiffHunk,
+  previousOldEnd: number,
+  previousNewEnd: number,
+): SkippedRange {
+  return {
+    count: skippedUnmodifiedLines(hunk, previousOldEnd, previousNewEnd),
+    newStart: previousNewEnd + 1,
+    oldStart: previousOldEnd + 1,
+  }
+}
+
+function trailingSkippedRange(
+  file: DiffFile,
+  previousOldEnd: number,
+  previousNewEnd: number,
+): SkippedRange {
+  // Only a whole-file diff knows how long the tail is; a parsed patch carries
+  // just the hunk lines, so its trailing region stays unknown and unrendered.
+  if (file.hunks.length === 0 || file.isPartial) return { count: 0, newStart: 1, oldStart: 1 }
+
+  const oldRemaining = contentLineCount(file.oldLines) - previousOldEnd
+  const newRemaining = contentLineCount(file.newLines) - previousNewEnd
+  return {
+    count: Math.max(oldRemaining, newRemaining, 0),
+    newStart: previousNewEnd + 1,
+    oldStart: previousOldEnd + 1,
+  }
+}
+
+function contentLineCount(lines: readonly string[]): number {
+  if (lines.length === 0) return 0
+  if (lines.at(-1) === '') return lines.length - 1
+  return lines.length
 }
 
 function expandedSideRow(
   lines: readonly string[],
   lineNumber: number,
   side: 'old' | 'new',
-  hunkIndex: number,
+  hunkIndex: number | undefined,
 ): DiffRenderRow {
   const text = lines[lineNumber - 1] ?? ''
 
@@ -317,7 +340,7 @@ function expandedBothRow(
   lines: readonly string[],
   oldLineNumber: number,
   newLineNumber: number,
-  hunkIndex: number,
+  hunkIndex: number | undefined,
 ): DiffRenderRow {
   return renderRowFromLine(
     {

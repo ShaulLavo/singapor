@@ -37,10 +37,17 @@ const findOffsetAfterPieceLineBreak = (
   return offset - piece.start + 1
 }
 
-const countLineBreaksBeforeOffset = (
+// Counts the line breaks before `offset` and, in the same descent, records the
+// offset the resulting row starts at into `lineStart` — the column then falls
+// out as `offset - lineStart` with no second descent. `lineStart` stays null
+// only when the last break before `offset` sits in a subtree this descent never
+// entered, i.e. when `offset` lands on the first line of the piece it falls in.
+const findRowAtOffset = (
   node: PieceTreeNode | null,
   buffers: PieceTableBuffers,
   offset: number,
+  baseOffset: number,
+  lineStart: { value: number | null },
 ): number => {
   if (!node || offset <= 0) return 0
 
@@ -48,20 +55,40 @@ const countLineBreaksBeforeOffset = (
   const nodeLen = getPieceVisibleLength(node.piece)
   const nodeEnd = leftLen + nodeLen
 
-  if (offset <= leftLen) return countLineBreaksBeforeOffset(node.left, buffers, offset)
+  if (offset <= leftLen) return findRowAtOffset(node.left, buffers, offset, baseOffset, lineStart)
 
   const leftLineBreaks = getSubtreeLineBreaks(node.left)
   if (offset <= nodeEnd) {
-    return leftLineBreaks + countPiecePrefixLineBreaks(buffers, node.piece, offset - leftLen)
+    const prefixLineBreaks = countPiecePrefixLineBreaks(buffers, node.piece, offset - leftLen)
+    if (prefixLineBreaks > 0) {
+      lineStart.value =
+        baseOffset + leftLen + findOffsetAfterPieceLineBreak(buffers, node.piece, prefixLineBreaks)
+    }
+
+    return leftLineBreaks + prefixLineBreaks
   }
 
-  return (
-    leftLineBreaks +
-    getPieceVisibleLineBreaks(node.piece) +
-    countLineBreaksBeforeOffset(node.right, buffers, offset - nodeEnd)
+  const pieceLineBreaks = getPieceVisibleLineBreaks(node.piece)
+  const tailRow = findRowAtOffset(
+    node.right,
+    buffers,
+    offset - nodeEnd,
+    baseOffset + nodeEnd,
+    lineStart,
   )
+  // Only the *last* break before `offset` names the row start, so this piece
+  // answers just when nothing after it held one.
+  if (tailRow === 0 && pieceLineBreaks > 0) {
+    lineStart.value =
+      baseOffset + leftLen + findOffsetAfterPieceLineBreak(buffers, node.piece, pieceLineBreaks)
+  }
+
+  return leftLineBreaks + pieceLineBreaks + tailRow
 }
 
+// The augmented `subtreeLineBreaks` counts pick the branch, so a whole left
+// subtree is skipped in one comparison rather than walked. `lineBreakOrdinal` is
+// 1-based, and null means the subtree holds fewer breaks than that.
 const findOffsetAfterLineBreak = (
   node: PieceTreeNode | null,
   buffers: PieceTableBuffers,
@@ -115,9 +142,10 @@ export const offsetToPoint = (snapshot: PieceTableTreeSnapshot, offset: number):
     throw new RangeError('invalid offset')
   }
 
-  const row = countLineBreaksBeforeOffset(snapshot.root, snapshot.buffers, offset)
-  const column = offset - lineStartOffset(snapshot, row)
-  return { row, column }
+  const lineStart: { value: number | null } = { value: null }
+  const row = findRowAtOffset(snapshot.root, snapshot.buffers, offset, 0, lineStart)
+
+  return { row, column: offset - (lineStart.value ?? lineStartOffset(snapshot, row)) }
 }
 
 export const pointToOffset = (snapshot: PieceTableTreeSnapshot, point: Point): number => {

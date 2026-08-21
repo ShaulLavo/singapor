@@ -8,7 +8,7 @@ import '@singapor/scope-lines/style.css'
 import { createEditorFindPlugin } from '@singapor/find'
 import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapor/gutters'
 import { createMinimapPlugin } from '@singapor/minimap'
-import { createScopeLinesPlugin } from '@singapor/scope-lines'
+import { createScopeLinesPlugin, createStickyScrollPlugin } from '@singapor/scope-lines'
 import { css, html, javaScript, json, markdown, typeScript } from '@singapor/tree-sitter-languages'
 import {
   createTypeScriptLspPlugin,
@@ -76,6 +76,7 @@ export function mountApp(): void {
     createMergeConflictPlugin(),
     createEditorFindPlugin(),
     createScopeLinesPlugin(),
+    createStickyScrollPlugin(),
     createMinimapPlugin(),
     typeScriptLsp,
   ]

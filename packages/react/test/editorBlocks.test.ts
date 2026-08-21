@@ -146,6 +146,53 @@ describe('createReactEditorBlocksPlugin', () => {
       await flushReactBlockTasks()
     })
   })
+
+  it('keeps a React surface that declares hoisted hosting alive across recycling', async () => {
+    const unmounted: string[] = []
+    const container = document.createElement('div')
+    const text = Array.from({ length: 120 }, (_value, index) => `line ${index}`).join('\n')
+    document.body.append(container)
+
+    const plugin = createReactEditorBlocksPlugin({
+      blocks: [
+        { id: 'draft', anchor: { row: 0 }, top: { height: { px: 24 }, hosting: 'hoisted' } },
+      ],
+      renderSurface: (block) =>
+        createElement(SurfaceProbe, {
+          label: block.id,
+          onUnmount: (label) => unmounted.push(label),
+        }),
+    })
+
+    let editor!: Editor
+    act(() => {
+      editor = new Editor(container, {
+        defaultText: text,
+        lineHeight: 20,
+        plugins: [plugin],
+      })
+    })
+
+    const surface = container.querySelector('[data-react-block-surface]')
+    expect(surface).not.toBeNull()
+
+    await act(async () => {
+      editor.setScrollPosition({ top: 1_600, left: 0 })
+      await flushReactBlockTasks()
+    })
+    await act(async () => {
+      editor.setScrollPosition({ top: 0, left: 0 })
+      await flushReactBlockTasks()
+    })
+
+    expect(unmounted).toEqual([])
+    expect(container.querySelector('[data-react-block-surface]')).toBe(surface)
+
+    await act(async () => {
+      editor.dispose()
+      await flushReactBlockTasks()
+    })
+  })
 })
 
 function blockFixture(id: string): ReactEditorBlock {

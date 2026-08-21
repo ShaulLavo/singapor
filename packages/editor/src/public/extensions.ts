@@ -1,10 +1,41 @@
 export {
   createEditorCapabilityToken,
+  createEditorLanguageFeatureToken,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
+  EDITOR_PASTE_HANDLER,
+  EDITOR_PASTE_HANDLER_ID,
 } from '../plugins'
+export {
+  EditorDecorationStore,
+  projectDecorationRangeThroughEdits,
+} from '../editor/decorationStore'
+export type {
+  EditorDecoration,
+  EditorDecorationRange,
+  EditorDecorationSpec,
+  EditorDecorationSurface,
+} from '../editor/decorationStore'
 export { EDITOR_FIND_FEATURE, EDITOR_FIND_FEATURE_ID } from '../editor/findFeature'
 export type { EditorFindFeature } from '../editor/findFeature'
+export {
+  editorLanguageConfiguration,
+  registerEditorLanguageConfiguration,
+} from '../editor/languageConfiguration'
+export type {
+  EditorAutoClosingPair,
+  EditorBlockCommentTokens,
+  EditorBracketPair,
+  EditorCommentTokens,
+  EditorEnterAction,
+  EditorFoldingRules,
+  EditorIndentationRules,
+  EditorLanguageConfiguration,
+  EditorOnEnterRule,
+} from '../editor/languageConfiguration'
+export type { EditorSnippetMirror, EditorSnippetStop } from '../plugins'
+export { reindentEditsForRanges } from '../editor/reindent'
+export type { EditorReindentOptions } from '../editor/reindent'
 export type {
   EditorCapabilityToken,
   EditorCapabilityContribution,
@@ -33,6 +64,8 @@ export type {
   EditorInjectedTextRowProviderContext,
   EditorInlineReplacementContext,
   EditorInlineReplacementProvider,
+  EditorLanguageFeatureSelector,
+  EditorLanguageFeatureToken,
   EditorLogEditorContext,
   EditorLogError,
   EditorLogEvent,
@@ -44,11 +77,17 @@ export type {
   EditorMinimapFeature,
   EditorMinimapSectionHeaderStyle,
   EditorOverlaySide,
+  EditorPasteContext,
+  EditorPasteHandler,
+  EditorPasteTarget,
   EditorPlugin,
   EditorPluginContext,
   EditorPluginLifecycleState,
   EditorResolvedSelection,
   EditorSelectionRange,
+  EditorSelectionRangeContext,
+  EditorSelectionRangeProvider,
+  EditorTrackedRanges,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionProvider,

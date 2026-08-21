@@ -1,4 +1,5 @@
 import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import { projectDecorationRangeThroughEdits } from '@singapor/core/extensions'
 import {
   lspPositionToOffset,
   lspPositionToOffsetInSnapshot,
@@ -20,10 +21,11 @@ export type SnapshotDocumentSession = {
  */
 export type ProjectedDiagnostic = lsp.Diagnostic
 
-type OffsetRange = {
-  readonly start: number
-  readonly end: number
-}
+/**
+ * A diagnostic describes text the server has already seen, so neither edge takes in what is typed
+ * against it — the character you add after a squiggle is not yet part of the problem it reports.
+ */
+const DIAGNOSTIC_STICKINESS = { startBias: 'right', endBias: 'left' } as const
 
 export function projectDiagnosticsInSnapshot(
   diagnostics: readonly lsp.Diagnostic[],
@@ -93,9 +95,14 @@ function projectDiagnosticThroughSnapshotEdits(
 ): lsp.Diagnostic | null {
   const start = lspPositionToOffsetInSnapshot(previousDocument, diagnostic.range.start)
   const end = lspPositionToOffsetInSnapshot(previousDocument, diagnostic.range.end)
-  const range = projectOffsetRangeThroughEdits({ start, end }, edits)
+  // An edit that reaches into a flagged span leaves the marker over whatever survives rather than
+  // taking it away. This projection only has to hold until the server republishes, and deleting a
+  // character out of a bad identifier rarely makes it good — a squiggle that blinks out under the
+  // caret claims the problem is fixed, which is the more misleading of the two wrong answers. The
+  // price, and the change from what shipped before this milestone, is that the painted extent can
+  // be shorter than the one the server actually described.
+  const range = projectDecorationRangeThroughEdits({ start, end, ...DIAGNOSTIC_STICKINESS }, edits)
   if (!range) return null
-  if (range.start === range.end && start !== end) return null
 
   return {
     ...diagnostic,
@@ -104,62 +111,6 @@ function projectDiagnosticThroughSnapshotEdits(
       end: offsetToLspPositionInSnapshot(nextDocument, range.end),
     },
   }
-}
-
-function projectOffsetRangeThroughEdits(
-  range: OffsetRange,
-  edits: readonly TextEdit[],
-): OffsetRange | null {
-  let projected: OffsetRange | null = range
-  let delta = 0
-  const sorted = edits.toSorted((left, right) => left.from - right.from || left.to - right.to)
-
-  for (const edit of sorted) {
-    if (!projected) return null
-
-    const adjusted = {
-      from: edit.from + delta,
-      to: edit.to + delta,
-      text: edit.text,
-    }
-    projected = projectOffsetRangeThroughEdit(projected, adjusted)
-    delta += edit.text.length - (edit.to - edit.from)
-  }
-
-  return projected
-}
-
-function projectOffsetRangeThroughEdit(range: OffsetRange, edit: TextEdit): OffsetRange | null {
-  const start = projectOffsetThroughEdit(range.start, edit, 'after')
-  const end = projectOffsetThroughEdit(range.end, edit, 'before')
-  if (start === null || end === null) return null
-  if (end < start) return null
-
-  return { start, end }
-}
-
-function projectOffsetThroughEdit(
-  offset: number,
-  edit: TextEdit,
-  insertionBias: 'before' | 'after',
-): number | null {
-  if (edit.from === edit.to) return projectOffsetThroughInsertion(offset, edit, insertionBias)
-  if (offset < edit.from) return offset
-  if (offset > edit.to) return offset + edit.text.length - (edit.to - edit.from)
-  if (offset === edit.to) return edit.from + edit.text.length
-  if (offset === edit.from) return edit.from
-  return null
-}
-
-function projectOffsetThroughInsertion(
-  offset: number,
-  edit: TextEdit,
-  insertionBias: 'before' | 'after',
-): number {
-  if (offset < edit.from) return offset
-  if (offset > edit.from) return offset + edit.text.length
-  if (insertionBias === 'after') return offset + edit.text.length
-  return offset
 }
 
 function diagnosticContainsOffset(

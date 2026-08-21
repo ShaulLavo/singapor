@@ -1,13 +1,26 @@
 import type { EditorCommandHandler, EditorDisposable } from '../plugins'
 import type { EditorCommandContext, EditorCommandId } from './commands'
+import {
+  isEditorDocumentSelectionEditCommand,
+  type EditorDocumentSelectionEditCommandId,
+} from './reindent'
 import { isEditorEditActionCommand, type EditorEditActionCommandId } from './editActions'
+import { isEditorFoldCommand, type EditorFoldCommandId } from './foldOperations'
+import { isEditorInlineSuggestCommand, type EditorInlineSuggestCommandId } from './ghostText'
 
 export type EditorCommandRouterHandlers = {
   history(command: 'undo' | 'redo', context: EditorCommandContext): boolean
+  cursorHistory(command: 'undo' | 'redo', context: EditorCommandContext): boolean
   delete(direction: 'backward' | 'forward', context: EditorCommandContext): boolean
   indent(direction: 'indent' | 'outdent', context: EditorCommandContext): boolean
-  editAction(command: EditorEditActionCommandId, context: EditorCommandContext): boolean
+  editAction(
+    command: EditorEditActionCommandId | EditorDocumentSelectionEditCommandId,
+    context: EditorCommandContext,
+  ): boolean
+  fold(command: EditorFoldCommandId): boolean
+  inlineSuggest(command: EditorInlineSuggestCommandId, context: EditorCommandContext): boolean
   selectAll(context: EditorCommandContext): boolean
+  smartSelect(direction: 'expand' | 'shrink', context: EditorCommandContext): boolean
   addNextOccurrence(context: EditorCommandContext): boolean
   clearSecondarySelections(context: EditorCommandContext): boolean
   insertCursor(direction: 'above' | 'below', context: EditorCommandContext): boolean
@@ -17,6 +30,7 @@ export type EditorCommandRouterHandlers = {
   ): boolean
   moveSelectionToNextOccurrence(context: EditorCommandContext): boolean
   toggleWordWrap(context: EditorCommandContext): boolean
+  toggleTabFocusMode(context: EditorCommandContext): boolean
   navigation(command: EditorCommandId, context: EditorCommandContext): boolean
 }
 
@@ -27,17 +41,25 @@ export class EditorCommandRouter {
 
   dispatch(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
     const registeredResult = this.runRegisteredCommand(command, context)
-    if (registeredResult !== null) {
-      if (command === 'closeFind' && !registeredResult) {
-        return this.handlers.clearSecondarySelections(context)
-      }
-
-      return registeredResult
-    }
+    if (registeredResult === true) return true
+    // Escape spells one intention — put back whatever the last thing was — and arrives here as the
+    // find command because that is what claims the key. Collapsing a run of cursors is the other
+    // thing it has to be able to undo, and asking whether anything answered for find first is the
+    // whole of the order between them: a host that ships no find at all still has the key.
+    if (command === 'closeFind') return this.handlers.clearSecondarySelections(context)
+    if (registeredResult !== null) return registeredResult
 
     if (command === 'undo') return this.handlers.history('undo', context)
     if (command === 'redo') return this.handlers.history('redo', context)
+    if (command === 'cursorUndo') return this.handlers.cursorHistory('undo', context)
+    if (command === 'cursorRedo') return this.handlers.cursorHistory('redo', context)
     if (command === 'selectAll') return this.handlers.selectAll(context)
+    if (command === 'editor.action.smartSelect.expand') {
+      return this.handlers.smartSelect('expand', context)
+    }
+    if (command === 'editor.action.smartSelect.shrink') {
+      return this.handlers.smartSelect('shrink', context)
+    }
     if (command === 'addNextOccurrence') return this.handlers.addNextOccurrence(context)
     if (command === 'clearSecondarySelections') {
       return this.handlers.clearSecondarySelections(context)
@@ -55,9 +77,18 @@ export class EditorCommandRouter {
       return this.handlers.moveSelectionToNextOccurrence(context)
     }
     if (command === 'editor.action.toggleWordWrap') return this.handlers.toggleWordWrap(context)
+    if (command === 'editor.action.toggleTabFocusMode') {
+      return this.handlers.toggleTabFocusMode(context)
+    }
     if (command === 'deleteBackward') return this.handlers.delete('backward', context)
     if (command === 'deleteForward') return this.handlers.delete('forward', context)
-    if (isEditorEditActionCommand(command)) return this.handlers.editAction(command, context)
+    if (isEditorFoldCommand(command)) return this.handlers.fold(command)
+    if (isEditorInlineSuggestCommand(command)) {
+      return this.handlers.inlineSuggest(command, context)
+    }
+    if (isEditorEditActionCommand(command) || isEditorDocumentSelectionEditCommand(command)) {
+      return this.handlers.editAction(command, context)
+    }
     if (command === 'indentSelection') return this.handlers.indent('indent', context)
     if (command === 'outdentSelection') return this.handlers.indent('outdent', context)
 

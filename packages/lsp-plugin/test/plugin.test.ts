@@ -12,6 +12,7 @@ import {
 } from '@singapor/core/extensions'
 import type { LspManagedTransport, LspTransportHandler, LspWebSocketLike } from '@singapor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type * as lsp from 'vscode-languageserver-protocol'
 
 import { type LanguageServerCompletionEditFeature } from '../src/completion'
 import { createLanguageServerAdapterPlugin, createLanguageServerPlugin } from '../src/plugin'
@@ -174,6 +175,54 @@ describe('createLanguageServerAdapterPlugin', () => {
     )
   })
 
+  // A formatter answers with the whole file even when one line moved, and applying that verbatim
+  // retires every anchor, decoration, fold and selection inside it.
+  it('applies a whole-document formatting reply as the one edit that differs', async () => {
+    const transport = new FakeTransport()
+    const applyEdits = vi.fn<EditorEditContributionContext['applyEdits']>()
+    const text = '# Notes\n\n- one\n-  two\n'
+    const { commands, features, provider } = activatePlugin(
+      createLanguageServerAdapterPlugin({
+        name: 'editor.test-lsp',
+        createTransport: () => transport,
+        defaultHighlightPrefix: 'editor-test',
+        completion: { acceptTimingName: 'testLsp.completion.accept' },
+      }),
+      { applyEdits },
+    )
+    const contribution = provider.createContribution(
+      viewContributionContext(editorSnapshot(text), { features }),
+    )
+    if (!contribution) throw new Error('missing contribution')
+
+    transport.receive(
+      initializeResponse(jsonMessage(transport.sent[0]), { documentFormattingProvider: true }),
+    )
+    await flushPromises()
+
+    expect(command(commands, 'editor.action.formatDocument')({})).toBe(true)
+
+    const request = transport.sent.findLast(hasMethod('textDocument/formatting'))
+    if (!request) throw new Error('missing formatting request')
+    transport.receive({
+      jsonrpc: '2.0',
+      id: jsonMessage(request).id,
+      result: [
+        {
+          newText: '# Notes\n\n- one\n- two\n',
+          range: { start: { line: 0, character: 0 }, end: { line: 4, character: 0 } },
+        },
+      ],
+    })
+    await flushPromises()
+
+    expect(applyEdits).toHaveBeenCalledWith(
+      [{ from: 17, text: '', to: 18 }],
+      'testLsp.completion.accept',
+      { anchor: 0, head: 0 },
+    )
+  })
+
   it('keeps the public custom-server plugin as the bring-your-own-server path', async () => {
     const statuses: string[] = []
     const applyEdits = vi.fn<EditorEditContributionContext['applyEdits']>()
@@ -317,20 +366,23 @@ function viewContributionContext(
   }
 }
 
-function editorSnapshot(): EditorViewSnapshot {
-  const fullText = '# Notes'
+function editorSnapshot(fullText = '# Notes'): EditorViewSnapshot {
+  const lineStarts = [0]
+  for (let index = 0; index < fullText.length; index += 1) {
+    if (fullText.charCodeAt(index) === 10) lineStarts.push(index + 1)
+  }
   return {
     documentId: 'README.md',
     languageId: 'markdown',
     fullText,
     textVersion: 1,
-    lineStarts: [0],
+    lineStarts,
     textSnapshot: stringTextSnapshot(fullText),
     tokens: [],
     brackets: [],
     selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
     metrics: {} as EditorViewSnapshot['metrics'],
-    lineCount: 1,
+    lineCount: lineStarts.length,
     contentWidth: 0,
     totalHeight: 0,
     tabSize: 4,
@@ -357,7 +409,10 @@ function stringTextSnapshot(text: string): TextSnapshot {
   }
 }
 
-function initializeResponse(request: JsonMessage): JsonMessage {
+function initializeResponse(
+  request: JsonMessage,
+  capabilities: lsp.ServerCapabilities = {},
+): JsonMessage {
   return {
     jsonrpc: '2.0',
     id: request.id,
@@ -367,6 +422,7 @@ function initializeResponse(request: JsonMessage): JsonMessage {
           openClose: true,
           change: 2,
         },
+        ...capabilities,
       },
     },
   }

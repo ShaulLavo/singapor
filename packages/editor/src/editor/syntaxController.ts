@@ -11,6 +11,7 @@ import { createEmptySyntaxResult } from '../syntax/session'
 import type {
   BracketInfo,
   EditorSyntaxCapture,
+  EditorSyntaxInjection,
   EditorSyntaxRange,
   EditorSyntaxResult,
   EditorSyntaxSession,
@@ -146,6 +147,7 @@ export class EditorSyntaxController {
   })
   private currentTokens: readonly EditorToken[] = []
   private currentBrackets: readonly BracketInfo[] = []
+  private currentInjections: readonly EditorSyntaxInjection[] = []
   private syntaxContentVersion = 0
   private parsedSyntaxContentVersion: number | null = null
   private pendingSyntaxContentVersion: number | null = null
@@ -171,6 +173,14 @@ export class EditorSyntaxController {
     return this.currentBrackets
   }
 
+  /**
+   * The stretches the last structural parse handed to another grammar, so that anything acting on a
+   * position can ask which language actually owns it instead of assuming the file's own.
+   */
+  get injections(): readonly EditorSyntaxInjection[] {
+    return this.currentInjections
+  }
+
   get providerTheme(): EditorTheme | null {
     return this.providerHighlighterTheme
   }
@@ -192,6 +202,7 @@ export class EditorSyntaxController {
     this.clearSyntaxRangeCache()
     this.resetSyntaxContentVersion()
     this.currentBrackets = []
+    this.currentInjections = []
     this.highlighterSession = this.createHighlighterSession(
       document.documentId,
       document.languageId,
@@ -630,17 +641,25 @@ export class EditorSyntaxController {
     const nextTokens = this.highlighterSession
       ? this.currentTokens
       : this.syntaxTokensForResult(result.tokens, loadResult.range)
+    // Brackets and injected spans share the folds gate: all of them are whole-scope facts, and a
+    // window that does not cover the viewport would pair brackets across the part it never parsed
+    // and report the rest of the document as being in the host language.
+    const applyScopeFacts = this.shouldApplySyntaxFolds(loadResult)
+    // Ahead of the tokens, because adopting them is the only notification this pass sends the view
+    // contributions: a bracket list assigned after it is a parse late to everyone reading the
+    // snapshot, and on a document nobody touches after opening it that means never.
+    if (applyScopeFacts) {
+      this.currentBrackets = result.brackets
+      this.currentInjections = result.injections
+    }
     if (!this.highlighterSession) this.setTokens(nextTokens)
     if (loadResult.range) this.rememberSyntaxRange(loadResult.range, result)
     if (!this.highlighterSession && loadResult.range && !this.pendingWarm) {
       this.warmSyntaxAroundRange(documentVersion, loadResult.range)
     }
-    if (this.shouldApplySyntaxFolds(loadResult)) {
+    if (applyScopeFacts) {
       this.options.setSyntaxFolds(result.folds)
       this.options.setSyntaxCaptures?.(result.captures)
-      // Brackets share the folds gate: both are whole-scope facts, and adopting them from a window
-      // that does not cover the viewport would pair brackets across the part it never parsed.
-      this.currentBrackets = result.brackets
     }
     this.options.notifyChange(null)
     return true

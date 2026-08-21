@@ -89,6 +89,13 @@ export class EditorFindWidget {
     this.root.hidden = true
   }
 
+  // The stylesheet anchors the widget a fixed inset from the container's
+  // trailing edge, which is also where a minimap parks. Margin keeps that inset
+  // authoritative and shifts the whole widget inboard of the claimed strip.
+  public setTrailingInset(width: number): void {
+    this.root.style.marginRight = width > 0 ? `${Math.ceil(width)}px` : ''
+  }
+
   public update(state: EditorFindWidgetState): void {
     syncEditorThemeVariables(this.root, this.themeSource)
     if (this.findInput.value !== state.searchString) this.findInput.value = state.searchString
@@ -96,8 +103,14 @@ export class EditorFindWidget {
       this.replaceInput.value = state.replaceString
     this.replaceRow.hidden = !state.replaceRevealed
     setToggleExpanded(this.replaceToggleButton, state.replaceRevealed, 'Replace')
-    this.count.textContent = resultCountText(state.matchesPosition, state.matchesCount)
-    this.count.title = this.count.textContent
+    this.count.textContent = resultCountText(
+      state.matchesPosition,
+      state.matchesCount,
+      state.matchesTruncated,
+    )
+    this.count.title = state.matchesTruncated
+      ? truncatedCountTitle(state.matchesCount)
+      : this.count.textContent
     setTogglePressed(this.caseButton, state.matchCase, 'Match Case')
     setTogglePressed(this.wordButton, state.wholeWord, 'Match Whole Word')
     setTogglePressed(this.regexButton, state.isRegex, 'Use Regular Expression')
@@ -122,6 +135,10 @@ export class EditorFindWidget {
   private build(document: Document): void {
     this.root.className = 'editor-find-widget'
     this.root.hidden = true
+    // Layer from the editor's shared stacking scale so the widget keeps its
+    // place as other surfaces claim tiers; the literal is the standalone
+    // fallback for hosts that ship this stylesheet without the editor's.
+    this.root.style.zIndex = 'var(--editor-z-overlay-widget, 20)'
     this.findInput.className = 'editor-find-input'
     this.findInput.type = 'text'
     this.findInput.placeholder = 'Find'
@@ -273,7 +290,14 @@ function toggleTooltip(label: string, active: boolean): string {
   return active ? `${label} (On)` : `${label} (Off)`
 }
 
-function resultCountText(position: number, count: number): string {
+function resultCountText(position: number, count: number, truncated: boolean): string {
   if (count === 0) return 'No results'
-  return `${position || '?'} of ${count}`
+  return `${position || '?'} of ${count}${truncated ? '+' : ''}`
+}
+
+// The '+' alone reads as an error; name the operations that ignore the cap
+// rather than claiming all of them do — navigation still walks the capped list
+// until the incremental searcher lands.
+function truncatedCountTitle(count: number): string {
+  return `Only the first ${count} results are counted and highlighted. Replace All and Select All Matches still cover the entire text.`
 }

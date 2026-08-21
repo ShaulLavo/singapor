@@ -1,6 +1,17 @@
+/**
+ * The nesting depths that get a command, and with it a key, of their own. Seven is where one more
+ * costs a chord and buys nothing: a region deeper than this is reached by folding what encloses it,
+ * not by naming its depth.
+ */
+export const EDITOR_FOLD_LEVELS = [1, 2, 3, 4, 5, 6, 7] as const
+
+export type EditorFoldLevel = (typeof EDITOR_FOLD_LEVELS)[number]
+
 export type EditorCommandId =
   | 'undo'
   | 'redo'
+  | 'cursorUndo'
+  | 'cursorRedo'
   | 'find'
   | 'findReplace'
   | 'findNext'
@@ -24,6 +35,8 @@ export type EditorCommandId =
   | 'replaceAll'
   | 'selectAllMatches'
   | 'selectAll'
+  | 'editor.action.smartSelect.expand'
+  | 'editor.action.smartSelect.shrink'
   | 'addNextOccurrence'
   | 'clearSecondarySelections'
   | 'editor.action.insertCursorAbove'
@@ -32,17 +45,34 @@ export type EditorCommandId =
   | 'editor.action.changeAll'
   | 'editor.action.jumpToBracket'
   | 'editor.action.toggleWordWrap'
+  | 'editor.action.toggleTabFocusMode'
   | 'editor.action.formatDocument'
   | 'editor.action.rename'
+  | 'editor.action.autoFix'
+  | 'editor.action.inlineSuggest.commit'
+  | 'editor.action.inlineSuggest.acceptNextWord'
   | 'editor.action.moveSelectionToNextFindMatch'
+  | 'editor.fold'
+  | 'editor.unfold'
+  | 'editor.foldRecursively'
+  | 'editor.unfoldRecursively'
+  | 'editor.foldAll'
+  | 'editor.unfoldAll'
+  | `editor.foldLevel${EditorFoldLevel}`
+  | 'editor.createFoldingRangeFromSelection'
+  | 'editor.removeManualFoldingRanges'
   | 'deleteBackward'
   | 'deleteForward'
   | 'deleteWordLeft'
   | 'deleteWordRight'
+  | 'deleteWordPartLeft'
+  | 'deleteWordPartRight'
   | 'editor.action.commentLine'
   | 'editor.action.blockComment'
   | 'editor.action.indentLines'
   | 'editor.action.outdentLines'
+  | 'editor.action.reindentlines'
+  | 'editor.action.reindentselectedlines'
   | 'editor.action.deleteLines'
   | 'editor.action.copyLinesUpAction'
   | 'editor.action.copyLinesDownAction'
@@ -88,6 +118,12 @@ export type EditorCommandId =
   | 'cursorDocumentEnd'
   | 'selectDocumentStart'
   | 'selectDocumentEnd'
+  | 'cursorColumnSelectLeft'
+  | 'cursorColumnSelectRight'
+  | 'cursorColumnSelectUp'
+  | 'cursorColumnSelectDown'
+  | 'cursorColumnSelectPageUp'
+  | 'cursorColumnSelectPageDown'
 
 export type EditorCommandContext = {
   readonly event?: KeyboardEvent

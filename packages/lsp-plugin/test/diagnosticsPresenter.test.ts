@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { DiagnosticsPresenter } from '../src/diagnosticsPresenter'
+import { DIAGNOSTIC_MARKER_COLORS } from '../src/plugin.styles'
 
 describe('DiagnosticsPresenter', () => {
   it('uses configured highlight names, minimap source, and marker timing names', () => {
@@ -25,7 +26,7 @@ describe('DiagnosticsPresenter', () => {
       expect.any(Object),
     )
     expect(minimap.setDecorations).toHaveBeenCalledWith('editor.test.diagnostics', [
-      expect.objectContaining({ startLineNumber: 1, color: 'rgba(239, 68, 68, 1)' }),
+      expect.objectContaining({ startLineNumber: 1, color: DIAGNOSTIC_MARKER_COLORS.error }),
     ])
     expect(context.setSelection).toHaveBeenCalledWith(1, 2, 'testLsp.marker.next', 1)
     expect(minimap.clearDecorations).toHaveBeenCalledWith('editor.test.diagnostics')

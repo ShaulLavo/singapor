@@ -9,16 +9,14 @@ import { anchorAt, resolveAnchor } from './pieceTable/anchors'
 export type SelectionGoal =
   | { readonly kind: 'none' }
   | { readonly kind: 'horizontal'; readonly x: number }
-  | { readonly kind: 'horizontalRange'; readonly anchorX: number; readonly headX: number }
+  // The end of the line is not a column, it is wherever the line happens to stop. A caret sent
+  // there by End has to remember that rather than the width of the line it left.
+  | { readonly kind: 'lineEnd' }
 
 export const SelectionGoal = {
   none: (): SelectionGoal => ({ kind: 'none' }),
   horizontal: (x: number): SelectionGoal => ({ kind: 'horizontal', x }),
-  horizontalRange: (anchorX: number, headX: number): SelectionGoal => ({
-    kind: 'horizontalRange',
-    anchorX,
-    headX,
-  }),
+  lineEnd: (): SelectionGoal => ({ kind: 'lineEnd' }),
 } as const
 
 export type Selection<T> = {
@@ -33,6 +31,9 @@ export type AnchorSelection = Selection<PieceTableAnchor>
 
 export type SelectionSet<T> = {
   readonly selections: readonly Selection<T>[]
+  // Which cursor the user reached for last. Where a cursor sits cannot answer that: the set is kept
+  // in document order, and every edit hands it back rebuilt in that same order.
+  readonly lastAddedIndex?: number
   readonly normalized: boolean
   readonly normalizedFor?: PieceTableSnapshot
 }
@@ -68,6 +69,12 @@ type OffsetRange = {
 
 type ResolvedSelectionWithSource = ResolvedSelection & {
   readonly source: AnchorSelection
+  readonly lastAdded: boolean
+}
+
+type NormalizedSelections = {
+  readonly selections: AnchorSelection[]
+  readonly lastAddedIndex: number
 }
 
 export const createSelectionIdFactory = (prefix = 'selection'): SelectionIdFactory => {
@@ -84,14 +91,38 @@ const createFallbackSelectionId = (
   return `selection:${anchorOffset}:${headOffset}:${direction}`
 }
 
+/** Where in the run of ids above this one was handed out, or -1 for an id from anywhere else. */
+const selectionIdSequence = (id: string): number => {
+  const counter = id.slice(id.lastIndexOf(':') + 1)
+  if (!/^\d+$/u.test(counter)) return -1
+  return Number.parseInt(counter, 10)
+}
+
+/**
+ * The id a cursor was minted with rides through every rebuild untouched, so the newest of them is
+ * the newest cursor wherever it ended up.
+ *
+ * Ids from anywhere else say nothing about age; a set built only from those falls back to the
+ * caller that grew it appending the cursor it just made.
+ */
+const newestSelectionIndex = <T>(selections: readonly Selection<T>[]): number => {
+  let newest = -1
+  let index = Math.max(0, selections.length - 1)
+
+  for (const [candidate, selection] of selections.entries()) {
+    const sequence = selectionIdSequence(selection.id)
+    if (sequence <= newest) continue
+
+    newest = sequence
+    index = candidate
+  }
+
+  return index
+}
+
 const orderOffsets = (first: number, second: number): OffsetRange => ({
   start: Math.min(first, second),
   end: Math.max(first, second),
-})
-
-const resolvedSelectionRange = (selection: ResolvedSelection): OffsetRange => ({
-  start: selection.startOffset,
-  end: selection.endOffset,
 })
 
 const lastItem = <T>(items: readonly T[]): T | null => {
@@ -148,18 +179,28 @@ export const createAnchorSelection = (
   }
 }
 
+/**
+ * Which cursor the user reached for last, for a set that may not have been built here.
+ *
+ * A hand-assembled set carries no answer, and the document-first cursor is the one every caller
+ * fell back to before the set could name one.
+ */
+export const lastAddedSelectionIndex = <T>(set: SelectionSet<T>): number => set.lastAddedIndex ?? 0
+
 export const createSelectionSet = <T>(
   selections: readonly Selection<T>[],
   normalized = false,
   normalizedFor?: PieceTableSnapshot,
 ): SelectionSet<T> => ({
   selections,
+  lastAddedIndex: newestSelectionIndex(selections),
   normalized,
   normalizedFor: normalized ? normalizedFor : undefined,
 })
 
 export const markSelectionSetDirty = <T>(set: SelectionSet<T>): SelectionSet<T> => ({
   selections: set.selections,
+  lastAddedIndex: set.lastAddedIndex,
   normalized: false,
   normalizedFor: undefined,
 })
@@ -192,9 +233,11 @@ export const resolveSelection = (
 const resolveSelectionWithSource = (
   snapshot: PieceTableSnapshot,
   selection: AnchorSelection,
+  lastAdded: boolean,
 ): ResolvedSelectionWithSource => ({
   ...resolveSelection(snapshot, selection),
   source: selection,
+  lastAdded,
 })
 
 const compareResolvedSelections = (
@@ -206,8 +249,14 @@ const compareResolvedSelections = (
   return left.id.localeCompare(right.id)
 }
 
-const shouldMergeRanges = (left: OffsetRange, right: OffsetRange): boolean =>
-  right.start <= left.end
+// Two selections that share only an edge are two ranges the user built deliberately — collapsing
+// `ab|ab` into one range would let the next keystroke overwrite the whole run — so they merge only
+// where they genuinely overlap. A collapsed cursor has no text of its own to lose, so a neighbour
+// that reaches its offset absorbs it.
+const shouldMergeSelections = (left: ResolvedSelection, right: ResolvedSelection): boolean => {
+  if (left.collapsed || right.collapsed) return right.startOffset <= left.endOffset
+  return right.startOffset < left.endOffset
+}
 
 const selectionFromResolved = (
   snapshot: PieceTableSnapshot,
@@ -227,6 +276,7 @@ const normalizeResolvedSelection = (
   return {
     ...resolveSelection(snapshot, source),
     source,
+    lastAdded: resolved.lastAdded,
   }
 }
 
@@ -237,23 +287,35 @@ const mergeResolvedSelections = (
 ): ResolvedSelectionWithSource => {
   const startOffset = Math.min(left.startOffset, right.startOffset)
   const endOffset = Math.max(left.endOffset, right.endOffset)
-  const source = createAnchorSelection(snapshot, startOffset, endOffset, {
-    id: left.id,
-    goal: SelectionGoal.none(),
-    reversed: false,
-  })
+  // The survivor keeps steering the way the cursor the user is holding was steering: resetting the
+  // direction would send the next Shift+Arrow the other way, and resetting the goal would strand
+  // the next Up/Down on the merged edge instead of the column it was tracking.
+  const steering = right.lastAdded ? right : left
+  const source = createAnchorSelection(
+    snapshot,
+    steering.reversed ? endOffset : startOffset,
+    steering.reversed ? startOffset : endOffset,
+    {
+      id: steering.id,
+      goal: steering.goal,
+    },
+  )
 
   return {
     ...resolveSelection(snapshot, source),
     source,
+    lastAdded: left.lastAdded || right.lastAdded,
   }
 }
 
 const normalizeSelections = (
   snapshot: PieceTableSnapshot,
   selections: readonly AnchorSelection[],
-): AnchorSelection[] => {
-  const resolved = selections.map((selection) => resolveSelectionWithSource(snapshot, selection))
+  lastAddedIndex: number,
+): NormalizedSelections => {
+  const resolved = selections.map((selection, index) =>
+    resolveSelectionWithSource(snapshot, selection, index === lastAddedIndex),
+  )
   const sorted = resolved.toSorted(compareResolvedSelections)
   const normalized: ResolvedSelectionWithSource[] = []
 
@@ -264,7 +326,7 @@ const normalizeSelections = (
       continue
     }
 
-    if (!shouldMergeRanges(resolvedSelectionRange(previous), resolvedSelectionRange(selection))) {
+    if (!shouldMergeSelections(previous, selection)) {
       normalized.push(normalizeResolvedSelection(snapshot, selection))
       continue
     }
@@ -272,7 +334,13 @@ const normalizeSelections = (
     normalized[normalized.length - 1] = mergeResolvedSelections(snapshot, previous, selection)
   }
 
-  return normalized.map((selection) => selection.source)
+  return {
+    selections: normalized.map((selection) => selection.source),
+    lastAddedIndex: Math.max(
+      0,
+      normalized.findIndex((selection) => selection.lastAdded),
+    ),
+  }
 }
 
 export const normalizeSelectionSet = (
@@ -281,8 +349,10 @@ export const normalizeSelectionSet = (
 ): SelectionSet<PieceTableAnchor> => {
   if (set.normalized && set.normalizedFor === snapshot) return set
 
+  const normalized = normalizeSelections(snapshot, set.selections, lastAddedSelectionIndex(set))
   return {
-    selections: normalizeSelections(snapshot, set.selections),
+    selections: normalized.selections,
+    lastAddedIndex: normalized.lastAddedIndex,
     normalized: true,
     normalizedFor: snapshot,
   }

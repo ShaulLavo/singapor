@@ -324,12 +324,16 @@ function bufferLineEndOffset(view: VirtualizedTextViewInternal, row: number): nu
   return Math.max(bufferLineStartOffset(view, row), bufferLineStartOffset(view, row + 1) - 1)
 }
 
+// indexOf rather than a per-character compare, matching computeLineStarts:
+// indexing a string allocates a one-character string per character, which on a
+// large document costs more than the scan itself.
 function computeLineStartsFromSnapshot(snapshot: TextSnapshot): number[] {
   const lineStarts = [0]
   snapshot.forEachTextChunk((text, chunkStart) => {
-    for (let index = 0; index < text.length; index += 1) {
-      if (text[index] !== '\n') continue
+    let index = text.indexOf('\n')
+    while (index !== -1) {
       lineStarts.push(chunkStart + index + 1)
+      index = text.indexOf('\n', index + 1)
     }
   })
   return lineStarts

@@ -2,11 +2,7 @@ import type { TextSnapshot } from '../documentTextSnapshot'
 import type { FoldRange } from '../syntax/session'
 import type { TextEdit } from '../tokens'
 import type { VirtualizedFoldMarker } from '../virtualization/virtualizedTextView'
-
-export type SyntaxFoldProjection = {
-  readonly folds: readonly FoldRange[]
-  readonly keyMap: ReadonlyMap<string, string>
-}
+import { MANUAL_FOLD_TYPE } from './foldOperations'
 
 export type FoldRangeRejection = {
   readonly kind: 'invalid-range' | 'overlap'
@@ -22,21 +18,21 @@ export type FoldRangeIngestionResult = {
 
 export const EMPTY_FOLD_MARKERS: readonly VirtualizedFoldMarker[] = []
 
-export function foldMarkerFromRange(
-  fold: FoldRange,
-  collapsedFoldKeys: ReadonlySet<string>,
-): VirtualizedFoldMarker {
-  const key = foldRangeKey(fold)
+export function foldMarkerFromRange(fold: FoldRange, collapsed: boolean): VirtualizedFoldMarker {
   return {
-    key,
+    key: foldRangeKey(fold),
     startOffset: fold.startIndex,
     endOffset: fold.endIndex,
     startRow: fold.startLine,
     endRow: fold.endLine,
-    collapsed: collapsedFoldKeys.has(key),
+    collapsed,
   }
 }
 
+/**
+ * Distinguishes one fold from its siblings within a single set of ranges. Every reparse renumbers
+ * the offsets, so this is a per-generation label and never a durable identity for a region.
+ */
 export function foldRangeKey(fold: FoldRange): string {
   return `${fold.languageId ?? 'plain'}:${fold.type}:${fold.startIndex}:${fold.endIndex}`
 }
@@ -82,23 +78,28 @@ export function rejectCrossingFoldRanges(folds: readonly FoldRange[]): FoldRange
   return { folds: accepted, rejected }
 }
 
-export function projectSyntaxFoldsThroughLineEdit(
+/**
+ * Carries the last parsed fold geometry across an edit so gutter markers and the hidden-row map stay
+ * on the rows they describe until the next parse lands. An edit that shifts no boundary — including
+ * one that only moves characters within a row — yields null so callers can skip the resync.
+ */
+export function projectSyntaxFoldsThroughEdit(
   folds: readonly FoldRange[],
   edit: TextEdit,
   previousText: string | TextSnapshot,
-): SyntaxFoldProjection | null {
-  const lineDelta = editLineDelta(edit, previousText)
-  if (lineDelta === 0) return null
+): readonly FoldRange[] | null {
   if (folds.length === 0) return null
 
   const offsetDelta = edit.text.length - (edit.to - edit.from)
-  const keyMap = new Map<string, string>()
-  const projected = folds.map((fold) =>
-    projectSyntaxFoldThroughLineEdit(fold, edit, offsetDelta, lineDelta, keyMap),
-  )
+  const lineDelta = editLineDelta(edit, previousText)
+  const projected: FoldRange[] = []
+  for (const fold of folds) {
+    const next = projectFoldRangeThroughEdit(fold, edit, offsetDelta, lineDelta)
+    if (next) projected.push(next)
+  }
 
   if (foldRangesEqual(folds, projected)) return null
-  return { folds: projected, keyMap }
+  return projected
 }
 
 function sortedFoldRangesForIngestion(folds: readonly FoldRange[]): readonly FoldRange[] {
@@ -161,33 +162,25 @@ function foldRangeEqual(left: FoldRange, right: FoldRange): boolean {
   )
 }
 
-function projectSyntaxFoldThroughLineEdit(
+/**
+ * Null for a region the edit leaves nothing to carry: what remains of a range whose boundary the edit
+ * crossed is a guess, and a parse is what corrects a guess. A hand-drawn region never gets that
+ * correction, so it goes with the text it was drawn over rather than staying on rows it no longer
+ * describes, heading a chevron that hides live lines when the reader clicks it.
+ */
+function projectFoldRangeThroughEdit(
   fold: FoldRange,
   edit: TextEdit,
   offsetDelta: number,
   lineDelta: number,
-  keyMap: Map<string, string>,
-): FoldRange {
-  const projected = projectFoldRangeThroughLineEdit(fold, edit, offsetDelta, lineDelta)
-  if (projected === fold) return fold
-
-  keyMap.set(foldRangeKey(fold), foldRangeKey(projected))
-  return projected
-}
-
-function projectFoldRangeThroughLineEdit(
-  fold: FoldRange,
-  edit: TextEdit,
-  offsetDelta: number,
-  lineDelta: number,
-): FoldRange {
+): FoldRange | null {
   if (edit.to <= fold.startIndex) return shiftFoldRange(fold, offsetDelta, lineDelta)
   if (edit.from >= fold.endIndex) return fold
   if (edit.from > fold.startIndex && edit.to < fold.endIndex) {
     return resizeFoldRangeEnd(fold, offsetDelta, lineDelta)
   }
 
-  return fold
+  return fold.type === MANUAL_FOLD_TYPE ? null : fold
 }
 
 function shiftFoldRange(fold: FoldRange, offsetDelta: number, lineDelta: number): FoldRange {

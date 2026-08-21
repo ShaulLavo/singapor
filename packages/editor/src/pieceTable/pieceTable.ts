@@ -36,6 +36,7 @@ export {
 } from './lineEndings'
 export {
   pieceTableByteOrderMark,
+  pieceTableContainsUnusualLineTerminators,
   pieceTableDocumentText,
   pieceTableLineEnding,
   type PieceTableDocumentTextOptions,

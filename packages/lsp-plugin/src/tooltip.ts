@@ -1,6 +1,7 @@
 import type { EditorTheme } from '@singapor/core/rendering'
 import type * as lsp from 'vscode-languageserver-protocol'
 
+import { createAnchoredSurface, type AnchoredSurfacePlacement } from './anchoredSurface'
 import { renderTooltipMarkdown } from './markdownTooltip'
 
 /**
@@ -9,8 +10,8 @@ import { renderTooltipMarkdown } from './markdownTooltip'
  * drives when the tooltip appears). Chosen to debounce rapid pointer sweeps
  * so the user does not trigger a hover round-trip for every token the cursor
  * passes through, while staying short enough that an intentional hover still
- * feels immediate. 250 ms matches the VS Code hover-provider default, which
- * users are already calibrated to.
+ * feels immediate. 250 ms is the interval editors have converged on, so it is
+ * the one users are already calibrated to.
  */
 export const HOVER_REQUEST_DEBOUNCE_MS = 250
 
@@ -37,7 +38,6 @@ export const COPY_BUTTON_RESET_DELAY_MS = 1200
 const TOOLTIP_GAP_PX = 8
 const TOOLTIP_VIEWPORT_MARGIN_PX = 12
 const TOOLTIP_MAX_HEIGHT_PX = 420
-const TOOLTIP_MIN_MAX_HEIGHT_PX = 80
 const TOOLTIP_BODY_CHROME_PX = 46
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const TOOLTIP_THEME_VARIABLES = [
@@ -52,19 +52,12 @@ const TOOLTIP_THEME_VARIABLES = [
   '--editor-syntax-type',
 ] as const
 
-let nextTooltipAnchorId = 0
-
-type TooltipAnchorNames = {
-  readonly anchorName: string
-  readonly classNamespace: string
-}
-
 export type TooltipShowOptions = {
   readonly anchor: DOMRect
   readonly hoverText: string | null
   readonly diagnostics: readonly lsp.Diagnostic[]
   readonly theme: EditorTheme | null
-  readonly preferredPlacement?: 'top' | 'bottom'
+  readonly preferredPlacement?: AnchoredSurfacePlacement
 }
 
 export type TooltipOptions = {
@@ -93,6 +86,8 @@ export type TooltipOptions = {
 
 export type TooltipController = {
   show(options: TooltipShowOptions): void
+  /** Moves a tooltip already on screen to where its text is drawn now, without rebuilding it. */
+  reanchor(anchor: DOMRect): void
   hide(): void
   /**
    * Schedule a deferred hide, honoring {@link TOOLTIP_HIDE_DELAY_MS} and the
@@ -117,14 +112,26 @@ export type TooltipController = {
 export function createTooltipController(options: TooltipOptions): TooltipController {
   const { document, themeSource, reentryElement } = options
   const classNamespace = options.classNamespace ?? 'lsp-plugin'
-  const names = nextTooltipAnchorNames(classNamespace)
-  const anchor = createTooltipAnchorElement(document, names)
-  const tooltip = createTooltipElement(document, names)
-  document.body.append(anchor, tooltip)
+  const tooltip = createTooltipElement(document, classNamespace)
+  document.body.append(tooltip)
+  const surface = createAnchoredSurface({
+    element: tooltip,
+    anchorClassName: tooltipClassName(classNamespace, 'anchor'),
+    preferredPlacement: 'top',
+    gapPx: TOOLTIP_GAP_PX,
+    viewportMarginPx: TOOLTIP_VIEWPORT_MARGIN_PX,
+    maxHeightPx: TOOLTIP_MAX_HEIGHT_PX,
+    onPlaced: (maxHeightPx) => setTooltipBodyMaxHeight(tooltip, maxHeightPx),
+  })
 
   let hideTimer: ReturnType<typeof setTimeout> | null = null
   let pointerDown = false
   let disposed = false
+  // The rect the tooltip was placed against, which the hover zone is measured from. Kept rather
+  // than read back off the anchor element: it is the same rectangle, and reading it back would
+  // settle the layout on every pointer move across the editor.
+  let anchorRect: DOMRect | null = null
+  let placement: AnchoredSurfacePlacement = 'top'
 
   const cancelHide = (): void => {
     if (!hideTimer) return
@@ -140,7 +147,8 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     }
     pointerDown = false
     tooltip.hidden = true
-    anchor.style.display = 'none'
+    anchorRect = null
+    surface.release()
     tooltip.replaceChildren()
   }
 
@@ -155,9 +163,9 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
   }
 
   const show = (showOptions: TooltipShowOptions): void => {
-    const placement =
+    placement =
       showOptions.preferredPlacement ?? (showOptions.diagnostics.length > 0 ? 'bottom' : 'top')
-    positionTooltipAnchor(anchor, showOptions.anchor)
+    anchorRect = showOptions.anchor
     syncEditorThemeVariables(tooltip, themeSource)
     renderTooltip(tooltip, {
       hoverText: showOptions.hoverText,
@@ -166,7 +174,15 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
       markdownCodeBackground: options.markdownCodeBackground ?? false,
       classNamespace,
     })
-    placeTooltip(tooltip, showOptions.anchor, placement)
+    // Placed after the content is in: which side it goes on is decided from how tall it turned out.
+    surface.place(showOptions.anchor, placement)
+  }
+
+  const reanchor = (nextAnchor: DOMRect): void => {
+    if (tooltip.hidden) return
+
+    anchorRect = nextAnchor
+    surface.place(nextAnchor, placement)
   }
 
   const containsTarget = (target: EventTarget | null): boolean => {
@@ -175,10 +191,9 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
   }
 
   const pointInHoverZone = (clientX: number, clientY: number): boolean => {
-    if (tooltip.hidden) return false
+    if (tooltip.hidden || !anchorRect) return false
 
     const tooltipRect = tooltip.getBoundingClientRect()
-    const anchorRect = anchor.getBoundingClientRect()
     const hoverZone = expandRect(unionRects(tooltipRect, anchorRect), TOOLTIP_GAP_PX)
     return rectContainsPoint(hoverZone, clientX, clientY)
   }
@@ -224,12 +239,13 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     tooltip.removeEventListener('pointerdown', handleTooltipPointerDown)
     document.removeEventListener('pointerup', handleDocumentPointerUp)
     document.removeEventListener('pointercancel', handleDocumentPointerUp)
-    anchor.remove()
+    surface.dispose()
     tooltip.remove()
   }
 
   return {
     show,
+    reanchor,
     hide,
     scheduleHide,
     cancelHide,
@@ -239,33 +255,11 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
   }
 }
 
-function nextTooltipAnchorNames(classNamespace: string): TooltipAnchorNames {
-  nextTooltipAnchorId += 1
-  return {
-    anchorName: `--editor-${classNamespace}-hover-${nextTooltipAnchorId}`,
-    classNamespace,
-  }
-}
-
-function createTooltipAnchorElement(document: Document, names: TooltipAnchorNames): HTMLDivElement {
+function createTooltipElement(document: Document, classNamespace: string): HTMLDivElement {
   const element = document.createElement('div')
-  element.className = tooltipClassName(names.classNamespace, 'anchor')
-  Object.assign(element.style, {
-    position: 'fixed',
-    display: 'none',
-    opacity: '0',
-    pointerEvents: 'none',
-  })
-  element.style.setProperty('anchor-name', names.anchorName)
-  return element
-}
-
-function createTooltipElement(document: Document, names: TooltipAnchorNames): HTMLDivElement {
-  const element = document.createElement('div')
-  element.className = tooltipClassName(names.classNamespace)
+  element.className = tooltipClassName(classNamespace)
   element.hidden = true
   Object.assign(element.style, {
-    position: 'fixed',
     zIndex: '1000',
     width: 'max-content',
     maxWidth: 'min(520px, calc(100vw - 24px))',
@@ -288,7 +282,6 @@ function createTooltipElement(document: Document, names: TooltipAnchorNames): HT
     userSelect: 'text',
     cursor: 'text',
   })
-  applyCssAnchorPosition(element, names)
   return element
 }
 
@@ -547,37 +540,6 @@ function diagnosticRow(document: Document, diagnostic: lsp.Diagnostic): HTMLElem
   return row
 }
 
-function positionTooltipAnchor(element: HTMLDivElement, anchor: DOMRect): void {
-  Object.assign(element.style, {
-    display: 'block',
-    left: `${anchor.left}px`,
-    top: `${anchor.top}px`,
-    width: `${Math.max(1, anchor.width)}px`,
-    height: `${Math.max(1, anchor.height)}px`,
-  })
-}
-
-function applyCssAnchorPosition(element: HTMLDivElement, names: TooltipAnchorNames): void {
-  element.style.setProperty('position-anchor', names.anchorName)
-  element.style.setProperty('inset', 'auto')
-  applyTooltipPlacement(element, 'top')
-}
-
-function placeTooltip(
-  element: HTMLDivElement,
-  anchor: DOMRect,
-  preferredPlacement: 'top' | 'bottom',
-): void {
-  const viewportHeight = tooltipViewportHeight(element.ownerDocument)
-  const tooltipHeight = Math.min(element.getBoundingClientRect().height, TOOLTIP_MAX_HEIGHT_PX)
-  const placement = tooltipPlacement(anchor, tooltipHeight, viewportHeight, preferredPlacement)
-  const availableHeight = tooltipAvailableHeight(anchor, placement, viewportHeight)
-  const maxHeight = tooltipMaxHeight(availableHeight)
-  element.style.maxHeight = `${maxHeight}px`
-  setTooltipBodyMaxHeight(element, maxHeight)
-  applyTooltipPlacement(element, placement)
-}
-
 function defaultTooltipMaxHeight(): string {
   return `min(${TOOLTIP_MAX_HEIGHT_PX}px, calc(100vh - ${TOOLTIP_VIEWPORT_MARGIN_PX * 2}px))`
 }
@@ -608,48 +570,6 @@ function tooltipClassNameForElement(element: HTMLElement, part: string): string 
 function tooltipNamespaceFromClassName(className: string): string {
   const match = /^editor-(.+)-hover(?:\s|$)/.exec(className)
   return match?.[1] ?? 'lsp-plugin'
-}
-
-function tooltipViewportHeight(document: Document): number {
-  return document.defaultView?.innerHeight ?? TOOLTIP_MAX_HEIGHT_PX
-}
-
-function tooltipPlacement(
-  anchor: DOMRect,
-  tooltipHeight: number,
-  viewportHeight: number,
-  preferredPlacement: 'top' | 'bottom',
-): 'top' | 'bottom' {
-  const preferredHeight = tooltipAvailableHeight(anchor, preferredPlacement, viewportHeight)
-  if (preferredHeight >= tooltipHeight) return preferredPlacement
-
-  const fallbackPlacement = preferredPlacement === 'top' ? 'bottom' : 'top'
-  const fallbackHeight = tooltipAvailableHeight(anchor, fallbackPlacement, viewportHeight)
-  if (fallbackHeight >= tooltipHeight) return fallbackPlacement
-
-  const availableTop = tooltipAvailableHeight(anchor, 'top', viewportHeight)
-  const availableBottom = tooltipAvailableHeight(anchor, 'bottom', viewportHeight)
-  return availableTop >= availableBottom ? 'top' : 'bottom'
-}
-
-function tooltipAvailableHeight(
-  anchor: DOMRect,
-  placement: 'top' | 'bottom',
-  viewportHeight: number,
-): number {
-  if (placement === 'top') return anchor.top - TOOLTIP_GAP_PX - TOOLTIP_VIEWPORT_MARGIN_PX
-  return viewportHeight - anchor.bottom - TOOLTIP_GAP_PX - TOOLTIP_VIEWPORT_MARGIN_PX
-}
-
-function tooltipMaxHeight(availableHeight: number): number {
-  const maxHeight = Math.min(TOOLTIP_MAX_HEIGHT_PX, Math.floor(availableHeight))
-  return Math.max(TOOLTIP_MIN_MAX_HEIGHT_PX, maxHeight)
-}
-
-function applyTooltipPlacement(element: HTMLDivElement, placement: 'top' | 'bottom'): void {
-  element.style.setProperty('position-area', `${placement} center`)
-  element.style.setProperty('margin-top', placement === 'bottom' ? `${TOOLTIP_GAP_PX}px` : '0')
-  element.style.setProperty('margin-bottom', placement === 'top' ? `${TOOLTIP_GAP_PX}px` : '0')
 }
 
 function severityForDiagnostic(diagnostic: lsp.Diagnostic): string {

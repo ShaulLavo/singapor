@@ -12,6 +12,7 @@ import type {
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
 import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
+import { mergeDenseDecorations } from './decorationMerge'
 import { resolveMinimapOptions } from './options'
 import type { EditorMinimapOptions, ResolvedMinimapOptions } from './types'
 import { canUseMinimapWorker, MinimapWorkerClient, type MinimapHost } from './workerClient'
@@ -97,7 +98,7 @@ class MinimapContribution implements EditorViewContribution {
       host: this.host,
       options,
       snapshot: this.latestSnapshot,
-      decorations: decorations.getDecorations(),
+      decorations: this.collectDecorations(),
       onLayoutWidth: this.reserveWidth,
     })
     this.decorationSubscription = decorations.subscribe(this.handleDecorationsChanged)
@@ -289,7 +290,18 @@ class MinimapContribution implements EditorViewContribution {
   }
 
   private readonly handleDecorationsChanged = (): void => {
-    this.client.setExternalDecorations(this.latestSnapshot, this.decorations.getDecorations())
+    this.client.setExternalDecorations(this.latestSnapshot, this.collectDecorations())
+  }
+
+  // The height a whole document is projected onto is the editor's own, so how
+  // dense a source is on screen is answerable from the snapshot, without
+  // waiting on the worker that owns the render layout.
+  private collectDecorations(): readonly EditorMinimapDecoration[] {
+    return mergeDenseDecorations(
+      this.decorations.getDecorations(),
+      this.latestSnapshot.viewport.clientHeight,
+      this.latestSnapshot.lineCount,
+    )
   }
 }
 

@@ -1,4 +1,5 @@
-import type { PieceTableSnapshot } from '@singapor/core/document'
+import type { PieceTableSnapshot, TextOffsetRange } from '@singapor/core/document'
+import type { FoldRange } from '@singapor/core/syntax'
 import {
   createAnchorSelection,
   createSelectionSet,
@@ -35,6 +36,19 @@ export type TreeSitterSelectionCommandResult = {
   readonly status: 'ok' | 'stale'
 }
 
+/**
+ * The nesting the grammar found, as one unordered bucket for the editor's selection ladder to rank.
+ *
+ * Fold ranges are node ranges the parse has already published, so expand climbs exactly the nesting
+ * the gutter offers to collapse rather than a second, differently shaped idea of what encloses what.
+ * The fold query only reports nodes that span lines, so a construct written on one line is left to
+ * the word and line rungs.
+ */
+export const treeSitterSelectionRanges = (
+  folds: readonly FoldRange[],
+): readonly TextOffsetRange[] =>
+  folds.map((fold) => ({ start: fold.startIndex, end: fold.endIndex }))
+
 export const selectTreeSitterToken = async (
   options: TreeSitterSelectionCommandOptions,
 ): Promise<TreeSitterSelectionCommandResult> => {
@@ -46,8 +60,9 @@ export const expandTreeSitterSelection = async (
   options: TreeSitterSelectionCommandOptions,
 ): Promise<TreeSitterSelectionCommandResult> => {
   const result = await requestSelectionRanges(options, 'expand')
+  const selected = rangesFromSelectionSet(options.snapshot, options.selections)
   return selectionCommandResult(options, result, (range, index) => {
-    const stack = stackForSelection(options.state, index)
+    const stack = stackForSelection(options, index, selected[index])
     const previous = stack.at(-1)
     if (previous && rangesEqual(previous, range)) return stack
     return [...stack, range]
@@ -137,7 +152,9 @@ const selectionSetFromRanges = (
     const source = original.selections[index]
     return createAnchorSelection(snapshot, range.startIndex, range.endIndex, {
       id: source?.id,
-      reversed: false,
+      // Which end leads is the user's, not the tree's: a selection dragged right to left keeps
+      // growing away from its anchor.
+      reversed: source?.reversed ?? false,
     })
   })
 
@@ -150,17 +167,30 @@ const rangesFromShrinkState = (
   if (!options.state) return null
   if (options.state.snapshotVersion !== options.snapshotVersion) return null
 
-  const ranges = options.state.stacks.map((stack) => stack.at(-2) ?? stack.at(-1))
+  const selected = rangesFromSelectionSet(options.snapshot, options.selections)
+  if (options.state.stacks.length !== selected.length) return null
+
+  const ranges = options.state.stacks.map((stack, index) => {
+    const top = stack.at(-1)
+    const current = selected[index]
+    if (!top || !current || !rangesEqual(top, current)) return undefined
+    return stack.at(-2) ?? top
+  })
   if (ranges.some((range) => !range)) return null
   return ranges as readonly TreeSitterSelectionRange[]
 }
 
 const stackForSelection = (
-  state: TreeSitterSelectionExpansionState | undefined,
+  options: TreeSitterSelectionCommandOptions,
   index: number,
+  selected: TreeSitterSelectionRange | undefined,
 ): readonly TreeSitterSelectionRange[] => {
-  const stack = state?.stacks[index]
-  return stack ? stack : []
+  if (!selected) return []
+  if (options.state?.snapshotVersion !== options.snapshotVersion) return [selected]
+
+  const stack = options.state.stacks[index]
+  const top = stack?.at(-1)
+  return stack && top && rangesEqual(top, selected) ? stack : [selected]
 }
 
 const rangesEqual = (left: TreeSitterSelectionRange, right: TreeSitterSelectionRange): boolean =>

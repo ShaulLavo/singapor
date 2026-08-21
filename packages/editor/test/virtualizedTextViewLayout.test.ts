@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { BlockRow, DisplayRow, DisplayTextRow } from '../src/displayTransforms'
 import { createStringTextSnapshot } from '../src/documentTextSnapshot'
-import type { FixedRowVirtualizerSnapshot } from '../src/virtualization/fixedRowVirtualizer'
+import {
+  FixedRowVirtualizer,
+  type FixedRowVirtualizerSnapshot,
+} from '../src/virtualization/fixedRowVirtualizer'
 import { createLineStartOffsetIndex } from '../src/virtualization/lineStartIndex'
+import {
+  createRowHeightIndex,
+  rowHeightIndexStart,
+  updateRowHeightIndex,
+} from '../src/virtualization/rowHeightIndex'
 import type { VirtualizedTextViewInternal } from '../src/virtualization/virtualizedTextViewInternals'
 import {
   applySameLineTextLayout,
@@ -247,6 +255,76 @@ describe('virtualized text view layout', () => {
   })
 })
 
+describe('row height index', () => {
+  it('re-sums only the rows after a settled block height', () => {
+    const rowSizes = Array.from({ length: 500 }, () => 20)
+    const index = createRowHeightIndex(rowSizes, 0)
+    const resummed = countArrayIndexWrites(index.rowStarts)
+
+    const settled = rowSizes.slice()
+    settled[496] = 120
+
+    const next = updateRowHeightIndex(index, settled, 0)
+
+    expect(resummed.count).toBe(4)
+    expect(next.totalSize).toBe(500 * 20 + 100)
+    expect(rowHeightIndexStart(next, 400)).toBe(8_000)
+    expect(rowHeightIndexStart(next, 499)).toBe(499 * 20 + 100)
+  })
+
+  it('carries settled offsets forward across repeated measurements', () => {
+    const rowSizes = Array.from({ length: 500 }, () => 20)
+    const grown = updateRowHeightIndex(createRowHeightIndex(rowSizes, 4), settled(10, 200), 4)
+    const resummed = countArrayIndexWrites(grown.rowStarts)
+
+    const regrown = updateRowHeightIndex(grown, settled(10, 300), 4)
+    const unchanged = updateRowHeightIndex(regrown, settled(10, 300), 4)
+
+    // Rows 11 to 500 once, and nothing at all for the measurement that repeated
+    // the height it had already reported.
+    expect(resummed.count).toBe(490)
+    expect(unchanged.totalSize).toBe(12_276)
+    expect(rowHeightIndexStart(unchanged, 499)).toBe(12_256)
+    expect(rowHeightIndexStart(unchanged, 10)).toBe(240)
+
+    function settled(row: number, height: number): number[] {
+      const sizes = rowSizes.slice()
+      sizes[row] = height
+      return sizes
+    }
+  })
+
+  // A measurement that reports the heights it reported last time is the common case, and every
+  // caller that skips work on an unchanged index does so by comparing references.
+  it('hands back the index itself, sizes included, when no row moved', () => {
+    const rowSizes = Array.from({ length: 500 }, () => 20)
+    const index = createRowHeightIndex(rowSizes, 4)
+
+    const unchanged = updateRowHeightIndex(index, rowSizes.slice(), 4)
+
+    expect(unchanged).toBe(index)
+    expect(unchanged.rowSizes).toBe(index.rowSizes)
+  })
+
+  it('re-spaces the rows a gap change moved, at unchanged row heights', () => {
+    const index = createRowHeightIndex([20, 20, 20], 0)
+
+    const spaced = updateRowHeightIndex(index, [20, 20, 20], 6)
+
+    expect(rowHeightIndexStart(spaced, 2)).toBe(52)
+    expect(spaced.totalSize).toBe(72)
+  })
+
+  it('rebuilds from scratch when the row count changes', () => {
+    const index = createRowHeightIndex([20, 60, 20], 4)
+
+    const next = updateRowHeightIndex(index, [20, 60, 20, 20], 4)
+
+    expect(next.totalSize).toBe(132)
+    expect(rowHeightIndexStart(next, 3)).toBe(112)
+  })
+})
+
 describe('line start offset index', () => {
   it('tracks suffix shifts and materializes them in row order', () => {
     const index = createLineStartOffsetIndex(4)
@@ -297,11 +375,13 @@ function layoutView(fields: LayoutFields): VirtualizedTextViewInternal {
 }
 
 function throwingVirtualizer(): VirtualizedTextViewInternal['virtualizer'] {
-  return {
-    getSnapshot: () => {
+  // A real virtualizer with its snapshot read poisoned: these layout paths must answer from the
+  // model, never by asking the virtualizer for a snapshot.
+  return Object.assign(new FixedRowVirtualizer({ count: 0, rowHeight: 20 }), {
+    getSnapshot: (): FixedRowVirtualizerSnapshot => {
       throw new Error('unexpected virtualizer snapshot read')
     },
-  } as VirtualizedTextViewInternal['virtualizer']
+  })
 }
 
 function fixedSnapshot(
@@ -344,6 +424,8 @@ function textRow(
     sourceText,
     sourceStartColumn: startOffset,
     sourceEndColumn: endOffset,
+    displayStartColumn: startOffset,
+    displayEndColumn: endOffset,
     wrapSegment,
   }
 }
@@ -400,6 +482,24 @@ function guardArrayIndexWrite<T>(items: T[], index: number, message: string): vo
       throw new Error(message)
     },
   })
+}
+
+function countArrayIndexWrites(values: readonly number[]): { count: number } {
+  const counter = { count: 0 }
+  const items = values as number[]
+  for (let index = 0; index < items.length; index += 1) {
+    let value = items[index]!
+    Object.defineProperty(items, index, {
+      configurable: true,
+      get: () => value,
+      set: (next: number) => {
+        counter.count += 1
+        value = next
+      },
+    })
+  }
+
+  return counter
 }
 
 function guardArrayIndexRead<T>(items: T[], index: number, message: string): void {

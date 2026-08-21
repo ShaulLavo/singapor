@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor/Editor'
+import { EDITOR_OPTION_DESCRIPTORS } from '../src/editor/optionDescriptors'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 
 /**
@@ -71,6 +72,23 @@ describe('word wrap', () => {
     expect(editor.isWordWrapEnabled()).toBe(true)
 
     editor.dispatchCommand('editor.action.toggleWordWrap')
+    expect(editor.isWordWrapEnabled()).toBe(false)
+  })
+
+  // A framework binding never names an option; it walks the registry. A setter with no entry
+  // beside it is one a host can only reach by holding the editor and calling it, which is exactly
+  // what binding through props exists to avoid.
+  it('is in the registry a host binding drives options through', () => {
+    editor = new Editor(container, { defaultText: LONG_LINE, wordWrap: true })
+    const descriptor = EDITOR_OPTION_DESCRIPTORS.find((entry) => entry.name === 'wordWrap')
+    if (!descriptor) throw new Error('wordWrap is not in the option registry')
+
+    descriptor.applyTo(editor, descriptor.validate(false))
+    expect(editor.isWordWrapEnabled()).toBe(false)
+
+    // A prop that arrived as anything but a state is a host that has not said which way it wants
+    // this, so the editor keeps what it has rather than reading a string as an answer.
+    descriptor.applyTo(editor, descriptor.validate('true'))
     expect(editor.isWordWrapEnabled()).toBe(false)
   })
 

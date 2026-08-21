@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import { editActionForCommand, type EditorEditActionCommandId } from '../src/editor/editActions'
+import {
+  editActionForCommand,
+  isEditorEditActionCommand,
+  listItemLineBreak,
+  type EditorEditActionCommandId,
+  type EditorEditActionOptions,
+} from '../src/editor/editActions'
+import { defaultEditorKeyBindings, editorCommandPackForCommand } from '../src/editor/keymap'
+import { registerEditorLanguageConfiguration } from '../src/editor/languageConfiguration'
 import type { ResolvedSelection } from '../src/selections'
+import type { EditorSyntaxInjection } from '../src/syntax/session'
 
 /** A resolved selection over [start, end); collapsed when they match. */
 function selection(start: number, end = start): ResolvedSelection {
@@ -17,8 +26,13 @@ function selection(start: number, end = start): ResolvedSelection {
 }
 
 /** Applies an action's edits to `text`, so tests assert the resulting document, not edit shapes. */
-function run(command: EditorEditActionCommandId, text: string, selections: ResolvedSelection[]) {
-  const action = editActionForCommand(command, text, selections)
+function run(
+  command: EditorEditActionCommandId,
+  text: string,
+  selections: ResolvedSelection[],
+  options?: EditorEditActionOptions,
+) {
+  const action = editActionForCommand(command, text, selections, options)
   let out = text
   for (const edit of [...action.edits].sort((left, right) => right.from - left.from)) {
     out = out.slice(0, edit.from) + edit.text + out.slice(edit.to)
@@ -29,7 +43,9 @@ function run(command: EditorEditActionCommandId, text: string, selections: Resol
 
 describe('trimTrailingWhitespace', () => {
   it('trims spaces and tabs at line ends across the document', () => {
-    expect(run('editor.action.trimTrailingWhitespace', 'a  \nb\t\nc', [selection(0)])).toBe('a\nb\nc')
+    expect(run('editor.action.trimTrailingWhitespace', 'a  \nb\t\nc', [selection(0)])).toBe(
+      'a\nb\nc',
+    )
   })
 
   it('leaves indentation and clean lines alone', () => {
@@ -50,7 +66,6 @@ describe('sortLines', () => {
     expect(run('editor.action.sortLinesDescending', 'a\nc\nb', [selection(0, 5)])).toBe('c\nb\na')
   })
 
-  // Reordering a file the user did not select is worse than doing nothing.
   it('does nothing for a single-line selection', () => {
     expect(run('editor.action.sortLinesAscending', 'c\na\nb', [selection(0)])).toBe('c\na\nb')
   })
@@ -107,8 +122,277 @@ describe('case transforms', () => {
     )
   })
 
-  // Which range would it even transform? Guessing between selection and word is worse than nothing.
   it('does nothing without a selection', () => {
     expect(run('editor.action.transformToUppercase', 'abc', [selection(1)])).toBe('abc')
+  })
+})
+
+describe('deleteWord', () => {
+  it('takes the word the caret is against', () => {
+    expect(run('deleteWordLeft', 'alpha beta', [selection(10)])).toBe('alpha ')
+    expect(run('deleteWordRight', 'alpha beta', [selection(0)])).toBe('beta')
+  })
+
+  it('takes the line break when the caret is against a line edge', () => {
+    expect(run('deleteWordLeft', 'alpha\nbeta', [selection(6)])).toBe('alphabeta')
+    expect(run('deleteWordRight', 'alpha\nbeta', [selection(5)])).toBe('alphabeta')
+  })
+
+  it('has nothing to take at the document edges', () => {
+    expect(run('deleteWordLeft', 'abc', [selection(0)])).toBe('abc')
+    expect(run('deleteWordRight', 'abc', [selection(3)])).toBe('abc')
+  })
+})
+
+describe('deleteWordPart', () => {
+  it('takes one camel hump', () => {
+    expect(run('deleteWordPartLeft', 'parseValue', [selection(10)])).toBe('parse')
+    expect(run('deleteWordPartRight', 'parseValue', [selection(0)])).toBe('Value')
+  })
+
+  it('ends an acronym at the capital that starts the next hump', () => {
+    expect(run('deleteWordPartLeft', 'parseHTTPResponse', [selection(17)])).toBe('parseHTTP')
+  })
+
+  it('takes one snake_case part where the word delete takes the whole name', () => {
+    expect(run('deleteWordPartLeft', 'parse_value next', [selection(11)])).toBe('parse_ next')
+    expect(run('deleteWordLeft', 'parse_value next', [selection(11)])).toBe(' next')
+  })
+
+  it('stops on the space in front of a word instead of taking the word too', () => {
+    expect(run('deleteWordPartLeft', 'alpha beta', [selection(6)])).toBe('alphabeta')
+    expect(run('deleteWordPartRight', 'alpha beta', [selection(5)])).toBe('alphabeta')
+  })
+
+  it('takes the line break when the caret is against a line edge', () => {
+    expect(run('deleteWordPartLeft', 'alpha\nbeta', [selection(6)])).toBe('alphabeta')
+    expect(run('deleteWordPartRight', 'alpha\nbeta', [selection(5)])).toBe('alphabeta')
+  })
+
+  it('has nothing to take at the document edges', () => {
+    expect(run('deleteWordPartLeft', 'abc', [selection(0)])).toBe('abc')
+    expect(run('deleteWordPartRight', 'abc', [selection(3)])).toBe('abc')
+  })
+})
+
+describe('line comments', () => {
+  const comment = (text: string, options?: EditorEditActionOptions) =>
+    run('editor.action.commentLine', text, [selection(0, text.length)], options)
+
+  it('puts every marker in the same column, not each line indentation', () => {
+    expect(comment('a\n  b\n    c')).toBe('// a\n//   b\n//     c')
+  })
+
+  it('measures that column from the shallowest line, so no marker lands in the code', () => {
+    expect(comment('    a\n  b\n      c')).toBe('  //   a\n  // b\n  //     c')
+  })
+
+  it('leaves a blank line inside the block uncommented', () => {
+    expect(comment('a\n\nb')).toBe('// a\n\n// b')
+  })
+
+  it('comments blank lines when they are all there is to comment', () => {
+    expect(comment('  \n  ')).toBe('  // \n  // ')
+  })
+
+  it('uncomments a block it commented, blank line and all', () => {
+    expect(comment('// a\n\n//   b')).toBe('a\n\n  b')
+  })
+
+  it('takes the tokens from the language, not from a table of its own', () => {
+    expect(comment('a', { languageId: 'markdown' })).toBe('<!-- a -->')
+  })
+
+  it('leaves a blank line uncommented where the language has only block tokens', () => {
+    expect(comment('a\n\nb', { languageId: 'markdown' })).toBe('<!-- a -->\n\n<!-- b -->')
+  })
+
+  it('uncomments a block of block markers the blank line was left out of', () => {
+    expect(comment('<!-- a -->\n\n<!-- b -->', { languageId: 'markdown' })).toBe('a\n\nb')
+  })
+
+  it('takes the tokens of a language registered from outside', () => {
+    const registration = registerEditorLanguageConfiguration('lua', {
+      autoClosingPairs: [],
+      brackets: [],
+      comments: { line: '--' },
+    })
+
+    try {
+      expect(comment('a', { languageId: 'lua' })).toBe('-- a')
+    } finally {
+      registration.dispose()
+    }
+  })
+})
+
+describe('comments where the document holds another language', () => {
+  /** A heading, a blank line, then a fenced block: the shape the fixture depends on. */
+  const FENCED = '# T\n\n```ts\nconst a = 1\n```\n'
+  const CODE_OFFSET = FENCED.indexOf('const')
+  /** What the fence query captures: the content lines, ending where the closing fence begins. */
+  const TYPESCRIPT_FENCE: EditorSyntaxInjection = {
+    parentLanguageId: 'markdown',
+    languageId: 'typescript',
+    startIndex: CODE_OFFSET,
+    endIndex: FENCED.lastIndexOf('```'),
+  }
+
+  const commentRowAt = (
+    text: string,
+    offset: number,
+    injections: readonly EditorSyntaxInjection[],
+  ) =>
+    run('editor.action.commentLine', text, [selection(offset)], {
+      injections,
+      languageId: 'markdown',
+    })
+
+  it('takes the fenced language tokens for a caret inside the fence', () => {
+    expect(commentRowAt(FENCED, CODE_OFFSET, [TYPESCRIPT_FENCE])).toBe(
+      '# T\n\n```ts\n// const a = 1\n```\n',
+    )
+  })
+
+  it('takes the host tokens on a row the fence does not cover', () => {
+    expect(commentRowAt(FENCED, 0, [TYPESCRIPT_FENCE])).toBe(
+      '<!-- # T -->\n\n```ts\nconst a = 1\n```\n',
+    )
+  })
+
+  // The whole point of the fixture: with nothing reporting the fence, this is the bug.
+  it('takes the host tokens on the fenced row when no injection is reported', () => {
+    expect(commentRowAt(FENCED, CODE_OFFSET, [])).toBe('# T\n\n```ts\n<!-- const a = 1 -->\n```\n')
+  })
+
+  it('takes the innermost tokens where one embedded language holds another', () => {
+    // A style block markdown hands to HTML, whose contents HTML in turn hands to CSS. CSS is the only
+    // one of the three that does not comment with `<!--`, so the assertion can only pass for CSS.
+    const styled = '<style>\np { color: red }\n</style>\n'
+    const ruleOffset = styled.indexOf('p {')
+    const injections: readonly EditorSyntaxInjection[] = [
+      {
+        parentLanguageId: 'markdown',
+        languageId: 'html',
+        startIndex: 0,
+        endIndex: styled.length,
+      },
+      {
+        parentLanguageId: 'html',
+        languageId: 'css',
+        startIndex: ruleOffset,
+        endIndex: styled.indexOf('</style>'),
+      },
+    ]
+
+    expect(commentRowAt(styled, ruleOffset, injections)).toBe(
+      '<style>\n/* p { color: red } */\n</style>\n',
+    )
+  })
+
+  it('takes the tokens of the language the marker is written into, not the one under the caret', () => {
+    // A rule embedded mid-line: the marker still has to open in the markup the row starts with, and a
+    // CSS one there would comment nothing out.
+    const inline = '<style>p { color: red }</style>\n'
+    const injections: readonly EditorSyntaxInjection[] = [
+      {
+        parentLanguageId: 'html',
+        languageId: 'css',
+        startIndex: inline.indexOf('p {'),
+        endIndex: inline.indexOf('</style>'),
+      },
+    ]
+    const commented = run(
+      'editor.action.commentLine',
+      inline,
+      [selection(inline.indexOf('color'))],
+      { injections, languageId: 'html' },
+    )
+
+    expect(commented).toBe('<!-- <style>p { color: red }</style> -->\n')
+  })
+
+  it('falls back outward when the embedded grammar has no rules of its own', () => {
+    // Markdown injects its own inline grammar over ordinary prose. Nothing describes that grammar, and
+    // answering it anyway would swap the host's markers for the guess a nameless language gets.
+    const injections: readonly EditorSyntaxInjection[] = [
+      { parentLanguageId: 'markdown', languageId: 'markdown_inline', startIndex: 0, endIndex: 4 },
+    ]
+
+    expect(commentRowAt('# T\n', 0, injections)).toBe('<!-- # T -->\n')
+  })
+})
+
+describe('what counts as a list item', () => {
+  /**
+   * Enter pressed at `caret`, as the text it leaves behind, or null where the press has nothing to do
+   * with a list and is left to be an ordinary line break.
+   */
+  function listBreak(text: string, caret: number, languageId = 'markdown'): string | null {
+    const lines = text.split('\n')
+    const starts: number[] = []
+    let start = 0
+    for (const line of lines) {
+      starts.push(start)
+      start += line.length + 1
+    }
+
+    const result = listItemLineBreak({
+      caretOffset: caret,
+      caretRow: starts.filter((lineStart) => lineStart <= caret).length - 1,
+      languageId,
+      readLine: (row) =>
+        row < 0 || row >= lines.length ? null : { start: starts[row], text: lines[row] },
+    })
+    if (!result) return null
+
+    let out = text
+    for (const edit of [...result.edits].sort((left, right) => right.from - left.from)) {
+      out = out.slice(0, edit.from) + edit.text + out.slice(edit.to)
+    }
+
+    return out
+  }
+
+  it('needs whitespace after the marker, so a quantity is not one', () => {
+    expect(listBreak('1.5 kg', 6)).toBeNull()
+    expect(listBreak('-5 degrees', 10)).toBeNull()
+    // The same press against a marker that does have its whitespace, so the two above are answering
+    // for their text and not for the way they are asked.
+    expect(listBreak('- alpha', 7)).toBe('- alpha\n- ')
+  })
+
+  it('continues a list in a document whose language arrived with host casing', () => {
+    expect(listBreak('- alpha', 7, ' Markdown ')).toBe('- alpha\n- ')
+  })
+})
+
+describe('word-part command wiring', () => {
+  const wordPartCommands = [
+    'cursorWordPartLeft',
+    'cursorWordPartRight',
+    'cursorWordPartLeftSelect',
+    'cursorWordPartRightSelect',
+    'deleteWordPartLeft',
+    'deleteWordPartRight',
+  ] as const
+
+  // A pack is what carries a binding into a layer, so an unclassified command is bound to nothing.
+  it.each(wordPartCommands)(
+    'gives %s a pack and a default binding on every platform',
+    (command) => {
+      expect(editorCommandPackForCommand(command)).not.toBeNull()
+
+      for (const platform of ['mac', 'windows', 'linux'] as const) {
+        expect(defaultEditorKeyBindings(platform).map((binding) => binding.command)).toContain(
+          command,
+        )
+      }
+    },
+  )
+
+  it('routes the two deletes to the edit actions', () => {
+    expect(isEditorEditActionCommand('deleteWordPartLeft')).toBe(true)
+    expect(isEditorEditActionCommand('deleteWordPartRight')).toBe(true)
   })
 })

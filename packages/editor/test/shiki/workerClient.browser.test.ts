@@ -11,7 +11,7 @@ const createChange = (text: string, edit: { from: number; to: number; text: stri
   ((snapshot = createPieceTableSnapshot(text)) => ({
     kind: 'edit',
     edits: [edit],
-    text,
+    transaction: null,
     textSnapshot: createDocumentTextSnapshot(snapshot, text),
     snapshot,
     selections: { selections: [], normalized: true },
@@ -39,7 +39,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
-      text,
+      fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -67,7 +67,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
-      text: initialText,
+      fullText: initialText,
       snapshot: createPieceTableSnapshot(initialText),
     })
 
@@ -91,7 +91,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
-      text: initialText,
+      fullText: initialText,
       snapshot: createPieceTableSnapshot(initialText),
     })
 
@@ -113,7 +113,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
-      text,
+      fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
 
@@ -128,7 +128,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
-      text: nextText,
+      fullText: nextText,
       snapshot: createPieceTableSnapshot(nextText),
     })
 

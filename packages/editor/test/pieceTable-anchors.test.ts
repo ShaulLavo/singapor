@@ -131,6 +131,19 @@ describe('piece table anchors', () => {
     expect(resolveAnchor(suffixDeleted, Anchor.MAX)).toEqual({ offset: 4, liveness: 'live' })
   })
 
+  it('snaps an offset inside a surrogate pair instead of throwing', () => {
+    const snapshot = createPieceTableSnapshot('a\u{1F600}b')
+
+    expect(resolveAnchor(snapshot, anchorAt(snapshot, 2, 'left'))).toEqual({
+      offset: 1,
+      liveness: 'live',
+    })
+    expect(resolveAnchor(snapshot, anchorAt(snapshot, 2, 'right'))).toEqual({
+      offset: 1,
+      liveness: 'live',
+    })
+  })
+
   it('toggles liveness across undo and redo snapshot swaps', () => {
     const initial = createPieceTableSnapshot('abcdef')
     const anchor = anchorAt(initial, 2, 'right')

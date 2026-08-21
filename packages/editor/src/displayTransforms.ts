@@ -83,6 +83,7 @@ export type DisplayBlockRow = {
   readonly heightRows: number
   readonly heightPx?: number
   readonly heightMeasured?: boolean
+  readonly hoistKey?: string
   readonly startOffset: number
   readonly endOffset: number
   readonly text: string
@@ -115,6 +116,18 @@ export type BlockRow = {
   readonly heightPx?: number
   readonly heightMeasured?: boolean
   readonly text?: string
+  /**
+   * Breaks ties between blocks sharing an anchor row and placement. Without one
+   * the order falls back to `id`, which encodes who registered first rather
+   * than a decision either side made.
+   */
+  readonly ordinal?: number
+  /**
+   * Identity of the surface's DOM host, stable across re-resolutions. Set only
+   * for surfaces that must survive row recycling, where the host has to outlive
+   * both the mounted row and `id`, which is reissued on every resolve.
+   */
+  readonly hoistKey?: string
 }
 
 export type BlockLane = {
@@ -166,16 +179,37 @@ export type WrapMap = {
 }
 
 /**
+ * Which display edge of an injected run the caret may rest on. Only a position with no direction of
+ * its own needs telling: every other one at that point is the edge of a range, and a range takes the
+ * side that leaves the run outside it.
+ */
+export type InlineCursorStops = 'both' | 'left' | 'right' | 'none'
+
+/**
+ * Fills the node a replacement is painted as. Returning a disposable lets the run take down whatever
+ * it attached — a listener, an observer — when the replacement leaves the map.
+ */
+export type InlineReplacementRender = (container: HTMLElement) => void | { dispose(): void }
+
+/**
  * A single-line source span painted as `text` instead of its own characters. An empty `text` hides
  * the span outright; a non-empty `text` stands in for it. Replacements are atomic: no display
  * column ever resolves to a source column strictly inside one.
+ *
+ * An `insertion` covers no source columns at all — phantom text hanging off a point, which is how an
+ * inlay hint or a colour swatch reaches the screen without the document ever holding it.
  */
 export type InlineReplacement = {
   readonly id: string
   readonly startColumn: number
   readonly endColumn: number
   readonly text: string
+  readonly insertion?: boolean
   readonly kind?: string
+  /** Styles the run alone, where `kind` restyles the whole row the run sits on. */
+  readonly className?: string
+  readonly cursorStops?: InlineCursorStops
+  readonly render?: InlineReplacementRender
   readonly metadata?: unknown
 }
 
@@ -189,6 +223,9 @@ export type InlineRowSegment = {
   readonly displayEndColumn: number
   readonly id?: string
   readonly replacementKind?: string
+  readonly className?: string
+  readonly cursorStops?: InlineCursorStops
+  readonly render?: InlineReplacementRender
   readonly metadata?: unknown
 }
 
@@ -355,11 +392,13 @@ export function sourceColumnToInlineColumn(
 
   for (const segment of row.segments) {
     if (target > segment.sourceEndColumn) continue
-    if (segment.kind === 'source') {
-      return segment.displayStartColumn + (target - segment.sourceStartColumn)
-    }
 
-    return inlineReplacementDisplayColumn(segment, target, bias)
+    const displayColumn =
+      segment.kind === 'source'
+        ? segment.displayStartColumn + (target - segment.sourceStartColumn)
+        : inlineReplacementDisplayColumn(segment, target, bias)
+
+    return injectedRunSideColumn(row, displayColumn, bias)
   }
 
   return row.text.length
@@ -369,8 +408,8 @@ export function sourceColumnToInlineColumn(
  * Hidden replacements are zero-width in display space, so several source columns share one display
  * column and the inverse is genuinely ambiguous there. The rule is: `before` and `nearest` resolve to
  * the earliest source column for that display column, `after` to the latest. Horizontal motion
- * therefore passes the bias matching its direction. `display -> source -> display` is always the
- * identity; `source -> display -> source` is not, at a hidden boundary.
+ * therefore passes the bias matching its direction. `display -> source -> display` is the identity
+ * across a hidden run; `source -> display -> source` is not, at a hidden boundary.
  */
 export function inlineColumnToSourceColumn(
   row: InlineRow,
@@ -515,6 +554,9 @@ const inlineReplacementSegment = (
   displayStartColumn,
   displayEndColumn: displayStartColumn + replacement.text.length,
   ...(replacement.kind === undefined ? {} : { replacementKind: replacement.kind }),
+  ...(replacement.className === undefined ? {} : { className: replacement.className }),
+  ...(replacement.cursorStops === undefined ? {} : { cursorStops: replacement.cursorStops }),
+  ...(replacement.render === undefined ? {} : { render: replacement.render }),
   ...(replacement.metadata === undefined ? {} : { metadata: replacement.metadata }),
 })
 
@@ -530,10 +572,17 @@ const normalizeInlineReplacements = (
       startColumn: clampColumn(replacement.startColumn, sourceText.length),
       endColumn: clampColumn(replacement.endColumn, sourceText.length),
     }))
-    .filter((replacement) => replacement.endColumn > replacement.startColumn)
+    // Zero width is phantom text at a point, which only a replacement that asked for one may be; an
+    // ordinary span that clamping collapsed onto itself is degenerate and still goes.
+    .filter((replacement) =>
+      replacement.insertion === true
+        ? replacement.endColumn === replacement.startColumn
+        : replacement.endColumn > replacement.startColumn,
+    )
     .toSorted((left, right) => {
       return (
         left.startColumn - right.startColumn ||
+        insertionOrder(left) - insertionOrder(right) ||
         right.endColumn - left.endColumn ||
         left.id.localeCompare(right.id)
       )
@@ -547,6 +596,57 @@ const normalizeInlineReplacements = (
   }
 
   return kept
+}
+
+/**
+ * Phantom text hung off a point stands in front of whatever begins at that point, and — covering no
+ * source column — cannot overlap it. Ordering it ahead of a span starting on the same column is what
+ * keeps a hint or a suggestion offered at the opening edge of a replaced span, which is where a
+ * construct's own markers sit, from being read as a range inside that span and dropped.
+ */
+const insertionOrder = (replacement: InlineReplacement): number =>
+  replacement.insertion === true ? 0 : 1
+
+/**
+ * Which side of the injected runs standing at a display column a source column belongs on.
+ *
+ * A run owns no source column, so it falls outside every source range: one that opens at the point
+ * opens past the runs, one that closes there stops in front of them. That is what keeps a decoration,
+ * a find match or a syntax token from spreading over text the document does not hold.
+ *
+ * Only a direction-free position — a caret standing still — has a real choice, and the runs' own
+ * cursor stops make it. A run that stops on neither side hands the choice to whatever follows it,
+ * which is how padding between two hint parts never traps the caret inside the hint.
+ */
+const injectedRunSideColumn = (row: InlineRow, column: number, bias: TransformBias): number => {
+  let past = column
+  let stop: number | null = null
+
+  for (const segment of row.segments) {
+    if (segment.displayStartColumn !== past) continue
+    if (!isInjectedSegment(segment)) continue
+    if (stop === null && injectedRunStopsLeft(segment)) stop = past
+    past = segment.displayEndColumn
+    if (stop === null && injectedRunStopsRight(segment)) stop = past
+  }
+
+  if (bias === 'before') return past
+  if (bias === 'after') return column
+  return stop ?? column
+}
+
+const isInjectedSegment = (segment: InlineRowSegment): boolean =>
+  segment.kind === 'replacement' && segment.sourceStartColumn === segment.sourceEndColumn
+
+/** A run without stated stops takes both, matching a replacement that never heard of the concept. */
+const injectedRunStopsLeft = (segment: InlineRowSegment): boolean => {
+  const stops = segment.cursorStops ?? 'both'
+  return stops === 'both' || stops === 'left'
+}
+
+const injectedRunStopsRight = (segment: InlineRowSegment): boolean => {
+  const stops = segment.cursorStops ?? 'both'
+  return stops === 'both' || stops === 'right'
 }
 
 const inlineSegmentIndexForDisplayColumn = (
@@ -826,6 +926,7 @@ const appendBlockRowUnits = (rows: DisplayRow[], block: BlockRow, offset: number
     heightRows,
     ...(heightPx === undefined ? {} : { heightPx }),
     ...(block.heightMeasured === true ? { heightMeasured: true } : {}),
+    ...(block.hoistKey === undefined ? {} : { hoistKey: block.hoistKey }),
     startOffset: offset,
     endOffset: offset,
     text: block.text ?? '',
@@ -960,6 +1061,7 @@ const normalizeBlockRows = (blocks: readonly BlockRow[]): readonly BlockRow[] =>
       return (
         left.anchorBufferRow - right.anchorBufferRow ||
         placementOrder(left.placement) - placementOrder(right.placement) ||
+        (left.ordinal ?? 0) - (right.ordinal ?? 0) ||
         left.id.localeCompare(right.id)
       )
     })

@@ -10,6 +10,7 @@ import type { DocumentSessionChange } from '@singapor/core'
 import type { LspClient } from '@singapor/lsp'
 import { offsetToLspPosition } from '@singapor/lsp'
 
+import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
 import type { ActiveDocument } from './pluginTypes'
 import {
   formatSignatureHelp,
@@ -66,6 +67,10 @@ export class SignatureHelpController {
       this.hide()
       return
     }
+    if (anchoredSurfaceFollowsUpdate(kind)) {
+      this.reanchor()
+      return
+    }
     if (kind !== 'content') return
 
     const trigger = signatureHelpTriggerFromChange(change)
@@ -113,7 +118,9 @@ export class SignatureHelpController {
     const delta = event.key === 'ArrowDown' ? 1 : -1
     event.preventDefault()
     event.stopPropagation()
-    this.showSignature(nextSignatureIndex(this.display.activeSignature, this.display.signatureCount, delta))
+    this.showSignature(
+      nextSignatureIndex(this.display.activeSignature, this.display.signatureCount, delta),
+    )
   }
 
   private async request(triggerCharacter: '(' | ','): Promise<void> {
@@ -177,6 +184,25 @@ export class SignatureHelpController {
       preferredPlacement: 'top',
       theme: this.currentTheme,
     })
+  }
+
+  /**
+   * Follows the caret when the view moves under the signature.
+   *
+   * The call being typed is where the signature belongs, and a caret that has scrolled out of the
+   * rendered rows has no rect to belong to any more — leaving the widget parked over unrelated code
+   * is worse than losing it, and the next keystroke in the argument list asks for it again.
+   */
+  private reanchor(): void {
+    if (!this.display) return
+
+    const anchor = this.caretAnchor()
+    if (!anchor) {
+      this.hide()
+      return
+    }
+
+    this.tooltip.reanchor(anchor)
   }
 
   private caretAnchor(): DOMRect | null {

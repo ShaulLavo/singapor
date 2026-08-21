@@ -1,13 +1,37 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
   EditorCapabilityContributionProvider,
+  EditorMinimapDecoration,
+  EditorMinimapFeature,
   EditorPluginContext,
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
 import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
+import { MINIMAP_DECORATION_MERGE_LIMIT } from '../src/decorationMerge'
 import { createMinimapPlugin } from '../src/plugin'
+import type {
+  MinimapDocumentPayload,
+  MinimapWorkerRequest,
+  MinimapWorkerResponse,
+} from '../src/types'
+
+// One band past the merge limit, every fifth line: 6000 lines projected onto the
+// 600px the editor is tall leave 30 lines inside one band's width, so the run
+// paints as a single span while the stragglers 100 lines past it stay themselves.
+// Spread over the document's own scroll height instead, a band would cover 2
+// lines and none of this would merge.
+const DENSE_DOCUMENT_LINES = 6000
+const DENSE_DOCUMENT_HEIGHT = 600
+const DENSE_RUN_STEP = 5
+const DENSE_RUN_END = 1 + MINIMAP_DECORATION_MERGE_LIMIT * DENSE_RUN_STEP
+const DENSE_STRAGGLERS = [DENSE_RUN_END + 100, DENSE_RUN_END + 200]
+const DENSE_BANDS = [
+  ...rowBands(1, MINIMAP_DECORATION_MERGE_LIMIT + 1, DENSE_RUN_STEP),
+  ...DENSE_STRAGGLERS.map((row) => rowBand(row)),
+]
+const DENSE_SPANS = [[1, DENSE_RUN_END], ...DENSE_STRAGGLERS.map((row) => [row, row])]
 
 describe('createMinimapPlugin', () => {
   it('registers a view contribution factory', () => {
@@ -343,7 +367,135 @@ describe('createMinimapPlugin', () => {
       restoreRuntime()
     }
   })
+
+  it('sends a dense source to the worker as row bands', () => {
+    const restoreRuntime = installMinimapRuntime()
+    try {
+      const providers = activateMinimap()
+      const registry = registeredMinimapFeature(providers.capability)
+
+      registry.setDecorations('find', DENSE_BANDS)
+      const contribution = providers.view?.createContribution(
+        context(documentSnapshot(DENSE_DOCUMENT_LINES, DENSE_DOCUMENT_HEIGHT)),
+      )
+
+      expect(openedDocument()?.externalDecorations?.map(span)).toEqual(DENSE_SPANS)
+
+      contribution?.dispose()
+    } finally {
+      restoreRuntime()
+    }
+  })
+
+  it('merges the bands a source registers while the minimap is already open', () => {
+    const restoreRuntime = installMinimapRuntime()
+    const timers = installTimers()
+    try {
+      const providers = activateMinimap()
+      const registry = registeredMinimapFeature(providers.capability)
+      // A minimap is there from the moment the editor opens and a search runs
+      // later, so what the constructor assembled says nothing about the payload a
+      // source's own change sends.
+      const contribution = providers.view?.createContribution(
+        context(documentSnapshot(DENSE_DOCUMENT_LINES, DENSE_DOCUMENT_HEIGHT)),
+      )
+      timers.flush()
+      acknowledgeRender()
+
+      registry.setDecorations('find', DENSE_BANDS)
+      timers.flush()
+
+      expect(externalDecorations()?.map(span)).toEqual(DENSE_SPANS)
+
+      contribution?.dispose()
+    } finally {
+      timers.restore()
+      restoreRuntime()
+    }
+  })
 })
+
+function activateMinimap(): {
+  readonly capability: EditorCapabilityContributionProvider | undefined
+  readonly view: EditorViewContributionProvider | undefined
+} {
+  let capability: EditorCapabilityContributionProvider | undefined
+  let view: EditorViewContributionProvider | undefined
+
+  createMinimapPlugin({ enabled: true }).activate({
+    registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
+    registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerViewContribution: (provider) => {
+      view = provider
+      return { dispose: vi.fn() }
+    },
+    registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
+    registerCapabilityContribution: (provider) => {
+      capability = provider
+      return { dispose: vi.fn() }
+    },
+    registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
+    registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
+    registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
+    registerBlockProvider: vi.fn(() => ({ dispose: vi.fn() })),
+    registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
+  })
+
+  return { capability, view }
+}
+
+function registeredMinimapFeature(
+  provider: EditorCapabilityContributionProvider | undefined,
+): EditorMinimapFeature {
+  const registered: EditorMinimapFeature[] = []
+  provider?.createContribution({
+    registerFeature: (_token, feature) => {
+      registered.push(feature as EditorMinimapFeature)
+      return { dispose: vi.fn() }
+    },
+  })
+
+  const feature = registered[0]
+  if (!feature) throw new Error('missing minimap decoration registry')
+  return feature
+}
+
+function rowBands(
+  firstRow: number,
+  count: number,
+  step: number,
+): readonly EditorMinimapDecoration[] {
+  return Array.from({ length: count }, (_unused, index) => rowBand(firstRow + index * step))
+}
+
+function rowBand(row: number): EditorMinimapDecoration {
+  return {
+    startLineNumber: row,
+    startColumn: 1,
+    endLineNumber: row,
+    endColumn: 1,
+    color: 'rgba(234, 179, 8, 0.34)',
+    position: 'inline',
+  }
+}
+
+function span(decoration: EditorMinimapDecoration): readonly number[] {
+  return [decoration.startLineNumber, decoration.endLineNumber]
+}
+
+function documentSnapshot(lineCount: number, clientHeight: number): EditorViewSnapshot {
+  const lines = Array.from({ length: lineCount }, (_unused, index) => `line ${index + 1}`)
+  const lineStarts = [0]
+  for (const line of lines.slice(0, -1)) lineStarts.push(lineStarts.at(-1)! + line.length + 1)
+
+  return {
+    ...snapshot({ clientHeight, scrollHeight: lineCount * 20 }),
+    fullText: lines.join('\n'),
+    lineStarts,
+    lineCount,
+    totalHeight: lineCount * 20,
+  }
+}
 
 function context(viewSnapshot = snapshot()): EditorViewContributionContext {
   const container = document.createElement('div')
@@ -429,13 +581,63 @@ function installMinimapRuntime(): () => void {
   }
 }
 
+const mockWorkers: MockWorker[] = []
+
 class MockWorker {
   public onmessage: ((event: MessageEvent) => void) | null = null
   public onerror: ((event: ErrorEvent) => void) | null = null
   public postMessage = vi.fn()
   public terminate = vi.fn()
 
-  public constructor(_url: URL, _options?: WorkerOptions) {}
+  public constructor(_url: URL, _options?: WorkerOptions) {
+    mockWorkers.push(this)
+  }
+
+  public send(response: MinimapWorkerResponse): void {
+    this.onmessage?.({ data: response } as MessageEvent)
+  }
+}
+
+function openedDocument(): MinimapDocumentPayload | null {
+  for (const request of postedRequests()) {
+    if (request.type === 'openDocument') return request.document
+  }
+  return null
+}
+
+function externalDecorations(): readonly EditorMinimapDecoration[] | null {
+  const posted = postedRequests().findLast(
+    (request): request is Extract<MinimapWorkerRequest, { type: 'updateExternalDecorations' }> =>
+      request.type === 'updateExternalDecorations',
+  )
+  return posted?.decorations ?? null
+}
+
+// Nothing else reaches the worker until the render it is already waiting on comes
+// back, so a case that wants to see a later message has to answer this one.
+function acknowledgeRender(): void {
+  const worker = mockWorkers.at(-1)
+  const render = postedRequests().findLast(
+    (request): request is Extract<MinimapWorkerRequest, { type: 'render' }> =>
+      request.type === 'render',
+  )
+  if (!worker || !render) throw new Error('missing minimap render request')
+
+  worker.send({
+    type: 'rendered',
+    sequence: render.sequence,
+    sliderNeeded: true,
+    sliderTop: 0,
+    sliderHeight: 20,
+    shadowVisible: false,
+  })
+}
+
+function postedRequests(): readonly MinimapWorkerRequest[] {
+  const worker = mockWorkers.at(-1)
+  if (!worker) return []
+
+  return worker.postMessage.mock.calls.map(([request]) => request as MinimapWorkerRequest)
 }
 
 function defineThrowingLayoutProperty(
@@ -546,6 +748,51 @@ function installAnimationFrames(): {
     restore: () => {
       restoreDescriptor(globalThis, 'requestAnimationFrame', requestAnimationFrame)
       restoreDescriptor(globalThis, 'cancelAnimationFrame', cancelAnimationFrame)
+    },
+  }
+}
+
+// A decoration change is held back for a quiet moment before it is posted, and
+// waiting one out in real time would only make the case slower.
+function installTimers(): {
+  readonly flush: () => void
+  readonly restore: () => void
+} {
+  const setTimeoutDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'setTimeout')
+  const clearTimeoutDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'clearTimeout')
+  const timers = new Map<number, () => void>()
+  let nextTimer = 1
+
+  Object.defineProperty(globalThis, 'setTimeout', {
+    configurable: true,
+    value: (callback: () => void) => {
+      const timer = nextTimer
+      nextTimer += 1
+      timers.set(timer, callback)
+      return timer
+    },
+  })
+  Object.defineProperty(globalThis, 'clearTimeout', {
+    configurable: true,
+    value: (timer: number) => {
+      timers.delete(timer)
+    },
+  })
+
+  return {
+    // Drained rather than stepped: a posted message can schedule the next piece
+    // of work, and a case cares about where the run settles.
+    flush: () => {
+      while (timers.size > 0) {
+        for (const [timer, callback] of Array.from(timers)) {
+          timers.delete(timer)
+          callback()
+        }
+      }
+    },
+    restore: () => {
+      restoreDescriptor(globalThis, 'setTimeout', setTimeoutDescriptor)
+      restoreDescriptor(globalThis, 'clearTimeout', clearTimeoutDescriptor)
     },
   }
 }

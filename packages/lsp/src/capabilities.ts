@@ -8,6 +8,22 @@ const TEXT_DOCUMENT_SYNC_INCREMENTAL = 2
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+/**
+ * The roots of the code-action kind hierarchy, which is what the value set names — a server is free
+ * to answer with any kind beneath one of these, and the client matches by dotted prefix.
+ */
+const CODE_ACTION_KINDS: lsp.CodeActionKind[] = [
+  '',
+  'quickfix',
+  'refactor',
+  'refactor.extract',
+  'refactor.inline',
+  'refactor.rewrite',
+  'source',
+  'source.organizeImports',
+  'source.fixAll',
+]
+
 export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
   general: {
     positionEncodings: ['utf-16'],
@@ -21,7 +37,14 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
     completion: {
       contextSupport: true,
       completionItem: {
+        // The characters an item may be accepted on are withheld from a client that has not said it
+        // will act on them, and a set nobody reads is a set no server sends.
+        commitCharactersSupport: true,
         documentationFormat: ['markdown', 'plaintext'],
+        // An item that can both insert at the caret and overtype the word around it only carries
+        // both ranges for a client that says it can choose between them; undeclared, the server
+        // picks one for us and picks it before the user has decided how to accept.
+        insertReplaceSupport: true,
         labelDetailsSupport: true,
         // Servers defer the expensive parts of an item until resolve; without this they either
         // send nothing there or refuse the request. additionalTextEdits is the load-bearing one —
@@ -31,6 +54,17 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
         },
         snippetSupport: true,
       },
+    },
+    // Without the literal form a server may only answer with bare commands, which carry no kind and
+    // no preference — nothing to filter or rank an action by. dataSupport is what lets a server hand
+    // back a handle instead of an edit and compute the expensive part only when the fix is chosen.
+    codeAction: {
+      codeActionLiteralSupport: {
+        codeActionKind: { valueSet: CODE_ACTION_KINDS },
+      },
+      dataSupport: true,
+      isPreferredSupport: true,
+      resolveSupport: { properties: ['edit'] },
     },
     // Servers only answer what the client advertises, so this has to be declared for
     // textDocument/signatureHelp to come back at all.

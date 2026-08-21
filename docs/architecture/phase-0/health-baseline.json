@@ -55,14 +55,20 @@
   "sourceCycles": {
     "editor": [
       [
+        "packages/editor/src/editor/decorationStore.ts",
+        "packages/editor/src/editor/disposables.ts",
+        "packages/editor/src/editor/types.ts",
         "packages/editor/src/editorBlocks.ts",
         "packages/editor/src/plugins.ts",
+        "packages/editor/src/virtualization/browserMetrics.ts",
         "packages/editor/src/virtualization/virtualizedTextViewTypes.ts"
       ],
       [
         "packages/editor/src/virtualization/virtualizedTextViewBlockLanes.ts",
         "packages/editor/src/virtualization/virtualizedTextViewGeometry.ts",
         "packages/editor/src/virtualization/virtualizedTextViewHelpers.ts",
+        "packages/editor/src/virtualization/virtualizedTextViewHiddenCharacters.ts",
+        "packages/editor/src/virtualization/virtualizedTextViewInternals.ts",
         "packages/editor/src/virtualization/virtualizedTextViewLayout.ts"
       ]
     ],
@@ -71,6 +77,8 @@
         "packages/editor/src/virtualization/virtualizedTextViewBlockLanes.ts",
         "packages/editor/src/virtualization/virtualizedTextViewGeometry.ts",
         "packages/editor/src/virtualization/virtualizedTextViewHelpers.ts",
+        "packages/editor/src/virtualization/virtualizedTextViewHiddenCharacters.ts",
+        "packages/editor/src/virtualization/virtualizedTextViewInternals.ts",
         "packages/editor/src/virtualization/virtualizedTextViewLayout.ts"
       ]
     ],

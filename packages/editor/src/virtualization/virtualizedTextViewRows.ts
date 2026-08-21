@@ -6,8 +6,15 @@ import {
   type DisplayBlockRow,
   type DisplayInjectedTextRow,
   type DisplayRow,
+  type InlineReplacementRender,
+  type InlineRow,
 } from '../displayTransforms'
 import { clamp } from '../style-utils'
+import {
+  createEditorBlockResizeObserver,
+  elementMeasuredEditorBlockSize,
+} from '../editor/editorBlockSurfaces'
+import type { InlineMap } from '../inlineMap'
 import type {
   EditorGutterContribution,
   EditorGutterRowContext,
@@ -41,6 +48,7 @@ import {
   rowHeight,
   rowTop,
   scrollableHeight,
+  updateVirtualizerRows,
   visibleLineCount,
 } from './virtualizedTextViewLayout'
 import type {
@@ -60,7 +68,9 @@ import {
   rowInlineMappingForDisplayRow,
 } from './virtualizedTextViewInlineMapping'
 import {
+  type InlineWidgetPlacement,
   type RenderedChunkParts,
+  clearRowGeometryCaches,
   createRenderedChunkParts,
   createTextChunkParts,
   domBoundaryForOffset,
@@ -69,6 +79,7 @@ import {
   offsetFromDomBoundary,
   offsetToX,
   isSimpleRowText,
+  setInlineWidgetMeasuredWidth,
 } from './virtualizedTextViewGeometry'
 import {
   clearHiddenCharactersForRow,
@@ -85,6 +96,17 @@ const CURSOR_LINE_ROW_CLASS = 'editor-virtualized-cursor-line-row'
 const CURSOR_LINE_GUTTER_CLASS = 'editor-virtualized-cursor-line-gutter'
 const gutterCursorLineStates = new WeakMap<HTMLElement, boolean>()
 const emptyBlockLaneInset = { left: 0, right: 0, key: '' }
+const MAX_ROW_TEXT_NODE_LENGTH = 50
+const MAX_SINGLE_NODE_ROW_LENGTH = 512
+// Far enough out that no scroll offset brings a parked surface back into the
+// spacer's painted box. Parking moves the surface rather than hiding or
+// detaching it, because both of those blur whatever the user was typing into —
+// which is the state hoisting exists to protect.
+const PARKED_HOISTED_BLOCK_TOP_PX = -1_000_000
+const hoistedBlockSurfacesByView = new WeakMap<VirtualizedTextViewInternal, HoistedBlockSurfaces>()
+const INLINE_WIDGET_CLASS = 'editor-inline-widget'
+const inlineWidgetsByView = new WeakMap<VirtualizedTextViewInternal, InlineWidgets>()
+const pendingInlineWidgetRepaints = new WeakMap<VirtualizedTextViewInternal, () => void>()
 
 type RowUpdatePass = {
   readonly cursorBufferRow: number | null
@@ -101,6 +123,60 @@ type RowUpdateState = EditorGutterRowContext & {
   readonly inlineMapping: RowInlineMapping | null
 }
 
+type HoistedBlockSurfaces = {
+  readonly layerElement: HTMLDivElement
+  readonly hosts: Map<string, HoistedBlockSurface>
+}
+
+type HoistedBlockSurface = {
+  readonly element: HTMLDivElement
+  readonly mountDisposable: { dispose(): void } | null
+  layoutKey: string
+}
+
+type HoistedBlockRowItem = {
+  readonly item: FixedRowVirtualItem
+  readonly blockRow: DisplayBlockRow
+  readonly hoistKey: string
+}
+
+/** Fills the span an inline replacement renders into; the return value tears that content down. */
+
+type InlineWidgets = {
+  readonly hosts: Map<string, InlineWidgetHost>
+  /** The map the live ids were last taken from; a different one is what retires a mount. */
+  inlineMap: InlineMap | null
+}
+
+type InlineWidgetHost = {
+  readonly element: HTMLSpanElement
+  readonly mountDisposable: { dispose(): void } | null
+  readonly observer: ResizeObserver | null
+}
+
+type InlineWidgetRun = {
+  readonly id: string
+  readonly localStart: number
+  readonly localEnd: number
+  readonly render: InlineReplacementRender
+  readonly className?: string
+}
+
+/** A run that stays the text it stands for, boxed so it can be styled apart from that text. */
+type InlineClassRun = {
+  readonly id: string
+  readonly localStart: number
+  readonly localEnd: number
+  readonly className: string
+}
+
+type InlineRowRuns = {
+  readonly widgets: readonly InlineWidgetRun[]
+  readonly classes: readonly InlineClassRun[]
+}
+
+const NO_INLINE_ROW_RUNS: InlineRowRuns = { widgets: [], classes: [] }
+
 export function rowsKey(
   view: VirtualizedTextViewInternal,
   snapshot: FixedRowVirtualizerSnapshot,
@@ -116,7 +192,9 @@ export function renderRows(
   const updatePass = createRowUpdatePass(view)
   applyTotalHeight(view, snapshot)
   updateContentWidth(view, snapshot.virtualItems)
+  retireInlineWidgets(view)
   reconcileRows(view, snapshot.virtualItems, snapshot, updatePass, onRemoveSlot)
+  renderHoistedBlockSurfaces(view, snapshot)
   renderHiddenCharacters(view)
 }
 
@@ -259,6 +337,7 @@ export function disposeGutterCells(view: VirtualizedTextViewInternal): void {
 
 export function disposeBlockRowMounts(view: VirtualizedTextViewInternal): void {
   for (const row of allRows(view)) disposeBlockRowMount(row)
+  disposeHoistedBlockSurfaces(view)
 }
 
 export function updateGutterContributions(
@@ -472,6 +551,10 @@ function bufferRowForDisplayRow(view: VirtualizedTextViewInternal, index: number
   return bufferRowForVirtualRow(view, index)
 }
 
+function inlineRowForDisplayRow(row: DisplayRow | undefined): InlineRow | undefined {
+  return isDocumentTextDisplayRow(row) ? row.inlineRow : undefined
+}
+
 function displayRowSource(row: DisplayRow | undefined): EditorGutterRowContext['source'] {
   if (!row) return 'document'
   if (row.kind === 'block') return 'block'
@@ -678,10 +761,168 @@ function setBlockRowContent(
 
   if (row.element.firstChild !== row.blockContainerElement || row.element.childNodes.length !== 1)
     row.element.replaceChildren(row.blockContainerElement)
+
+  // A hoisted surface is laid over this row from its own layer, so the row only
+  // reserves the space; its height is fixed here even when the surface is
+  // measured, because the surface is no longer what fills this container.
+  if (blockRow.hoistKey) {
+    if (row.blockMountKey !== '') disposeBlockRowMount(row)
+    syncBlockContainerHeight(row.blockContainerElement, item.size, false)
+    updateMutableRowChunks(row, [])
+    return
+  }
+
   syncBlockContainerHeight(row.blockContainerElement, item.size, blockRow.heightMeasured === true)
 
   syncBlockRowMount(view, row, blockRow)
   updateMutableRowChunks(row, [])
+}
+
+function renderHoistedBlockSurfaces(
+  view: VirtualizedTextViewInternal,
+  snapshot: FixedRowVirtualizerSnapshot,
+): void {
+  if (!view.blockRowMount) return
+
+  const items = hoistedBlockRowItems(view, snapshot)
+  const existing = hoistedBlockSurfacesByView.get(view)
+  if (items.length === 0 && !existing) return
+
+  const surfaces = existing ?? createHoistedBlockSurfaces(view)
+  const laidOut = new Set<string>()
+  for (const entry of items) {
+    layoutHoistedBlockSurface(view, surfaces, entry)
+    laidOut.add(entry.hoistKey)
+  }
+
+  if (surfaces.hosts.size > laidOut.size) retireHoistedBlockSurfaces(view, surfaces, laidOut)
+}
+
+function hoistedBlockRowItems(
+  view: VirtualizedTextViewInternal,
+  snapshot: FixedRowVirtualizerSnapshot,
+): readonly HoistedBlockRowItem[] {
+  const items: HoistedBlockRowItem[] = []
+  for (const item of snapshot.virtualItems) {
+    const blockRow = blockDisplayRowForIndex(view, item.index)
+    const hoistKey = blockRow?.hoistKey
+    if (!blockRow || !hoistKey) continue
+
+    items.push({ item, blockRow, hoistKey })
+  }
+
+  return items
+}
+
+function createHoistedBlockSurfaces(view: VirtualizedTextViewInternal): HoistedBlockSurfaces {
+  const layerElement = view.scrollElement.ownerDocument.createElement('div')
+  layerElement.className = 'editor-virtualized-hoisted-block-layer'
+  // Geometry inline, as everywhere else in the spacer, and spanning the same
+  // box a row does so a hoisted surface lines up with the row it replaces.
+  layerElement.style.position = 'absolute'
+  layerElement.style.top = '0'
+  layerElement.style.left = 'var(--editor-gutter-width)'
+  layerElement.style.right = '0'
+  layerElement.style.height = '0'
+  layerElement.style.pointerEvents = 'none'
+  layerElement.style.zIndex = 'var(--editor-z-inline-surface)'
+  view.spacer.appendChild(layerElement)
+
+  const surfaces = { layerElement, hosts: new Map<string, HoistedBlockSurface>() }
+  hoistedBlockSurfacesByView.set(view, surfaces)
+  return surfaces
+}
+
+function layoutHoistedBlockSurface(
+  view: VirtualizedTextViewInternal,
+  surfaces: HoistedBlockSurfaces,
+  entry: HoistedBlockRowItem,
+): void {
+  const host = surfaces.hosts.get(entry.hoistKey) ?? mountHoistedBlockSurface(view, surfaces, entry)
+  syncBlockContainerHeight(host.element, entry.item.size, entry.blockRow.heightMeasured === true)
+
+  const layoutKey = `translateY(${entry.item.start}px)`
+  if (host.layoutKey === layoutKey) return
+
+  host.layoutKey = layoutKey
+  setStyleValue(host.element, 'transform', layoutKey)
+}
+
+function mountHoistedBlockSurface(
+  view: VirtualizedTextViewInternal,
+  surfaces: HoistedBlockSurfaces,
+  entry: HoistedBlockRowItem,
+): HoistedBlockSurface {
+  const element = view.scrollElement.ownerDocument.createElement('div')
+  element.className = 'editor-virtualized-block-surface'
+  element.style.position = 'absolute'
+  element.style.top = '0'
+  element.style.left = '0'
+  element.style.pointerEvents = 'auto'
+  // Attached before mounting so a surface that measures itself on mount is
+  // asked about a laid-out element rather than an orphan.
+  surfaces.layerElement.appendChild(element)
+
+  const disposable = view.blockRowMount?.(element, {
+    id: entry.blockRow.id,
+    anchorBufferRow: entry.blockRow.anchorBufferRow,
+    placement: entry.blockRow.placement,
+    startOffset: entry.blockRow.startOffset,
+    endOffset: entry.blockRow.endOffset,
+  })
+  const host = { element, mountDisposable: disposable ?? null, layoutKey: '' }
+  surfaces.hosts.set(entry.hoistKey, host)
+  return host
+}
+
+function retireHoistedBlockSurfaces(
+  view: VirtualizedTextViewInternal,
+  surfaces: HoistedBlockSurfaces,
+  laidOut: ReadonlySet<string>,
+): void {
+  const projected = projectedHoistKeys(view)
+  for (const [hoistKey, host] of surfaces.hosts) {
+    if (laidOut.has(hoistKey)) continue
+    if (projected.has(hoistKey)) {
+      parkHoistedBlockSurface(host)
+      continue
+    }
+
+    disposeHoistedBlockSurface(host)
+    surfaces.hosts.delete(hoistKey)
+  }
+}
+
+function projectedHoistKeys(view: VirtualizedTextViewInternal): ReadonlySet<string> {
+  const keys = new Set<string>()
+  for (const blockRow of view.model.blockRows) {
+    if (blockRow.hoistKey) keys.add(blockRow.hoistKey)
+  }
+
+  return keys
+}
+
+function parkHoistedBlockSurface(host: HoistedBlockSurface): void {
+  const layoutKey = `translateY(${PARKED_HOISTED_BLOCK_TOP_PX}px)`
+  if (host.layoutKey === layoutKey) return
+
+  host.layoutKey = layoutKey
+  setStyleValue(host.element, 'transform', layoutKey)
+}
+
+function disposeHoistedBlockSurface(host: HoistedBlockSurface): void {
+  host.mountDisposable?.dispose()
+  host.element.remove()
+}
+
+function disposeHoistedBlockSurfaces(view: VirtualizedTextViewInternal): void {
+  const surfaces = hoistedBlockSurfacesByView.get(view)
+  if (!surfaces) return
+
+  for (const host of surfaces.hosts.values()) disposeHoistedBlockSurface(host)
+  surfaces.hosts.clear()
+  surfaces.layerElement.remove()
+  hoistedBlockSurfacesByView.delete(view)
 }
 
 function syncBlockContainerHeight(element: HTMLDivElement, size: number, measured: boolean): void {
@@ -796,6 +1037,12 @@ function updateRowTextChunks(
   mapping: RowInlineMapping | null,
   snapshot = view.virtualizer.getSnapshot(),
 ): void {
+  const runs = inlineRowRuns(mapping, text)
+  if (runs.widgets.length > 0 || runs.classes.length > 0) {
+    setInlineRunRowText(view, row, text, startOffset, mapping, runs)
+    return
+  }
+
   if (!shouldChunkLine(view, text)) {
     setDirectRowText(view, row, text, startOffset, mapping)
     return
@@ -813,7 +1060,9 @@ function setDirectRowText(
 ): void {
   if (reuseDirectRowText(row, text, startOffset, mapping)) return
 
-  if (!isSimpleRowText(text)) {
+  // Splitting costs the row the in-place `Text.data` patch it lives on while the user types, so a
+  // row short enough to be scanned cheaply keeps its single node and pays nothing.
+  if (!isSimpleRowText(text) || text.length > MAX_SINGLE_NODE_ROW_LENGTH) {
     setRenderedDirectRowText(view, row, text, startOffset, mapping)
     return
   }
@@ -833,12 +1082,9 @@ function setRenderedDirectRowText(
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): void {
-  const rendered = createRenderedChunkParts(
-    row.element.ownerDocument,
-    text,
-    0,
-    characterWidth(view),
-  )
+  const rendered = isSimpleRowText(text)
+    ? createSplitTextChunkParts(row.element.ownerDocument, text, 0)
+    : createRenderedChunkParts(row.element.ownerDocument, text, 0, characterWidth(view))
   if (!adoptRenderedSingleTextPart(row, rendered)) {
     row.element.replaceChildren(...rendered.nodes)
   }
@@ -979,6 +1225,373 @@ function rowHasInlineAttachments(row: MountedVirtualizedTextRow): boolean {
   return row.hiddenCharactersKey.length > 0
 }
 
+/**
+ * Which of the row's replacements need a box of their own — one that renders itself, one that only
+ * asks to be styled apart from the text around it. The row's display columns are line-absolute in
+ * the mapping, so a wrapped row only claims the runs that fall inside the slice it renders: a run
+ * cut by a wrap boundary has no single box to be, and stays the text it stands for.
+ */
+function inlineRowRuns(mapping: RowInlineMapping | null, text: string): InlineRowRuns {
+  if (!mapping) return NO_INLINE_ROW_RUNS
+
+  const widgets: InlineWidgetRun[] = []
+  const classes: InlineClassRun[] = []
+  for (const segment of mapping.line.segments) {
+    if (segment.kind !== 'replacement' || segment.id === undefined) continue
+    const { className, render } = segment
+    if (!render && className === undefined) continue
+
+    const localStart = segment.displayStartColumn - mapping.displayStartColumn
+    const localEnd = segment.displayEndColumn - mapping.displayStartColumn
+    // A run with no display column of its own would put both its boundaries on one x, leaving the
+    // caret no side to stop on and the measured advance nothing to span.
+    if (localStart < 0 || localEnd > text.length || localEnd <= localStart) continue
+
+    const id = segment.id
+    const styling = className === undefined ? {} : { className }
+    if (render) widgets.push({ id, localStart, localEnd, render, ...styling })
+    else if (className !== undefined) classes.push({ id, localStart, localEnd, className })
+  }
+
+  return { widgets, classes }
+}
+
+/**
+ * Rows carrying a run never take the chunked path: a chunk boundary falls on a fixed column stride,
+ * which would cut a replacement's columns in two, and the box it paints into is one or nothing.
+ */
+function setInlineRunRowText(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  text: string,
+  startOffset: number,
+  mapping: RowInlineMapping | null,
+  runs: InlineRowRuns,
+): void {
+  const placements = runs.widgets.map((run) => inlineWidgetPlacement(view, run))
+  const chunk = row.chunks[0]
+  if (chunk && reusesInlineRunRowText(row, chunk, text, placements, runs.classes)) {
+    syncDirectRowChunk(row, text, startOffset, mapping, chunk.parts, chunk.textNode)
+    return
+  }
+
+  const rendered = createInlineRunParts(
+    row.element.ownerDocument,
+    text,
+    characterWidth(view),
+    placements,
+    runs.classes,
+  )
+  row.element.replaceChildren(...rendered.nodes)
+  setTextRenderMode(row, 'widget')
+  syncDirectRowChunk(row, text, startOffset, mapping, rendered.parts, rendered.textNode)
+}
+
+/**
+ * The row's text, with every styled run boxed in a span of its own. The parts still point at the
+ * text nodes inside those boxes, so a column inside a run measures, hit-tests and paints exactly as
+ * one outside it does — the box changes what the run looks like, not what it is.
+ */
+function createInlineRunParts(
+  document: Document,
+  text: string,
+  cellWidth: number,
+  placements: readonly InlineWidgetPlacement[],
+  classes: readonly InlineClassRun[],
+): RenderedChunkParts {
+  const nodes: Node[] = []
+  const parts: VirtualizedTextChunkPart[] = []
+  let cursor = 0
+
+  for (const run of classes) {
+    appendInlineRunSlice(
+      document,
+      nodes,
+      parts,
+      text,
+      cursor,
+      run.localStart,
+      cellWidth,
+      placements,
+    )
+    appendInlineClassRun(document, nodes, parts, text, run, cellWidth)
+    cursor = run.localEnd
+  }
+
+  appendInlineRunSlice(document, nodes, parts, text, cursor, text.length, cellWidth, placements)
+  return { nodes, parts, textNode: firstRowTextNode(parts) ?? document.createTextNode('') }
+}
+
+function appendInlineRunSlice(
+  document: Document,
+  nodes: Node[],
+  parts: VirtualizedTextChunkPart[],
+  text: string,
+  localStart: number,
+  localEnd: number,
+  cellWidth: number,
+  placements: readonly InlineWidgetPlacement[],
+): void {
+  if (localEnd <= localStart) return
+
+  const rendered = createRenderedChunkParts(
+    document,
+    text.slice(localStart, localEnd),
+    localStart,
+    cellWidth,
+    placements.filter(
+      (placement) => placement.localStart >= localStart && placement.localEnd <= localEnd,
+    ),
+  )
+  nodes.push(...rendered.nodes)
+  parts.push(...rendered.parts)
+}
+
+function appendInlineClassRun(
+  document: Document,
+  nodes: Node[],
+  parts: VirtualizedTextChunkPart[],
+  text: string,
+  run: InlineClassRun,
+  cellWidth: number,
+): void {
+  const boxed = createRenderedChunkParts(
+    document,
+    text.slice(run.localStart, run.localEnd),
+    run.localStart,
+    cellWidth,
+  )
+  const element = document.createElement('span')
+  element.className = run.className
+  element.dataset.editorInlineRun = run.id
+  element.append(...boxed.nodes)
+
+  nodes.push(element)
+  parts.push(...boxed.parts)
+}
+
+function firstRowTextNode(parts: readonly VirtualizedTextChunkPart[]): Text | null {
+  for (const part of parts) {
+    if (part.kind === 'text') return part.node
+  }
+
+  return null
+}
+
+/**
+ * Reuse is what keeps a widget out of the DOM churn a scroll frame otherwise causes, so it asks the
+ * row itself rather than a key: the mounted nodes are still where this row put them, in the columns
+ * these runs claim. A node another row has since taken fails on its parent.
+ */
+function reusesInlineRunRowText(
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+  text: string,
+  placements: readonly InlineWidgetPlacement[],
+  classes: readonly InlineClassRun[],
+): boolean {
+  if (row.text !== text || row.textRenderMode !== 'widget' || row.chunks.length !== 1) return false
+
+  const mounted = chunk.parts.filter((part) => part.kind === 'widget')
+  if (mounted.length !== placements.length) return false
+
+  const reused = placements.every((placement, index) => {
+    const part = mounted[index]
+    if (!part || part.element !== placement.element) return false
+    if (part.localStart !== placement.localStart || part.localEnd !== placement.localEnd)
+      return false
+    return part.element.parentNode === row.element
+  })
+
+  return reused && reusesInlineClassRuns(row, chunk, classes)
+}
+
+/**
+ * A box is rebuilt rather than remounted, so all that has to still hold is which run it was built
+ * for: everything else about it is the text the row has already been found to be painting.
+ */
+function reusesInlineClassRuns(
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+  classes: readonly InlineClassRun[],
+): boolean {
+  const boxes = inlineClassRunElements(row, chunk)
+  if (boxes.length !== classes.length) return false
+
+  return classes.every((run, index) => {
+    const box = boxes[index]
+    if (!box) return false
+    return box.dataset.editorInlineRun === run.id && box.className === run.className
+  })
+}
+
+/** The boxes the row's text parts sit in, in the order the row paints them. */
+function inlineClassRunElements(
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+): readonly HTMLElement[] {
+  const boxes: HTMLElement[] = []
+
+  for (const part of chunk.parts) {
+    if (part.kind !== 'text') continue
+    const parent = part.node.parentElement
+    if (!parent || parent === row.element) continue
+    if (boxes.at(-1) !== parent) boxes.push(parent)
+  }
+
+  return boxes
+}
+
+/**
+ * A replacement id owns its mount for as long as the replacement lives, across every row the run is
+ * painted into. Re-rendering per row would tear the node down and build it again on every scroll
+ * frame that recycles the row under it, which for anything stateful — a loading image, a spinner,
+ * an input — is visible.
+ */
+function inlineWidgetPlacement(
+  view: VirtualizedTextViewInternal,
+  run: InlineWidgetRun,
+): InlineWidgetPlacement {
+  const widgets = inlineWidgets(view)
+  const host = widgets.hosts.get(run.id) ?? mountInlineWidget(view, widgets, run)
+  applyInlineWidgetClass(host.element, run.className)
+  return { localStart: run.localStart, localEnd: run.localEnd, element: host.element }
+}
+
+/** The run's own class rides alongside the mount's, and is re-read because the mount outlives it. */
+function applyInlineWidgetClass(element: HTMLSpanElement, className: string | undefined): void {
+  const next = className === undefined ? INLINE_WIDGET_CLASS : `${INLINE_WIDGET_CLASS} ${className}`
+  if (element.className !== next) element.className = next
+}
+
+function inlineWidgets(view: VirtualizedTextViewInternal): InlineWidgets {
+  const existing = inlineWidgetsByView.get(view)
+  if (existing) return existing
+
+  const widgets = { hosts: new Map<string, InlineWidgetHost>(), inlineMap: view.model.inlineMap }
+  inlineWidgetsByView.set(view, widgets)
+  return widgets
+}
+
+function mountInlineWidget(
+  view: VirtualizedTextViewInternal,
+  widgets: InlineWidgets,
+  run: InlineWidgetRun,
+): InlineWidgetHost {
+  const element = view.scrollElement.ownerDocument.createElement('span')
+  applyInlineWidgetClass(element, run.className)
+  element.dataset.editorInlineWidget = run.id
+  // Nothing in the row is editable, but a browser still finds caret positions inside any node it can
+  // descend into, and the replacement is one indivisible stop.
+  element.setAttribute('contenteditable', 'false')
+
+  const mountDisposable = run.render(element) ?? null
+  // The callback is only the signal that something moved: re-reading the element keeps a resize and
+  // the measurement below on the same box, rather than the content box without its border. It is
+  // also the first real width, since nothing has laid this node out until a row paints it in.
+  const observer = createEditorBlockResizeObserver(() => measureInlineWidget(view, element))
+  observer?.observe(element)
+
+  const host = { element, mountDisposable, observer }
+  widgets.hosts.set(run.id, host)
+  measureInlineWidget(view, element)
+  return host
+}
+
+function measureInlineWidget(view: VirtualizedTextViewInternal, element: HTMLSpanElement): void {
+  applyInlineWidgetWidth(view, element, elementMeasuredEditorBlockSize(element, 'width'))
+}
+
+function applyInlineWidgetWidth(
+  view: VirtualizedTextViewInternal,
+  element: HTMLSpanElement,
+  width: number,
+): void {
+  // A node that measures nothing has not been laid out yet — off-screen, or a host that answers no
+  // rects at all. The columns it stands on are a better guess than collapsing it to nothing.
+  if (!Number.isFinite(width) || width <= 0) return
+  if (!setInlineWidgetMeasuredWidth(element, width)) return
+
+  // Row geometry is cached against the row's text and classes, none of which move when the node a
+  // replacement rendered does. An image that finished loading would otherwise keep the columns
+  // after it where they were laid out at its placeholder size.
+  clearRowGeometryCaches(view)
+  // Dropping the caches is only half of it. Every other place that drops them is inside a pass that
+  // goes on to repaint; this one is reached from a resize delivery with nothing behind it, so the
+  // caret and the horizontal extent would keep the numbers they were last painted with until the
+  // next keystroke happened to ask for them again.
+  scheduleInlineWidgetRepaint(view)
+}
+
+/**
+ * Coalesced and deferred, because the width arrives either inside a resize delivery — where
+ * repainting immediately re-enters the observer that is still running — or inside the row paint
+ * that mounted the node, which would re-enter the render pass writing that row. A burst of
+ * replacements settling together is one pass either way.
+ */
+function scheduleInlineWidgetRepaint(view: VirtualizedTextViewInternal): void {
+  if (pendingInlineWidgetRepaints.has(view)) return
+
+  const win = view.scrollElement.ownerDocument.defaultView
+  if (!win) return
+
+  /**
+   * @justification Leaving the current frame is the entire content of this delay: it is what keeps
+   * the repaint out of the resize delivery and out of the row paint that ask for it. The one
+   * outstanding handle per view makes a second request in the same frame a no-op, and
+   * `cancelInlineWidgetRepaint` withdraws it when the view goes away.
+   */
+  const handle = win.setTimeout(() => {
+    pendingInlineWidgetRepaints.delete(view)
+    resetContentWidthScan(view)
+    view.lastRenderedRowsKey = ''
+    updateVirtualizerRows(view)
+  }, 0)
+  pendingInlineWidgetRepaints.set(view, () => win.clearTimeout(handle))
+}
+
+function cancelInlineWidgetRepaint(view: VirtualizedTextViewInternal): void {
+  pendingInlineWidgetRepaints.get(view)?.()
+  pendingInlineWidgetRepaints.delete(view)
+}
+
+/**
+ * A mount lives as long as its replacement does, not as long as the row showing it: scrolling away
+ * keeps it, and only the replacement leaving the map — dropped by its provider, or revealed under
+ * the caret — takes it down.
+ */
+function retireInlineWidgets(view: VirtualizedTextViewInternal): void {
+  const widgets = inlineWidgetsByView.get(view)
+  if (!widgets || widgets.inlineMap === view.model.inlineMap) return
+
+  widgets.inlineMap = view.model.inlineMap
+  const live = new Set<string>()
+  for (const range of view.model.inlineMap?.ranges ?? []) live.add(range.id)
+
+  for (const [id, host] of widgets.hosts) {
+    if (live.has(id)) continue
+
+    disposeInlineWidget(host)
+    widgets.hosts.delete(id)
+  }
+}
+
+export function disposeInlineWidgets(view: VirtualizedTextViewInternal): void {
+  cancelInlineWidgetRepaint(view)
+  const widgets = inlineWidgetsByView.get(view)
+  if (!widgets) return
+
+  for (const host of widgets.hosts.values()) disposeInlineWidget(host)
+  widgets.hosts.clear()
+  inlineWidgetsByView.delete(view)
+}
+
+function disposeInlineWidget(host: InlineWidgetHost): void {
+  host.observer?.disconnect()
+  host.mountDisposable?.dispose()
+  host.element.remove()
+}
+
 function setBlockRowText(row: MountedVirtualizedTextRow, text: string, startOffset: number): void {
   disposeBlockRowMount(row)
   if (shouldReplaceBlockTextChildren(row)) {
@@ -1048,18 +1661,17 @@ function createRowChunk(
   const element = view.scrollElement.ownerDocument.createElement('span')
   const chunkText = text.slice(localStart, localEnd)
   const rendered = isSimpleRowText(chunkText)
-    ? null
+    ? createSplitTextChunkParts(view.scrollElement.ownerDocument, chunkText, localStart)
     : createRenderedChunkParts(
         view.scrollElement.ownerDocument,
         chunkText,
         localStart,
         characterWidth(view),
       )
-  const textNode = rendered?.textNode ?? view.scrollElement.ownerDocument.createTextNode(chunkText)
 
   element.className = 'editor-virtualized-row-chunk'
   element.dataset.editorVirtualChunkStart = String(localStart)
-  element.append(...(rendered?.nodes ?? [textNode]))
+  element.append(...rendered.nodes)
 
   return {
     startOffset: offsetForLocalIndex(mapping, startOffset, localStart, 'before'),
@@ -1068,9 +1680,45 @@ function createRowChunk(
     localEnd,
     text: chunkText,
     element,
-    textNode,
-    parts: rendered?.parts ?? createTextChunkParts(textNode, localStart, localEnd),
+    textNode: rendered.textNode,
+    parts: rendered.parts,
   }
+}
+
+/**
+ * Reading a character position out of a text node costs the browser a scan of that node, and the
+ * scan does not stay linear in its length — so caret placement, hit testing and every highlight
+ * range painted over a very long line get steadily more expensive the more text one node holds.
+ * Spreading the text over several nodes bounds each of those scans and changes nothing about what
+ * renders or what the parts describe: adjacent text nodes lay out as one, and the parts still cover
+ * the same local span end to end.
+ *
+ * Callers must have established that the text is simple. A fixed stride can cut a grapheme cluster
+ * in two, and each half then measures — and stops the caret — as a character of its own.
+ */
+function createSplitTextChunkParts(
+  document: Document,
+  text: string,
+  localStart: number,
+): RenderedChunkParts {
+  const nodeCount = Math.max(1, Math.ceil(text.length / MAX_ROW_TEXT_NODE_LENGTH))
+  const nodes: Text[] = []
+  const parts: VirtualizedTextChunkPart[] = []
+
+  for (let index = 0; index < nodeCount; index += 1) {
+    const start = index * MAX_ROW_TEXT_NODE_LENGTH
+    const end = Math.min(start + MAX_ROW_TEXT_NODE_LENGTH, text.length)
+    const node = document.createTextNode(text.slice(start, end))
+    nodes.push(node)
+    parts.push({
+      kind: 'text',
+      localStart: localStart + start,
+      localEnd: localStart + end,
+      node,
+    })
+  }
+
+  return { nodes, parts, textNode: nodes[0]! }
 }
 
 function shouldChunkLine(view: VirtualizedTextViewInternal, text: string): boolean {
@@ -1085,8 +1733,11 @@ function rowChunkKey(
 ): string {
   if (!shouldChunkLine(view, text)) return 'direct'
 
+  // Only the aligned window bounds describe what the row rendered. Folding the raw scroll position
+  // or viewport width in would invalidate the row — and the geometry measured for it — on every
+  // pixel of horizontal scroll, even though the mounted chunks are identical.
   const window = horizontalChunkWindow(view, text, snapshot)
-  return `${window.start}:${window.end}:${snapshot.viewportWidth}:${snapshot.scrollLeft}`
+  return `${window.start}:${window.end}`
 }
 
 function horizontalChunkWindow(
@@ -1144,21 +1795,20 @@ function horizontalWindowKey(
   items: readonly FixedRowVirtualItem[],
   snapshot: FixedRowVirtualizerSnapshot,
 ): string {
-  if (!hasHorizontalChunkedRows(view, items)) return 'direct'
-
-  const scrollLeft = Math.floor(snapshot.scrollLeft)
-  return `${scrollLeft}:${snapshot.viewportWidth}:${view.longLineChunkSize}`
-}
-
-function hasHorizontalChunkedRows(
-  view: VirtualizedTextViewInternal,
-  items: readonly FixedRowVirtualItem[],
-): boolean {
+  // Same reasoning as `rowChunkKey`: the render pass only has work to do once a chunked row's
+  // window actually shifts, so the key is the windows themselves rather than the scroll offset
+  // they were derived from. Rows that are not chunked contribute nothing — horizontal scroll never
+  // changes what they render.
+  let key = ''
   for (const item of items) {
-    if (shouldChunkLine(view, lineText(view, item.index))) return true
+    const text = lineText(view, item.index)
+    if (!shouldChunkLine(view, text)) continue
+
+    const window = horizontalChunkWindow(view, text, snapshot)
+    key += `${item.index}:${window.start}:${window.end}|`
   }
 
-  return false
+  return key === '' ? 'direct' : key
 }
 
 function updateRowFoldPresentation(
@@ -1390,6 +2040,9 @@ function isRowCurrent(
 
   const text = lineText(view, item.index)
   if (row.text !== text) return false
+  // Display text alone does not say what is behind it: a run that changed only how it paints — the
+  // box it asks for, the node it renders — leaves every column of the row exactly where it was.
+  if (row.inlineMapping?.line !== inlineRowForDisplayRow(displayRow)) return false
   if (row.chunkKey !== rowChunkKey(view, text, snapshot)) return false
   if (row.rowDecorationKey !== rowDecorationKey(view, item.index)) return false
 
@@ -1425,7 +2078,12 @@ function blockDisplayRowForIndex(
 
 function blockMountKeyForIndex(view: VirtualizedTextViewInternal, index: number): string {
   if (!view.blockRowMount) return ''
-  return blockDisplayRowForIndex(view, index)?.id ?? ''
+
+  const blockRow = blockDisplayRowForIndex(view, index)
+  // A hoisted surface never mounts into the row, so the row's key stays empty;
+  // claiming the block id here would report every such row as stale each frame.
+  if (!blockRow || blockRow.hoistKey) return ''
+  return blockRow.id
 }
 
 function rowDecorationKey(view: VirtualizedTextViewInternal, virtualRow: number): string {
@@ -1893,13 +2551,46 @@ function scrollHorizontallyToOffset(
   view.scrollElement.scrollLeft = Math.max(0, targetLeft - gutterWidth(view))
 }
 
-export function positionInputInViewport(
+/**
+ * Moves the hidden input under the caret.
+ *
+ * An IME anchors its candidate window on the box of the element being typed into, not on the text
+ * the reader can see, so an input parked in a corner of the viewport takes the candidate list there
+ * with it — as do the accent and emoji pickers, which never announce themselves through a
+ * composition event at all. A caret nobody can see has no box worth pointing at, and an input moved
+ * outside the viewport invites the browser to scroll it back into view, so the corner stands in.
+ */
+export function positionInputAtCaret(view: VirtualizedTextViewInternal): void {
+  // The virtualizer's copy of the scroll offsets, never the element's: this runs inside the render
+  // pass, where reading scroll back off the DOM is what forces the layout it has just written.
+  const snapshot = view.virtualizer.getSnapshot()
+  const caret = visibleCaretPosition(view, snapshot)
+  // The input hangs off the scroll element rather than the spacer, so it does not come with the
+  // offset the spacer is translated by on a document taller than the browser will scroll.
+  const spacerOffset = snapshot.nativeScrollTop - snapshot.scrollTop
+
+  setStyleValue(
+    view.inputElement,
+    'top',
+    `${caret ? caret.top + spacerOffset : snapshot.nativeScrollTop}px`,
+  )
+  setStyleValue(view.inputElement, 'left', `${caret ? caret.left : snapshot.scrollLeft}px`)
+}
+
+/** Null for a caret outside the rows that are mounted, or behind the gutter or the right edge. */
+function visibleCaretPosition(
   view: VirtualizedTextViewInternal,
-  scrollTop: number,
-  scrollLeft: number,
-): void {
-  setStyleValue(view.inputElement, 'top', `${scrollTop}px`)
-  setStyleValue(view.inputElement, 'left', `${scrollLeft}px`)
+  snapshot: FixedRowVirtualizerSnapshot,
+): { readonly left: number; readonly top: number } | null {
+  const selection = view.selections[0]
+  if (!selection) return null
+
+  const position = caretPosition(view, selection.head)
+  if (!position) return null
+  if (position.left < snapshot.scrollLeft + gutterWidth(view)) return null
+  if (position.left > snapshot.scrollLeft + snapshot.viewportWidth) return null
+
+  return position
 }
 
 export function restoreScrollPosition(

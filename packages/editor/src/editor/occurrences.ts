@@ -1,6 +1,6 @@
 import type { DocumentSessionChange } from '../documentSession'
 import type { ResolvedSelection } from '../selections'
-import { wordRangeAtOffset } from './textRanges'
+import { isWholeWordRange, wordRangeAtOffset } from '../textRanges'
 
 export type ExactOccurrenceRange = {
   readonly start: number
@@ -15,16 +15,6 @@ export type OccurrenceSelectionChange = {
 export type OccurrenceQuery = {
   readonly query: string
   readonly range: ExactOccurrenceRange
-}
-
-export function getOccurrenceQuery(
-  text: string,
-  selections: readonly ResolvedSelection[],
-): string | null {
-  const selection = selections.find((candidate) => !candidate.collapsed)
-  if (!selection) return null
-
-  return text.slice(selection.startOffset, selection.endOffset)
 }
 
 export function occurrenceQueryForSelection(
@@ -57,35 +47,18 @@ export function findAllExactOccurrences(
   return ranges
 }
 
-export function findNextExactOccurrence(
-  text: string,
-  query: string,
-  selections: readonly ResolvedSelection[],
-): ExactOccurrenceRange | null {
-  if (query.length === 0) return null
-
-  const selected = selections.map((selection) => ({
-    start: selection.startOffset,
-    end: selection.endOffset,
-  }))
-  const searchStart = selected.reduce((offset, range) => Math.max(offset, range.end), 0)
-  return (
-    findExactOccurrenceFrom(text, query, selected, searchStart) ??
-    findExactOccurrenceFrom(text, query, selected, 0, searchStart)
-  )
-}
-
 export function findNextExactOccurrenceFromRange(
   text: string,
   query: string,
   selected: readonly ExactOccurrenceRange[],
   range: ExactOccurrenceRange,
+  wholeWord = false,
 ): ExactOccurrenceRange | null {
   if (query.length === 0) return null
 
   return (
-    findExactOccurrenceFrom(text, query, selected, range.end) ??
-    findExactOccurrenceFrom(text, query, selected, 0, range.end)
+    findExactOccurrenceFrom(text, query, selected, wholeWord, range.end) ??
+    findExactOccurrenceFrom(text, query, selected, wholeWord, 0, range.end)
   )
 }
 
@@ -100,6 +73,7 @@ function findExactOccurrenceFrom(
   text: string,
   query: string,
   selected: readonly ExactOccurrenceRange[],
+  wholeWord: boolean,
   start: number,
   end = text.length,
 ): ExactOccurrenceRange | null {
@@ -107,7 +81,8 @@ function findExactOccurrenceFrom(
 
   while (index !== -1 && index < end) {
     const range = { start: index, end: index + query.length }
-    if (!selected.some((selection) => rangesOverlap(selection, range))) return range
+    const claimed = selected.some((selection) => rangesOverlap(selection, range))
+    if (!claimed && (!wholeWord || isWholeWordRange(text, range))) return range
     index = text.indexOf(query, index + 1)
   }
 

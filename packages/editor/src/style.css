@@ -1,3 +1,22 @@
+/* Stacking scale. Layers name a tier here instead of picking an integer that
+   beats whatever they happened to land next to, and the tiers are spaced so a
+   surface that has to sit between two of them can take an intermediate value
+   without renumbering the rest. Declared on the document root because plugin
+   overlays mount into the host container, outside the editor's own subtree.
+
+   Plugin stylesheets still hardcode theirs — 1 for indent guides and the split
+   handle, 4 for per-glyph and diff overlays, 5 for the minimap, 20 for the find
+   widget — so the two in-scroll tiers stay unspaced to fit between 1 and 4, and
+   the overlay tiers start above every one of them. Both can be spread out once
+   those stylesheets read from here too. */
+:root {
+  --editor-z-gutter: 2;
+  --editor-z-inline-surface: 3;
+  --editor-z-overlay-surface: 100;
+  --editor-z-overlay-widget: 200;
+  --editor-z-overlay-popup: 300;
+}
+
 .editor {
   --editor-background: #1e1e1e;
   --editor-foreground: #d4d4d4;
@@ -8,6 +27,7 @@
   --editor-cursor-line-row-background: rgba(255, 255, 255, 0.06);
   --editor-caret-color: var(--editor-foreground);
   --editor-hidden-character-foreground: #71717a;
+  --editor-suspicious-character-color: #f87171;
   --editor-minimap-background: var(--editor-background);
   --editor-minimap-background-opacity: 0.5;
   --editor-syntax-attribute: #99f6e4;
@@ -54,6 +74,7 @@
   --editor-cursor-line-row-background: rgba(255, 255, 255, 0.06);
   --editor-caret-color: var(--editor-foreground);
   --editor-hidden-character-foreground: #71717a;
+  --editor-suspicious-character-color: #f87171;
   --editor-minimap-background: var(--editor-background);
   --editor-minimap-background-opacity: 0.5;
   --editor-syntax-attribute: #99f6e4;
@@ -111,7 +132,7 @@
   pointer-events: none;
   position: sticky;
   width: var(--editor-gutter-width);
-  z-index: 2;
+  z-index: var(--editor-z-gutter);
 }
 
 .editor-virtualized-gutter-row {
@@ -194,7 +215,7 @@
   pointer-events: none;
   position: absolute;
   top: 0;
-  z-index: 3;
+  z-index: var(--editor-z-inline-surface);
 }
 
 .editor-virtualized-horizontal-block-surface {
@@ -232,6 +253,24 @@
   text-align: center;
   vertical-align: top;
   white-space: pre;
+}
+
+/* Dimmed rather than recoloured, so a suggestion reads as not-yet-written against whatever the theme
+   is painting the line in, instead of taking a colour that means something else in it. */
+.editor-ghost-text {
+  opacity: 0.5;
+}
+
+/* Laid out as one box in the text flow, and aligned to the row's top edge so a node taller than the
+   line does not push the baseline the rest of the row sits on. */
+.editor-inline-widget {
+  display: inline-block;
+  line-height: inherit;
+  max-height: var(--editor-row-height);
+  overflow: hidden;
+  user-select: none;
+  vertical-align: top;
+  white-space: normal;
 }
 
 .editor-virtualized-row-spacer {
@@ -279,12 +318,18 @@
   white-space: pre;
 }
 
-.editor-virtualized-hidden-character-marker[data-editor-hidden-character='space']::before {
-  content: '\00b7';
+/* A confusable character is legible and has to stay legible — the reader has to be able to compare
+   it with what it imitates — so it is underlined rather than covered. */
+.editor-virtualized-hidden-character-marker[data-editor-hidden-character='ambiguous'] {
+  border-bottom: 2px solid var(--editor-suspicious-character-color);
 }
 
-.editor-virtualized-hidden-character-marker[data-editor-hidden-character='tab']::before {
-  content: '\2192';
+/* An invisible one has no glyph and often no width at all, so the marker is the only thing there is
+   to see; the minimum width is what keeps a zero-width character from drawing a zero-width mark. */
+.editor-virtualized-hidden-character-marker[data-editor-hidden-character='invisible'] {
+  background-color: var(--editor-suspicious-character-color);
+  min-width: 2px;
+  opacity: 0.6;
 }
 
 .editor-virtualized-fold-placeholder {
@@ -293,6 +338,11 @@
   user-select: none;
 }
 
+/* Invisible, but not sizeless and not parked: the OS anchors an IME candidate window, an accent
+   picker and an emoji picker on this element's box, so it is kept a row tall and moved to the caret
+   (positionInputAtCaret). The width stays at one pixel so the browser's own scroll-the-caret-into-
+   view keeps whatever is being composed pinned to that box, and so nothing of the page of document
+   text this element carries for screen readers can ever be read off the screen. */
 .editor-virtualized-input {
   -webkit-appearance: none;
   appearance: none;
@@ -301,7 +351,7 @@
   box-shadow: none;
   caret-color: transparent;
   color: transparent;
-  height: 1px;
+  height: var(--editor-row-height);
   left: 0;
   opacity: 0;
   outline: none;
@@ -313,6 +363,19 @@
   top: 0;
   -webkit-text-fill-color: transparent;
   width: 1px;
+}
+
+/* Text an IME is still assembling. It belongs to no line yet, so it draws over the row it is going
+   to land in and has to cover what is behind it; the underline is what says it is not committed. */
+.editor-virtualized-composition {
+  background: var(--editor-background);
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  text-decoration: underline;
+  top: 0;
+  user-select: none;
+  z-index: var(--editor-z-inline-surface);
 }
 
 .editor-virtualized-caret-layer {
@@ -366,7 +429,7 @@
   position: absolute;
   right: 0;
   top: 0;
-  z-index: 5;
+  z-index: var(--editor-z-overlay-surface);
 }
 
 .editor-merge-conflict-actions {
@@ -438,7 +501,7 @@
     transform 120ms ease;
   white-space: normal;
   width: max-content;
-  z-index: 10;
+  z-index: var(--editor-z-overlay-popup);
 }
 
 .editor-merge-conflict-action:hover::after,

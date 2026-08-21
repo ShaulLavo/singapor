@@ -144,6 +144,7 @@ describe('Shiki worker client theme cache', () => {
     const snapshot = createPieceTableSnapshot('const value = 1;')
     const session = owner.createSession({
       documentId: 'file.ts',
+      languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
       snapshot,

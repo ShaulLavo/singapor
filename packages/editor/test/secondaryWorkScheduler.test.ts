@@ -28,6 +28,43 @@ describe('EditorSecondaryWorkScheduler', () => {
     expect(calls).toEqual(['second'])
   })
 
+  it('runs rescheduled work once maxDelayMs elapses', () => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    const scheduler = new EditorSecondaryWorkScheduler()
+
+    // A fast typist never leaves the 150ms debounce gap, so without a ceiling
+    // on the wait the syntax refresh would never run during the burst. 800ms of
+    // typing against a 400ms ceiling is exactly two runs — fewer means the
+    // ceiling was pushed out, more means it was not honoured as declared.
+    for (let keystroke = 0; keystroke < 20; keystroke += 1) {
+      scheduler.schedule({
+        key: 'editor.syntaxRefresh',
+        delayMs: 150,
+        maxDelayMs: 400,
+        run: () => calls.push('refresh'),
+      })
+      vi.advanceTimersByTime(40)
+    }
+
+    expect(calls).toEqual(['refresh', 'refresh'])
+    scheduler.dispose()
+  })
+
+  it('keeps debouncing a key that has no maximum wait', () => {
+    vi.useFakeTimers()
+    const calls: string[] = []
+    const scheduler = new EditorSecondaryWorkScheduler()
+
+    for (let keystroke = 0; keystroke < 20; keystroke += 1) {
+      scheduler.schedule({ key: 'editor.syntaxRefresh', delayMs: 150, run: () => calls.push('r') })
+      vi.advanceTimersByTime(40)
+    }
+
+    expect(calls).toEqual([])
+    scheduler.dispose()
+  })
+
   it('skips work when the version guard is stale', () => {
     vi.useFakeTimers()
     const calls: string[] = []

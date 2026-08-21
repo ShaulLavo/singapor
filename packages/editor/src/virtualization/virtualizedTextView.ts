@@ -1,4 +1,5 @@
 import type { FoldMap } from '../foldMap'
+import type { ResolvedSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
 import {
   normalizeTabSize,
@@ -55,9 +56,12 @@ import {
   setTokens as setViewTokens,
 } from './virtualizedTextViewHighlights'
 import {
+  DEFAULT_SUSPICIOUS_SETTINGS,
   normalizeHiddenCharactersMode,
   renderHiddenCharacters,
+  setSuspiciousCharacters,
 } from './virtualizedTextViewHiddenCharacters'
+import { setCompositionPreedit } from './virtualizedTextViewComposition'
 import { createVirtualizedTextViewModel } from './virtualizedTextViewModel'
 import {
   applyMultiLineTextLayout,
@@ -83,7 +87,12 @@ import {
   visualColumnForOffset,
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
-import { clearRowGeometryCaches, xToOffset } from './virtualizedTextViewGeometry'
+import {
+  clearRowGeometryCaches,
+  knownRowContentWidth,
+  measureRowContentWidth,
+  xToOffset,
+} from './virtualizedTextViewGeometry'
 import {
   disposeAllMountedBlockLanes,
   renderBlockLanes,
@@ -93,12 +102,13 @@ import {
   applyRowHeight,
   disposeBlockRowMounts,
   disposeGutterCells,
+  disposeInlineWidgets,
   ensureOffsetMounted,
   getMountedRows,
   gutterWidth,
   horizontalViewportColumns,
   pageRowDelta,
-  positionInputInViewport,
+  positionInputAtCaret,
   renderRows,
   resetContentWidthScan,
   resolveMountedOffset,
@@ -180,6 +190,7 @@ export class VirtualizedTextView {
   public readonly inputElement: HTMLTextAreaElement
   private readonly view: VirtualizedTextViewInternal
   private readonly disposeForegroundHighlightRestore: () => void
+  private cancelContentWidthMeasurement: (() => void) | null = null
 
   public constructor(container: HTMLElement, options: VirtualizedTextViewOptions = {}) {
     const overscan = options.overscan ?? DEFAULT_OVERSCAN
@@ -307,6 +318,7 @@ export class VirtualizedTextView {
       metrics: { ...measuredMetrics, rowHeight },
       textMetrics,
       hiddenCharacters: normalizeHiddenCharactersMode(options.hiddenCharacters),
+      suspiciousCharacters: DEFAULT_SUSPICIOUS_SETTINGS,
     }
 
     scrollElement.style.setProperty('--editor-gutter-width', '0px')
@@ -341,12 +353,15 @@ export class VirtualizedTextView {
 
   public dispose(): void {
     const view = this.view
+    this.cancelContentWidthMeasurement?.()
+    this.cancelContentWidthMeasurement = null
     this.disposeForegroundHighlightRestore()
     clearSelectionHighlight(view)
     for (const name of view.rangeHighlightGroups.keys()) clearRangeHighlight(view, name)
     clearTokenHighlights(view)
     view.virtualizer.dispose()
     disposeBlockRowMounts(view)
+    disposeInlineWidgets(view)
     disposeAllMountedBlockLanes(view)
     disposeGutterCells(view)
     this.scrollElement.remove()
@@ -517,15 +532,22 @@ export class VirtualizedTextView {
     this.inputElement.readOnly = true
   }
 
+  /** The text an IME is still assembling, drawn at the caret; empty text takes it back down. */
+  public setCompositionPreedit(text: string): void {
+    setCompositionPreedit(this.view, text)
+  }
+
   public focusInput(): void {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
     const scrollTop = snapshot.scrollTop
     const scrollLeft = this.scrollElement.scrollLeft
-    positionInputInViewport(view, snapshot.nativeScrollTop, scrollLeft)
-    this.inputElement.value = ''
+    positionInputAtCaret(view)
+    // Focus and nothing more: the value and the caret inside it belong to whoever knows the
+    // document, and are rewritten from it on every selection change. Emptying them here would take
+    // the screen reader's only view of the text away on each click, and leave an edit deduced from
+    // the element nothing to be deduced against.
     this.inputElement.focus({ preventScroll: true })
-    this.inputElement.setSelectionRange(0, 0)
     restoreScrollPosition(view, scrollTop, scrollLeft)
   }
 
@@ -557,6 +579,10 @@ export class VirtualizedTextView {
     clearRowGeometryCaches(view)
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
+  }
+
+  public setSuspiciousCharacters(options: ResolvedSuspiciousCharactersOptions): boolean {
+    return setSuspiciousCharacters(this.view, options)
   }
 
   public setHiddenCharacters(mode: HiddenCharactersMode): void {
@@ -613,11 +639,16 @@ export class VirtualizedTextView {
 
   public reserveOverlayWidth(side: 'left' | 'right', width: number): boolean {
     const value = width > 0 && Number.isFinite(width) ? `${Math.ceil(width)}px` : ''
-    const property = side === 'left' ? 'paddingLeft' : 'paddingRight'
+    const property = overlayPaddingProperty(side)
     if (this.scrollElement.style[property] === value) return false
 
     this.scrollElement.style[property] = value
     return true
+  }
+
+  public reservedOverlayWidth(side: 'left' | 'right'): number {
+    const width = Number.parseFloat(this.scrollElement.style[overlayPaddingProperty(side)])
+    return Number.isFinite(width) ? width : 0
   }
 
   public scrollToRow(row: number): void {
@@ -817,11 +848,82 @@ export class VirtualizedTextView {
 
     view.lastRenderedRowsKey = key
     renderRows(view, snapshot, (rowSlotId) => deleteTokenRangesForRow(view, rowSlotId))
+    this.applyKnownContentWidths(snapshot)
     renderBlockLanes(view, snapshot)
     renderTokenHighlights(view)
     for (const name of view.rangeHighlightGroups.keys()) renderRangeHighlight(view, name)
     renderSelectionHighlight(view)
     view.onViewportChange?.()
+  }
+
+  /**
+   * The horizontal scroll extent is a column-count estimate, and a wide glyph advances further than
+   * the one cell it is counted as — so a CJK or emoji line reaches past the extent and its end
+   * cannot be scrolled to. Rows that already know their rendered width correct it here for free;
+   * the rest are measured off the critical path, because finding out costs a layout read and the
+   * render pass has just finished writing to the DOM.
+   */
+  private applyKnownContentWidths(snapshot: FixedRowVirtualizerSnapshot): void {
+    const view = this.view
+    let unmeasured = false
+    for (const row of view.rowElements.values()) {
+      if (row.kind !== 'text') continue
+
+      const width = knownRowContentWidth(view, row)
+      if (width === null) {
+        unmeasured = true
+        continue
+      }
+
+      raiseVisualColumnsSeen(view, width)
+    }
+
+    updateContentWidth(view, snapshot.virtualItems)
+    if (unmeasured) this.scheduleContentWidthMeasurement()
+  }
+
+  private scheduleContentWidthMeasurement(): void {
+    if (this.cancelContentWidthMeasurement) return
+
+    const win = this.scrollElement.ownerDocument.defaultView
+    if (!win) return
+
+    const run = () => {
+      this.cancelContentWidthMeasurement = null
+      this.measureContentWidths()
+    }
+
+    if (typeof win.requestIdleCallback === 'function') {
+      /**
+       * @justification Measuring every row's width is the work the horizontal scroll extent needs
+       * and nothing on screen is waiting for, so it is deliberately given whatever the frame has
+       * left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when
+       * the content it would measure has already changed.
+       */
+      const handle = win.requestIdleCallback(run)
+      this.cancelContentWidthMeasurement = () => win.cancelIdleCallback(handle)
+      return
+    }
+
+    /**
+     * @justification The same deferral for an engine with no idle callback. Zero rather than a
+     * delay, because the point is only to leave the current frame, and the same cancel withdraws it.
+     */
+    const handle = win.setTimeout(run, 0)
+    this.cancelContentWidthMeasurement = () => win.clearTimeout(handle)
+  }
+
+  private measureContentWidths(): void {
+    const view = this.view
+    let raised = false
+    for (const row of view.rowElements.values()) {
+      if (row.kind !== 'text') continue
+
+      raised = raiseVisualColumnsSeen(view, measureRowContentWidth(view, row)) || raised
+    }
+
+    if (!raised) return
+    updateContentWidth(view, view.virtualizer.getSnapshot().virtualItems)
   }
 
   private applySameLineEdit(patch: SameLineEditPatch, nextText: TextSnapshot): void {
@@ -910,6 +1012,14 @@ export class VirtualizedTextView {
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
   }
+}
+
+function raiseVisualColumnsSeen(view: VirtualizedTextViewInternal, width: number): boolean {
+  const columns = width / Math.max(1, view.metrics.characterWidth)
+  if (columns <= view.maxVisualColumnsSeen) return false
+
+  view.maxVisualColumnsSeen = columns
+  return true
 }
 
 function subscribeToForegroundHighlightRestore(view: VirtualizedTextViewInternal): () => void {
@@ -1081,4 +1191,9 @@ function dirtyTokenProjectionStartRow(current: number | null, row: number): numb
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+// A reservation is stored as scroll-element padding and has no other record.
+function overlayPaddingProperty(side: 'left' | 'right'): 'paddingLeft' | 'paddingRight' {
+  return side === 'left' ? 'paddingLeft' : 'paddingRight'
 }

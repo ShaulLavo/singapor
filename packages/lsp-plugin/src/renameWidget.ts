@@ -1,3 +1,5 @@
+import { createAnchoredSurface } from './anchoredSurface'
+
 export type RenameWidgetOptions = {
   readonly document: Document
   /** Element whose computed style carries the editor theme variables. */
@@ -13,6 +15,8 @@ export type RenameWidgetPrompt = {
 export type RenameWidgetController = {
   /** Shows the input and resolves with the new name, or null when dismissed. */
   prompt(options: RenameWidgetPrompt): Promise<string | null>
+  /** Moves an open prompt to where the symbol is drawn now. */
+  reanchor(anchor: DOMRect): void
   containsTarget(target: EventTarget | null): boolean
   dispose(): void
 }
@@ -24,19 +28,19 @@ const THEME_VARIABLES = [
   '--editor-font-size',
 ] as const
 
+/** Tighter than the tooltips: the input reads as attached to the symbol, not floating near it. */
+const RENAME_GAP_PX = 4
+
 /**
  * The editor's own rename input: a small floating field anchored at the symbol.
  *
  * It exists so the engine is usable on its own. A host with its own dialog language passes
  * `onRequestRenameName` instead and this is never built.
  */
-export function createRenameWidgetController(
-  options: RenameWidgetOptions,
-): RenameWidgetController {
+export function createRenameWidgetController(options: RenameWidgetOptions): RenameWidgetController {
   const namespace = options.classNamespace ?? 'lsp-plugin'
   const element = options.document.createElement('div')
   element.className = `${namespace}-rename`
-  element.style.position = 'fixed'
   element.style.zIndex = '60'
   element.style.display = 'none'
 
@@ -48,6 +52,14 @@ export function createRenameWidgetController(
   input.setAttribute('aria-label', 'New name')
   element.appendChild(input)
   options.document.body.appendChild(element)
+  const surface = createAnchoredSurface({
+    element,
+    anchorClassName: `${namespace}-rename-anchor`,
+    // Below the symbol, so the word being renamed stays readable while the new one is typed.
+    preferredPlacement: 'bottom',
+    alignment: 'start',
+    gapPx: RENAME_GAP_PX,
+  })
 
   let settle: ((value: string | null) => void) | null = null
 
@@ -57,6 +69,7 @@ export function createRenameWidgetController(
     const resolve = settle
     settle = null
     element.style.display = 'none'
+    surface.release()
     resolve(value)
   }
 
@@ -79,22 +92,29 @@ export function createRenameWidgetController(
 
   return {
     containsTarget: (target) => target instanceof Node && element.contains(target),
+    reanchor(anchor) {
+      if (!settle) return
+
+      surface.place(anchor)
+    },
     dispose() {
       close(null)
+      surface.dispose()
       element.remove()
     },
     prompt({ anchor, currentName }) {
+      // A prompt already open is dismissed first, because dismissing it hides the element and takes
+      // the anchor out of the page — done afterwards it would undo the showing it comes with.
+      close(null)
       applyTheme(element, options.themeSource)
       element.style.display = 'block'
-      element.style.left = `${Math.round(anchor.left)}px`
-      element.style.top = `${Math.round(anchor.bottom + 4)}px`
+      surface.place(anchor)
       input.value = currentName
       input.focus()
       // Selected, so typing replaces the old name — the common case — while arrow keys still edit it.
       input.select()
 
       return new Promise<string | null>((resolve) => {
-        close(null)
         settle = resolve
       })
     },

@@ -5,12 +5,13 @@ import {
 } from '../documentSession'
 import {
   foldRangesEqual,
-  projectSyntaxFoldsThroughLineEdit,
+  projectSyntaxFoldsThroughEdit,
   rejectCrossingFoldRanges,
   type FoldRangeRejection,
-  type SyntaxFoldProjection,
 } from './folds'
+import { fallbackFoldRanges } from './foldRanges'
 import { EditorFoldState } from './foldState'
+import { guessedTabSize } from './indentationGuess'
 import { EditorKeymapController } from './keymap'
 import { EditorBlockSurfaceController } from './blockSurfaceController'
 import { InputSelectionController } from './inputSelectionController'
@@ -24,6 +25,11 @@ import { measureEditorPerformance } from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
 import { EditorCommandRouter } from './commandRouter'
+import { EditorAnnouncer } from './announce'
+import { SelectionRangeStore } from './selectionRanges'
+import { EditorDecorationStore, type EditorDecorationRange } from './decorationStore'
+import { EditorOperation, type EditorOperationFlush } from './operation'
+import { CursorHistory, sameCursorSelections, type CursorHistoryEntry } from './cursorHistory'
 import {
   EditorDisplayProjectionRegistry,
   FULL_DISPLAY_PROJECTION_INVALIDATION,
@@ -43,14 +49,25 @@ import {
   type ResetOwnedDocumentOptions,
 } from './editorDocument'
 import { EditorDocumentController } from './documentController'
-import {
-  removeArrayItem,
-  viewContributionKindForChange,
-  type SessionChangeOptions,
-} from './editorUtils'
+import { removeArrayItem, type SessionChangeOptions } from './editorUtils'
 import { EDITOR_FIND_FEATURE, type EditorFindFeature } from './findFeature'
-import { foldCandidateAtLocation, type FoldOperation } from './foldOperations'
-import { groupedRangeDecorations, sameEditorRangeDecorations } from './rangeDecorations'
+import {
+  foldCandidateAtLocation,
+  foldRangesOutsideSpans,
+  manualFoldRangesForSpans,
+  nestableFoldRanges,
+  planFoldCommand,
+  type EditorFoldCommandId,
+  type EditorFoldPlanCommandId,
+  type FoldCommandLocation,
+  type FoldOperation,
+  type ManualFoldSpan,
+} from './foldOperations'
+import {
+  groupedRangeDecorations,
+  rangeDecorationsWithProjectionStacking,
+  sameEditorRangeDecorations,
+} from './rangeDecorations'
 import { selectionRevealOffset, type EditorSelectionRevealTarget } from './selectionReveal'
 import { syncTextEdit } from './textEdits'
 import type {
@@ -67,15 +84,21 @@ import type {
   EditorState,
   EditorSyntaxStatus,
 } from './types'
+import { registerBuiltInPasteHandlers } from './pasteHandlers'
 import { EditorViewContributionController } from './viewContributions'
 import type { FoldMap } from '../foldMap'
-import { createInlineMap, type InlineMap } from '../inlineMap'
+import { createInlineMap, type InlineMap, type InlineReplacementSpec } from '../inlineMap'
 import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
 import type { EditorInlineReplacementProvider } from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
 import type { BlockLane, BlockRow, InjectedTextRow } from '../displayTransforms'
-import { offsetToPoint } from '../pieceTable/positions'
+import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import { anchorAt, resolveAnchor } from '../pieceTable/anchors'
+import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
+import type { TextOffsetRange } from '../textRanges'
 import {
+  EDITOR_PASTE_HANDLER,
+  EditorLanguageFeatureRegistry,
   EditorPluginHost,
   type EditorCapabilityContribution,
   type EditorCapabilityContributionContext,
@@ -97,10 +120,14 @@ import {
   type EditorFeatureContributionProvider,
   type EditorGutterContribution,
   type EditorInjectedTextRowProviderContext,
+  type EditorLanguageFeatureSelector,
+  type EditorLanguageFeatureToken,
   type EditorLogError,
   type EditorLogInput,
   type EditorOverlaySide,
   type EditorPlugin,
+  type EditorSelectionRange,
+  type EditorTrackedRanges,
   type EditorViewContribution,
   type EditorViewContributionContext,
   type EditorViewContributionProvider,
@@ -132,8 +159,20 @@ import {
   type VirtualizedFoldMarker,
   type VirtualizedTextRowDecoration,
 } from '../virtualization/virtualizedTextView'
+import {
+  beginRowRectMeasurements,
+  endRowRectMeasurements,
+  invalidateRowRectMeasurements,
+} from '../virtualization/virtualizedTextViewGeometry'
+import { normalizeSuspiciousCharactersOptions } from '../unicodeHighlight'
+import { observeBrowserTextMetricsInvalidation } from '../virtualization/browserMetrics'
+import { EditorDisposableStore } from './disposables'
 
 const RAPID_INPUT_SECONDARY_WORK_DELAY_MS = 150
+// A sustained typing run never leaves a 150ms gap, so a pure debounce would
+// defer syntax and feature work for as long as the user keeps typing. This is
+// the ceiling on that wait, measured from the first keystroke of the burst.
+const RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS = 400
 const RAPID_INPUT_TIMING_NAMES = new Set([
   'input.beforeinput',
   'input.composition',
@@ -148,6 +187,8 @@ const VISIBLE_SYNTAX_MAX_LEAD_CHARS = 750_000
 const VISIBLE_SYNTAX_SCROLL_DELAY_MS = 16
 const BACKGROUND_SYNTAX_WARM_DELAY_MS = 80
 const SYNTAX_FOLD_PROJECTION_OWNER = 'editor.folds.syntax'
+const FALLBACK_FOLD_PROJECTION_OWNER = 'editor.folds.fallback'
+const MANUAL_FOLD_PROJECTION_OWNER = 'editor.folds.manual'
 const DIRECT_RANGE_DECORATION_OWNER = 'editor.rangeDecorations.direct'
 const DIRECT_ROW_DECORATION_OWNER = 'editor.rowDecorations.direct'
 const FEATURE_ROW_DECORATION_OWNER_PREFIX = 'editor.rowDecorations.feature:'
@@ -159,6 +200,11 @@ const PLUGIN_INJECTED_ROWS_PROJECTION_OWNER = 'editor.injectedRows.plugins'
 type SyntaxScrollDirection = -1 | 0 | 1
 type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'feature' | 'view'
 type EditorContributionFailurePhase = 'dispose' | 'factory' | 'initial-update' | 'update'
+
+type TrackedAnchorRange = {
+  readonly start: PieceTableAnchor
+  readonly end: PieceTableAnchor
+}
 
 type EditorLifecycleSummary = {
   readonly pluginNames: Set<string>
@@ -209,12 +255,19 @@ export class Editor {
   private readonly document: EditorDocumentController
   private readonly editorFeatures = new Map<EditorCapabilityToken<unknown>, unknown>()
   private readonly editorFeatureTokensById = new Map<string, EditorCapabilityToken<unknown>>()
+  private readonly languageFeatures = new EditorLanguageFeatureRegistry()
   private readonly rowDecorationSourceOwners = new Map<string, symbol>()
   private readonly rowDecorationSourcesByOwner = new Map<symbol, Set<string>>()
   private readonly rowDecorationContributionOwners = new Map<
     EditorDecorationContribution | EditorFeatureContribution,
     symbol
   >()
+  /**
+   * What the factory currently running has registered, held until it produces the contribution
+   * that would own it. A factory that fails part-way leaves no object to dispose, so without this
+   * its registrations answer for nobody and keep their ids taken against everyone else.
+   */
+  private contributionClaims: EditorDisposable[] | null = null
   private readonly commandContributions: EditorCommandContribution[] = []
   private readonly capabilityContributions: EditorCapabilityContribution[] = []
   private readonly editContributions: EditorEditContribution[] = []
@@ -245,23 +298,46 @@ export class Editor {
     EditorDecorationContribution
   >()
   private readonly keymap: EditorKeymapController
+  private readonly environmentRegistrations = new EditorDisposableStore()
   private readonly viewContributions: EditorViewContributionController
   private readonly secondaryWork = new EditorSecondaryWorkScheduler()
   private readonly editChain = new DocumentEditChain()
   private lineStartsViewCache: { textVersion: number; view: LineStartsView } | null = null
   private readonly displayProjections = new EditorDisplayProjectionRegistry()
+  private readonly decorations = new EditorDecorationStore()
   private readonly highlightPrefix: string
   private sessionChangeVersion = 0
   private inlineReplacementProvider: EditorInlineReplacementProvider | null = null
   private syntaxCaptures: readonly EditorSyntaxCapture[] = []
+  /**
+   * Regions the user drew rather than any provider describing them. They are held here and merged in
+   * at the fan-in instead of being registered as a contribution, because the contribution set is
+   * refused whole when two of its ranges cross, and a hand-drawn region cannot promise anything about
+   * ranges a provider has not produced yet.
+   */
+  private manualFolds: readonly FoldRange[] = []
   private blockSurfaces!: EditorBlockSurfaceController
   private readonly syntax: EditorSyntaxController
   private readonly inputSelection: InputSelectionController
+  private readonly selectionRanges: SelectionRangeStore
   private configuredTheme: EditorTheme | null = null
   private appliedRangeDecorationNames: readonly string[] = []
   private appliedInjectedTextRows: readonly InjectedTextRow[] = []
   private readonly lifecycleSummary = createEditorLifecycleSummary()
-  private readonly tabSize: number
+  /** The width a host named, which no document may contradict. */
+  private readonly configuredTabSize: number
+  /** The width in effect: the host's when it named one, otherwise the loaded document's own. */
+  private tabSize: number
+  private tabMovesFocus: boolean
+  private readonly announcer: EditorAnnouncer
+  private operation: EditorOperation | null = null
+  private readonly cursorHistory = new CursorHistory()
+  private cursorHistorySession: DocumentSession | null = null
+  private cursorHistoryBefore: {
+    readonly session: DocumentSession
+    readonly entry: CursorHistoryEntry
+  } | null = null
+  private restoringCursorHistory = false
   private disposed = false
 
   private get text(): string {
@@ -310,6 +386,10 @@ export class Editor {
     return this.document.textVersion
   }
 
+  // Set once a parse has described a fold for this document, and never for a language whose grammar
+  // ships no fold query. Cleared with the document rather than with the parse.
+  private grammarDescribedFolds = false
+
   private get syntaxStatus(): EditorSyntaxStatus {
     return this.syntax.status
   }
@@ -326,9 +406,17 @@ export class Editor {
     const mountStart = nowMs()
     this.container = container
     this.options = options
-    this.tabSize = normalizeTabSize(options.tabSize)
+    this.configuredTabSize = normalizeTabSize(options.tabSize)
+    this.tabSize = this.configuredTabSize
+    this.tabMovesFocus = options.tabMovesFocus ?? false
+    // On the host's container rather than on the scrolling element: everything under that element is
+    // layers the view mounts and measures, and what the editor has to say is none of the document.
+    this.announcer = new EditorAnnouncer(container)
     this.configuredTheme = options.theme ?? null
     this.pluginHost = new EditorPluginHost(options.plugins)
+    // Into the same channel a plugin registers into, so what ships and what a host adds are asked
+    // in one order rather than one of them being a fallback the other cannot get in front of.
+    registerBuiltInPasteHandlers(this.languageFeatures)
     this.highlightPrefix = nextEditorHighlightPrefix()
     this.document = new EditorDocumentController({
       defaultDocumentMode: options.documentMode,
@@ -355,8 +443,18 @@ export class Editor {
       onViewportChange: this.handleViewportChange,
       selectionHighlightName: `${this.highlightPrefix}-selection`,
     })
-    this.foldState = new EditorFoldState(this.view, () => this.session?.getSnapshot() ?? null)
+    this.foldState = new EditorFoldState(
+      this.view,
+      () => this.session?.getSnapshot() ?? null,
+      () => this.foldCommandLocations().map((location) => location.row),
+    )
     this.el = this.view.scrollElement
+    this.view.setSuspiciousCharacters(
+      normalizeSuspiciousCharactersOptions(options.suspiciousCharacters),
+    )
+    this.environmentRegistrations.add(
+      observeBrowserTextMetricsInvalidation(this.el, () => this.remeasureTextMetrics()),
+    )
     this.blockSurfaces = new EditorBlockSurfaceController({
       getDocumentId: () => this.documentId,
       getLineCount: () => this.view.getLineCount(),
@@ -365,7 +463,7 @@ export class Editor {
       applyBlockLanes: (lanes) => this.applyBlockLanesProjection(lanes),
       focusEditor: () => this.focus(),
       setSelection: (anchor, head) =>
-        this.inputSelection.applyFindSelection(anchor, head, 'editor.block.setSelection', head),
+        this.applyRequestedSelection(anchor, head, 'editor.block.setSelection', head),
       notifyLayout: () => this.notifyViewContributions('layout', null),
     })
     this.syntax = new EditorSyntaxController({
@@ -387,14 +485,31 @@ export class Editor {
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
     })
+    // Read per press rather than copied: outdent, backspace-through-indentation and the indentation
+    // a line break copies all have to measure in the width the open document actually uses, and that
+    // is only known once one has been loaded.
+    const effectiveTabSize = (): number => this.tabSize
+    const tabMovesFocus = (): boolean => this.tabMovesFocus
     this.inputSelection = new InputSelectionController({
       el: this.el,
+      announcer: this.announcer,
       selectionSyncMode: normalizeEditorSelectionSyncMode(options.selectionSyncMode),
-      tabSize: this.tabSize,
+      get tabSize(): number {
+        return effectiveTabSize()
+      },
+      // Read per press for the same reason as the width above: this one is toggled from a key, so a
+      // copy taken here is the state at mount rather than the state the reader is in.
+      get tabMovesFocus(): boolean {
+        return tabMovesFocus()
+      },
       view: this.view,
       getLanguageId: () => this.languageId,
+      getSyntaxInjections: () => this.syntax.injections,
       getSession: () => this.session,
       getSessionOptions: () => this.sessionOptions,
+      getPasteHandlers: () => this.languageFeatures.ordered(EDITOR_PASTE_HANDLER, this.languageId),
+      getSyntaxTokens: () => this.tokens,
+      getEditorTheme: () => this.resolvedTheme(),
       materializeFullText: () => this.materializeFullText(),
       canEditDocument: () => this.canEditDocument(),
       applySessionChange: (change, totalName, totalStart, options) =>
@@ -402,13 +517,26 @@ export class Editor {
       notifyChangeWithTiming: (change) => this.notifyChangeWithTiming(change),
       notifyViewContributions: (kind, change) => this.notifyViewContributions(kind, change),
     })
+    this.selectionRanges = new SelectionRangeStore({
+      getSession: () => this.session,
+      getLanguageId: () => this.languageId,
+      getSyntaxFolds: () => this.syntaxFoldProjection(),
+      getProviders: () => this.pluginHost.getSelectionRangeProviders(),
+      setSelections: (selections, timingName, revealOffset) =>
+        this.applyRequestedSelections(selections, timingName, revealOffset),
+    })
     this.commandRouter = new EditorCommandRouter({
       history: (command, context) => this.inputSelection.applyHistoryCommand(command, context),
+      cursorHistory: (command) => this.applyCursorHistory(command),
       delete: (direction, context) => this.inputSelection.applyDeleteCommand(direction, context),
       indent: (direction, context) => this.inputSelection.applyIndentCommand(direction, context),
       editAction: (command, context) =>
         this.inputSelection.applyEditActionCommand(command, context),
+      fold: (command) => this.applyFoldCommand(command),
+      inlineSuggest: (command, context) =>
+        this.inputSelection.applyInlineSuggestCommand(command, context),
       selectAll: (context) => this.inputSelection.applySelectAllCommand(context),
+      smartSelect: (direction) => this.selectionRanges.apply(direction),
       addNextOccurrence: (context) => this.inputSelection.applyAddNextOccurrenceCommand(context),
       clearSecondarySelections: (context) =>
         this.inputSelection.applyClearSecondarySelections(context),
@@ -420,6 +548,15 @@ export class Editor {
         this.inputSelection.applyMoveSelectionToNextOccurrenceCommand(context),
       toggleWordWrap: () => {
         this.setWordWrap(!this.isWordWrapEnabled())
+        return true
+      },
+      toggleTabFocusMode: () => {
+        const moves = this.setTabMovesFocus(!this.isTabMovesFocusEnabled())
+        // Said, not shown: the reader this key exists for is the one who cannot see an indicator
+        // change, and the next press of Tab is about to do something other than what it did.
+        this.announcer.alert(
+          moves ? 'Tab moves focus out of the editor' : 'Tab inserts indentation',
+        )
         return true
       },
       navigation: (command, context) =>
@@ -462,6 +599,8 @@ export class Editor {
       onPluginDeactivateFailed: (name, error, durationMs) =>
         this.logPluginFailure('editor.plugin.deactivate_failed', name, error, durationMs),
       onPluginDisposed: (name) => this.recordPluginLifecycle('disposed', name),
+      onPluginDisposeFailed: (name, error, durationMs) =>
+        this.logPluginFailure('editor.plugin.dispose_failed', name, error, durationMs),
       onHighlighterProvidersChanged: () => this.syntax.reloadHighlighterAndSyntax(),
       onSyntaxProvidersChanged: () => this.syntax.reloadSyntaxSession(),
       onViewContributionProviderAdded: (provider) => this.addViewContributionProvider(provider),
@@ -507,6 +646,7 @@ export class Editor {
     this.syncEditorBlocks()
     this.syncInjectedTextRows()
     this.setTokens([])
+    this.dropManualFolds()
     this.clearSyntaxFolds()
     this.applyRangeDecorations()
     this.notifyViewContributions('content', null)
@@ -557,6 +697,20 @@ export class Editor {
     return this.view.isWrapEnabled()
   }
 
+  /**
+   * Gives Tab back to the page, or takes it for indentation again. Returns the state in effect
+   * afterwards. Nothing is announced from here: a host writing its own controls says what it did in
+   * its own words, and the key that toggles this from inside the editor speaks for itself.
+   */
+  setTabMovesFocus(enabled: boolean): boolean {
+    this.tabMovesFocus = enabled
+    return this.tabMovesFocus
+  }
+
+  isTabMovesFocusEnabled(): boolean {
+    return this.tabMovesFocus
+  }
+
   setFoldMap(foldMap: FoldMap | null): void {
     this.view.setFoldMap(foldMap)
   }
@@ -593,21 +747,44 @@ export class Editor {
     this.refreshInlineMap()
   }
 
+  /**
+   * Offers an inline suggestion, drawn in front of the reader as the part of it the document does
+   * not already hold. Passing null takes back whatever is showing.
+   */
+  setInlineSuggestion(edit: TextEdit | null): boolean {
+    const shown = this.inputSelection.setInlineSuggestion(edit)
+    this.refreshInlineMap()
+    return shown
+  }
+
   private refreshInlineMap(): void {
     const providers = this.inlineReplacementProviders()
     const snapshot = this.session?.getSnapshot()
-    if (providers.length === 0 || !snapshot) {
+    if (!snapshot) {
       this.view.setInlineMap(null)
       return
     }
 
+    // The suggestion joins the same map rather than one of its own: a document rendering itself
+    // through replacements is still that document, and ghost text has to take its columns from what
+    // is on screen rather than from text the reader cannot see.
+    const suggestion = this.inputSelection.inlineSuggestionSpecs()
+    const specs =
+      providers.length === 0 ? suggestion : this.providedInlineSpecs(providers, suggestion)
+    this.view.setInlineMap(specs.length === 0 ? null : createInlineMap(snapshot, specs))
+  }
+
+  private providedInlineSpecs(
+    providers: readonly EditorInlineReplacementProvider[],
+    suggestion: readonly InlineReplacementSpec[],
+  ): readonly InlineReplacementSpec[] {
     const context = {
       text: this.materializeFullText(),
       languageId: this.languageId,
       captures: this.syntaxCaptures,
     }
-    const specs = providers.flatMap((provider) => provider(context))
-    this.view.setInlineMap(specs.length === 0 ? null : createInlineMap(snapshot, specs))
+
+    return providers.flatMap((provider) => provider(context)).concat(suggestion)
   }
 
   private inlineReplacementProviders(): readonly EditorInlineReplacementProvider[] {
@@ -618,8 +795,11 @@ export class Editor {
   }
 
   setSyntaxFolds(folds: readonly FoldRange[]): void {
-    this.setSyntaxFoldProjection(folds)
-    this.syncFoldStateFromProjections()
+    this.runInOperation(() => {
+      if (folds.length > 0) this.grammarDescribedFolds = true
+      this.setSyntaxFoldProjection(folds)
+      this.syncFoldStateFromProjections()
+    })
   }
 
   toggleFold(offset?: number): boolean {
@@ -639,6 +819,7 @@ export class Editor {
 
     const changed = this.foldState.foldAll()
     if (changed) {
+      this.announcer.status(`Folded all, ${this.foldState.collapsedFoldCount} regions collapsed`)
       this.notifyViewContributions('layout', null)
       this.log({
         action: 'editor.fold.all',
@@ -654,6 +835,7 @@ export class Editor {
 
     const changed = this.foldState.unfoldAll()
     if (changed) {
+      this.announcer.status('Unfolded all')
       this.notifyViewContributions('layout', null)
       this.log({
         action: 'editor.unfold.all',
@@ -665,22 +847,24 @@ export class Editor {
   }
 
   setText(text: string, options: EditorSetTextOptions = {}): void {
-    const currentScrollPosition = this.getScrollPosition()
-    const documentVersion = this.resetOwnedDocument(
-      {
-        text,
-        documentMode: options.documentMode ?? this.documentMode,
-        languageId: options.languageId,
-      },
-      {
-        documentId: null,
-        persistentIdentity: false,
-        scrollPosition: preservedScrollPosition(currentScrollPosition, options.scrollPosition),
-      },
-    )
-    this.notifyChange(null)
-    this.refreshSyntax(documentVersion, null)
-    this.lifecycleSummary.document.setTextCount += 1
+    this.runInOperation(() => {
+      const currentScrollPosition = this.getScrollPosition()
+      const documentVersion = this.resetOwnedDocument(
+        {
+          text,
+          documentMode: options.documentMode ?? this.documentMode,
+          languageId: options.languageId,
+        },
+        {
+          documentId: null,
+          persistentIdentity: false,
+          scrollPosition: preservedScrollPosition(currentScrollPosition, options.scrollPosition),
+        },
+      )
+      this.notifyChange(null)
+      this.refreshSyntax(documentVersion, null)
+      this.lifecycleSummary.document.setTextCount += 1
+    })
   }
 
   syncText(text: string, options: EditorSetTextOptions = {}): void {
@@ -705,17 +889,29 @@ export class Editor {
     this.lifecycleSummary.document.syncedTextCount += 1
   }
 
+  /**
+   * Runs `run` as a single mutating pass. Whatever it changes, the caret is
+   * revealed once, the DOM selection is written back once and listeners hear
+   * once, at the end — so a sequence of edits costs one visual update instead of
+   * one each. Calls made from inside a pass join it rather than opening another.
+   */
+  runInOperation<T>(run: () => T): T {
+    return this.withOperation(() => run())
+  }
+
   edit(editOrEdits: EditorEditInput, options: EditorEditOptions = {}): void {
-    if (!this.canEditDocument()) return
+    this.runInOperation(() => {
+      if (!this.canEditDocument()) return
 
-    this.ensureAnonymousSession()
-    if (!this.session) return
+      this.ensureAnonymousSession()
+      if (!this.session) return
 
-    const edits = normalizeEditorEditInput(editOrEdits)
-    const change = this.session.applyEdits(edits, options)
-    if (change.kind === 'none') return
+      const edits = normalizeEditorEditInput(editOrEdits)
+      const change = this.session.applyEdits(edits, options)
+      if (change.kind === 'none') return
 
-    this.applySessionChange(change, 'editor.edit', nowMs())
+      this.applySessionChange(change, 'editor.edit', nowMs())
+    })
   }
 
   openDocument(document: EditorOpenDocumentOptions): void {
@@ -824,8 +1020,10 @@ export class Editor {
   }
 
   setSelection(anchor: number, head = anchor, reveal?: EditorSelectionRevealTarget): void {
-    const revealOffset = selectionRevealOffset(reveal, head)
-    this.inputSelection.applyFindSelection(anchor, head, 'editor.setSelection', revealOffset)
+    this.runInOperation(() => {
+      const revealOffset = selectionRevealOffset(reveal, head)
+      this.applyRequestedSelection(anchor, head, 'editor.setSelection', revealOffset)
+    })
   }
 
   openFind(): boolean {
@@ -858,6 +1056,15 @@ export class Editor {
 
   selectAllMatches(): boolean {
     return this.findFeature()?.selectAllMatches() ?? false
+  }
+
+  /** Returns the carets, and the view, to where they were before the last caret move. */
+  cursorUndo(): boolean {
+    return this.applyCursorHistory('undo')
+  }
+
+  cursorRedo(): boolean {
+    return this.applyCursorHistory('redo')
   }
 
   getScrollPosition(): Required<EditorScrollPosition> {
@@ -895,6 +1102,16 @@ export class Editor {
     })
   }
 
+  setSuspiciousCharacters(options: EditorOptions['suspiciousCharacters']): void {
+    if (!this.view.setSuspiciousCharacters(normalizeSuspiciousCharactersOptions(options))) return
+
+    this.log({
+      action: 'editor.rendering.suspicious_characters_changed',
+      level: 'info',
+      rendering: { suspiciousCharacters: options ?? null },
+    })
+  }
+
   setKeymap(keymap: EditorOptions['keymap']): void {
     if (!this.keymap.setKeymap(keymap)) return
 
@@ -920,40 +1137,44 @@ export class Editor {
   setRangeDecorations(decorations: readonly EditorRangeDecoration[]): void {
     if (sameEditorRangeDecorations(this.directRangeDecorations(), decorations)) return
 
-    this.displayProjections.set({
-      kind: 'rangeDecorations',
-      owner: DIRECT_RANGE_DECORATION_OWNER,
-      source: this.currentDisplayProjectionSource(),
-      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
-      layer: 0,
-      priority: 0,
-      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
-      value: [...decorations],
-    })
-    this.applyRangeDecorations()
-    this.log({
-      action: 'editor.decorations.range.changed',
-      level: 'info',
-      decorations: { count: decorations.length },
+    this.runInOperation(() => {
+      this.displayProjections.set({
+        kind: 'rangeDecorations',
+        owner: DIRECT_RANGE_DECORATION_OWNER,
+        source: this.currentDisplayProjectionSource(),
+        invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+        layer: 0,
+        priority: 0,
+        disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+        value: [...decorations],
+      })
+      this.applyRangeDecorations()
+      this.log({
+        action: 'editor.decorations.range.changed',
+        level: 'info',
+        decorations: { count: decorations.length },
+      })
     })
   }
 
   setRowDecorations(decorations: ReadonlyMap<number, VirtualizedTextRowDecoration>): void {
-    this.displayProjections.set({
-      kind: 'rowDecorations',
-      owner: DIRECT_ROW_DECORATION_OWNER,
-      source: this.currentDisplayProjectionSource(),
-      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
-      layer: 0,
-      priority: 0,
-      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
-      value: new Map(decorations),
-    })
-    this.applyComposedRowDecorations()
-    this.log({
-      action: 'editor.decorations.row.changed',
-      level: 'info',
-      decorations: { count: decorations.size },
+    this.runInOperation(() => {
+      this.displayProjections.set({
+        kind: 'rowDecorations',
+        owner: DIRECT_ROW_DECORATION_OWNER,
+        source: this.currentDisplayProjectionSource(),
+        invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+        layer: 0,
+        priority: 0,
+        disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+        value: new Map(decorations),
+      })
+      this.applyComposedRowDecorations()
+      this.log({
+        action: 'editor.decorations.row.changed',
+        level: 'info',
+        decorations: { count: decorations.size },
+      })
     })
   }
 
@@ -976,6 +1197,17 @@ export class Editor {
       action: 'editor.layout.row_gap_changed',
       level: 'info',
       layout: { rowGap },
+    })
+  }
+
+  private remeasureTextMetrics(): void {
+    const metrics = this.view.refreshMetrics()
+
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.layout.text_metrics_remeasured',
+      level: 'info',
+      layout: { rowHeight: metrics.rowHeight, characterWidth: metrics.characterWidth },
     })
   }
 
@@ -1009,7 +1241,7 @@ export class Editor {
 
   dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
     const start = nowMs()
-    const handled = this.commandRouter.dispatch(command, context)
+    const handled = this.runInOperation(() => this.commandRouter.dispatch(command, context))
     this.log({
       action: 'editor.command.dispatched',
       level: handled ? 'info' : 'debug',
@@ -1024,6 +1256,7 @@ export class Editor {
   }
 
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
+    const replacingDocument = this.session !== null
     const attachment = this.document.attachSession(session, options)
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
@@ -1033,7 +1266,10 @@ export class Editor {
     })
     this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
+    this.adoptDocumentTabSize(attachment.fullText)
     this.setDocument({ text: attachment.fullText, tokens: [] })
+    // A host handing over its own session is replacing the document just as much as opening one is.
+    if (replacingDocument) this.forgetOutgoingDocumentProjections()
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
@@ -1053,6 +1289,7 @@ export class Editor {
     this.document.clear()
     this.syntax.clearDocument()
     this.inputSelection.clearSelectionHighlight()
+    this.forgetOutgoingDocumentProjections()
     this.view.setEditable(false)
     this.setContent('')
     this.applyDocumentScrollPosition()
@@ -1065,6 +1302,7 @@ export class Editor {
 
     this.disposed = true
     this.lifecycleSummary.disposingAt = new Date().toISOString()
+    this.environmentRegistrations.dispose()
     this.secondaryWork.dispose()
     this.displayProjections.clear()
     this.blockSurfaces.dispose()
@@ -1076,17 +1314,28 @@ export class Editor {
     this.disposeCapabilityContributions()
     this.disposeCommandContributions()
     this.keymap.dispose()
+    this.announcer.dispose()
     this.syntax.dispose()
     this.detachSession()
     this.logLifecycleSummary()
-    this.pluginHost.dispose()
-    this.view.dispose()
+    // The view owns listeners on window and document, so it has to come down even when a plugin
+    // takes the host with it. The host contains a throwing dispose per plugin; this catches what
+    // escapes that — a throwing installation disposable, or a host-owned registration.
+    try {
+      this.pluginHost.dispose()
+    } finally {
+      this.view.dispose()
+    }
   }
 
   private resetOwnedDocument(
     document: EditorOpenDocumentOptions,
     options: ResetOwnedDocumentOptions,
   ): number {
+    // Asked before the swap, because afterwards there is a document either way. An owner that
+    // registered ranges before the editor ever held one meant them for the document it was waiting
+    // for, and that document is the one arriving here.
+    const replacingDocument = this.session !== null
     const attachment = this.document.resetOwnedDocument(document, options)
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
@@ -1096,12 +1345,48 @@ export class Editor {
     })
     this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
+    this.adoptDocumentTabSize(attachment.fullText)
     this.setDocument({ text: attachment.fullText, tokens: [] })
+    // After the text is in, so what is rebuilt here is measured against the document that arrived.
+    if (replacingDocument) this.forgetOutgoingDocumentProjections()
     this.applyRangeDecorations()
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
     return attachment.documentVersion
+  }
+
+  /**
+   * Lets go of what the document being replaced was the only thing giving meaning to.
+   *
+   * A replacement is not an edit, so nothing carries these across it the way the flush carries a
+   * decoration through a keystroke. A range registered over the old text would be redrawn across
+   * whatever characters now sit at those offsets, and would then keep being carried by every later
+   * edit; an editor walked through a hundred files would never shed the ranges of the ninety-nine
+   * behind it. A suggestion is the same story with a shorter fuse: the view only refuses a map
+   * describing text of another length, so a replacement of the same length paints the old
+   * document's ghost text into the new one.
+   *
+   * The owners hear about the new document immediately after this and restate whatever still
+   * applies to it, which is the only account of it that can be right.
+   */
+  private forgetOutgoingDocumentProjections(): void {
+    this.decorations.clear()
+    this.setInlineSuggestion(null)
+  }
+
+  /**
+   * Takes the newly loaded document's indentation width as the one in effect.
+   *
+   * A host that named a width has said something about intent that a file cannot argue with, so its
+   * value stands; a host that named none would otherwise have every editor measure every file in the
+   * same width, which is wrong for all but the files that happen to use it. The text is already
+   * materialized for the view here, so reading it costs one pass over what is in hand.
+   */
+  private adoptDocumentTabSize(text: string): void {
+    if (this.options.tabSize !== undefined) return
+
+    this.tabSize = guessedTabSize(text, this.configuredTabSize)
   }
 
   private initializeDefaultText(): void {
@@ -1190,12 +1475,9 @@ export class Editor {
   private createViewContribution(
     provider: EditorViewContributionProvider,
   ): EditorViewContribution | null {
-    try {
-      return provider.createContribution(this.createViewContributionContext(this.container))
-    } catch (error) {
-      this.logContributionFailure('view', 'factory', error)
-      return null
-    }
+    return this.createContributionSafely('view', () =>
+      provider.createContribution(this.createViewContributionContext(this.container)),
+    )
   }
 
   private createInitialCommandContributions(
@@ -1215,12 +1497,9 @@ export class Editor {
   private createCommandContribution(
     provider: EditorCommandContributionProvider,
   ): EditorCommandContribution | null {
-    try {
-      return provider.createContribution(this.createCommandContributionContext())
-    } catch (error) {
-      this.logContributionFailure('command', 'factory', error)
-      return null
-    }
+    return this.createContributionSafely('command', () =>
+      provider.createContribution(this.createCommandContributionContext()),
+    )
   }
 
   private removeCommandContributionProvider(provider: EditorCommandContributionProvider): void {
@@ -1257,12 +1536,9 @@ export class Editor {
   private createCapabilityContribution(
     provider: EditorCapabilityContributionProvider,
   ): EditorCapabilityContribution | null {
-    try {
-      return provider.createContribution(this.createCapabilityContributionContext())
-    } catch (error) {
-      this.logContributionFailure('capability', 'factory', error)
-      return null
-    }
+    return this.createContributionSafely('capability', () =>
+      provider.createContribution(this.createCapabilityContributionContext()),
+    )
   }
 
   private removeCapabilityContributionProvider(
@@ -1301,12 +1577,9 @@ export class Editor {
   private createEditContribution(
     provider: EditorEditContributionProvider,
   ): EditorEditContribution | null {
-    try {
-      return provider.createContribution(this.createEditContributionContext())
-    } catch (error) {
-      this.logContributionFailure('edit', 'factory', error)
-      return null
-    }
+    return this.createContributionSafely('edit', () =>
+      provider.createContribution(this.createEditContributionContext()),
+    )
   }
 
   private removeEditContributionProvider(provider: EditorEditContributionProvider): void {
@@ -1350,17 +1623,14 @@ export class Editor {
     provider: EditorDecorationContributionProvider,
     owner: symbol,
   ): EditorDecorationContribution | null {
-    try {
-      const contribution = provider.createContribution(
-        this.createDecorationContributionContext(owner),
-      )
-      if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
-      return contribution
-    } catch (error) {
-      this.clearRowDecorationSourcesForOwner(owner)
-      this.logContributionFailure('decoration', 'factory', error)
-      return null
-    }
+    const contribution = this.createContributionSafely('decoration', () =>
+      provider.createContribution(this.createDecorationContributionContext(owner)),
+    )
+    // Rows are claimed against an owner rather than handed back as something to dispose, so they
+    // are swept by that owner instead of unwinding with the rest of what the factory took.
+    if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
+
+    return contribution
   }
 
   private removeDecorationContributionProvider(
@@ -1410,17 +1680,14 @@ export class Editor {
     provider: EditorFeatureContributionProvider,
     owner: symbol,
   ): EditorFeatureContribution | null {
-    try {
-      const contribution = provider.createContribution(
+    const contribution = this.createContributionSafely('feature', () =>
+      provider.createContribution(
         this.createEditorFeatureContributionContext(this.container, owner),
-      )
-      if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
-      return contribution
-    } catch (error) {
-      this.clearRowDecorationSourcesForOwner(owner)
-      this.logContributionFailure('feature', 'factory', error)
-      return null
-    }
+      ),
+    )
+    if (!contribution) this.clearRowDecorationSourcesForOwner(owner)
+
+    return contribution
   }
 
   private removeEditorFeatureContributionProvider(
@@ -1492,6 +1759,7 @@ export class Editor {
     action:
       | 'editor.plugin.activation_failed'
       | 'editor.plugin.deactivate_failed'
+      | 'editor.plugin.dispose_failed'
       | 'editor.plugin.install_failed'
       | 'editor.plugin.update_failed',
     name: string,
@@ -1573,6 +1841,41 @@ export class Editor {
       error: editorLogError(error),
       contribution: { kind, phase },
     })
+  }
+
+  /** Builds one contribution, unwinding whatever it registered if it never hands one back. */
+  private createContributionSafely<T>(
+    kind: EditorContributionKind,
+    create: () => T | null,
+  ): T | null {
+    // A factory is free to build a second contribution while it runs, and the inner one's claims
+    // are its own; restoring the list rather than clearing it keeps them apart.
+    const enclosing = this.contributionClaims
+    const claims: EditorDisposable[] = []
+    this.contributionClaims = claims
+    try {
+      const contribution = create()
+      if (!contribution) this.releaseContributionClaims(claims, kind)
+      return contribution
+    } catch (error) {
+      this.releaseContributionClaims(claims, kind)
+      this.logContributionFailure(kind, 'factory', error)
+      return null
+    } finally {
+      this.contributionClaims = enclosing
+    }
+  }
+
+  private claimForContribution(registration: EditorDisposable): EditorDisposable {
+    this.contributionClaims?.push(registration)
+    return registration
+  }
+
+  private releaseContributionClaims(
+    claims: readonly EditorDisposable[],
+    kind: EditorContributionKind,
+  ): void {
+    for (const claim of claims) this.disposeContributionSafely(claim, kind)
   }
 
   private disposeContributionSafely(
@@ -1758,12 +2061,94 @@ export class Editor {
     return this.displayProjections.get('folds', SYNTAX_FOLD_PROJECTION_OWNER)?.value ?? []
   }
 
+  /**
+   * Hand-drawn regions join the contributed ones here, and only the ones that still take a place in
+   * the nesting: a provider is free to describe a block that half-overlaps one the user drew, and
+   * when it does, the drawn region sits out rather than leaving the set with a range that has no
+   * level. Its collapse outlives the eclipse, so the region comes back folded when the parse moves on.
+   */
   private foldProjections(): readonly EditorDisplayProjection<'folds'>[] {
-    return this.displayProjections.values('folds')
+    const contributed = this.displayProjections.values('folds')
+    if (this.manualFolds.length === 0) return contributed
+
+    const contributedFolds = contributed.flatMap((projection) => [...projection.value])
+    const manualFolds = nestableFoldRanges(this.manualFolds, contributedFolds)
+    if (manualFolds.length === 0) return contributed
+
+    return [
+      ...contributed,
+      {
+        kind: 'folds',
+        owner: MANUAL_FOLD_PROJECTION_OWNER,
+        source: this.currentDisplayProjectionSource(),
+        invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+        layer: 0,
+        priority: 2,
+        disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+        value: manualFolds,
+      },
+    ]
   }
 
   private syncFoldStateFromProjections(): void {
+    this.syncFallbackFoldProjection()
     this.foldState.setFoldProjections(this.foldProjections())
+  }
+
+  /**
+   * The indentation walk reads the whole document, which is not a cost a keystroke can carry, and
+   * the rows it describes are wanted by the next frame rather than by the edit. So an edit adopts
+   * whatever parsed folds it has synchronously and lets the walk catch up.
+   */
+  private scheduleFallbackFoldProjection(): void {
+    this.foldState.setFoldProjections(this.foldProjections())
+    this.secondaryWork.schedule({
+      key: 'editor.fallbackFolds',
+      delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
+      maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
+      run: () => this.runInOperation(() => this.syncFoldStateFromProjections()),
+    })
+  }
+
+  /**
+   * Keeps a fold model in place for documents the grammar cannot describe, so that folding, and
+   * everything downstream that reads enclosing scopes, is never a property of which languages we
+   * happen to ship a parser for.
+   *
+   * A grammar that has described folds displaces this entirely, including over the stretches where it
+   * currently describes none: letting indentation answer there would contribute a second version of
+   * blocks the grammar already describes, which the fan-in refuses as crossing anyway. Merely having
+   * parsed is not that signal — fold queries ship for some languages and not others, and a grammar
+   * that was never asked for folds must not be read as having answered none.
+   */
+  private syncFallbackFoldProjection(): void {
+    if (this.grammarDescribedFolds || this.syntaxFoldProjection().length > 0) {
+      this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
+      return
+    }
+
+    const folds = measureEditorPerformance('editor.fallbackFoldRanges', () =>
+      fallbackFoldRanges({
+        text: this.materializeFullText(),
+        languageId: this.languageId,
+        tabSize: this.tabSize,
+      }),
+    )
+    if (folds.length === 0) {
+      this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
+      return
+    }
+
+    this.displayProjections.set({
+      kind: 'folds',
+      owner: FALLBACK_FOLD_PROJECTION_OWNER,
+      source: this.currentDisplayProjectionSource(),
+      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+      layer: 0,
+      priority: 1,
+      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+      value: folds,
+    })
   }
 
   private handleInjectedTextRowProvidersChanged(): void {
@@ -1965,21 +2350,65 @@ export class Editor {
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
       getFeature: (key) => this.getFeature(key),
+      getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
+      registerProvider: (token, selector, provider) =>
+        this.registerLanguageFeatureProvider(token, selector, provider),
       log: (event) => this.log(event),
       revealLine: (row) => this.view.scrollToRow(row),
+      announce: (message) => this.announcer.status(message),
       focusEditor: () => this.focus(),
       setSelection: (anchor, head, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset),
+        this.applyRequestedSelection(anchor, head, timingName, revealOffset),
       setSelections: (selections, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelections(selections, timingName, revealOffset),
+        this.applyRequestedSelections(selections, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
+      getReservedOverlayWidth: (side) => this.view.reservedOverlayWidth(side),
       setScrollTop: (scrollTop) => this.setScrollTop(scrollTop),
       textOffsetFromPoint: (clientX, clientY) =>
         this.inputSelection.textOffsetFromPoint(clientX, clientY),
       getRangeClientRect: (start, end) => this.inputSelection.rangeClientRect(start, end),
+      trackRanges: (ranges, bias) => this.trackDocumentRanges(ranges, bias),
       setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
       clearRangeHighlight: (name) => this.view.clearRangeHighlight(name),
     }
+  }
+
+  /**
+   * A caller that names no bias asked for a region of the document rather than for the characters
+   * that were in it, so text arriving at either edge belongs to the span it gets back.
+   */
+  private trackDocumentRanges(
+    ranges: readonly TextOffsetRange[],
+    bias: Pick<EditorDecorationRange, 'startBias' | 'endBias'> = {
+      startBias: 'left',
+      endBias: 'right',
+    },
+  ): EditorTrackedRanges {
+    const snapshot = this.session?.getSnapshot()
+    const tracked = snapshot
+      ? ranges.map((range) => ({
+          start: anchorAt(snapshot, range.start, bias.startBias),
+          end: anchorAt(snapshot, range.end, bias.endBias),
+        }))
+      : []
+
+    return { resolve: () => this.resolveTrackedRanges(tracked) }
+  }
+
+  private resolveTrackedRanges(tracked: readonly TrackedAnchorRange[]): readonly TextOffsetRange[] {
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot) return []
+
+    const resolved: TextOffsetRange[] = []
+    for (const range of tracked) {
+      const start = resolveAnchor(snapshot, range.start).offset
+      const end = resolveAnchor(snapshot, range.end).offset
+      // A span whose text is gone has nothing left to hold, and the point it collapsed onto is a
+      // range the caller never asked about.
+      if (end > start) resolved.push({ start, end })
+    }
+
+    return resolved
   }
 
   private createCommandContributionContext(): EditorCommandContributionContext {
@@ -1991,6 +2420,8 @@ export class Editor {
   private createCapabilityContributionContext(): EditorCapabilityContributionContext {
     return {
       registerFeature: (key, feature) => this.registerFeature(key, feature),
+      registerProvider: (token, selector, provider) =>
+        this.registerLanguageFeatureProvider(token, selector, provider),
     }
   }
 
@@ -2004,12 +2435,13 @@ export class Editor {
       focusEditor: () => this.focus(),
       applyEdits: (edits, timingName, selection) =>
         this.inputSelection.applyFindEdits(edits, timingName, selection),
-      startSnippetSession: (ranges) => this.inputSelection.startSnippetSession(ranges),
+      startSnippetSession: (stops) => this.inputSelection.startSnippetSession(stops),
     }
   }
 
   private createDecorationContributionContext(owner: symbol): EditorDecorationContributionContext {
     return {
+      decorations: this.decorations,
       hasDocument: () => this.session !== null,
       log: (event) => this.log(event),
       materializeFullText: () => this.materializeFullText(),
@@ -2037,9 +2469,9 @@ export class Editor {
       getSelections: () => this.inputSelection.resolveViewSelections(),
       focusEditor: () => this.focus(),
       setSelection: (anchor, head, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset),
+        this.applyRequestedSelection(anchor, head, timingName, revealOffset),
       setSelections: (selections, timingName, revealOffset) =>
-        this.inputSelection.applyFindSelections(selections, timingName, revealOffset),
+        this.applyRequestedSelections(selections, timingName, revealOffset),
       applyEdits: (edits, timingName, selection) =>
         this.inputSelection.applyFindEdits(edits, timingName, selection),
       setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
@@ -2099,12 +2531,9 @@ export class Editor {
   }
 
   private composedRangeDecorations(): readonly EditorRangeDecoration[] {
-    const decorations: EditorRangeDecoration[] = []
-    for (const projection of this.displayProjections.values('rangeDecorations')) {
-      decorations.push(...projection.value)
-    }
-
-    return decorations
+    return rangeDecorationsWithProjectionStacking(
+      this.displayProjections.values('rangeDecorations').map((projection) => projection.value),
+    )
   }
 
   private retagDisplayProjectionSources(): void {
@@ -2169,7 +2598,10 @@ export class Editor {
       lineCount: viewState.lineCount,
       contentWidth: viewState.contentWidth,
       totalHeight: viewState.totalHeight,
-      tabSize: viewState.tabSize,
+      // The width in effect, not the one the view lays tab characters out on: contributions divide
+      // an indent column by this to get a nesting level, so a guide has to be drawn one per level
+      // the document actually writes.
+      tabSize: this.tabSize,
       foldMarkers: viewState.foldMarkers,
       visibleRows: viewState.mountedRows.map((row) => ({
         index: row.index,
@@ -2250,7 +2682,7 @@ export class Editor {
     command: EditorCommandId,
     handler: EditorCommandHandler,
   ): EditorDisposable {
-    return this.commandRouter.registerCommandHandler(command, handler)
+    return this.claimForContribution(this.commandRouter.registerCommandHandler(command, handler))
   }
 
   private registerFeature<T>(token: EditorCapabilityToken<T>, feature: T): EditorDisposable {
@@ -2261,7 +2693,15 @@ export class Editor {
     this.editorFeatures.set(token, feature)
     this.editorFeatureTokensById.set(token.id, token)
 
-    return disposableOnce(() => this.unregisterFeature(token, feature))
+    return this.claimForContribution(disposableOnce(() => this.unregisterFeature(token, feature)))
+  }
+
+  private registerLanguageFeatureProvider<T>(
+    token: EditorLanguageFeatureToken<T>,
+    selector: EditorLanguageFeatureSelector,
+    provider: T,
+  ): EditorDisposable {
+    return this.claimForContribution(this.languageFeatures.register(token, selector, provider))
   }
 
   private unregisterFeature<T>(token: EditorCapabilityToken<T>, feature: T): void {
@@ -2391,34 +2831,189 @@ export class Editor {
     totalStart = nowMs(),
     options: SessionChangeOptions = {},
   ): void {
-    this.syntax.projectCacheForChange(change)
-    let timedChange = change
-    const renderStart = nowMs()
-    measureEditorPerformance('editor.renderSessionChange', () => this.renderSessionChange(change))
-    timedChange = appendTiming(timedChange, 'editor.render', renderStart)
+    this.withOperation((operation) => {
+      this.syntax.projectCacheForChange(change)
+      const renderStart = nowMs()
+      measureEditorPerformance('editor.renderSessionChange', () => this.renderSessionChange(change))
+      invalidateRowRectMeasurements()
+      operation.record(
+        appendTiming(change, 'editor.render', renderStart),
+        totalName,
+        totalStart,
+        options,
+      )
+    })
 
-    if (options.revealOffset !== undefined) {
+    // After the view has taken the change, because a map is only accepted while it describes text of
+    // the same length as the one on screen. An edit leaves a suggestion describing text that no
+    // longer exists, and the map carrying it is rebuilt rather than patched.
+    if (this.inputSelection.syncInlineSuggestion(change.snapshot)) this.refreshInlineMap()
+  }
+
+  private withOperation<T>(run: (operation: EditorOperation) => T): T {
+    const open = this.operation
+    if (open) return run(open)
+
+    const operation = new EditorOperation()
+    this.operation = operation
+    // Read before the pass runs: by the time it ends the caret has been revealed
+    // somewhere else, and it is the view the user is leaving that cursor history
+    // has to be able to hand back.
+    this.cursorHistoryBefore = this.captureCursorHistoryBefore()
+    beginRowRectMeasurements()
+    try {
+      return run(operation)
+    } finally {
+      // Cleared before the flush so a listener that edits from inside it opens
+      // a pass of its own rather than appending to one nobody will drain again,
+      // and in a finally so a pass that throws part-way still closes instead of
+      // leaving the editor wedged inside it.
+      this.operation = null
+      try {
+        this.flushOperation(operation)
+      } finally {
+        endRowRectMeasurements()
+      }
+    }
+  }
+
+  private flushOperation(operation: EditorOperation): void {
+    const flush = operation.flush()
+    if (!flush) return
+
+    // Ahead of the fan-out below, because a listener that moves the caret from
+    // inside it opens a pass of its own and that pass belongs after this one.
+    this.recordCursorHistory(flush)
+
+    // Every range this pass moved is moved before anything outside the editor is
+    // told about it: a listener that edits from inside the fan-out opens a pass
+    // of its own that projects the moment it closes, and edits still waiting here
+    // would then be applied over a range that later edit has already carried.
+    for (const pending of flush.changes) this.decorations.applyEdits(pending.change.edits)
+
+    let timedChange = flush.latest.change
+    if (flush.revealOffset !== null) {
       const revealStart = nowMs()
-      this.view.revealOffset(options.revealOffset, options.revealBlock)
+      this.view.revealOffset(flush.revealOffset, flush.revealBlock)
+      invalidateRowRectMeasurements()
       timedChange = appendTiming(timedChange, 'editor.reveal', revealStart)
     }
 
-    if (options.syncDomSelection !== false) {
+    if (flush.syncDomSelection) {
       const selectionStart = nowMs()
       this.inputSelection.syncDomSelection()
       timedChange = appendTiming(timedChange, 'editor.syncDomSelection', selectionStart)
     }
-    const finalChange = appendTiming(timedChange, totalName, totalStart)
-    this.sessionOptions.onChange?.(finalChange)
+    const finalChange = appendTiming(timedChange, flush.latest.totalName, flush.latest.totalStart)
+    // The notifications describe the pass; the hand-off below describes each
+    // change in it. Only the first can be coalesced.
+    const passChange = coalescedPassChange(flush, finalChange)
+    this.sessionOptions.onChange?.(passChange)
     measureEditorPerformance('editor.notifyViewContributions', () =>
-      this.notifyViewContributions(viewContributionKindForChange(finalChange), finalChange),
+      this.notifyViewContributions(flush.contributionKind, passChange),
     )
     measureEditorPerformance('editor.notifyChangeWithTiming', () =>
-      this.notifyChangeWithTiming(finalChange),
+      this.notifyChangeWithTiming(passChange),
     )
-    this.logSessionChange(finalChange, totalName)
-    this.sessionChangeVersion += 1
-    this.scheduleSecondarySessionChangeWork(finalChange, totalName, this.sessionChangeVersion)
+    // Syntax is reparsed from one change onto the previous one, so every change
+    // the pass made still has to be handed over, in the order it was made — only
+    // the notifications above describe a state, and only a state can be skipped.
+    for (const pending of flush.changes) {
+      const recorded = pending === flush.latest ? finalChange : pending.change
+      this.logSessionChange(recorded, pending.totalName)
+      this.sessionChangeVersion += 1
+      this.scheduleSecondarySessionChangeWork(
+        recorded,
+        pending.totalName,
+        this.sessionChangeVersion,
+      )
+    }
+  }
+
+  /**
+   * A pass either moved the carets or changed the text; only the first is a
+   * place worth being able to return to, and the second makes every place
+   * already recorded meaningless.
+   */
+  private recordCursorHistory(flush: EditorOperationFlush): void {
+    // A restore is itself a pass of caret moves. Recording it would make going
+    // back and forward the same single step.
+    if (this.restoringCursorHistory) return
+
+    const before = this.cursorHistoryBefore
+    const history = this.cursorHistoryForSession()
+    if (flush.changes.some((pending) => pending.change.edits.length > 0)) {
+      history.clear()
+      return
+    }
+    // A pass that swapped the document leaves a reading of the one before it,
+    // which addresses nothing here.
+    if (!before || before.session !== this.cursorHistorySession) return
+    // Plenty of passes flush without moving a caret — a decoration update, a
+    // theme change, an arrow key at the end of the document. Recording those
+    // spends a step of history that then walks back to where the user already
+    // is, and fills the stack with steps that look broken when taken.
+    if (sameCursorSelections(before.entry, this.captureCursorHistoryEntry())) return
+
+    history.record(before.entry)
+  }
+
+  private cursorHistoryForSession(): CursorHistory {
+    // Entries are offsets into one document; against another they address text
+    // that has nothing to do with them.
+    if (this.cursorHistorySession !== this.session) {
+      this.cursorHistorySession = this.session
+      this.cursorHistory.clear()
+    }
+
+    return this.cursorHistory
+  }
+
+  private captureCursorHistoryBefore(): {
+    readonly session: DocumentSession
+    readonly entry: CursorHistoryEntry
+  } | null {
+    const session = this.session
+    if (!session) return null
+
+    return { entry: this.captureCursorHistoryEntry(), session }
+  }
+
+  private captureCursorHistoryEntry(): CursorHistoryEntry {
+    const scrollPosition = this.getScrollPosition()
+    return {
+      scrollLeft: scrollPosition.left,
+      scrollTop: scrollPosition.top,
+      selections: this.inputSelection
+        .resolveViewSelections()
+        .map((selection) => ({ anchor: selection.anchorOffset, head: selection.headOffset })),
+    }
+  }
+
+  private applyCursorHistory(direction: 'undo' | 'redo'): boolean {
+    if (!this.session) return false
+
+    const current = this.captureCursorHistoryEntry()
+    const history = this.cursorHistoryForSession()
+    const entry = direction === 'undo' ? history.undo(current) : history.redo(current)
+    if (!entry) return false
+
+    const timingName = direction === 'undo' ? 'editor.cursorUndo' : 'editor.cursorRedo'
+    this.restoringCursorHistory = true
+    try {
+      this.runInOperation(() => {
+        this.applyRequestedSelections(entry.selections, timingName)
+      })
+    } finally {
+      this.restoringCursorHistory = false
+      // An enclosing pass has now walked the stack rather than moved the caret
+      // once, so where it started is not a place to be handed back to.
+      this.cursorHistoryBefore = null
+    }
+    // After the pass, so the recorded position is the one that survives rather
+    // than whatever settling the restored carets scrolled the view to.
+    this.applyScrollPosition({ top: entry.scrollTop, left: entry.scrollLeft })
+    return true
   }
 
   private renderSessionChange(change: DocumentSessionChange): void {
@@ -2430,7 +3025,7 @@ export class Editor {
       const syntaxFolds = this.syntaxFoldProjection()
       const foldProjection = measureEditorPerformance(
         'editor.projectSyntaxFolds',
-        () => projectSyntaxFoldsThroughLineEdit(syntaxFolds, edit, previousTextSnapshot),
+        () => projectSyntaxFoldsThroughEdit(syntaxFolds, edit, previousTextSnapshot),
         () => ({ foldCount: syntaxFolds.length }),
       )
       const projectedTokens = measureEditorPerformance(
@@ -2443,21 +3038,33 @@ export class Editor {
         previousTextSnapshot,
         this.view.getLineStartsView(),
       )
+      const manualFolds = projectSyntaxFoldsThroughEdit(
+        this.manualFolds,
+        edit,
+        previousTextSnapshot,
+      )
       this.applyEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
+      // No reparse ever restates a hand-drawn region, so this is the only thing keeping one on the
+      // rows it was drawn over.
+      if (manualFolds) this.manualFolds = manualFolds
       this.applySyntaxFoldProjection(foldProjection)
       if (rowDecorationsProjected) this.view.setRowDecorations(this.composedRowDecorations())
       return
     }
 
+    this.dropManualFolds()
     this.clearSyntaxFolds()
     this.setDocument({ text: change.textSnapshot.materializeFullText(), tokens: [] })
   }
 
-  private applySyntaxFoldProjection(projection: SyntaxFoldProjection | null): void {
-    if (!projection) return
+  /**
+   * Null means the edit moved no parsed boundary, which still leaves the indentation fallback to
+   * recompute: the rows it describes come from the text itself, not from the parse.
+   */
+  private applySyntaxFoldProjection(folds: readonly FoldRange[] | null): void {
+    if (folds) this.setSyntaxFoldProjection(folds)
 
-    this.setSyntaxFoldProjection(projection.folds)
-    this.foldState.applyProjectedEdit(projection, this.foldProjections())
+    this.scheduleFallbackFoldProjection()
   }
 
   private logSessionChange(change: DocumentSessionChange, timingName: string): void {
@@ -2544,6 +3151,7 @@ export class Editor {
     this.secondaryWork.schedule({
       key: 'editor.syntaxRefresh',
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
+      maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
       version: sessionChangeVersion,
       isCurrent: (version) => version === this.sessionChangeVersion,
       run: () =>
@@ -2554,6 +3162,7 @@ export class Editor {
     this.secondaryWork.schedule({
       key: 'editor.featureContributions',
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
+      maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
       version: sessionChangeVersion,
       isCurrent: (version) => version === this.sessionChangeVersion,
       run: () =>
@@ -2591,6 +3200,198 @@ export class Editor {
       action: 'editor.fold.toggled',
       level: 'info',
       fold: foldLogContext(marker),
+    })
+  }
+
+  private applyFoldCommand(command: EditorFoldCommandId): boolean {
+    if (command === 'editor.foldAll') return this.foldAll()
+    if (command === 'editor.unfoldAll') return this.unfoldAll()
+    if (command === 'editor.createFoldingRangeFromSelection') return this.createManualFolds()
+    if (command === 'editor.removeManualFoldingRanges') return this.removeManualFolds()
+
+    return this.applyFoldPlan(command)
+  }
+
+  private applyFoldPlan(command: EditorFoldPlanCommandId): boolean {
+    const locations = this.foldCommandLocations()
+    if (locations.length === 0) return false
+
+    const plan = planFoldCommand(command, {
+      folds: this.foldState.folds,
+      locations,
+      isCollapsed: (fold) => this.foldState.isCollapsed(fold),
+    })
+    let collapsed = 0
+    let expanded = 0
+    for (const fold of plan.collapse) if (this.foldState.fold(fold)) collapsed += 1
+    for (const fold of plan.expand) if (this.foldState.unfold(fold)) expanded += 1
+    if (collapsed === 0 && expanded === 0) return false
+
+    this.announceFoldChange(collapsed, expanded)
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.fold.command',
+      level: 'info',
+      fold: {
+        collapsedCount: this.foldState.collapsedFoldCount,
+        command,
+        foldCount: plan.collapse.length + plan.expand.length,
+      },
+    })
+    return true
+  }
+
+  /**
+   * Moves the selection somewhere this editor was asked to go, opening whatever hides it on the way.
+   *
+   * A caret can never be asked afterwards whether it is on a row nobody is shown: one that would land
+   * there is pulled back onto the header of the region hiding it before it is ever stored, so by then
+   * the answer is always no. This is the last place the position that was asked for still exists, and
+   * opening the regions here means the landing is the one the request named rather than the nearest
+   * row that happened to be on screen.
+   *
+   * Nothing is deferred behind a scheduler: there is one call per request rather than a stream of
+   * cursor movements to coalesce, and someone who asked to be taken somewhere is waiting to see it.
+   */
+  private applyRequestedSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    revealOffset?: number,
+  ): void {
+    this.revealFoldedOffset(head)
+    this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset)
+  }
+
+  /** The primary selection is the one reveal follows, so it is the one that has to end up on screen. */
+  private applyRequestedSelections(
+    selections: readonly EditorSelectionRange[],
+    timingName: string,
+    revealOffset?: number,
+  ): void {
+    const primary = selections[0]
+    if (primary) this.revealFoldedOffset(primary.head)
+    this.inputSelection.applyFindSelections(selections, timingName, revealOffset)
+  }
+
+  /**
+   * Only a request that names a destination opens anything. Walking into a region with the arrow keys
+   * is the reader moving through a document they folded themselves, and motion already steps over the
+   * rows a region hides rather than stalling on its header — a key that opened them would be undoing
+   * the fold on the way past.
+   */
+  private revealFoldedOffset(offset: number): void {
+    const location = this.foldLocation(offset)
+    if (!location) return
+
+    const expanded = this.foldState.revealRow(location.row)
+    if (expanded === 0) return
+
+    this.announceFoldChange(0, expanded)
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.fold.revealed',
+      level: 'info',
+      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: expanded },
+    })
+  }
+
+  /**
+   * Rows leave the document without the caret moving, so a reader who cannot see the rows go has
+   * nothing to tell them how much of the file just stopped being there.
+   */
+  private announceFoldChange(collapsed: number, expanded: number): void {
+    const parts: string[] = []
+    if (collapsed > 0) parts.push(`Folded ${collapsed} ${collapsed === 1 ? 'region' : 'regions'}`)
+    if (expanded > 0) parts.push(`Unfolded ${expanded} ${expanded === 1 ? 'region' : 'regions'}`)
+
+    this.announcer.status(parts.join(', '))
+  }
+
+  /**
+   * The caret goes to the head row of each region drawn, which stays visible when the region folds.
+   * Left where the gesture ended it would be inside rows the fold hides, and a caret in hidden rows
+   * is what unfolds them again — the fold would come back open the moment it was made.
+   */
+  private createManualFolds(): boolean {
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot) return false
+
+    const created = manualFoldRangesForSpans(
+      this.selectionFoldSpans(snapshot),
+      this.foldState.folds,
+    )
+    if (created.length === 0) return false
+
+    const carets = created.map((fold) =>
+      pointToOffset(snapshot, { row: fold.startLine, column: 0 }),
+    )
+    this.applyRequestedSelections(
+      carets.map((offset) => ({ anchor: offset, head: offset })),
+      'editor.fold.manual',
+      carets[0],
+    )
+    this.manualFolds = [...this.manualFolds, ...created]
+    this.syncFoldStateFromProjections()
+    for (const fold of created) this.foldState.fold(fold)
+
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.fold.manual.created',
+      level: 'info',
+      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: created.length },
+    })
+    return true
+  }
+
+  private removeManualFolds(): boolean {
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot || this.manualFolds.length === 0) return false
+
+    const kept = foldRangesOutsideSpans(this.manualFolds, this.selectionFoldSpans(snapshot))
+    if (kept.length === this.manualFolds.length) return false
+
+    const removedCount = this.manualFolds.length - kept.length
+    this.manualFolds = kept
+    this.syncFoldStateFromProjections()
+
+    this.notifyViewContributions('layout', null)
+    this.log({
+      action: 'editor.fold.manual.removed',
+      level: 'info',
+      fold: { collapsedCount: this.foldState.collapsedFoldCount, foldCount: removedCount },
+    })
+    return true
+  }
+
+  /** Text this editor did not arrive at one edit at a time is text those regions no longer describe. */
+  private dropManualFolds(): void {
+    this.manualFolds = []
+  }
+
+  private foldCommandLocations(): readonly FoldCommandLocation[] {
+    const snapshot = this.session?.getSnapshot()
+    if (!snapshot) return []
+
+    return this.inputSelection.resolveViewSelections().map((selection) => ({
+      offset: selection.headOffset,
+      row: offsetToPoint(snapshot, selection.headOffset).row,
+    }))
+  }
+
+  private selectionFoldSpans(snapshot: PieceTableSnapshot): readonly ManualFoldSpan[] {
+    return this.inputSelection.resolveViewSelections().map((selection) => {
+      const startRow = offsetToPoint(snapshot, selection.startOffset).row
+      const end = offsetToPoint(snapshot, selection.endOffset)
+      // A selection stopping at the head of a row has not taken any of that row's text with it.
+      const endRow = end.column === 0 ? Math.max(startRow, end.row - 1) : end.row
+
+      return {
+        startRow,
+        endRow,
+        startIndex: rowEndOffset(snapshot, startRow),
+        endIndex: rowEndOffset(snapshot, endRow),
+      }
     })
   }
 
@@ -2649,8 +3450,12 @@ export class Editor {
   }
 
   private clearSyntaxFolds(): void {
+    this.grammarDescribedFolds = false
     this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
     this.foldState.clear()
+    // Losing the parse is precisely when the fallback has something to say, and this runs on every
+    // freshly opened document — where it is the only thing that will speak until a parse lands.
+    this.syncFoldStateFromProjections()
   }
 
   private applyResolvedTheme(): void {
@@ -2768,6 +3573,14 @@ function summarizeTextEdits(edits: readonly TextEdit[]): readonly Record<string,
   }))
 }
 
+/**
+ * Where a row's text ends. A fold starting here keeps its own row on screen and hides the rest, which
+ * is what a region drawn over whole rows means.
+ */
+function rowEndOffset(snapshot: PieceTableSnapshot, row: number): number {
+  return pointToOffset(snapshot, { row, column: Number.MAX_SAFE_INTEGER })
+}
+
 function foldLogContext(fold: FoldRange | VirtualizedFoldMarker): Record<string, unknown> {
   if ('startOffset' in fold) {
     return {
@@ -2846,6 +3659,26 @@ function joinClassNames(left: string | undefined, right: string | undefined): st
   if (!left) return right
   if (!right) return left
   return `${left} ${right}`
+}
+
+/**
+ * The one change a coalesced pass reports.
+ *
+ * A pass shows only its net result, so its listeners get the newest snapshot and
+ * selections — but they also get every edit that produced them, in order, under
+ * the kind of the last change that carried edits. Reporting the final change
+ * alone would tell a listener the text stood still whenever a pass happened to
+ * end on a caret move.
+ */
+function coalescedPassChange(
+  flush: EditorOperationFlush,
+  latest: DocumentSessionChange,
+): DocumentSessionChange {
+  const edits = flush.changes.flatMap((pending) => pending.change.edits)
+  if (edits.length === latest.edits.length) return latest
+
+  const lastEditing = flush.changes.findLast((pending) => pending.change.edits.length > 0)
+  return { ...latest, edits, kind: lastEditing?.change.kind ?? latest.kind }
 }
 
 function disposableOnce(dispose: () => void): EditorDisposable {

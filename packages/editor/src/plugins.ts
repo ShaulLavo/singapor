@@ -1,7 +1,10 @@
+import type { EditorDecorationRange, EditorDecorationStore } from './editor/decorationStore'
 import type { DocumentSessionChange } from './documentSession'
 import type { DocumentTextSnapshot, TextSnapshot } from './documentTextSnapshot'
 import type { EditorCommandContext, EditorCommandId } from './editor/commands'
+import { EditorDisposableStore, MutableEditorDisposable } from './editor/disposables'
 import type { PieceTableSnapshot } from './pieceTable/pieceTableTypes'
+import type { SnippetMirrorRange, SnippetSessionStop } from './editor/snippetSession'
 import type { EditorTheme } from './theme'
 import type { EditorToken, TextEdit } from './tokens'
 import type { EditorBlockProvider } from './editorBlocks'
@@ -13,8 +16,10 @@ import {
   type EditorSyntaxProvider,
   type EditorSyntaxSession,
   type EditorSyntaxSessionOptions,
+  type FoldRange,
 } from './syntax/session'
 import type { InlineReplacementSpec } from './inlineMap'
+import type { TextOffsetRange } from './textRanges'
 import type { BrowserTextMetrics } from './virtualization/browserMetrics'
 import type { FixedRowVisibleRange } from './virtualization/fixedRowVirtualizer'
 import type {
@@ -38,6 +43,36 @@ export function createEditorCapabilityToken<T>(id: string): EditorCapabilityToke
   if (!normalized) throw new Error('Editor capability token id cannot be empty')
 
   return Object.freeze({ id: normalized }) as EditorCapabilityToken<T>
+}
+
+/**
+ * Names a language feature — completion, hover, definition — that as many sources may answer as a
+ * document has for it: a language server, a grammar-backed word source and a snippet set all offer
+ * completions at once. A capability is the opposite case, one owner for the whole editor, which is
+ * why the two are separate token kinds rather than one channel that sometimes allows a second
+ * registration.
+ *
+ * The id is the identity: two packages that cannot import each other's token still answer the same
+ * feature by naming it the same.
+ */
+export type EditorLanguageFeatureToken<T> = {
+  readonly id: string
+  readonly __languageFeature?: T
+}
+
+export function createEditorLanguageFeatureToken<T>(id: string): EditorLanguageFeatureToken<T> {
+  const normalized = id.trim()
+  if (!normalized) throw new Error('Editor language feature token id cannot be empty')
+
+  return Object.freeze({ id: normalized }) as EditorLanguageFeatureToken<T>
+}
+
+/** Which documents a provider answers for. */
+export type EditorLanguageFeatureSelector = {
+  /** `'*'` answers for every document, including one whose language is unknown. */
+  readonly language: EditorSyntaxLanguageId | '*'
+  /** Separates providers that fit the document equally well; higher is asked first, default 0. */
+  readonly priority?: number
 }
 
 export type EditorLogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -207,6 +242,18 @@ export type EditorViewSnapshot = {
 
 export type EditorOverlaySide = 'left' | 'right'
 
+/**
+ * Ranges the document keeps in step with its own text.
+ *
+ * A contribution that holds a span across edits it does not control — the region a find is scoped
+ * to, matches painted while a re-search is still outstanding — would otherwise be reading offsets
+ * the text has already moved out from under.
+ */
+export type EditorTrackedRanges = {
+  /** Where the tracked ranges now sit, without any whose text is gone. */
+  resolve(): readonly TextOffsetRange[]
+}
+
 export type EditorViewContributionContext = {
   readonly container: HTMLElement
   readonly scrollElement: HTMLDivElement
@@ -214,9 +261,34 @@ export type EditorViewContributionContext = {
   hasDocument(): boolean
   getSnapshot(): EditorViewSnapshot
   getFeature?<T>(token: EditorCapabilityToken<T>): T | null
+  /**
+   * The sources registered for a language feature, best first. The language is the caller's to name
+   * because the region being answered for is not always the whole document's — an embedded fence
+   * asks on behalf of the language inside it.
+   */
+  getProviders?<T>(
+    token: EditorLanguageFeatureToken<T>,
+    languageId: EditorSyntaxLanguageId | null,
+  ): readonly T[]
+  /**
+   * Registers a source from the contribution that owns whatever answers for it — a connection, a
+   * worker, an index built from the view. Such a source has to stop being asked the moment that
+   * thing goes away, and the contribution's own disposal is what knows when; a source that owns
+   * nothing view-scoped registers from a capability contribution instead.
+   */
+  registerProvider?<T>(
+    token: EditorLanguageFeatureToken<T>,
+    selector: EditorLanguageFeatureSelector,
+    provider: T,
+  ): EditorDisposable
   log?(event: EditorLogInput): void
   revealLine(row: number): void
   focusEditor(): void
+  /**
+   * Says something out loud to a screen reader. Optional so a hand-written context keeps compiling;
+   * a host without one simply stays quiet, which is what it did before it could speak at all.
+   */
+  announce?(message: string): void
   setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
   setSelections(
     selections: readonly EditorSelectionRange[],
@@ -225,8 +297,20 @@ export type EditorViewContributionContext = {
   ): void
   setScrollTop(scrollTop: number): void
   reserveOverlayWidth(side: EditorOverlaySide, width: number): void
+  // Width already claimed on that edge by other contributions, so an overlay
+  // that anchors itself to the edge can step clear of them instead of covering
+  // them. Changes are announced as a 'layout' update.
+  getReservedOverlayWidth?(side: EditorOverlaySide): number
   textOffsetFromPoint(clientX: number, clientY: number): number | null
   getRangeClientRect(start: number, end: number): DOMRect | null
+  // Spans the document follows on the contribution's behalf; see EditorTrackedRanges. Whether an
+  // edge absorbs text arriving against it is the contribution's call, in the bias terms
+  // EditorDecorationRange states it in: a region selected to work within absorbs it, something
+  // found in the text does not.
+  trackRanges?(
+    ranges: readonly TextOffsetRange[],
+    bias?: Pick<EditorDecorationRange, 'startBias' | 'endBias'>,
+  ): EditorTrackedRanges
   setRangeHighlight?(
     name: string,
     ranges: readonly { readonly start: number; readonly end: number }[],
@@ -244,6 +328,13 @@ export type EditorViewContributionUpdateKind =
   | 'layout'
   | 'clear'
 
+/**
+ * Contributions update from one snapshot inside a single render pass, so their reads and writes
+ * interleave with each other's. A measurement taken after anything in the pass has written to the
+ * DOM forces the browser to settle the layout that write dirtied, and the bill lands on whoever
+ * happens to measure next rather than on whoever wrote — so an update takes every measurement it
+ * needs first, into plain data, and writes only once the last of them is in hand.
+ */
 export type EditorViewContribution = EditorDisposable & {
   update(
     snapshot: EditorViewSnapshot,
@@ -310,6 +401,21 @@ export type EditorCommandContributionContext = {
 
 export type EditorCapabilityContributionContext = {
   registerFeature<T>(token: EditorCapabilityToken<T>, feature: T): EditorDisposable
+  /**
+   * Adds one more source for a language feature, next to whichever others already answer it. The
+   * selector decides which documents it is asked about and where in the order it sits; see
+   * EditorLanguageFeatureSelector.
+   *
+   * Optional on the same terms as the newer plugin-context registrations. A host without it hands
+   * the source on to no one, so a caller that consumes the feature itself is left asking what it
+   * registered and nothing else, and one that only registers has nothing to fall back to and should
+   * say so rather than going quiet.
+   */
+  registerProvider?<T>(
+    token: EditorLanguageFeatureToken<T>,
+    selector: EditorLanguageFeatureSelector,
+    provider: T,
+  ): EditorDisposable
 }
 
 export type EditorEditContributionContext = EditorDocumentContributionContext &
@@ -321,12 +427,22 @@ export type EditorEditContributionContext = EditorDocumentContributionContext &
       selection?: EditorSelectionRange,
     ): void
     /**
-     * Starts tab-stop navigation over ranges of the text just inserted. Optional so existing
-     * hand-written contexts (test doubles, mostly) keep compiling; a host without it simply leaves
-     * the caret at the first stop.
+     * Starts tab-stop navigation over the text just inserted: one entry per stop, carrying the
+     * range the caret visits and, where the snippet writes that stop more than once, the copies
+     * that have to go on reading the same as it while it is being typed into. A copy with a
+     * `transform` is rendered from the stop's text rather than holding it verbatim.
+     *
+     * Optional so existing hand-written contexts (test doubles, mostly) keep compiling; a host
+     * without it simply leaves the caret at the first stop.
      */
-    startSnippetSession?(ranges: readonly { readonly start: number; readonly end: number }[]): void
+    startSnippetSession?(stops: readonly EditorSnippetStop[]): void
   }
+
+/** A second place a snippet writes a stop, kept reading the same as the stop while it is typed. */
+export type EditorSnippetMirror = SnippetMirrorRange
+
+/** One tab stop as a snippet source hands it over: where the caret visits, and its copies. */
+export type EditorSnippetStop = SnippetSessionStop
 
 export type EditorFeatureContributionContext = EditorFeatureDomContributionContext &
   EditorDocumentContributionContext &
@@ -357,9 +473,69 @@ export type EditorEditContributionProvider = {
   createContribution(context: EditorEditContributionContext): EditorEditContribution | null
 }
 
+/** One place a paste is about to land, with the text it would replace. */
+export type EditorPasteTarget = {
+  readonly start: number
+  readonly end: number
+  /** What the paste displaces, empty at a caret. A handler that rewrites around it reads it here. */
+  readonly text: string
+}
+
+/**
+ * A paste, as the transfer describes it rather than as the text it flattens to.
+ *
+ * The flattening is the whole problem: an image, a URL landing on a word, a symbol whose import has
+ * to travel with it are each a different payload, and every one of them reaches `text/plain` as
+ * either nothing at all or as something that reads wrong where it lands.
+ */
+export type EditorPasteContext = {
+  /** The transfer itself, for a type nothing named here carries. */
+  readonly dataTransfer: DataTransfer
+  /** Types the transfer reports; `'Files'` is the one a browser uses for the files below. */
+  readonly types: readonly string[]
+  readonly files: readonly File[]
+  /** `text/plain` with its line endings already flattened — what the default path would insert. */
+  readonly text: string
+  readonly languageId: EditorSyntaxLanguageId | null
+  /** The payload was copied out of an editor in this process, so a move within one is visible. */
+  readonly internal: boolean
+  /** Where it lands, in document order. */
+  readonly targets: readonly EditorPasteTarget[]
+}
+
+/**
+ * A reading of a paste other than its plain text.
+ *
+ * Registered against `EDITOR_PASTE_HANDLER`, so which documents a handler is asked about and where
+ * in the order it sits are the selector's to say. The first handler to answer takes the paste;
+ * declining costs it nothing, and the plain-text path is what remains when every one of them does.
+ */
+export type EditorPasteHandler = {
+  /** Types this handler answers for. A transfer carrying none of them never reaches it. */
+  readonly mimeTypes: readonly string[]
+  /**
+   * The text each target takes, one entry per entry of `context.targets`, or null to pass. A list
+   * of any other length does not describe these targets and is declined on the handler's behalf.
+   */
+  handlePaste(context: EditorPasteContext): readonly string[] | null
+}
+
+export const EDITOR_PASTE_HANDLER_ID = 'editor.pasteHandler'
+
+export const EDITOR_PASTE_HANDLER =
+  createEditorLanguageFeatureToken<EditorPasteHandler>(EDITOR_PASTE_HANDLER_ID)
+
 export type EditorDecorationContributionContext = EditorDocumentContributionContext &
   EditorRangeHighlightContributionContext &
-  EditorRowDecorationContributionContext
+  EditorRowDecorationContributionContext & {
+    /**
+     * Decorations registered here follow the text through edits, so a
+     * contribution states where a decoration is once instead of recomputing its
+     * offsets after every keystroke. Shared with every other contribution, which
+     * is why each one owns its entries.
+     */
+    readonly decorations: EditorDecorationStore
+  }
 
 export type EditorDecorationContribution = EditorDisposable & {
   handleEditorChange?(change: DocumentSessionChange | null): void
@@ -442,6 +618,30 @@ export type EditorInlineReplacementProvider = (
   context: EditorInlineReplacementContext,
 ) => readonly InlineReplacementSpec[]
 
+export type EditorSelectionRangeContext = {
+  readonly text: string
+  readonly languageId: EditorSyntaxLanguageId | null
+  /** The caret the ladder is being built around; a provider that knows only a point uses this. */
+  readonly offset: number
+  readonly selection: TextOffsetRange
+  /**
+   * Enclosing constructs the last structural parse reported, so a grammar-backed provider answers
+   * from the parse the document already paid for instead of asking for one of its own.
+   */
+  readonly folds: readonly FoldRange[]
+}
+
+/**
+ * One source of candidate ranges around a caret, in no particular order.
+ *
+ * Ranking is deliberately not a provider's job: a source that knows about brackets cannot compare
+ * its ranges against one that knows about words, so each hands back a bucket and the expand/shrink
+ * ladder is the single place that turns the union into the sequence a reader walks up.
+ */
+export type EditorSelectionRangeProvider = (
+  context: EditorSelectionRangeContext,
+) => readonly TextOffsetRange[]
+
 export type EditorPluginContext = {
   log?(event: EditorLogInput): void
   registerLogger?(logger: EditorLogger): EditorDisposable
@@ -456,11 +656,13 @@ export type EditorPluginContext = {
   registerBlockProvider(provider: EditorBlockProvider): EditorDisposable
   registerInjectedTextRowProvider(provider: EditorInjectedTextRowProvider): EditorDisposable
   /**
-   * Optional so that adding it did not break every hand-written `EditorPluginContext` (test mocks,
-   * mostly). The plugin host always provides it; callers should treat a missing one as a host too old
-   * for the contribution and say so rather than silently skipping their own registration.
+   * Optional so that adding these did not break every hand-written `EditorPluginContext` (test
+   * mocks, mostly). The plugin host always provides them; callers should treat a missing one as a
+   * host too old for the contribution and say so rather than silently skipping their own
+   * registration.
    */
   registerInlineReplacementProvider?(provider: EditorInlineReplacementProvider): EditorDisposable
+  registerSelectionRangeProvider?(provider: EditorSelectionRangeProvider): EditorDisposable
 }
 
 export type EditorInternalPluginContext = EditorPluginContext & {
@@ -495,6 +697,7 @@ export type EditorPluginHostEvents = {
   onPluginDeactivated?(name: string, durationMs: number): void
   onPluginDeactivateFailed?(name: string, error: unknown, durationMs: number): void
   onPluginDisposed?(name: string): void
+  onPluginDisposeFailed?(name: string, error: unknown, durationMs: number): void
   onViewContributionProviderAdded?(provider: EditorViewContributionProvider): void
   onViewContributionProviderRemoved?(provider: EditorViewContributionProvider): void
   onDecorationContributionProviderAdded?(provider: EditorDecorationContributionProvider): void
@@ -510,6 +713,115 @@ export type EditorPluginHostEvents = {
   onGutterContributionsChanged?(): void
   onBlockProvidersChanged?(): void
   onInjectedTextRowProvidersChanged?(): void
+}
+
+const LANGUAGE_SELECTOR_SCORE = 10
+const WILDCARD_SELECTOR_SCORE = 5
+
+type LanguageFeatureEntry = {
+  readonly provider: unknown
+  readonly selector: EditorLanguageFeatureSelector
+  readonly sequence: number
+}
+
+type LanguageFeatureChannel = {
+  readonly entries: LanguageFeatureEntry[]
+  readonly ordered: Map<EditorSyntaxLanguageId | null, readonly unknown[]>
+}
+
+/**
+ * The sources answering each language feature, and the order a consumer asks them in.
+ *
+ * How closely a provider's selector fits the document decides the order before anything the
+ * provider asked for itself does: one that named this language outranks one that took every
+ * document, so a general source cannot push a language's own source aside by claiming a priority.
+ * Priority separates only providers that fit equally well, and registration order separates the
+ * rest — leaving the sequence a consumer walks the same on every query.
+ */
+export class EditorLanguageFeatureRegistry {
+  private readonly channels = new Map<string, LanguageFeatureChannel>()
+  private sequence = 0
+
+  public register<T>(
+    token: EditorLanguageFeatureToken<T>,
+    selector: EditorLanguageFeatureSelector,
+    provider: T,
+  ): EditorDisposable {
+    const channel = this.channelFor(token.id)
+    const entry: LanguageFeatureEntry = { provider, selector, sequence: this.sequence++ }
+    channel.entries.push(entry)
+    channel.ordered.clear()
+
+    return disposableOnce(() => this.unregister(token.id, entry))
+  }
+
+  public ordered<T>(
+    token: EditorLanguageFeatureToken<T>,
+    languageId: EditorSyntaxLanguageId | null,
+  ): readonly T[] {
+    const channel = this.channels.get(token.id)
+    if (!channel) return []
+
+    // Language features are queried per keystroke, so the answer for a language is held until a
+    // registration moves and consumers can skip work on the array they already have.
+    const cached = channel.ordered.get(languageId)
+    if (cached) return cached as readonly T[]
+
+    const providers = orderedLanguageFeatureProviders(channel.entries, languageId)
+    channel.ordered.set(languageId, providers)
+
+    return providers as readonly T[]
+  }
+
+  private channelFor(id: string): LanguageFeatureChannel {
+    const existing = this.channels.get(id)
+    if (existing) return existing
+
+    const channel: LanguageFeatureChannel = { entries: [], ordered: new Map() }
+    this.channels.set(id, channel)
+
+    return channel
+  }
+
+  private unregister(id: string, entry: LanguageFeatureEntry): void {
+    const channel = this.channels.get(id)
+    if (!channel) return
+
+    const index = channel.entries.indexOf(entry)
+    if (index === -1) return
+
+    channel.entries.splice(index, 1)
+    channel.ordered.clear()
+  }
+}
+
+function orderedLanguageFeatureProviders(
+  entries: readonly LanguageFeatureEntry[],
+  languageId: EditorSyntaxLanguageId | null,
+): readonly unknown[] {
+  const matched: { readonly entry: LanguageFeatureEntry; readonly score: number }[] = []
+  for (const entry of entries) {
+    const score = languageFeatureSelectorScore(entry.selector, languageId)
+    if (score > 0) matched.push({ entry, score })
+  }
+
+  matched.sort(
+    (a, b) =>
+      b.score - a.score ||
+      (b.entry.selector.priority ?? 0) - (a.entry.selector.priority ?? 0) ||
+      a.entry.sequence - b.entry.sequence,
+  )
+
+  return matched.map((match) => match.entry.provider)
+}
+
+function languageFeatureSelectorScore(
+  selector: EditorLanguageFeatureSelector,
+  languageId: EditorSyntaxLanguageId | null,
+): number {
+  if (selector.language === '*') return WILDCARD_SELECTOR_SCORE
+
+  return selector.language === languageId ? LANGUAGE_SELECTOR_SCORE : 0
 }
 
 type InstalledEditorPlugin = {
@@ -542,20 +854,23 @@ export class EditorPluginHost implements EditorDisposable {
   private readonly blockProviders: EditorBlockProvider[] = []
   private readonly injectedTextRowProviders: EditorInjectedTextRowProvider[] = []
   private readonly inlineReplacementProviders: EditorInlineReplacementProvider[] = []
+  private readonly selectionRangeProviders: EditorSelectionRangeProvider[] = []
   private readonly blockProviderInvalidationDisposables = new Map<
     EditorBlockProvider,
-    EditorDisposable
+    MutableEditorDisposable
   >()
   private readonly injectedTextRowProviderInvalidationDisposables = new Map<
     EditorInjectedTextRowProvider,
-    EditorDisposable
+    MutableEditorDisposable
   >()
   private readonly installedPlugins = new Map<EditorPlugin, InstalledEditorPlugin>()
   private readonly managedPlugins = new Set<EditorPlugin>()
   private readonly manualPlugins = new Set<EditorPlugin>()
-  private readonly lifecycleRegistrationStack: EditorDisposable[][] = []
+  private readonly lifecycleRegistrationStack: EditorDisposableStore[] = []
+  private readonly hostRegistrations = new EditorDisposableStore()
   private readonly context = this.createContext()
   private events: EditorPluginHostEvents = {}
+  private disposed = false
 
   public constructor(plugins: readonly EditorPlugin[] = []) {
     this.setPlugins(plugins)
@@ -721,6 +1036,10 @@ export class EditorPluginHost implements EditorDisposable {
     return this.inlineReplacementProviders
   }
 
+  public getSelectionRangeProviders(): readonly EditorSelectionRangeProvider[] {
+    return this.selectionRangeProviders
+  }
+
   public getInjectedTextRowProviders(): readonly EditorInjectedTextRowProvider[] {
     return this.injectedTextRowProviders
   }
@@ -769,12 +1088,16 @@ export class EditorPluginHost implements EditorDisposable {
   }
 
   public dispose(): void {
+    if (this.disposed) return
+
+    this.disposed = true
     while (this.installedPlugins.size > 0) {
       const plugin = this.installedPlugins.keys().next().value
       if (!plugin) break
 
       this.disposeInstalledPlugin(plugin)
     }
+    this.hostRegistrations.dispose()
     this.managedPlugins.clear()
     this.manualPlugins.clear()
     this.loggers.length = 0
@@ -798,6 +1121,7 @@ export class EditorPluginHost implements EditorDisposable {
     this.injectedTextRowProviderInvalidationDisposables.clear()
     this.injectedTextRowProviders.length = 0
     this.inlineReplacementProviders.length = 0
+    this.selectionRangeProviders.length = 0
   }
 
   private ensurePluginActive(plugin: EditorPlugin): boolean {
@@ -844,7 +1168,7 @@ export class EditorPluginHost implements EditorDisposable {
     if (!plugin.install) return { installed: true, disposable: null }
 
     const start = nowMs()
-    const registrations: EditorDisposable[] = []
+    const registrations = new EditorDisposableStore()
     this.lifecycleRegistrationStack.push(registrations)
 
     try {
@@ -852,7 +1176,7 @@ export class EditorPluginHost implements EditorDisposable {
       this.events.onPluginInstalled?.(pluginName(plugin), nowMs() - start)
       return { installed: true, disposable }
     } catch (error) {
-      disposeAll(registrations)
+      registrations.dispose()
       this.events.onPluginInstallFailed?.(pluginName(plugin), error, nowMs() - start)
       return { installed: false, disposable: null }
     } finally {
@@ -862,7 +1186,7 @@ export class EditorPluginHost implements EditorDisposable {
 
   private activatePlugin(plugin: EditorPlugin): EditorPluginActivation {
     const start = nowMs()
-    const registrations: EditorDisposable[] = []
+    const registrations = new EditorDisposableStore()
     this.lifecycleRegistrationStack.push(registrations)
 
     try {
@@ -870,7 +1194,7 @@ export class EditorPluginHost implements EditorDisposable {
       this.events.onPluginActivated?.(pluginName(plugin), nowMs() - start)
       return { activated: true, disposable }
     } catch (error) {
-      disposeAll(registrations)
+      registrations.dispose()
       this.events.onPluginActivationFailed?.(pluginName(plugin), error, nowMs() - start)
       return { activated: false, disposable: null }
     } finally {
@@ -916,8 +1240,14 @@ export class EditorPluginHost implements EditorDisposable {
 
     this.deactivatePlugin(plugin)
     this.installedPlugins.delete(plugin)
+    const start = nowMs()
     try {
       plugin.dispose?.(this.context)
+    } catch (error) {
+      // Teardown has to survive a plugin that throws on its way out: an escaping error would abort
+      // the loop in dispose(), stranding every plugin behind it and everything the host's owner
+      // unwinds after it.
+      this.events.onPluginDisposeFailed?.(pluginName(plugin), error, nowMs() - start)
     } finally {
       installedPlugin.installationDisposable?.dispose()
     }
@@ -953,21 +1283,33 @@ export class EditorPluginHost implements EditorDisposable {
   private createContext(): EditorInternalPluginContext {
     return {
       log: (event) => this.logInput(event),
-      registerLogger: (logger) => this.registerLogger(logger),
-      registerHighlighter: (provider) => this.registerHighlighter(provider),
-      registerSyntaxProvider: (provider) => this.registerSyntaxProvider(provider),
-      registerViewContribution: (provider) => this.registerViewContribution(provider),
-      registerCommandContribution: (provider) => this.registerCommandContribution(provider),
-      registerCapabilityContribution: (provider) => this.registerCapabilityContribution(provider),
-      registerEditContribution: (provider) => this.registerEditContribution(provider),
-      registerDecorationContribution: (provider) => this.registerDecorationContribution(provider),
+      registerLogger: (logger) => this.ownRegistration(() => this.registerLogger(logger)),
+      registerHighlighter: (provider) =>
+        this.ownRegistration(() => this.registerHighlighter(provider)),
+      registerSyntaxProvider: (provider) =>
+        this.ownRegistration(() => this.registerSyntaxProvider(provider)),
+      registerViewContribution: (provider) =>
+        this.ownRegistration(() => this.registerViewContribution(provider)),
+      registerCommandContribution: (provider) =>
+        this.ownRegistration(() => this.registerCommandContribution(provider)),
+      registerCapabilityContribution: (provider) =>
+        this.ownRegistration(() => this.registerCapabilityContribution(provider)),
+      registerEditContribution: (provider) =>
+        this.ownRegistration(() => this.registerEditContribution(provider)),
+      registerDecorationContribution: (provider) =>
+        this.ownRegistration(() => this.registerDecorationContribution(provider)),
       registerEditorFeatureContribution: (provider) =>
-        this.registerEditorFeatureContribution(provider),
-      registerGutterContribution: (contribution) => this.registerGutterContribution(contribution),
-      registerBlockProvider: (provider) => this.registerBlockProvider(provider),
-      registerInjectedTextRowProvider: (provider) => this.registerInjectedTextRowProvider(provider),
+        this.ownRegistration(() => this.registerEditorFeatureContribution(provider)),
+      registerGutterContribution: (contribution) =>
+        this.ownRegistration(() => this.registerGutterContribution(contribution)),
+      registerBlockProvider: (provider) =>
+        this.ownRegistration(() => this.registerBlockProvider(provider)),
+      registerInjectedTextRowProvider: (provider) =>
+        this.ownRegistration(() => this.registerInjectedTextRowProvider(provider)),
       registerInlineReplacementProvider: (provider) =>
-        this.registerInlineReplacementProvider(provider),
+        this.ownRegistration(() => this.registerInlineReplacementProvider(provider)),
+      registerSelectionRangeProvider: (provider) =>
+        this.ownRegistration(() => this.registerSelectionRangeProvider(provider)),
     }
   }
 
@@ -978,7 +1320,7 @@ export class EditorPluginHost implements EditorDisposable {
   private registerLogger(logger: EditorLogger): EditorDisposable {
     this.loggers.push(logger)
 
-    return this.trackLifecycleRegistration(disposableOnce(() => this.unregisterLogger(logger)))
+    return disposableOnce(() => this.unregisterLogger(logger))
   }
 
   private unregisterLogger(logger: EditorLogger): void {
@@ -990,9 +1332,7 @@ export class EditorPluginHost implements EditorDisposable {
 
   private registerHighlighter(provider: EditorHighlighterProvider): EditorDisposable {
     this.highlighters.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterHighlighter(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterHighlighter(provider))
     notifyRegistrationAdded(disposable, () => this.events.onHighlighterProvidersChanged?.())
 
     return disposable
@@ -1008,9 +1348,7 @@ export class EditorPluginHost implements EditorDisposable {
 
   private registerSyntaxProvider(provider: EditorSyntaxProvider): EditorDisposable {
     this.syntaxProviders.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterSyntaxProvider(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterSyntaxProvider(provider))
     notifyRegistrationAdded(disposable, () => this.events.onSyntaxProvidersChanged?.())
 
     return disposable
@@ -1026,9 +1364,7 @@ export class EditorPluginHost implements EditorDisposable {
 
   private registerViewContribution(provider: EditorViewContributionProvider): EditorDisposable {
     this.viewContributions.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterViewContribution(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterViewContribution(provider))
 
     try {
       this.events.onViewContributionProviderAdded?.(provider)
@@ -1052,9 +1388,7 @@ export class EditorPluginHost implements EditorDisposable {
     provider: EditorCommandContributionProvider,
   ): EditorDisposable {
     this.commandContributions.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterCommandContribution(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterCommandContribution(provider))
 
     try {
       this.events.onCommandContributionProviderAdded?.(provider)
@@ -1078,9 +1412,7 @@ export class EditorPluginHost implements EditorDisposable {
     provider: EditorCapabilityContributionProvider,
   ): EditorDisposable {
     this.capabilityContributions.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterCapabilityContribution(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterCapabilityContribution(provider))
 
     try {
       this.events.onCapabilityContributionProviderAdded?.(provider)
@@ -1102,9 +1434,7 @@ export class EditorPluginHost implements EditorDisposable {
 
   private registerEditContribution(provider: EditorEditContributionProvider): EditorDisposable {
     this.editContributions.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterEditContribution(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterEditContribution(provider))
 
     try {
       this.events.onEditContributionProviderAdded?.(provider)
@@ -1128,9 +1458,7 @@ export class EditorPluginHost implements EditorDisposable {
     provider: EditorDecorationContributionProvider,
   ): EditorDisposable {
     this.decorationContributions.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterDecorationContribution(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterDecorationContribution(provider))
 
     try {
       this.events.onDecorationContributionProviderAdded?.(provider)
@@ -1154,9 +1482,7 @@ export class EditorPluginHost implements EditorDisposable {
     provider: EditorFeatureContributionProvider,
   ): EditorDisposable {
     this.editorFeatureContributions.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterEditorFeatureContribution(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterEditorFeatureContribution(provider))
 
     try {
       this.events.onEditorFeatureContributionProviderAdded?.(provider)
@@ -1182,9 +1508,7 @@ export class EditorPluginHost implements EditorDisposable {
     }
 
     this.gutterContributions.push(contribution)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterGutterContribution(contribution)),
-    )
+    const disposable = disposableOnce(() => this.unregisterGutterContribution(contribution))
     notifyRegistrationAdded(disposable, () => this.events.onGutterContributionsChanged?.())
 
     return disposable
@@ -1204,15 +1528,13 @@ export class EditorPluginHost implements EditorDisposable {
     }
 
     this.blockProviders.push(provider)
-    const invalidationDisposable = provider.onDidChangeBlocks?.(() => {
-      this.events.onBlockProvidersChanged?.()
-    })
-    if (invalidationDisposable) {
-      this.blockProviderInvalidationDisposables.set(provider, invalidationDisposable)
-    }
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterBlockProvider(provider)),
-    )
+    const invalidation = new MutableEditorDisposable()
+    this.blockProviderInvalidationDisposables.set(provider, invalidation)
+    invalidation.value =
+      provider.onDidChangeBlocks?.(() => {
+        this.events.onBlockProvidersChanged?.()
+      }) ?? null
+    const disposable = disposableOnce(() => this.unregisterBlockProvider(provider))
     notifyRegistrationAdded(disposable, () => this.events.onBlockProvidersChanged?.())
 
     return disposable
@@ -1232,9 +1554,7 @@ export class EditorPluginHost implements EditorDisposable {
     provider: EditorInlineReplacementProvider,
   ): EditorDisposable {
     this.inlineReplacementProviders.push(provider)
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterInlineReplacementProvider(provider)),
-    )
+    const disposable = disposableOnce(() => this.unregisterInlineReplacementProvider(provider))
     notifyRegistrationAdded(disposable, () => this.events.onInlineReplacementProvidersChanged?.())
 
     return disposable
@@ -1248,19 +1568,33 @@ export class EditorPluginHost implements EditorDisposable {
     this.events.onInlineReplacementProvidersChanged?.()
   }
 
+  // Read fresh on every expand, so a registration needs no invalidation event to take effect.
+  private registerSelectionRangeProvider(provider: EditorSelectionRangeProvider): EditorDisposable {
+    this.selectionRangeProviders.push(provider)
+
+    return disposableOnce(() => this.unregisterSelectionRangeProvider(provider))
+  }
+
+  private unregisterSelectionRangeProvider(provider: EditorSelectionRangeProvider): void {
+    const index = this.selectionRangeProviders.indexOf(provider)
+    if (index === -1) return
+
+    this.selectionRangeProviders.splice(index, 1)
+  }
+
   private registerInjectedTextRowProvider(
     provider: EditorInjectedTextRowProvider,
   ): EditorDisposable {
     this.injectedTextRowProviders.push(provider)
-    const invalidationDisposable = provider.onDidChangeInjectedTextRows?.(() => {
-      this.events.onInjectedTextRowProvidersChanged?.()
-    })
-    if (invalidationDisposable) {
-      this.injectedTextRowProviderInvalidationDisposables.set(provider, invalidationDisposable)
-    }
-    const disposable = this.trackLifecycleRegistration(
-      disposableOnce(() => this.unregisterInjectedTextRowProvider(provider)),
-    )
+    const invalidation =
+      this.injectedTextRowProviderInvalidationDisposables.get(provider) ??
+      new MutableEditorDisposable()
+    this.injectedTextRowProviderInvalidationDisposables.set(provider, invalidation)
+    invalidation.value =
+      provider.onDidChangeInjectedTextRows?.(() => {
+        this.events.onInjectedTextRowProvidersChanged?.()
+      }) ?? null
+    const disposable = disposableOnce(() => this.unregisterInjectedTextRowProvider(provider))
     notifyRegistrationAdded(disposable, () => this.events.onInjectedTextRowProvidersChanged?.())
 
     return disposable
@@ -1271,33 +1605,46 @@ export class EditorPluginHost implements EditorDisposable {
     if (index === -1) return
 
     this.injectedTextRowProviders.splice(index, 1)
-    this.injectedTextRowProviderInvalidationDisposables.get(provider)?.dispose()
-    this.injectedTextRowProviderInvalidationDisposables.delete(provider)
+    // Every lease on the same provider shares one invalidation subscription, so only the last one
+    // out may close it — releasing it earlier would leave the surviving registrations deaf to the
+    // provider's own change events.
+    if (!this.injectedTextRowProviders.includes(provider)) {
+      this.injectedTextRowProviderInvalidationDisposables.get(provider)?.dispose()
+      this.injectedTextRowProviderInvalidationDisposables.delete(provider)
+    }
     this.events.onInjectedTextRowProvidersChanged?.()
   }
 
-  private trackLifecycleRegistration(disposable: EditorDisposable): EditorDisposable {
-    const registrations = this.currentLifecycleRegistrations()
-    if (registrations) registrations.push(disposable)
+  /**
+   * Registrations reach the host only through the context, so this is the one place that can name an
+   * owner for them. A plugin registering from a timer, a resolved promise or an event handler is
+   * past its install/activate body and has no scope left to unwind with, so the host owns those
+   * until teardown.
+   */
+  private ownRegistration(register: () => EditorDisposable): EditorDisposable {
+    if (this.disposed) return disposableOnce(() => undefined)
 
-    return disposable
-  }
+    const owner = this.lifecycleRegistrationStack.at(-1) ?? this.hostRegistrations
+    const registration = register()
+    const owned: EditorDisposable = disposableOnce(() => {
+      owner.delete(owned)
+      registration.dispose()
+    })
 
-  private currentLifecycleRegistrations(): EditorDisposable[] | null {
-    return this.lifecycleRegistrationStack.at(-1) ?? null
+    return owner.add(owned)
   }
 }
 
 function lifecycleDisposableFromResult(
   result: void | EditorDisposable | readonly EditorDisposable[],
-  registrations: readonly EditorDisposable[],
+  registrations: EditorDisposableStore,
 ): EditorDisposable | null {
   const disposable = disposableFromActivationResult(result)
-  if (!disposable && registrations.length === 0) return null
+  if (!disposable && registrations.size === 0) return null
 
   return disposableOnce(() => {
     disposable?.dispose()
-    disposeAll(registrations)
+    registrations.dispose()
   })
 }
 

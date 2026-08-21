@@ -84,7 +84,14 @@ type VirtualizedBlockLaneMountContext = {
   readonly placement: BlockLanePlacement
 }
 
-export type HiddenCharactersMode = 'hidden' | 'show' | 'show-on-selection'
+export type HiddenCharactersMode =
+  | 'hidden'
+  | 'show'
+  | 'show-on-selection'
+  /** Leading and trailing runs, plus runs of two or more inside the text. */
+  | 'boundary'
+  /** Whitespace past the last non-whitespace character of the line. */
+  | 'trailing'
 
 export type VirtualizedTextHighlightRange = {
   readonly start: number
@@ -95,6 +102,10 @@ export type VirtualizedTextHighlightStyle = {
   readonly backgroundColor?: string
   readonly color?: string
   readonly textDecoration?: string
+  // Stacking against other highlight groups, highest paints last. Without it
+  // the CSS highlight registry falls back to registration order, which shifts
+  // as groups scroll in and out of the mounted window.
+  readonly zIndex?: number
 }
 
 export type VirtualizedTextRowDecoration = {
@@ -122,8 +133,9 @@ export type VirtualizedTextChunk = {
 export type VirtualizedTextChunkPart =
   | VirtualizedTextChunkTextPart
   | VirtualizedTextChunkControlPart
+  | VirtualizedTextChunkWidgetPart
 
-export type VirtualizedTextRenderMode = 'simple' | 'rendered' | 'chunked'
+export type VirtualizedTextRenderMode = 'simple' | 'rendered' | 'chunked' | 'widget'
 
 export type VirtualizedTextChunkTextPart = {
   readonly kind: 'text'
@@ -138,6 +150,18 @@ type VirtualizedTextChunkControlPart = {
   readonly localEnd: number
   readonly element: HTMLSpanElement
   readonly widthCells: number
+}
+
+/**
+ * An inline replacement that rendered its own DOM instead of standing for text. It covers the
+ * replacement's display columns like any other part, but its advance is whatever the mounted node
+ * measures — the columns underneath it say nothing about how wide it draws.
+ */
+type VirtualizedTextChunkWidgetPart = {
+  readonly kind: 'widget'
+  readonly localStart: number
+  readonly localEnd: number
+  readonly element: HTMLSpanElement
 }
 
 export type VirtualizedFoldMarker = {

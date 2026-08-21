@@ -42,6 +42,7 @@ export {
   normalizeLineEndings,
   offsetToPoint,
   pieceTableByteOrderMark,
+  pieceTableContainsUnusualLineTerminators,
   pieceTableDocumentText,
   pieceTableLineEnding,
   pieceTableSnapshotsHaveSameText,

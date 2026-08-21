@@ -3,6 +3,7 @@ import {
   rowHeightIndexRowAfterOffset,
   rowHeightIndexRowAtOffset,
   rowHeightIndexStart,
+  updateRowHeightIndex,
   type RowHeightIndex,
 } from './rowHeightIndex'
 
@@ -164,8 +165,13 @@ export class FixedRowVirtualizer {
   }
 
   public updateOptions(options: Partial<FixedRowVirtualizerOptions>): boolean {
-    const next = normalizeOptions({ ...denormalizeOptions(this.options), ...options })
-    const nextScrollTop = nextScrollTopForOptions(next, this.scrollTop, this.viewportHeight)
+    const anchor = this.viewportAnchor()
+    const next = normalizeOptions({ ...denormalizeOptions(this.options), ...options }, this.options)
+    const nextScrollTop = nextScrollTopForOptions(
+      next,
+      anchoredScrollTop(anchor, next, this.scrollTop),
+      this.viewportHeight,
+    )
     if (sameNormalizedOptions(this.options, next) && nextScrollTop === this.scrollTop) return false
 
     this.updateCacheForFixedRows(next.rowHeight, next.rowGap)
@@ -636,9 +642,144 @@ export class FixedRowVirtualizer {
     return this.scrollTop
   }
 
+  /**
+   * Read before the new sizes are folded in, because adopting them rewrites the
+   * very offsets the anchor is measured against.
+   */
+  private viewportAnchor(): ViewportAnchor | null {
+    if (this.isStaticMode() || this.scrollTop <= 0 || this.options.count === 0) return null
+
+    const index = this.options.rowHeightIndex
+    const row = index
+      ? rowHeightIndexRowAtOffset(index, this.scrollTop)
+      : fixedRowIndexAtOffset(
+          this.options.count,
+          this.options.rowHeight,
+          this.options.rowGap,
+          this.scrollTop,
+        )
+    return {
+      row,
+      start: index
+        ? rowHeightIndexStart(index, row)
+        : row * (this.options.rowHeight + this.options.rowGap),
+      rowCount: this.options.count,
+      rowSizes: index?.rowSizes ?? null,
+      rowHeight: this.options.rowHeight,
+    }
+  }
+
   private isStaticMode(): boolean {
     return this.options.scrollMode === 'static'
   }
+}
+
+/** The row at the top of the viewport, as the layout being replaced saw it. */
+type ViewportAnchor = {
+  readonly row: number
+  readonly start: number
+  readonly rowCount: number
+  readonly rowSizes: readonly number[] | null
+  readonly rowHeight: number
+}
+
+/**
+ * Height that appears, disappears or resolves above the viewport must not drag
+ * the rows the reader is looking at down the screen: whatever offset the top
+ * visible row gains, the scroll offset gains with it. Heights below it need no
+ * correction — they leave its offset alone — so the whole rule is one lookup of
+ * where that row ended up.
+ */
+function anchoredScrollTop(
+  anchor: ViewportAnchor | null,
+  next: NormalizedFixedRowVirtualizerOptions,
+  scrollTop: number,
+): number {
+  if (!anchor || next.scrollMode === 'static') return scrollTop
+
+  // A layout with no height index is one where every row is the base height, not
+  // one that cannot be anchored: withdrawing the last variable row above the
+  // viewport is exactly the case that needs the correction most.
+  const index = next.rowHeightIndex
+  const nextLayout = {
+    rowSizes: index?.rowSizes ?? null,
+    rowCount: index ? index.rowSizes.length : next.count,
+    rowHeight: next.rowHeight,
+  }
+
+  const anchorRow = anchorRowInNextLayout(anchor, nextLayout)
+  if (anchorRow === null) return scrollTop
+
+  const nextStart = index
+    ? rowHeightIndexStart(index, anchorRow)
+    : anchorRow * (next.rowHeight + next.rowGap)
+  return scrollTop + nextStart - anchor.start
+}
+
+/** Row heights of one layout, whether or not it needed an index to hold them. */
+type AnchorLayout = {
+  readonly rowSizes: readonly number[] | null
+  readonly rowCount: number
+  readonly rowHeight: number
+}
+
+function layoutRowSize(layout: AnchorLayout, row: number): number {
+  return layout.rowSizes?.[row] ?? layout.rowHeight
+}
+
+/**
+ * An unchanged row count makes the index itself the anchor row's identity. When
+ * rows were added or dropped the anchor survives only if every row from the
+ * first height change onwards reappears displaced by the whole count
+ * difference — one contiguous run inserted or taken away, which is what a fold
+ * or a new block surface produces. Anything else is a different set of rows,
+ * where carrying the offset over would preserve a position that means nothing.
+ *
+ * Heights are the only evidence there is, so a run of rows identical in height
+ * to the ones it displaced is invisible here: prepending five plain lines to a
+ * document of plain lines reads exactly like appending five to the end, and the
+ * anchor stays put. Distinguishing them needs the caller to say where it edited,
+ * which is a wider change than this layer.
+ */
+function anchorRowInNextLayout(anchor: ViewportAnchor, next: AnchorLayout): number | null {
+  const displacement = next.rowCount - anchor.rowCount
+  if (displacement === 0) return anchor.row
+
+  const changedRow = firstChangedAnchorRow(anchor, next)
+  if (anchor.row < changedRow) return anchor.row
+
+  // Removed rows have no counterpart, so the anchor has to sit past the run.
+  const firstDisplacedRow = changedRow - Math.min(0, displacement)
+  if (anchor.row < firstDisplacedRow) return null
+  if (!anchorRowsDisplacedFrom(anchor, next, firstDisplacedRow, displacement)) return null
+
+  return anchor.row + displacement
+}
+
+function firstChangedAnchorRow(anchor: ViewportAnchor, next: AnchorLayout): number {
+  const shared = Math.min(anchor.rowCount, next.rowCount)
+  for (let row = 0; row < shared; row += 1) {
+    if (anchorRowSize(anchor, row) !== layoutRowSize(next, row)) return row
+  }
+
+  return shared
+}
+
+function anchorRowsDisplacedFrom(
+  anchor: ViewportAnchor,
+  next: AnchorLayout,
+  fromRow: number,
+  displacement: number,
+): boolean {
+  for (let row = fromRow; row < anchor.rowCount; row += 1) {
+    if (anchorRowSize(anchor, row) !== layoutRowSize(next, row + displacement)) return false
+  }
+
+  return true
+}
+
+function anchorRowSize(anchor: ViewportAnchor, row: number): number {
+  return anchor.rowSizes?.[row] ?? anchor.rowHeight
 }
 
 function computeOverscannedRange(
@@ -698,16 +839,17 @@ type NormalizedFixedRowVirtualizerOptions = Required<
 
 function normalizeOptions(
   options: FixedRowVirtualizerOptions,
+  previous: NormalizedFixedRowVirtualizerOptions | null = null,
 ): NormalizedFixedRowVirtualizerOptions {
   const count = normalizeCount(options.count)
   const rowGap = normalizeRowGap(options.rowGap)
-  const rowSizes = normalizeRowSizes(options.rowSizes, count)
+  const rowHeightIndex = normalizeRowHeightIndex(options.rowSizes, count, rowGap, previous)
   return {
     count,
     rowHeight: normalizeRowHeight(options.rowHeight),
     rowGap,
-    rowSizes,
-    rowHeightIndex: rowSizes ? createRowHeightIndex(rowSizes, rowGap) : null,
+    rowSizes: rowHeightIndex?.rowSizes ?? null,
+    rowHeightIndex,
     overscan: normalizeOverscan(options.overscan),
     enabled: options.enabled ?? true,
     maxScrollHeight: normalizeMaxScrollHeight(options.maxScrollHeight),
@@ -942,12 +1084,20 @@ function totalRowGap(count: number, rowGap: number): number {
   return Math.max(0, count - 1) * rowGap
 }
 
-function normalizeRowSizes(
+function normalizeRowHeightIndex(
   rowSizes: readonly number[] | undefined,
   count: number,
-): readonly number[] | null {
+  rowGap: number,
+  previous: NormalizedFixedRowVirtualizerOptions | null,
+): RowHeightIndex | null {
   if (!rowSizes || rowSizes.length !== count) return null
-  return rowSizes.map(normalizeRowHeight)
+
+  const previousIndex = previous?.rowHeightIndex ?? null
+  // Options that leave the sizes alone hand back the array we already normalized.
+  const normalized = rowSizes === previous?.rowSizes ? rowSizes : rowSizes.map(normalizeRowHeight)
+  if (!previousIndex) return createRowHeightIndex(normalized, rowGap)
+
+  return updateRowHeightIndex(previousIndex, normalized, rowGap)
 }
 
 function normalizeCount(value: number): number {

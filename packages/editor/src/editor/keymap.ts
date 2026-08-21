@@ -6,7 +6,7 @@ import {
   type RawHotkey,
   type RegisterableHotkey,
 } from '@tanstack/hotkeys'
-import type { EditorCommandContext, EditorCommandId } from './commands'
+import { EDITOR_FOLD_LEVELS, type EditorCommandContext, type EditorCommandId } from './commands'
 
 type EditorPlatform = ReturnType<typeof detectPlatform>
 type EditorKeymapSignature = readonly string[]
@@ -23,7 +23,10 @@ export type EditorCommandPack =
   | 'text-editing'
   | 'advanced-editing'
   | 'multi-cursor'
+  | 'folding'
   | 'lsp-navigation'
+  | 'lsp-editing'
+  | 'inline-suggest'
 
 export type EditorKeymapLayerSource = 'core' | 'plugin' | 'app' | 'user'
 
@@ -204,7 +207,10 @@ export const defaultEditorCommandPacks = [
   'text-editing',
   'advanced-editing',
   'multi-cursor',
+  'folding',
   'lsp-navigation',
+  'lsp-editing',
+  'inline-suggest',
 ] as const satisfies readonly EditorCommandPack[]
 
 export const readonlySafeEditorCommandPacks = [
@@ -212,6 +218,8 @@ export const readonlySafeEditorCommandPacks = [
   'selection',
   'clipboard',
   'find',
+  // Folding writes nothing back to the document, so a reader of one keeps every one of these keys.
+  'folding',
 ] as const satisfies readonly EditorCommandPack[]
 
 export function defaultEditorKeymapLayers(
@@ -282,7 +290,10 @@ export function editorCommandPackForCommand(command: EditorCommandId): EditorCom
   if (TEXT_EDITING_COMMANDS.has(command)) return 'text-editing'
   if (ADVANCED_EDITING_COMMANDS.has(command)) return 'advanced-editing'
   if (MULTI_CURSOR_COMMANDS.has(command)) return 'multi-cursor'
+  if (FOLDING_COMMANDS.has(command)) return 'folding'
   if (LSP_NAVIGATION_COMMANDS.has(command)) return 'lsp-navigation'
+  if (LSP_EDITING_COMMANDS.has(command)) return 'lsp-editing'
+  if (INLINE_SUGGEST_COMMANDS.has(command)) return 'inline-suggest'
 
   return null
 }
@@ -297,7 +308,10 @@ function editorKeyBindingsForCommandPack(
   if (pack === 'text-editing') return textEditingBindings(platform)
   if (pack === 'advanced-editing') return advancedEditingBindings(platform)
   if (pack === 'multi-cursor') return multiCursorEditingBindings(platform)
+  if (pack === 'folding') return foldingBindings(platform)
   if (pack === 'lsp-navigation') return lspNavigationBindings()
+  if (pack === 'lsp-editing') return lspEditingBindings(platform)
+  if (pack === 'inline-suggest') return inlineSuggestBindings(platform)
 
   return []
 }
@@ -323,28 +337,45 @@ const NAVIGATION_COMMANDS = new Set<EditorCommandId>([
   'cursorDown',
   'cursorWordLeft',
   'cursorWordRight',
+  'cursorWordPartLeft',
+  'cursorWordPartRight',
   'cursorLineStart',
   'cursorLineEnd',
   'cursorPageUp',
   'cursorPageDown',
   'cursorDocumentStart',
   'cursorDocumentEnd',
+  'editor.action.jumpToBracket',
+  // Soft wrap decides whether a long line is walked sideways or read down the page, which is a
+  // question for whoever is reading the document rather than whoever is writing it — so it is
+  // offered and withdrawn with the rest of the keys for getting through one.
+  'editor.action.toggleWordWrap',
 ])
 
 const SELECTION_COMMANDS = new Set<EditorCommandId>([
   'selectAll',
+  'editor.action.smartSelect.expand',
+  'editor.action.smartSelect.shrink',
   'selectLeft',
   'selectRight',
   'selectUp',
   'selectDown',
   'selectWordLeft',
   'selectWordRight',
+  'cursorWordPartLeftSelect',
+  'cursorWordPartRightSelect',
   'selectLineStart',
   'selectLineEnd',
   'selectPageUp',
   'selectPageDown',
   'selectDocumentStart',
   'selectDocumentEnd',
+  'cursorColumnSelectLeft',
+  'cursorColumnSelectRight',
+  'cursorColumnSelectUp',
+  'cursorColumnSelectDown',
+  'cursorColumnSelectPageUp',
+  'cursorColumnSelectPageDown',
 ])
 
 const FIND_COMMANDS = new Set<EditorCommandId>([
@@ -362,10 +393,15 @@ const FIND_COMMANDS = new Set<EditorCommandId>([
 const TEXT_EDITING_COMMANDS = new Set<EditorCommandId>([
   'undo',
   'redo',
+  'cursorUndo',
+  'cursorRedo',
   'deleteBackward',
   'deleteForward',
   'indentSelection',
   'outdentSelection',
+  // Handing Tab back to the page belongs with the keys that took it, so a host cannot end up
+  // offering the trap without the way out of it.
+  'editor.action.toggleTabFocusMode',
   'findReplace',
   'replaceOne',
   'replaceAll',
@@ -374,10 +410,14 @@ const TEXT_EDITING_COMMANDS = new Set<EditorCommandId>([
 const ADVANCED_EDITING_COMMANDS = new Set<EditorCommandId>([
   'deleteWordLeft',
   'deleteWordRight',
+  'deleteWordPartLeft',
+  'deleteWordPartRight',
   'editor.action.commentLine',
   'editor.action.blockComment',
   'editor.action.indentLines',
   'editor.action.outdentLines',
+  'editor.action.reindentlines',
+  'editor.action.reindentselectedlines',
   'editor.action.deleteLines',
   'editor.action.copyLinesUpAction',
   'editor.action.copyLinesDownAction',
@@ -385,6 +425,14 @@ const ADVANCED_EDITING_COMMANDS = new Set<EditorCommandId>([
   'editor.action.moveLinesDownAction',
   'editor.action.insertLineBefore',
   'editor.action.insertLineAfter',
+  'editor.action.trimTrailingWhitespace',
+  'editor.action.sortLinesAscending',
+  'editor.action.sortLinesDescending',
+  'editor.action.joinLines',
+  'editor.action.duplicateSelection',
+  'editor.action.transformToUppercase',
+  'editor.action.transformToLowercase',
+  'editor.action.transformToTitlecase',
 ])
 
 const MULTI_CURSOR_COMMANDS = new Set<EditorCommandId>([
@@ -396,6 +444,18 @@ const MULTI_CURSOR_COMMANDS = new Set<EditorCommandId>([
   'editor.action.selectHighlights',
   'editor.action.changeAll',
   'editor.action.moveSelectionToNextFindMatch',
+])
+
+const FOLDING_COMMANDS = new Set<EditorCommandId>([
+  'editor.fold',
+  'editor.unfold',
+  'editor.foldRecursively',
+  'editor.unfoldRecursively',
+  'editor.foldAll',
+  'editor.unfoldAll',
+  'editor.createFoldingRangeFromSelection',
+  'editor.removeManualFoldingRanges',
+  ...EDITOR_FOLD_LEVELS.map((level) => `editor.foldLevel${level}` as const),
 ])
 
 const LSP_NAVIGATION_COMMANDS = new Set<EditorCommandId>([
@@ -410,6 +470,25 @@ const LSP_NAVIGATION_COMMANDS = new Set<EditorCommandId>([
   'editor.action.marker.prev',
 ])
 
+/**
+ * The language-server commands that write to the document, kept apart from the ones that only move
+ * the caret, so a host can offer the second family to a reader and neither one by accident.
+ */
+const LSP_EDITING_COMMANDS = new Set<EditorCommandId>([
+  'editor.action.formatDocument',
+  'editor.action.rename',
+  'editor.action.autoFix',
+])
+
+/**
+ * Taking text nobody typed, kept as its own pack so a host that offers no suggestions — or offers
+ * them and wants the reader's own keys back — turns the family off in one place.
+ */
+const INLINE_SUGGEST_COMMANDS = new Set<EditorCommandId>([
+  'editor.action.inlineSuggest.commit',
+  'editor.action.inlineSuggest.acceptNextWord',
+])
+
 function navigationBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   return horizontalNavigationBindings(platform).concat(verticalNavigationBindings(platform))
 }
@@ -418,6 +497,14 @@ const key = (keyName: string, modifiers: Omit<RawHotkey, 'key'> = {}): RawHotkey
   key: keyName,
   ...modifiers,
 })
+
+/**
+ * Subword shortcuts take both of the modifiers a word shortcut picks between, on every platform.
+ *
+ * Whichever one a platform spends on word motion, the pair is still free, so the subword shortcut
+ * can never shadow the word shortcut it refines, and reads as an extension of it either way.
+ */
+const WORD_PART_MODIFIER: Omit<RawHotkey, 'key'> = { alt: true, ctrl: true }
 
 function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   const platformBindings: readonly EditorKeyBinding[] =
@@ -428,12 +515,30 @@ function textEditingBindings(platform: EditorPlatform): readonly EditorKeyBindin
     { hotkey: key('Delete'), command: 'deleteForward' },
     { hotkey: key('Tab'), command: 'indentSelection' },
     { hotkey: key('Tab', { shift: true }), command: 'outdentSelection' },
+    ...tabFocusBindings(platform),
     { hotkey: key('H', { mod: true }), command: 'findReplace' },
     { hotkey: key('Enter', { mod: true, alt: true }), command: 'replaceAll' },
     { hotkey: key('Z', { mod: true }), command: 'undo' },
     { hotkey: key('Z', { mod: true, shift: true }), command: 'redo' },
+    { hotkey: key('U', { mod: true }), command: 'cursorUndo' },
+    { hotkey: key('U', { mod: true, shift: true }), command: 'cursorRedo' },
     ...platformBindings,
   ]
+}
+
+/**
+ * The way back out, shipped with the key that closes it in.
+ *
+ * Tab is the only key a page gives for walking between its controls, so binding it above is what
+ * leaves a reader who reached the editor with no way to leave it. The escape hatch is wanted exactly
+ * where those two bindings are, which is why it travels in their pack rather than in one a host can
+ * drop while keeping them. On mac the bare ctrl chord is one of the system's own text keys, so the
+ * toggle takes shift as well there.
+ */
+function tabFocusBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  const toggle = platform === 'mac' ? { ctrl: true, shift: true } : { ctrl: true }
+
+  return [{ hotkey: key('M', toggle), command: 'editor.action.toggleTabFocusMode' }]
 }
 
 function findBindings(): readonly EditorKeyBinding[] {
@@ -459,6 +564,8 @@ function advancedEditingBindings(platform: EditorPlatform): readonly EditorKeyBi
   return [
     { hotkey: key('Backspace', wordDeleteModifier), command: 'deleteWordLeft' },
     { hotkey: key('Delete', wordDeleteModifier), command: 'deleteWordRight' },
+    { hotkey: key('Backspace', WORD_PART_MODIFIER), command: 'deleteWordPartLeft' },
+    { hotkey: key('Delete', WORD_PART_MODIFIER), command: 'deleteWordPartRight' },
     { hotkey: key('K', { mod: true, shift: true }), command: 'editor.action.deleteLines' },
     { hotkey: key('ArrowUp', copyLineModifier), command: 'editor.action.copyLinesUpAction' },
     { hotkey: key('ArrowDown', copyLineModifier), command: 'editor.action.copyLinesDownAction' },
@@ -470,6 +577,29 @@ function advancedEditingBindings(platform: EditorPlatform): readonly EditorKeyBi
     { hotkey: key('A', blockCommentModifier), command: 'editor.action.blockComment' },
     { hotkey: key(']', { mod: true }), command: 'editor.action.indentLines' },
     { hotkey: key('[', { mod: true }), command: 'editor.action.outdentLines' },
+    ...reindentBindings(),
+  ]
+}
+
+/**
+ * Rewriting indentation from the rules, where the bracket chords above only push it by a unit.
+ *
+ * A letter rather than a bracket, because the two keys that spell indentation are already spent three
+ * times over between indenting, outdenting and folding. One chord on every platform: neither the
+ * primary modifier with shift, which is where a browser keeps its own tools, nor a lone alt, which is
+ * word motion on one platform, leaves room to vary it. Reaching past the selection to the whole
+ * document costs the primary modifier on top.
+ */
+function reindentBindings(): readonly EditorKeyBinding[] {
+  return [
+    {
+      hotkey: key('I', { alt: true, shift: true }),
+      command: 'editor.action.reindentselectedlines',
+    },
+    {
+      hotkey: key('I', { mod: true, alt: true, shift: true }),
+      command: 'editor.action.reindentlines',
+    },
   ]
 }
 
@@ -483,6 +613,75 @@ function multiCursorEditingBindings(platform: EditorPlatform): readonly EditorKe
 
 function lspNavigationBindings(): readonly EditorKeyBinding[] {
   return [{ hotkey: key('F12'), command: 'goToDefinition' }]
+}
+
+/**
+ * The fix chord deliberately takes a modifier more than the bare one on the same key.
+ *
+ * Applying a fix with no menu is the shorthand, not the general case, and leaving the shorter chord
+ * unclaimed keeps it for the menu that offers every action at the caret rather than just the obvious
+ * one. Mac spends shift on the period to type a colon, so it takes the primary modifier instead.
+ */
+function lspEditingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  const autoFix = platform === 'mac' ? { mod: true, alt: true } : { alt: true, shift: true }
+
+  return [{ hotkey: key('.', autoFix), command: 'editor.action.autoFix' }]
+}
+
+/**
+ * Only the word at a time takes a chord: the whole suggestion is what Tab already means while one is
+ * showing, and a second key for it would be a synonym nobody reaches for.
+ *
+ * A word at a time is rightward motion the reader repeats, so it spells that on the arrow the word
+ * chords are already on, one modifier deeper. Only mac has that arrow left — everywhere else the
+ * primary modifier collapses onto ctrl and every combination on it is already word, subword, line or
+ * rectangle motion. Taking one of those from a reader who may never see a suggestion is the worse
+ * trade, so elsewhere the family is reached through Tab, through the host's own layer, or not at all.
+ */
+function inlineSuggestBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  if (platform !== 'mac') return []
+
+  return [
+    {
+      hotkey: key('ArrowRight', { mod: true, alt: true }),
+      command: 'editor.action.inlineSuggest.acceptNextWord',
+    },
+  ]
+}
+
+/**
+ * Three keys carry the whole family, so none of it has to be remembered on its own.
+ *
+ * The brackets take the region at the caret, closing and opening the way the indent chords on those
+ * same two keys already push; the digits take the document a depth at a time, with zero standing for
+ * every depth at once; the comma is the region the user draws. Adding the third modifier asks for the
+ * variant of the chord it extends: for a bracket, which already spells a direction, the whole subtree
+ * instead of one region; for the two keys that spell none, the opposite action. Only the brackets
+ * differ by platform, because on mac the primary modifier with shift and a bracket is how the browser
+ * around us switches tabs.
+ */
+function foldingBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  const plain = { mod: true, alt: true }
+  const bracket = platform === 'mac' ? plain : { mod: true, shift: true }
+  const variant = { mod: true, alt: true, shift: true }
+  const levelBindings = EDITOR_FOLD_LEVELS.map(
+    (level): EditorKeyBinding => ({
+      hotkey: key(String(level), plain),
+      command: `editor.foldLevel${level}`,
+    }),
+  )
+
+  return [
+    { hotkey: key('[', bracket), command: 'editor.fold' },
+    { hotkey: key(']', bracket), command: 'editor.unfold' },
+    { hotkey: key('[', variant), command: 'editor.foldRecursively' },
+    { hotkey: key(']', variant), command: 'editor.unfoldRecursively' },
+    { hotkey: key('0', plain), command: 'editor.foldAll' },
+    { hotkey: key('0', variant), command: 'editor.unfoldAll' },
+    ...levelBindings,
+    { hotkey: key(',', plain), command: 'editor.createFoldingRangeFromSelection' },
+    { hotkey: key(',', variant), command: 'editor.removeManualFoldingRanges' },
+  ]
 }
 
 function multiCursorBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
@@ -545,8 +744,47 @@ function verticalNavigationBindings(platform: EditorPlatform): readonly EditorKe
 function selectionBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
   return [
     { hotkey: key('A', { mod: true }), command: 'selectAll' },
+    ...smartSelectBindings(platform),
     ...horizontalSelectionBindings(platform),
     ...verticalSelectionBindings(platform),
+    ...columnSelectionBindings(platform),
+  ]
+}
+
+/**
+ * Where the rectangle's moving corner can be pushed from the keyboard.
+ *
+ * Every chord wants the pair the mouse draws the box with plus the primary modifier, which the page
+ * keys get everywhere. The arrows cannot always have it: where the primary modifier collapses onto
+ * ctrl that pair is already subword selection, so the horizontal axis drops to alt alone, and on
+ * linux the vertical pair is already line copying, so it drops to the primary modifier alone. Each
+ * axis keeps a chord on every platform because a rectangle only a mouse can start does not exist
+ * for someone working from the keyboard.
+ */
+function columnSelectionBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  const box = { mod: true, alt: true, shift: true }
+  const horizontal = platform === 'mac' ? box : { alt: true }
+  const vertical = platform === 'linux' ? { mod: true } : box
+
+  return [
+    { hotkey: key('ArrowLeft', horizontal), command: 'cursorColumnSelectLeft' },
+    { hotkey: key('ArrowRight', horizontal), command: 'cursorColumnSelectRight' },
+    { hotkey: key('ArrowUp', vertical), command: 'cursorColumnSelectUp' },
+    { hotkey: key('ArrowDown', vertical), command: 'cursorColumnSelectDown' },
+    { hotkey: key('PageUp', box), command: 'cursorColumnSelectPageUp' },
+    { hotkey: key('PageDown', box), command: 'cursorColumnSelectPageDown' },
+  ]
+}
+
+function smartSelectBindings(platform: EditorPlatform): readonly EditorKeyBinding[] {
+  // Alt+Shift is the free pair everywhere except mac, where alt is already the word modifier and
+  // taking it would shadow word selection.
+  const modifier =
+    platform === 'mac' ? { mod: true, ctrl: true, shift: true } : { alt: true, shift: true }
+
+  return [
+    { hotkey: key('ArrowRight', modifier), command: 'editor.action.smartSelect.expand' },
+    { hotkey: key('ArrowLeft', modifier), command: 'editor.action.smartSelect.shrink' },
   ]
 }
 
@@ -574,6 +812,8 @@ function wordNavigationBindings(platform: EditorPlatform): readonly EditorKeyBin
   return [
     { hotkey: key('ArrowLeft', modifier), command: 'cursorWordLeft' },
     { hotkey: key('ArrowRight', modifier), command: 'cursorWordRight' },
+    { hotkey: key('ArrowLeft', WORD_PART_MODIFIER), command: 'cursorWordPartLeft' },
+    { hotkey: key('ArrowRight', WORD_PART_MODIFIER), command: 'cursorWordPartRight' },
   ]
 }
 
@@ -582,6 +822,14 @@ function wordSelectionBindings(platform: EditorPlatform): readonly EditorKeyBind
   return [
     { hotkey: key('ArrowLeft', { ...modifier, shift: true }), command: 'selectWordLeft' },
     { hotkey: key('ArrowRight', { ...modifier, shift: true }), command: 'selectWordRight' },
+    {
+      hotkey: key('ArrowLeft', { ...WORD_PART_MODIFIER, shift: true }),
+      command: 'cursorWordPartLeftSelect',
+    },
+    {
+      hotkey: key('ArrowRight', { ...WORD_PART_MODIFIER, shift: true }),
+      command: 'cursorWordPartRightSelect',
+    },
   ]
 }
 

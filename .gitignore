@@ -38,3 +38,8 @@ opensrc/
 
 # Local reference checkouts
 references/
+
+# Screenshots vitest writes when a browser test fails. Both directories have been committed by
+# accident before and had to be deleted again in 915b33a.
+.vitest-attachments/
+__screenshots__/

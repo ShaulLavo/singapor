@@ -635,6 +635,63 @@ describe('fixed row virtualizer', () => {
     })
   })
 
+  it('keeps the top visible row in place when a row above the viewport grows', () => {
+    const virtualizer = anchoredVirtualizer(blockLayout(200, 5, 60))
+
+    expect(topVisibleRow(virtualizer)).toEqual({ index: 48, offsetInViewport: 0 })
+
+    virtualizer.updateOptions({ rowSizes: blockLayout(200, 5, 160) })
+
+    expect(topVisibleRow(virtualizer)).toEqual({ index: 48, offsetInViewport: 0 })
+    expect(virtualizer.getSnapshot().scrollTop).toBe(1_100)
+  })
+
+  it('keeps the top visible row in place when a row is inserted above the viewport', () => {
+    const virtualizer = anchoredVirtualizer(blockLayout(200, 5, 60))
+    const inserted = blockLayout(200, 5, 60)
+    inserted.splice(20, 0, 100)
+
+    virtualizer.updateOptions({ count: 201, rowSizes: inserted })
+
+    // Row 48 is row 49 now, one insertion further down the layout.
+    expect(topVisibleRow(virtualizer)).toEqual({ index: 49, offsetInViewport: 0 })
+    expect(virtualizer.getSnapshot().scrollTop).toBe(1_100)
+  })
+
+  it('keeps the top visible row in place when rows above the viewport are folded away', () => {
+    const virtualizer = anchoredVirtualizer(blockLayout(200, 12, 60))
+    const folded = blockLayout(200, 12, 60)
+    folded.splice(10, 5)
+
+    virtualizer.updateOptions({ count: 195, rowSizes: folded })
+
+    expect(topVisibleRow(virtualizer)).toEqual({ index: 43, offsetInViewport: 0 })
+    expect(virtualizer.getSnapshot().scrollTop).toBe(860)
+  })
+
+  it('keeps the top visible row in place when the last variable row is withdrawn', () => {
+    const virtualizer = anchoredVirtualizer(blockLayout(200, 5, 200))
+
+    const before = topVisibleRow(virtualizer)
+
+    // Every row is the base height now, so this layout carries no height index
+    // at all — which is a uniform document, not an unanchorable one.
+    virtualizer.updateOptions({ rowSizes: undefined })
+
+    expect(topVisibleRow(virtualizer)).toEqual(before)
+    expect(virtualizer.getSnapshot().scrollTop).toBe(1_000 - (200 - 20))
+  })
+
+  it('does not carry the scroll offset into an unrelated row set', () => {
+    const virtualizer = anchoredVirtualizer(blockLayout(200, 5, 60))
+
+    // A different document: one row shorter, and its tall row sits elsewhere.
+    virtualizer.updateOptions({ count: 199, rowSizes: blockLayout(199, 120, 60) })
+
+    expect(virtualizer.getSnapshot().scrollTop).toBe(1_000)
+    expect(topVisibleRow(virtualizer)).toEqual({ index: 50, offsetInViewport: 0 })
+  })
+
   it('caps native scroll height while preserving logical scroll offsets', () => {
     const virtualizer = new FixedRowVirtualizer({
       count: 1_000,
@@ -701,6 +758,36 @@ describe('fixed row virtualizer', () => {
     virtualizer.dispose()
   })
 })
+
+// Uniform 20px text rows with one taller row standing in for a block surface.
+function blockLayout(count: number, blockRow: number, blockHeight: number): number[] {
+  const rowSizes = Array.from({ length: count }, () => 20)
+  rowSizes[blockRow] = blockHeight
+  return rowSizes
+}
+
+// Scrolled far enough that row 48 starts exactly at the top of the viewport,
+// with the taller row well above it.
+function anchoredVirtualizer(rowSizes: readonly number[]): FixedRowVirtualizer {
+  const virtualizer = new FixedRowVirtualizer({
+    count: rowSizes.length,
+    rowHeight: 20,
+    rowSizes,
+    overscan: 0,
+  })
+
+  virtualizer.setScrollMetrics({ scrollTop: 1_000, viewportHeight: 100 })
+  return virtualizer
+}
+
+function topVisibleRow(virtualizer: FixedRowVirtualizer): {
+  index: number
+  offsetInViewport: number
+} {
+  const snapshot = virtualizer.getSnapshot()
+  const item = snapshot.virtualItems[0]!
+  return { index: item.index, offsetInViewport: item.start - snapshot.scrollTop }
+}
 
 class TestResizeObserver implements ResizeObserver {
   public readonly observe = vi.fn()

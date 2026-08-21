@@ -6,6 +6,7 @@ import type { BrowserTextMetrics } from './browserMetrics'
 import type { FixedRowVirtualizer } from './fixedRowVirtualizer'
 import type { LineStartOffsetIndex } from './lineStartIndex'
 import type { RowHeightIndex } from './rowHeightIndex'
+import type { SuspiciousCharacterSettings } from './virtualizedTextViewHiddenCharacters'
 import type { VirtualizedTextViewModelState } from './virtualizedTextViewModel'
 import type {
   EditorCursorLineHighlightOptions,
@@ -47,6 +48,10 @@ export type VirtualizedTextHighlightStyle = {
   readonly backgroundColor?: string
   readonly color?: string
   readonly textDecoration?: string
+  // Stacking against other highlight groups, highest paints last. Without it
+  // the CSS highlight registry falls back to registration order, which shifts
+  // as groups scroll in and out of the mounted window.
+  readonly zIndex?: number
 }
 
 export type VirtualizedTextHighlightGroup = {
@@ -154,6 +159,7 @@ export interface VirtualizedTextViewInternal {
   metrics: BrowserTextMetrics
   textMetrics: BrowserTextMetrics | null
   hiddenCharacters: HiddenCharactersMode
+  suspiciousCharacters: SuspiciousCharacterSettings
 }
 
 export type MountedVirtualizedBlockLane = {

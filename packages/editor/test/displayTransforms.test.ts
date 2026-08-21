@@ -9,8 +9,10 @@ import {
   createInlineRow,
   createWrapMap,
   type InjectedTextRow,
+  type InlineCursorStops,
   type InlineReplacement,
   inlineColumnToSourceColumn,
+  isDocumentTextDisplayRow,
   sourceColumnToInlineColumn,
   sourceRangeToInlineRanges,
   tabPointToBufferPoint,
@@ -155,6 +157,26 @@ describe('display transform core', () => {
     ])
   })
 
+  it('breaks block row ties on ordinal before falling back to id', () => {
+    const text = 'a'
+    const rows = createDisplayRows({
+      text,
+      lineStarts: computeLineStarts(text),
+      visibleLineCount: 1,
+      bufferRowForVisibleRow: (row) => row,
+      blocks: [
+        { id: 'row-a', anchorBufferRow: 0, placement: 'before', heightRows: 1, ordinal: 20 },
+        { id: 'row-b', anchorBufferRow: 0, placement: 'before', heightRows: 1, ordinal: 10 },
+      ],
+    })
+
+    expect(rows.map((row) => (row.kind === 'block' ? row.id : row.text))).toEqual([
+      'row-b',
+      'row-a',
+      'a',
+    ])
+  })
+
   it('maps block rows back to nearby buffer rows', () => {
     const text = 'abc\ndef'
     const rows = createDisplayRows({
@@ -271,6 +293,101 @@ describe('inline display transform', () => {
   })
 })
 
+const injected = (
+  id: string,
+  column: number,
+  text: string,
+  cursorStops?: InlineCursorStops,
+): InlineReplacement => ({
+  id,
+  startColumn: column,
+  endColumn: column,
+  text,
+  insertion: true,
+  ...(cursorStops === undefined ? {} : { cursorStops }),
+})
+
+describe('injected inline runs', () => {
+  it('paints phantom text at a point without spending a source column', () => {
+    const row = createInlineRow('foo(1)', [injected('hint', 4, 'arg:')])
+
+    expect(row.text).toBe('foo(arg:1)')
+    for (let column = 4; column <= 8; column += 1) {
+      expect(inlineColumnToSourceColumn(row, column)).toBe(4)
+    }
+    expect(inlineColumnToSourceColumn(row, 9)).toBe(5)
+  })
+
+  it('drops a zero-width replacement that did not ask to be one', () => {
+    const row = createInlineRow('foo(1)', [{ id: 'hint', startColumn: 4, endColumn: 4, text: 'x' }])
+
+    expect(row.text).toBe('foo(1)')
+  })
+
+  it('carries a per-run class onto its own segment', () => {
+    const row = createInlineRow('foo(1)', [
+      { ...injected('hint', 4, 'arg:'), className: 'editor-inlay-hint' },
+    ])
+
+    expect(row.segments.map((segment) => segment.className)).toEqual([
+      undefined,
+      'editor-inlay-hint',
+      undefined,
+    ])
+  })
+
+  it('leaves the run outside a source range that meets it at its point', () => {
+    const row = createInlineRow('foo(1)', [injected('hint', 4, 'arg:')])
+    const painted = (start: number, end: number): readonly number[] => [
+      sourceColumnToInlineColumn(row, start, 'before'),
+      sourceColumnToInlineColumn(row, end, 'after'),
+    ]
+
+    expect(painted(0, 4)).toEqual([0, 4])
+    expect(painted(4, 6)).toEqual([8, 10])
+  })
+
+  it('keeps a run offered at the opening edge of a hidden span', () => {
+    const row = createInlineRow('**bold** tail', [
+      hidden('open', 0, 2),
+      hidden('close', 6, 8),
+      injected('ghost', 6, 'SUGGEST'),
+    ])
+
+    expect(row.text).toBe('boldSUGGEST tail')
+  })
+
+  it('drops a run offered inside a hidden span', () => {
+    const row = createInlineRow('**bold** tail', [hidden('open', 0, 2), injected('ghost', 1, 'X')])
+
+    expect(row.text).toBe('bold** tail')
+  })
+
+  it('parks a standing caret on the side the run stops', () => {
+    const stopsAt = (cursorStops: InlineCursorStops | undefined): number =>
+      sourceColumnToInlineColumn(
+        createInlineRow('foo(1)', [injected('h', 4, 'arg:', cursorStops)]),
+        4,
+      )
+
+    expect(stopsAt(undefined)).toBe(4)
+    expect(stopsAt('both')).toBe(4)
+    expect(stopsAt('left')).toBe(4)
+    expect(stopsAt('right')).toBe(8)
+    expect(stopsAt('none')).toBe(4)
+  })
+
+  it('walks a standing caret past a run that stops on neither side', () => {
+    const row = createInlineRow('foo(1)', [
+      injected('a-pad', 4, ' ', 'none'),
+      injected('b-hint', 4, 'arg:', 'right'),
+    ])
+
+    expect(row.text).toBe('foo( arg:1)')
+    expect(sourceColumnToInlineColumn(row, 4)).toBe(9)
+  })
+})
+
 describe('inline display rows', () => {
   it('leaves rows untouched when no replacements are supplied', () => {
     const text = 'abcd\nefgh'
@@ -282,7 +399,7 @@ describe('inline display rows', () => {
       inlineReplacements: () => [],
     })
 
-    expect(rows.map((row) => row.kind === 'text' && row.inlineSegments)).toEqual([
+    expect(rows.map((row) => isDocumentTextDisplayRow(row) && row.inlineRow)).toEqual([
       undefined,
       undefined,
     ])

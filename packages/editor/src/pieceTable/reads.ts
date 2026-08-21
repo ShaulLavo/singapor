@@ -27,6 +27,21 @@ export const readPieceTableTextRange = (
   return chunks.join('')
 }
 
+export const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
+
+export const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff
+
+// Reads a two-unit window because a surrogate half is only identifiable by its
+// neighbour: a low surrogate is legitimate text when a high one precedes it. The
+// document's own ends are never inside a pair, so they answer false without a
+// read.
+export const splitsSurrogatePair = (snapshot: PieceTableTreeSnapshot, offset: number): boolean => {
+  if (offset <= 0 || offset >= snapshot.length) return false
+
+  const probe = readPieceTableTextRange(snapshot, offset - 1, offset + 1)
+  return isHighSurrogate(probe.charCodeAt(0)) && isLowSurrogate(probe.charCodeAt(1))
+}
+
 export const materializePieceTableFullText = (snapshot: PieceTableTreeSnapshot): string =>
   readPieceTableTextRange(snapshot, 0, snapshot.length)
 

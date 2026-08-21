@@ -39,7 +39,7 @@
       "file": "packages/editor/src/editor/blockSurfaceController.ts",
       "id": "packages/editor/src/editor/blockSurfaceController.ts:setTimeout:81986effee",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 382,
+      "line": 404,
       "snippet": "this.editorBlockMeasureTimeout = setTimeout(() => {"
     },
     {
@@ -47,7 +47,7 @@
       "file": "packages/editor/src/editor/mouseSelection.ts",
       "id": "packages/editor/src/editor/mouseSelection.ts:requestAnimationFrame:e2ace6097b",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 28,
+      "line": 111,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -55,7 +55,7 @@
       "file": "packages/editor/src/editor/mouseSelection.ts",
       "id": "packages/editor/src/editor/mouseSelection.ts:setTimeout:ed35f29fb4",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 29,
+      "line": 112,
       "snippet": "return setTimeout(() => callback(nowMs()), 0) as unknown as number"
     },
     {
@@ -71,7 +71,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:requestAnimationFrame:f20775aa16",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 1055,
+      "line": 1205,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -79,7 +79,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:setTimeout:2ac189eec3",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 1056,
+      "line": 1206,
       "snippet": "return setTimeout(() => callback(nowMs()), 0) as unknown as number"
     },
     {
@@ -87,7 +87,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:setTimeout:7aa8053100",
       "justification": "The tail of a scroll, which has to be measured against the raw scroll events it follows rather than against editor work — pacing it with other tasks would make the settle time depend on what else was queued. Cancelled by `cancelTrailingScrollEmit` on every further scroll, so at most one is ever pending.",
-      "line": 303,
+      "line": 309,
       "snippet": "this.trailingScrollEmitTimer = setTimeout(() => {"
     },
     {
@@ -97,6 +97,22 @@
       "justification": "Coalesces the re-registration one engine needs to repaint highlights to once per registry per turn; `pendingRegistries` is what makes a second call in the same turn a no-op rather than a second pass.",
       "line": 26,
       "snippet": "queueMicrotask(() => {"
+    },
+    {
+      "api": "requestIdleCallback",
+      "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
+      "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
+      "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
+      "line": 903,
+      "snippet": "const handle = win.requestIdleCallback(run)"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
+      "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
+      "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
+      "line": 912,
+      "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
       "api": "queueMicrotask",
@@ -132,10 +148,26 @@
     },
     {
       "api": "setTimeout",
+      "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
+      "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
+      "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
+      "line": 1544,
+      "snippet": "const handle = win.setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/lsp-plugin/src/codeActions.ts",
+      "id": "packages/lsp-plugin/src/codeActions.ts:setTimeout:add08e7112",
+      "justification": "Debounces a question to the language server against the caret and the diagnostics, not against rendering, and `clear()` withdraws it on every further change — so a fix is never computed against text the reader has already moved past.",
+      "line": 177,
+      "snippet": "this.timer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
       "file": "packages/lsp-plugin/src/completionController.ts",
       "id": "packages/lsp-plugin/src/completionController.ts:setTimeout:af6e0495c6",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 146,
+      "line": 275,
       "snippet": "this.completionTimer = setTimeout(() => {"
     },
     {
@@ -147,11 +179,19 @@
       "snippet": "this.timer = setTimeout(() => {"
     },
     {
+      "api": "queueMicrotask",
+      "file": "packages/lsp-plugin/src/formatOnType.ts",
+      "id": "packages/lsp-plugin/src/formatOnType.ts:queueMicrotask:2f19d0645c",
+      "justification": "Coalesces the re-indents a single keystroke can queue into one pass at the end of the turn, so the edit lands before the frame the character was typed in is painted; `scheduled` is what makes a second call in that turn a no-op rather than a second pass.",
+      "line": 127,
+      "snippet": "queueMicrotask(() => {"
+    },
+    {
       "api": "setTimeout",
       "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
       "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:9b18e15f7b",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 224,
+      "line": 225,
       "snippet": "this.hoverTimer = setTimeout(() => {"
     },
     {
@@ -159,7 +199,7 @@
       "file": "packages/lsp-plugin/src/tooltip.ts",
       "id": "packages/lsp-plugin/src/tooltip.ts:setTimeout:1004d55352",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 151,
+      "line": 159,
       "snippet": "hideTimer = setTimeout(() => {"
     },
     {
@@ -167,7 +207,7 @@
       "file": "packages/lsp-plugin/src/tooltip.ts",
       "id": "packages/lsp-plugin/src/tooltip.ts:setTimeout:6e6b0feb4b",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 440,
+      "line": 433,
       "snippet": "setTimeout(() => {"
     },
     {
@@ -183,7 +223,7 @@
       "file": "packages/minimap/src/plugin.ts",
       "id": "packages/minimap/src/plugin.ts:requestAnimationFrame:cac4e5564e",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 398,
+      "line": 410,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -191,7 +231,7 @@
       "file": "packages/minimap/src/plugin.ts",
       "id": "packages/minimap/src/plugin.ts:setTimeout:32fb906cca",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 399,
+      "line": 411,
       "snippet": "return setTimeout(callback, 16) as unknown as number"
     },
     {
@@ -199,7 +239,7 @@
       "file": "packages/scope-lines/src/index.ts",
       "id": "packages/scope-lines/src/index.ts:requestAnimationFrame:c412fa7808",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 143,
+      "line": 151,
       "snippet": "this.pendingContentFrame = view.requestAnimationFrame(this.flushContentUpdate)"
     },
     {

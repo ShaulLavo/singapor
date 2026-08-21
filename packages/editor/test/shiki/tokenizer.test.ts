@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { createHighlighter } from 'shiki'
+
 import { createIncrementalTokenizer } from '../../src/shiki'
 
 function flattenTokens(line: readonly { content: string }[]): string {
@@ -328,7 +330,10 @@ describe('grammar state stabilization', () => {
     // Verify the final line is tokenized as code, not as template content
     const afterLine = tokenizer.getSnapshot().lines[2]!
     expect(afterLine.text).toBe('const after = true')
-    expect(afterLine.tokens.some((t) => t.content === 'const')).toBe(true)
+    // Report the tokens rather than a bare `false`. This assertion has failed once under the root
+    // runner and never in 25 isolated runs, and which way it failed is the whole question: one
+    // token holding the line means the grammar answered nothing, several means it answered wrong.
+    expect(afterLine.tokens.map((t) => t.content)).toContain('const')
   })
 
   it('template literal: nested ${} expression preserves depth', async () => {
@@ -432,5 +437,36 @@ describe('grammar state stabilization', () => {
     const freshLines = fresh.getSnapshot().lines.map((l) => flattenTokens(l.tokens))
 
     expect(incLines).toEqual(freshLines)
+  })
+
+  it('does not let shiki abandon a line on a wall clock', async () => {
+    // Shiki's default 500ms per-line budget is measured with Date.now(), so whether a line is
+    // tokenized or abandoned depends on what else the machine is doing. Abandoning returns the
+    // line as one token and the incoming stack unadvanced, and this tokenizer feeds that stack to
+    // the next line and caches it — so a busy moment re-colours everything after it. This is the
+    // bug that made the template-literal case above fail about once in forty runs of the full
+    // suite, and never once on an idle machine.
+    const seen: Array<Record<string, unknown>> = []
+    const real = await createHighlighter({ themes: ['github-dark'], langs: ['typescript'] })
+    const spy = {
+      ...real,
+      codeToTokensBase: (code: string, options: Record<string, unknown>) => {
+        seen.push(options)
+        return real.codeToTokensBase(code, options as never)
+      },
+    } as unknown as Parameters<typeof createIncrementalTokenizer>[0]['highlighter']
+
+    const { tokenizer } = await createIncrementalTokenizer({
+      lang: 'typescript',
+      theme: 'github-dark',
+      code: 'const a = 1',
+      highlighter: spy,
+    })
+    tokenizer.update('const a = 1\nconst b = 2')
+
+    highlighters.push(real)
+
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.every((options) => options.tokenizeTimeLimit === 0)).toBe(true)
   })
 })

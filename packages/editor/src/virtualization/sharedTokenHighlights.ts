@@ -1,5 +1,5 @@
 import type { EditorTokenStyle } from '../tokens'
-import { buildHighlightRule } from '../style-utils'
+import { buildHighlightRule, SharedStyleRules } from '../style-utils'
 import type { HighlightRegistry } from './virtualizedTextViewTypes'
 
 export type SharedTokenHandle = {
@@ -10,8 +10,7 @@ export type SharedTokenHandle = {
 type SharedTokenGroup = {
   readonly name: string
   readonly highlight: Highlight
-  readonly style: EditorTokenStyle
-  refCount: number
+  readonly rule: string
 }
 
 // Token highlight rules are theme-determined and identical across every editor
@@ -38,83 +37,47 @@ export function getSharedTokenHighlights(
 }
 
 export class SharedTokenHighlights {
-  readonly #doc: Document
   readonly #registry: HighlightRegistry
-  readonly #styleEl: HTMLStyleElement
+  readonly #rules: SharedStyleRules
   readonly #groups = new Map<string, SharedTokenGroup>()
-  #rulesDirty = false
 
   public constructor(doc: Document, registry: HighlightRegistry) {
-    this.#doc = doc
     this.#registry = registry
-    this.#styleEl = doc.createElement('style')
+    this.#rules = new SharedStyleRules(doc)
   }
 
   public acquire(styleKey: string, style: EditorTokenStyle): SharedTokenHandle {
     const existing = this.#groups.get(styleKey)
     if (existing) {
-      existing.refCount += 1
+      this.#rules.acquire(styleKey, existing.rule)
       return { name: existing.name, highlight: existing.highlight }
     }
 
     const name = `editor-shared-token-${nextSharedTokenId++}`
     const highlight = new Highlight()
-    const group: SharedTokenGroup = { name, highlight, style, refCount: 1 }
+    const group: SharedTokenGroup = { name, highlight, rule: buildHighlightRule(name, style) }
     this.#groups.set(styleKey, group)
     this.#registry.set(name, highlight)
-    this.#rulesDirty = true
+    this.#rules.acquire(styleKey, group.rule)
     return { name, highlight }
   }
 
   public release(styleKey: string): void {
     const group = this.#groups.get(styleKey)
     if (!group) return
-
-    group.refCount -= 1
-    if (group.refCount > 0) return
+    // The registry entry outlives the rule set only if some other view still paints this style,
+    // which is exactly what the reference count answers.
+    if (!this.#rules.release(styleKey)) return
 
     this.#groups.delete(styleKey)
     this.#registry.delete(group.name)
-    this.#rulesDirty = true
   }
 
-  // Acquire/release only mark the rule set dirty; the stylesheet is written once per batch
-  // when the view flushes its style rules, so adopting N new token styles is a single
-  // document style mutation rather than N.
   public flush(): void {
-    if (!this.#rulesDirty) return
-
-    this.#rulesDirty = false
-    this.#rebuild()
+    this.#rules.flush()
   }
 
   public restore(): void {
-    this.#rebuild()
-  }
-
-  #rebuild(): void {
-    const rules: string[] = []
-    for (const group of this.#groups.values())
-      rules.push(buildHighlightRule(group.name, group.style))
-
-    const nextRules = rules.join('\n')
-    if (this.#styleEl.textContent === nextRules) {
-      this.#syncConnection(nextRules)
-      return
-    }
-
-    this.#styleEl.textContent = nextRules
-    this.#syncConnection(nextRules)
-  }
-
-  #syncConnection(rules: string): void {
-    if (rules.length === 0) {
-      this.#styleEl.remove()
-      return
-    }
-
-    if (this.#styleEl.isConnected) return
-
-    this.#doc.head.appendChild(this.#styleEl)
+    this.#rules.restore()
   }
 }

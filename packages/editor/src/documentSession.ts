@@ -25,12 +25,13 @@ import {
   type EditorHistory,
 } from './history'
 import type { TextEdit } from './tokens'
+import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from './pieceTable/pieceTableTypes'
-import { applyBatchToPieceTable } from './pieceTable/edits'
+import { applyBatchToPieceTable, snapBatchEditRanges } from './pieceTable/edits'
 import { readPieceTableTextRange, pieceTableSnapshotsHaveSameText } from './pieceTable/reads'
 import { createPieceTableSnapshot } from './pieceTable/snapshot'
-import { normalizeLineEndings } from './pieceTable/lineEndings'
+import { normalizeDocumentText, normalizeLineEndings } from './pieceTable/lineEndings'
 
 export type DocumentSessionChangeKind = 'edit' | 'selection' | 'undo' | 'redo' | 'none'
 
@@ -60,7 +61,7 @@ export type DocumentSession = {
     edits: readonly TextEdit[],
     options?: DocumentSessionApplyEditsOptions,
   ): DocumentSessionChange
-  backspace(): DocumentSessionChange
+  backspace(tabSize?: number): DocumentSessionChange
   deleteSelection(): DocumentSessionChange
   undo(): DocumentSessionChange
   redo(): DocumentSessionChange
@@ -135,6 +136,7 @@ export type EditorTextBuffer = {
   backspace(
     selections: SelectionSet<PieceTableAnchor>,
     sourceViewId?: string | null,
+    tabSize?: number,
   ): DocumentSessionChange
   deleteSelection(
     selections: SelectionSet<PieceTableAnchor>,
@@ -146,6 +148,12 @@ export type EditorTextBuffer = {
   getTextSnapshot(): DocumentTextSnapshot
   getSnapshot(): PieceTableSnapshot
   getRevision(): number
+  // Whether materializing the whole document as one string is a heap hazard,
+  // the streaming alternative being `getTextSnapshot()`'s `forEachTextChunk`.
+  // Decided once when the buffer is constructed and never re-evaluated, so a
+  // consumer that branched on it at open cannot have the answer change under it
+  // mid-session. Nothing in the repo branches on it yet.
+  isTooLargeForHeapOperation(): boolean
   canUndo(): boolean
   canRedo(): boolean
   isDirty(): boolean
@@ -241,13 +249,36 @@ type DocumentHistory = EditorHistory<
   DocumentTransaction
 >
 
+type DocumentTransactionIntent = DocumentTransactionMetadata['intent']
+
+type TypingRunKind = 'insert' | 'backspace' | 'delete'
+
+// Whether the run currently ends in a space, and whether that space had one
+// before it. A lone space belongs to the word that follows, so it must not end
+// a run; a second one is deliberate enough that the text either side of it is
+// worth undoing separately.
+type TypingRunSpacing = 'none' | 'first-space' | 'consecutive-space'
+
 type TypingRun = {
-  readonly endOffset: number
-  readonly lastChar: string
+  readonly kind: TypingRunKind
+  readonly spacing: TypingRunSpacing
+  // Where the run left the caret, which is the only place the next keystroke of
+  // the same kind can continue it from: inserts and forward deletes start here,
+  // a backspace ends here.
+  readonly caretOffset: number
 }
 
+// Roughly 512MB of UTF-16 for one string, so past this point materializing the
+// whole document is a bug rather than a slow path.
+export const MAX_HEAP_OPERATION_LENGTH = 256 * 1024 * 1024
+
+export const exceedsHeapOperationBudget = (length: number): boolean =>
+  length > MAX_HEAP_OPERATION_LENGTH
+
 class PieceTableEditorTextBuffer implements EditorTextBuffer {
-  private readonly listeners = new Set<EditorTextBufferChangeListener>()
+  private readonly changes = new EditorEventSource<EditorTextBufferChange>({
+    action: 'editor.buffer.change_listener_failed',
+  })
   private history: DocumentHistory
   private cleanSnapshot: PieceTableSnapshot
   private dirtyCacheSnapshot: PieceTableSnapshot
@@ -255,9 +286,22 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private revision = 0
   private typingRun: TypingRun | null = null
   private textSnapshot: DocumentTextSnapshot
+  private readonly tooLargeForHeapOperation: boolean
 
-  public constructor(text: string) {
-    const snapshot = createPieceTableSnapshot(text)
+  public constructor(rawText: string) {
+    // Ingested first so the retained copy below is the text the piece table
+    // actually holds. Folding U+2028/U+2029 to LF does not change the length,
+    // so handing the raw string to createDocumentTextSnapshot would sail past
+    // its length check and leave every reader — including the view's line-start
+    // scan — looking at characters the model does not have.
+    const ingested = normalizeDocumentText(rawText)
+    const text = ingested.text
+    const snapshot = createPieceTableSnapshot(text, {
+      normalized: true,
+      lineEnding: ingested.lineEnding,
+      byteOrderMark: ingested.byteOrderMark,
+      containsUnusualLineTerminators: ingested.containsUnusualLineTerminators,
+    })
     const selections = createInitialSelectionSet(snapshot, createSelectionIdFactory())
     this.history = createEditorHistory<
       PieceTableSnapshot,
@@ -267,6 +311,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     this.cleanSnapshot = snapshot
     this.dirtyCacheSnapshot = snapshot
     this.textSnapshot = createDocumentTextSnapshot(snapshot, text)
+    this.tooLargeForHeapOperation = exceedsHeapOperationBudget(snapshot.length)
   }
 
   public applyText(
@@ -345,8 +390,13 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
 
-    const nextSnapshot = applyBatchToPieceTable(this.history.current, normalizedEdits)
-    const effectiveEdits = normalizedEdits.filter(isEffectiveTextEdit)
+    // Snapping can widen an edit off a surrogate pair, so the applied ranges are
+    // not always the ones we were handed. Everything downstream of this change —
+    // undo inversion, incremental re-render, decoration remapping, the LSP's
+    // copy of the document — has to be told what actually happened.
+    const appliedEdits = snapBatchEditRanges(this.history.current, normalizedEdits)
+    const nextSnapshot = applyBatchToPieceTable(this.history.current, appliedEdits)
+    const effectiveEdits = appliedEdits.filter(isEffectiveTextEdit)
     if (effectiveEdits.length === 0) {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
@@ -372,9 +422,10 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   public backspace(
     selections: SelectionSet<PieceTableAnchor>,
     sourceViewId: string | null = null,
+    tabSize?: number,
   ): DocumentSessionChange {
     const start = nowMs()
-    const result = backspaceSelections(this.history.current, selections)
+    const result = backspaceSelections(this.history.current, selections, tabSize)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
@@ -463,6 +514,10 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return this.revision
   }
 
+  public isTooLargeForHeapOperation(): boolean {
+    return this.tooLargeForHeapOperation
+  }
+
   public canUndo(): boolean {
     return this.history.undo !== null
   }
@@ -492,8 +547,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   }
 
   public subscribe(listener: EditorTextBufferChangeListener): () => void {
-    this.listeners.add(listener)
-    return () => this.listeners.delete(listener)
+    const subscription = this.changes.subscribe(listener)
+    return () => subscription.dispose()
   }
 
   private commitEdit(
@@ -517,7 +572,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       this.history = { ...this.history, current: snapshot, selections }
     }
 
-    this.updateTypingRun(edits, options)
+    this.typingRun = createTypingRun(this.typingRun, edits, options.metadata.intent, transaction)
     this.textSnapshot = createDocumentTextSnapshot(snapshot)
     this.revision += 1
     const change = this.createChange('edit', edits, transaction)
@@ -532,15 +587,15 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     options: CommitEditOptions,
     transaction: DocumentTransaction,
   ): void {
-    const edit = edits[0]
     const previous = this.history.undo?.entry.transaction
+    const kind = typingRunKind(options.metadata.intent)
 
-    if (edit && previous && this.shouldAmendTypingRun(edits, options, previous)) {
+    if (kind && previous && this.shouldAmendTypingRun(kind, edits, transaction, previous)) {
       this.history = amendEditorHistory(
         this.history,
         snapshot,
         selections,
-        createAmendedTypingTransaction(previous, snapshot, selections, edit),
+        createAmendedTypingTransaction(previous, transaction, kind),
       )
       return
     }
@@ -554,37 +609,20 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   }
 
   private shouldAmendTypingRun(
+    kind: TypingRunKind,
     edits: readonly TextEdit[],
-    options: CommitEditOptions,
+    transaction: DocumentTransaction,
     previous: DocumentTransaction,
   ): boolean {
-    const edit = singleTypingInsertEdit(edits)
+    const run = this.typingRun
+    if (!run || run.kind !== kind) return false
+
+    const edit = singleTypingRunEdit(edits, kind)
     if (!edit) return false
-    if (options.metadata.intent !== 'insert-text') return false
-    if (!this.typingRun) return false
-    if (edit.from !== this.typingRun.endOffset) return false
-    if (edit.text.includes('\n')) return false
-    if (startsNewWordAfterWhitespace(this.typingRun.lastChar, edit.text)) return false
-    return canAmendTypingTransaction(previous)
-  }
-
-  private updateTypingRun(edits: readonly TextEdit[], options: CommitEditOptions): void {
-    const edit = singleTypingInsertEdit(edits)
-
-    if (options.history !== 'record') {
-      this.typingRun = null
-      return
-    }
-
-    if (options.metadata.intent !== 'insert-text' || !edit || edit.text.includes('\n')) {
-      this.typingRun = null
-      return
-    }
-
-    this.typingRun = {
-      endOffset: edit.from + edit.text.length,
-      lastChar: edit.text.at(-1)!,
-    }
+    if (!continuesTypingRun(run, edit)) return false
+    if (kind === 'insert' && endsInsertRun(run.spacing, edit.text)) return false
+    if (kind !== 'insert' && !removesSingleCodePoint(transaction)) return false
+    return canAmendTypingTransaction(previous, kind)
   }
 
   private selectionsAfterProgrammaticEdit(
@@ -642,11 +680,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private emitChange(change: DocumentSessionChange, sourceViewId: string | null | undefined): void {
     if (change.kind === 'none') return
 
-    const event = {
-      change,
-      sourceViewId: sourceViewId ?? null,
-    }
-    for (const listener of this.listeners) listener(event)
+    this.changes.fire({ change, sourceViewId: sourceViewId ?? null })
   }
 }
 
@@ -820,9 +854,9 @@ class EditorBufferDocumentSession implements EditorBufferSession {
     )
   }
 
-  public backspace(): DocumentSessionChange {
+  public backspace(tabSize?: number): DocumentSessionChange {
     return this.acceptBufferChange(
-      this.buffer.backspace(this.view.getSelections(), this.view.viewId),
+      this.buffer.backspace(this.view.getSelections(), this.view.viewId, tabSize),
     )
   }
 
@@ -916,9 +950,16 @@ class StaticDocumentSession implements DocumentSession {
   private textSnapshot: DocumentTextSnapshot
   private selections: SelectionSet<PieceTableAnchor>
 
-  public constructor(text: string) {
-    this.snapshot = createPieceTableSnapshot(text)
-    this.textSnapshot = createDocumentTextSnapshot(this.snapshot, text)
+  public constructor(rawText: string) {
+    // Same ingestion-before-retention rule as PieceTableEditorTextBuffer.
+    const ingested = normalizeDocumentText(rawText)
+    this.snapshot = createPieceTableSnapshot(ingested.text, {
+      normalized: true,
+      lineEnding: ingested.lineEnding,
+      byteOrderMark: ingested.byteOrderMark,
+      containsUnusualLineTerminators: ingested.containsUnusualLineTerminators,
+    })
+    this.textSnapshot = createDocumentTextSnapshot(this.snapshot, ingested.text)
     this.selections = createSelectionSet(
       [
         createAnchorSelection(this.snapshot, this.snapshot.length, this.snapshot.length, {
@@ -952,8 +993,9 @@ class StaticDocumentSession implements DocumentSession {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
 
-    const nextSnapshot = applyBatchToPieceTable(this.snapshot, normalizedEdits)
-    const effectiveEdits = normalizedEdits.filter(isEffectiveTextEdit)
+    const appliedEdits = snapBatchEditRanges(this.snapshot, normalizedEdits)
+    const nextSnapshot = applyBatchToPieceTable(this.snapshot, appliedEdits)
+    const effectiveEdits = appliedEdits.filter(isEffectiveTextEdit)
     if (effectiveEdits.length === 0) {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
     }
@@ -964,7 +1006,7 @@ class StaticDocumentSession implements DocumentSession {
     return appendTiming(this.createChange('edit', effectiveEdits), 'session.applyEdits', start)
   }
 
-  public backspace(): DocumentSessionChange {
+  public backspace(_tabSize?: number): DocumentSessionChange {
     return this.createChange('none', [])
   }
 
@@ -1167,47 +1209,146 @@ function createDocumentSessionChange(fields: DocumentSessionChangeFields): Docum
   return { ...fields } // TODO why do we need this func??
 }
 
-function singleTypingInsertEdit(edits: readonly TextEdit[]): TextEdit | null {
+function typingRunKind(intent: DocumentTransactionIntent): TypingRunKind | null {
+  if (intent === 'insert-text') return 'insert'
+  if (intent === 'backspace') return 'backspace'
+  if (intent === 'delete') return 'delete'
+  return null
+}
+
+// A run is what one held-down key produces, so it is built from single edits
+// only; a multi-cursor pass or an inserted newline is a separate action and gets
+// its own undo entry.
+function singleTypingRunEdit(edits: readonly TextEdit[], kind: TypingRunKind): TextEdit | null {
   const edit = edits[0]
   if (edits.length !== 1 || !edit) return null
-  if (edit.from !== edit.to) return null
-  if (edit.text.length === 0) return null
-  return edit
+
+  if (kind === 'insert') {
+    if (edit.from !== edit.to || edit.text.length === 0) return null
+    return edit.text.includes('\n') ? null : edit
+  }
+
+  return edit.from !== edit.to && edit.text.length === 0 ? edit : null
+}
+
+function continuesTypingRun(run: TypingRun, edit: TextEdit): boolean {
+  return run.kind === 'backspace' ? edit.to === run.caretOffset : edit.from === run.caretOffset
+}
+
+// Deleting a selection is one deliberate action rather than a keystroke in a
+// run, so it must not swallow the keystrokes around it into its undo entry.
+function removesSingleCodePoint(transaction: DocumentTransaction): boolean {
+  const removed = transaction.inverseEdits[0]?.text ?? ''
+  return [...removed].length === 1
 }
 
 function isWhitespace(text: string): boolean {
   return /\s/u.test(text)
 }
 
-function startsNewWordAfterWhitespace(previous: string, text: string): boolean {
-  const first = text[0]
-  if (!first) return false
-  return isWhitespace(previous) && !isWhitespace(first)
+function endsInsertRun(spacing: TypingRunSpacing, text: string): boolean {
+  const typed = text[0]
+  if (!typed) return false
+  if (spacing === 'first-space') return false
+  return isWhitespace(typed) !== (spacing === 'consecutive-space')
 }
 
-function canAmendTypingTransaction(transaction: DocumentTransaction): boolean {
-  const edit = singleTypingInsertEdit(transaction.edits)
-  if (!edit) return false
-  if (transaction.metadata.intent !== 'insert-text') return false
-  return !edit.text.includes('\n')
+function nextTypingRunSpacing(spacing: TypingRunSpacing, text: string): TypingRunSpacing {
+  const last = text.at(-1)!
+  if (!isWhitespace(last)) return 'none'
+  return spacing === 'none' ? 'first-space' : 'consecutive-space'
+}
+
+function createTypingRun(
+  previous: TypingRun | null,
+  edits: readonly TextEdit[],
+  intent: DocumentTransactionIntent,
+  transaction: DocumentTransaction,
+): TypingRun | null {
+  const kind = typingRunKind(intent)
+  if (!kind) return null
+
+  const edit = singleTypingRunEdit(edits, kind)
+  if (!edit) return null
+
+  if (kind !== 'insert') {
+    return removesSingleCodePoint(transaction)
+      ? { kind, spacing: 'none', caretOffset: edit.from }
+      : null
+  }
+
+  return {
+    kind,
+    spacing: nextTypingRunSpacing(
+      previous?.kind === 'insert' ? previous.spacing : 'none',
+      edit.text,
+    ),
+    caretOffset: edit.from + edit.text.length,
+  }
+}
+
+function canAmendTypingTransaction(transaction: DocumentTransaction, kind: TypingRunKind): boolean {
+  return singleTypingRunEdit(transaction.edits, kind) !== null
 }
 
 function createAmendedTypingTransaction(
   previous: DocumentTransaction,
-  snapshot: PieceTableSnapshot,
-  selections: SelectionSet<PieceTableAnchor>,
-  edit: TextEdit,
+  next: DocumentTransaction,
+  kind: TypingRunKind,
 ): DocumentTransaction {
-  const previousEdit = previous.edits[0]!
-  const runStart = previousEdit.from
-  const text = previousEdit.text + edit.text
+  const merged =
+    kind === 'insert'
+      ? mergeInsertedRun(previous, next)
+      : mergeRemovedRun(previous, next, kind === 'backspace')
 
   return {
     ...previous,
+    edits: merged.edits,
+    inverseEdits: merged.inverseEdits,
+    snapshotAfter: next.snapshotAfter,
+    selectionAfter: next.selectionAfter,
+  }
+}
+
+type MergedRunEdits = {
+  readonly edits: readonly TextEdit[]
+  readonly inverseEdits: readonly TextEdit[]
+}
+
+function mergeInsertedRun(
+  previous: DocumentTransaction,
+  next: DocumentTransaction,
+): MergedRunEdits {
+  const previousEdit = previous.edits[0]!
+  const runStart = previousEdit.from
+  const text = previousEdit.text + next.edits[0]!.text
+
+  return {
     edits: [{ from: runStart, to: runStart, text }],
     inverseEdits: [{ from: runStart, to: runStart + text.length, text: '' }],
-    snapshotAfter: snapshot,
-    selectionAfter: selections,
+  }
+}
+
+// Both edits are ranges of the document the run started from, and a backspace
+// only ever widens that range to the left while a forward delete only widens it
+// to the right — which is also the order the removed text has to be put back in.
+function mergeRemovedRun(
+  previous: DocumentTransaction,
+  next: DocumentTransaction,
+  backwards: boolean,
+): MergedRunEdits {
+  const previousEdit = previous.edits[0]!
+  const nextEdit = next.edits[0]!
+  const previousText = previous.inverseEdits[0]!.text
+  const nextText = next.inverseEdits[0]!.text
+
+  const from = backwards ? nextEdit.from : previousEdit.from
+  const to = backwards ? previousEdit.to : previousEdit.to + (nextEdit.to - nextEdit.from)
+  const text = backwards ? nextText + previousText : previousText + nextText
+
+  return {
+    edits: [{ from, to, text: '' }],
+    inverseEdits: [{ from, to: from, text }],
   }
 }
 

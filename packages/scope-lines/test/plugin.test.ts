@@ -79,6 +79,37 @@ describe('createScopeLinesPlugin', () => {
     expect(lines[1]?.style.left).toBe('32px')
   })
 
+  it('places a guide at the shallowest body indentation, not the first line it finds', () => {
+    const registration = registeredProvider(createScopeLinesPlugin())
+    const text = 'if (x) {\n    deep()\n  shallow()\n}\n'
+    const starts = lineStarts(text)
+    const testContext = context(
+      snapshot({
+        fullText: text,
+        lineStarts: starts,
+        lineCount: starts.length,
+        foldMarkers: [
+          {
+            key: 'if:0:33',
+            startOffset: starts[0]!,
+            endOffset: starts[3]!,
+            startRow: 0,
+            endRow: 3,
+            collapsed: false,
+          },
+        ],
+        visibleRows: visibleRows(text),
+      }),
+    )
+
+    registration?.createContribution(testContext)
+
+    const lines = [...testContext.scrollElement.querySelectorAll<HTMLElement>('.editor-scope-line')]
+    expect(lines).toHaveLength(1)
+    expect(lines[0]?.style.left).toBe('0px')
+    expect(lines[0]?.dataset.editorScopeLineLevel).toBe('1')
+  })
+
   it('caches row text within a render pass', () => {
     const registration = registeredProvider(createScopeLinesPlugin())
     const text = 'function f() {\n  if (x) {\n    y()\n  }\n}\n'

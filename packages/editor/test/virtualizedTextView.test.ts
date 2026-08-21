@@ -387,7 +387,7 @@ describe('VirtualizedTextView', () => {
     )
   })
 
-  it('unregisters custom range highlights while all ranges are offscreen', () => {
+  it('keeps custom range highlights registered while all ranges are offscreen', () => {
     view.setText(createLines(20))
     view.setScrollMetrics(0, 20)
 
@@ -398,7 +398,7 @@ describe('VirtualizedTextView', () => {
       backgroundColor: 'rgba(234, 179, 8, 0.34)',
     })
 
-    expect(highlightsMap.has('test-find')).toBe(false)
+    expect(highlightsMap.get('test-find')?.size).toBe(0)
 
     view.setScrollMetrics(200, 20)
 
@@ -710,7 +710,7 @@ describe('VirtualizedTextView', () => {
     const firstChunk = view.getState().mountedRows[0]?.chunks[0]
 
     expect(firstChunk?.localStart).toBe(0)
-    expect(firstChunk?.textNode.length).toBe(1_000)
+    expect(firstChunk?.text).toHaveLength(1_000)
     expect(container.querySelector('.editor-virtualized-row')?.textContent?.length).toBe(1_000)
 
     const scrollLeft = 2_400 * view.getState().metrics.characterWidth
@@ -718,7 +718,136 @@ describe('VirtualizedTextView', () => {
     const scrolledChunk = view.getState().mountedRows[0]?.chunks[0]
 
     expect(scrolledChunk?.localStart).toBeGreaterThan(0)
-    expect(scrolledChunk?.textNode.length).toBeLessThanOrEqual(1_000)
+    expect(scrolledChunk?.text.length).toBeLessThanOrEqual(1_000)
+  })
+
+  it('spreads a mounted chunk over bounded text nodes without moving its offsets', () => {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      longLineChunkSize: 1_000,
+      longLineChunkThreshold: 1_000,
+      horizontalOverscanColumns: 0,
+    })
+    view.setText('x'.repeat(5_000))
+    view.setScrollMetrics(0, 20, 80)
+
+    const chunk = view.getState().mountedRows[0]!.chunks[0]!
+    const caret = view.createRange(chunk.startOffset + 353, chunk.startOffset + 353)
+    const nodes = [...chunk.element!.childNodes]
+
+    expect(chunk.element!.textContent).toBe('x'.repeat(1_000))
+    expect(chunk.textNode).toBe(nodes[0])
+    expect(Math.max(...nodes.map((node) => node.textContent!.length))).toBeLessThanOrEqual(50)
+    expect(caret?.startContainer).toBe(nodes[7])
+    expect(caret?.startOffset).toBe(3)
+    expect(view.textOffsetFromDomBoundary(nodes[7]!, 3)).toBe(chunk.startOffset + 353)
+  })
+
+  it('spreads a long sub-threshold row over bounded text nodes without moving its geometry', () => {
+    const line = 'abcdefghij'.repeat(120)
+    view.setText(`${line}\ntail`)
+    view.setScrollMetrics(0, 40)
+    mockViewport(view.scrollElement, 4_000, 40)
+
+    const row = view.getState().mountedRows[0]!
+    const caret = view.createRange(353, 353)
+    const nodes = [...row.element.childNodes]
+    const { characterWidth } = view.getState().metrics
+
+    expect(row.chunks).toHaveLength(1)
+    expect(row.element.textContent).toBe(line)
+    expect(row.textNode).toBe(nodes[0])
+    expect(Math.max(...nodes.map((node) => node.textContent!.length))).toBeLessThanOrEqual(50)
+    expect(caret?.startContainer).toBe(nodes[7])
+    expect(caret?.startOffset).toBe(3)
+    expect(view.textOffsetFromDomBoundary(nodes[7]!, 3)).toBe(353)
+    expect(view.textOffsetFromPoint(characterWidth * 353.5, 10)).toBe(353)
+
+    view.setSelection(353, 400)
+    const selection = selectionRanges(container)[0]!
+
+    expect(selection.style.left).toBe(`${characterWidth * 353}px`)
+    expect(selection.style.width).toBe(`${characterWidth * 47}px`)
+  })
+
+  /**
+   * A single line long enough to be chunked, plus a gutter cell whose updates count render passes:
+   * the cell is refreshed for every mounted row on every pass, including rows that stay current.
+   */
+  function mountLongLineView(onGutterCellUpdate: () => void = () => {}): void {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+      highlightRegistry: mockRegistry,
+      selectionHighlightName: 'test-selection',
+      longLineChunkSize: 1_000,
+      longLineChunkThreshold: 1_000,
+      horizontalOverscanColumns: 0,
+      gutterContributions: [
+        {
+          id: 'render-pass-counter',
+          createCell: (document) => document.createElement('div'),
+          width: () => 10,
+          updateCell: onGutterCellUpdate,
+        },
+      ],
+    })
+    view.setText('x'.repeat(20_000))
+  }
+
+  it('skips the render pass while horizontal scrolling stays inside the chunk window', () => {
+    let gutterCellUpdates = 0
+    mountLongLineView(() => {
+      gutterCellUpdates += 1
+    })
+    const { characterWidth } = view.getState().metrics
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth)
+    const chunkLocalStart = view.getState().mountedRows[0]!.chunks[0]!.localStart
+    gutterCellUpdates = 0
+
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth + 1)
+
+    expect(gutterCellUpdates).toBe(0)
+
+    view.setScrollMetrics(0, 20, 80, 3_400 * characterWidth)
+
+    expect(gutterCellUpdates).toBeGreaterThan(0)
+    expect(view.getState().mountedRows[0]!.chunks[0]!.localStart).toBeGreaterThan(chunkLocalStart)
+  })
+
+  it('keeps measured row geometry across a sub-chunk horizontal scroll', () => {
+    mountLongLineView()
+    const { characterWidth } = view.getState().metrics
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth)
+    // Painting a selection over the row materializes its measured geometry,
+    // which is what a scroll-derived chunk key would throw away on the very
+    // next pixel of horizontal scroll.
+    view.setSelection(2_450, 2_500)
+    const geometry = view.getState().mountedRows[0]!.geometryCache
+
+    expect(geometry).not.toBeNull()
+
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth + 1)
+
+    expect(view.getState().mountedRows[0]!.geometryCache).toBe(geometry)
+  })
+
+  it('reuses long-line chunks when a forced render lands on a sub-chunk scroll offset', () => {
+    mountLongLineView()
+    const { characterWidth } = view.getState().metrics
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth)
+    const chunkTextNode = view.getState().mountedRows[0]!.chunks[0]!.textNode
+
+    view.setScrollMetrics(0, 20, 80, 2_400 * characterWidth + 1)
+    // Any decoration update forces a full render pass; the row must still be recognized as current.
+    view.setRowDecorations(new Map())
+
+    expect(view.getState().mountedRows[0]!.chunks[0]!.textNode).toBe(chunkTextNode)
   })
 
   it('mounts wrapped text segments as virtual rows when wrapping is enabled', () => {
@@ -1116,7 +1245,7 @@ describe('VirtualizedTextView', () => {
     view.setSelection(1, 5)
 
     expect(hiddenCharacterMarkerKinds(container)).toEqual(['space', 'tab'])
-    expect(view.scrollElement.textContent).toBe('a b\tc d')
+    expect(textWithoutHiddenCharacterOverlay(view.scrollElement)).toBe('a b\tc d')
 
     view.setSelection(3, 3)
 
@@ -1153,7 +1282,7 @@ describe('VirtualizedTextView', () => {
 
     expect(hiddenCharacterMarkerKinds(container)).toEqual(['space', 'tab', 'space'])
     expect(hiddenCharacterMarkerOffsets(container)).toEqual(['0', '2', '4'])
-    expect(view.scrollElement.textContent).toBe(' a\tb ')
+    expect(textWithoutHiddenCharacterOverlay(view.scrollElement)).toBe(' a\tb ')
   })
 
   it('updates hidden character markers on mode changes for mounted rows', () => {
@@ -1616,7 +1745,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row token highlights at row-local offsets across repeated typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
@@ -1647,7 +1776,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row token highlights static when adopting projected tokens repeatedly', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#ff0000' } },
       { start: 6, end: 8, style: { color: '#ff0000' } },
@@ -1781,7 +1910,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static after a newline followed by rapid typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
@@ -1869,7 +1998,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static while alternating newlines and typing', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
@@ -1904,7 +2033,7 @@ describe('VirtualizedTextView', () => {
 
   it('keeps lower-row highlights static through repeated mixed inserts above them', () => {
     let text = 'aa\nbb\ncc'
-    let tokens = [
+    let tokens: readonly EditorToken[] = [
       { start: 0, end: 2, style: { color: '#ff0000' } },
       { start: 3, end: 5, style: { color: '#00ff00' } },
       { start: 6, end: 8, style: { color: '#0000ff' } },
@@ -2579,10 +2708,104 @@ describe('VirtualizedTextView', () => {
     expect(metrics.rowHeight).toBe(24)
     expect(metrics.characterWidth).toBe(10)
   })
+
+  it('keeps one measurement waiting however many times the rows are rendered', () => {
+    const idle = captureIdleCallbacks()
+    try {
+      view.setText('漢字テスト\nabc')
+      view.setScrollMetrics(0, 40)
+
+      expect(idle.pending.size).toBe(1)
+
+      view.setRowDecorations(new Map())
+      view.setRowDecorations(new Map())
+
+      expect(idle.pending.size).toBe(1)
+    } finally {
+      idle.restore()
+    }
+  })
+
+  it('leaves nothing waiting to run against a disposed view', () => {
+    const idle = captureIdleCallbacks()
+    try {
+      view.setText('漢字テスト\nabc')
+      view.setScrollMetrics(0, 40)
+
+      expect(idle.pending.size).toBe(1)
+
+      view.dispose()
+
+      expect(idle.pending.size).toBe(0)
+
+      view = new VirtualizedTextView(container, { rowHeight: 20, overscan: 2 })
+    } finally {
+      idle.restore()
+    }
+  })
+
+  it('reads nothing back out of the virtualizer when a measurement pass finds no wider row', () => {
+    const idle = captureIdleCallbacks()
+    try {
+      view.setText('漢字テスト\nabc')
+      view.setScrollMetrics(0, 40)
+
+      const measure = [...idle.pending.values()][0]!
+      // Whatever the rows had to give, the first pass already took.
+      measure()
+
+      const internal = Reflect.get(view, 'view') as {
+        virtualizer: { getSnapshot: () => unknown }
+      }
+      const snapshots = vi.spyOn(internal.virtualizer, 'getSnapshot')
+      measure()
+
+      expect(snapshots).not.toHaveBeenCalled()
+    } finally {
+      idle.restore()
+    }
+  })
 })
 
 function createLines(count: number): string {
   return Array.from({ length: count }, (_, index) => `line ${index}`).join('\n')
+}
+
+type IdleWindow = {
+  requestIdleCallback?: unknown
+  cancelIdleCallback?: unknown
+}
+
+/** The idle queue, held open so what is waiting in it can be counted and run on demand. */
+function captureIdleCallbacks(): {
+  readonly pending: ReadonlyMap<number, () => void>
+  readonly restore: () => void
+} {
+  const pending = new Map<number, () => void>()
+  const win = window as unknown as IdleWindow
+  const request = win.requestIdleCallback
+  const cancel = win.cancelIdleCallback
+  let nextHandle = 1
+
+  win.requestIdleCallback = (callback: () => void) => {
+    const handle = nextHandle
+    nextHandle += 1
+    pending.set(handle, callback)
+    return handle
+  }
+  win.cancelIdleCallback = (handle: number) => {
+    pending.delete(handle)
+  }
+
+  return {
+    pending,
+    restore: () => {
+      win.requestIdleCallback = request
+      // A view disposed after the queue is handed back still reaches for the canceller it was
+      // scheduled with, so that half stays until the environment has one of its own.
+      if (typeof cancel === 'function') win.cancelIdleCallback = cancel
+    },
+  }
 }
 
 function createFoldGutterTestView(
@@ -2762,6 +2985,17 @@ function blockSurfaces(container: HTMLElement): string[] {
   return [...container.querySelectorAll<HTMLElement>('[data-test-block-surface]')].map(
     (surface) => surface.textContent ?? '',
   )
+}
+
+// The whitespace glyphs live in the marker overlay, so the rendered document text is what is left
+// once the overlay is taken away.
+function textWithoutHiddenCharacterOverlay(root: HTMLElement): string {
+  const copy = root.cloneNode(true) as HTMLElement
+  for (const layer of copy.querySelectorAll('.editor-virtualized-hidden-character-layer')) {
+    layer.remove()
+  }
+
+  return copy.textContent ?? ''
 }
 
 function hiddenCharacterMarkerKinds(container: HTMLElement): string[] {
@@ -3055,6 +3289,34 @@ describe('VirtualizedTextView inline map', () => {
 
     expect(view.offsetAtLineBoundary(12, 'start')).toBe(8)
     expect(view.offsetAtLineBoundary(12, 'end')).toBe(20)
+  })
+
+  it('paints a tab as a tab on a row an inline replacement made complex', () => {
+    const indented = '\t\tconst answer = 42'
+    view.setText(indented)
+    view.setScrollMetrics(0, 100)
+    const plain = view.getState().mountedRows[0]!.element.textContent
+
+    view.setInlineMap(
+      createInlineMap(createPieceTableSnapshot(indented), [
+        {
+          id: 'ghost',
+          startIndex: indented.length,
+          endIndex: indented.length,
+          text: ' // 42',
+          insertion: true,
+          className: 'editor-ghost-text',
+        },
+      ]),
+    )
+
+    const rendered = view.getState().mountedRows[0]!.element.textContent
+
+    expect(plain).toContain('\t\t')
+    // The indent is laid out by `tab-size`, so a `␉` in its place would pull the line left by a
+    // whole tab stop per level the instant the ghost text appeared.
+    expect(rendered).not.toContain('\u2409')
+    expect(rendered).toContain('\t\tconst answer = 42')
   })
 
   it('ignores an inline map built against different text', () => {

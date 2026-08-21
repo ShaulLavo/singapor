@@ -1,18 +1,29 @@
 import {
+  createEditorOptionSync,
+  EDITOR_OPTION_DESCRIPTORS,
+  type EditorControlledOptionName,
+  type EditorControlledSelection,
+  type EditorOptionSync,
+} from '@singapor/core'
+import {
   Editor,
   type EditorChangeHandler,
   type EditorCommandContext,
   type EditorCommandId,
   type EditorDocumentMode,
+  type EditorEditability,
   type EditorEditInput,
   type EditorEditOptions,
+  type EditorKeymapOptions,
   type EditorOpenDocumentOptions,
   type EditorOptions,
   type EditorRangeDecoration,
+  type EditorScrollMode,
   type EditorScrollPosition,
   type EditorSelectionRevealTarget,
   type EditorSetTextOptions,
   type EditorState,
+  type EditorSuspiciousCharactersOptions,
 } from '@singapor/core/editor'
 import type { DocumentSessionChange, TextSnapshot } from '@singapor/core/document'
 import type { EditorSyntaxLanguageId } from '@singapor/core/syntax'
@@ -35,19 +46,39 @@ export type SolidEditorDocument = {
   readonly scrollPosition?: EditorScrollPosition
 }
 
-export type SolidEditorSelection = {
-  readonly anchor: number
-  readonly head?: number
-  readonly reveal?: boolean
-  readonly revealOffset?: number
-}
+export type SolidEditorSelection = EditorControlledSelection
 
-export type SolidEditorOptions = Omit<EditorOptions, 'hiddenCharacters' | 'onChange' | 'theme'> & {
+export type SolidEditorOptions = Omit<
+  EditorOptions,
+  | 'editability'
+  | 'hiddenCharacters'
+  | 'keymap'
+  | 'lineHeight'
+  | 'onChange'
+  | 'rangeDecorations'
+  | 'rowGap'
+  | 'scrollMode'
+  | 'suspiciousCharacters'
+  | 'tabMovesFocus'
+  | 'theme'
+  | 'wordWrap'
+> & {
   readonly document?: SolidEditorReactiveValue<SolidEditorDocument | null | undefined>
+  readonly editability?: SolidEditorReactiveValue<EditorEditability | undefined>
   readonly theme?: SolidEditorReactiveValue<EditorTheme | null | undefined>
   readonly hiddenCharacters?: SolidEditorReactiveValue<HiddenCharactersMode | undefined>
+  readonly keymap?: SolidEditorReactiveValue<EditorKeymapOptions | undefined>
+  readonly lineHeight?: SolidEditorReactiveValue<number | undefined>
+  readonly rangeDecorations?: SolidEditorReactiveValue<readonly EditorRangeDecoration[] | undefined>
+  readonly rowGap?: SolidEditorReactiveValue<number | undefined>
+  readonly scrollMode?: SolidEditorReactiveValue<EditorScrollMode | undefined>
   readonly selection?: SolidEditorReactiveValue<SolidEditorSelection | null | undefined>
   readonly scrollPosition?: SolidEditorReactiveValue<EditorScrollPosition | null | undefined>
+  readonly suspiciousCharacters?: SolidEditorReactiveValue<
+    EditorSuspiciousCharactersOptions | undefined
+  >
+  readonly tabMovesFocus?: SolidEditorReactiveValue<boolean | undefined>
+  readonly wordWrap?: SolidEditorReactiveValue<boolean | undefined>
   readonly onChange?: EditorChangeHandler
 }
 
@@ -112,18 +143,20 @@ export function createEditor(options: SolidEditorOptions = {}): SolidEditorContr
     setUpdateKind,
   } satisfies SolidEditorRuntime
   const documentState = createDocumentState()
+  const optionSync = createEditorOptionSync()
 
   const dispose = (): void => {
     disposeEditor(runtime)
     documentState.clear()
+    optionSync.reset()
   }
 
   const mount = (element: HTMLElement): void => {
     dispose()
-    mountEditor(element, options, runtime, documentState)
+    mountEditor(element, options, runtime, documentState, optionSync)
   }
 
-  createReactiveEffects(options, runtime, documentState)
+  createReactiveEffects(options, runtime, documentState, optionSync)
   onCleanup(dispose)
 
   return {
@@ -165,6 +198,7 @@ function mountEditor(
   options: SolidEditorOptions,
   runtime: SolidEditorRuntime,
   documentState: SolidEditorDocumentState,
+  optionSync: EditorOptionSync,
 ): void {
   const instance = new Editor(element, createConstructorOptions(options, runtime))
 
@@ -176,12 +210,9 @@ function mountEditor(
 
   untrack(() => {
     syncDocument(instance, readReactive(options.document), documentState)
-    syncTheme(instance, readReactive(options.theme))
-    syncHiddenCharacters(instance, readReactive(options.hiddenCharacters))
-    syncEditability(instance, options.editability)
-    syncRangeDecorations(instance, options.rangeDecorations)
-    syncSelection(instance, readReactive(options.selection))
-    syncScrollPosition(instance, readReactive(options.scrollPosition))
+    for (const descriptor of EDITOR_OPTION_DESCRIPTORS) {
+      optionSync.apply(instance, descriptor, controlledOptionInput(options, descriptor.name))
+    }
   })
 }
 
@@ -191,43 +222,73 @@ function createConstructorOptions(
 ): EditorOptions {
   const {
     document: _document,
+    editability,
     hiddenCharacters,
+    keymap,
+    lineHeight,
     onChange,
     plugins,
+    rangeDecorations,
+    rowGap,
+    scrollMode,
     scrollPosition: _scrollPosition,
     selection: _selection,
+    suspiciousCharacters,
+    tabMovesFocus,
     theme,
+    wordWrap,
     ...constructorOptions
   } = options
 
-  return {
-    ...constructorOptions,
-    hiddenCharacters: untrack(() => readReactive(hiddenCharacters)),
-    theme: untrack(() => readReactive(theme) ?? undefined),
-    plugins: [createSolidSyncPlugin(runtime), ...(plugins ?? [])],
-    onChange: (state, change) => {
-      syncChange(runtime, state, change)
-      onChange?.(state, change)
-    },
-  }
+  return untrack(
+    (): EditorOptions => ({
+      ...constructorOptions,
+      editability: readReactive(editability),
+      hiddenCharacters: readReactive(hiddenCharacters),
+      keymap: readReactive(keymap),
+      lineHeight: readReactive(lineHeight),
+      rangeDecorations: readReactive(rangeDecorations),
+      rowGap: readReactive(rowGap),
+      scrollMode: readReactive(scrollMode),
+      suspiciousCharacters: readReactive(suspiciousCharacters),
+      tabMovesFocus: readReactive(tabMovesFocus),
+      theme: readReactive(theme) ?? undefined,
+      wordWrap: readReactive(wordWrap),
+      plugins: [createSolidSyncPlugin(runtime), ...(plugins ?? [])],
+      onChange: (state, change) => {
+        syncChange(runtime, state, change)
+        onChange?.(state, change)
+      },
+    }),
+  )
 }
 
 function createReactiveEffects(
   options: SolidEditorOptions,
   runtime: SolidEditorRuntime,
   documentState: SolidEditorDocumentState,
+  optionSync: EditorOptionSync,
 ): void {
   createEffect(() =>
     syncDocument(runtime.getEditor(), readReactive(options.document), documentState),
   )
-  createEffect(() => syncTheme(runtime.getEditor(), readReactive(options.theme)))
-  createEffect(() =>
-    syncHiddenCharacters(runtime.getEditor(), readReactive(options.hiddenCharacters)),
-  )
-  createEffect(() => syncEditability(runtime.getEditor(), options.editability))
-  createEffect(() => syncRangeDecorations(runtime.getEditor(), options.rangeDecorations))
-  createEffect(() => syncSelection(runtime.getEditor(), readReactive(options.selection)))
-  createEffect(() => syncScrollPosition(runtime.getEditor(), readReactive(options.scrollPosition)))
+  // One effect per descriptor, so each option tracks only the source it was given.
+  for (const descriptor of EDITOR_OPTION_DESCRIPTORS) {
+    createEffect(() =>
+      optionSync.apply(
+        runtime.getEditor(),
+        descriptor,
+        controlledOptionInput(options, descriptor.name),
+      ),
+    )
+  }
+}
+
+function controlledOptionInput(
+  options: SolidEditorOptions,
+  name: EditorControlledOptionName,
+): unknown {
+  return readReactive(options[name] as SolidEditorReactiveValue<unknown>)
 }
 
 function createSolidSyncPlugin(runtime: SolidEditorRuntime): EditorPlugin {
@@ -294,65 +355,6 @@ function syncDocument(
     scrollPosition: document.scrollPosition,
     text: document.text,
   })
-}
-
-function syncTheme(editor: Editor | null, theme: EditorTheme | null | undefined): void {
-  if (!editor) return
-
-  editor.setTheme(theme)
-}
-
-function syncHiddenCharacters(
-  editor: Editor | null,
-  hiddenCharacters: HiddenCharactersMode | undefined,
-): void {
-  if (!editor || hiddenCharacters === undefined) return
-
-  editor.setHiddenCharacters(hiddenCharacters)
-}
-
-function syncEditability(
-  editor: Editor | null,
-  editability: SolidEditorOptions['editability'],
-): void {
-  if (!editor || editability === undefined) return
-
-  editor.setEditability(editability)
-}
-
-function syncRangeDecorations(
-  editor: Editor | null,
-  rangeDecorations: readonly EditorRangeDecoration[] | undefined,
-): void {
-  if (!editor || rangeDecorations === undefined) return
-
-  editor.setRangeDecorations(rangeDecorations)
-}
-
-function syncSelection(
-  editor: Editor | null,
-  selection: SolidEditorSelection | null | undefined,
-): void {
-  if (!editor || !selection) return
-
-  editor.setSelection(selection.anchor, selection.head, solidSelectionRevealTarget(selection))
-}
-
-function solidSelectionRevealTarget(
-  selection: SolidEditorSelection,
-): EditorSelectionRevealTarget | undefined {
-  if (selection.reveal === false) return { reveal: false }
-
-  return selection.revealOffset
-}
-
-function syncScrollPosition(
-  editor: Editor | null,
-  scrollPosition: EditorScrollPosition | null | undefined,
-): void {
-  if (!editor || !scrollPosition) return
-
-  editor.setScrollPosition(scrollPosition)
 }
 
 function disposeEditor(runtime: SolidEditorRuntime): void {

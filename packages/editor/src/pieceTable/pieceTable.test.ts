@@ -16,6 +16,7 @@ import {
   debugPieceTable,
   materializePieceTableFullText,
   offsetToPoint,
+  pieceTableContainsUnusualLineTerminators,
   pieceTableSnapshotsHaveSameText,
   pointToOffset,
   resolveAnchor,
@@ -507,10 +508,13 @@ describe('piece table', () => {
     expect(resolveAnchor(replaced, right)).toEqual({ offset: 3, liveness: 'deleted' })
   })
 
-  test('rejects anchors inside surrogate pairs', () => {
+  test('snaps anchors inside surrogate pairs to the start of the code point', () => {
     const snapshot = createPieceTableSnapshot('a😀b')
 
-    expect(() => anchorAfter(snapshot, 2)).toThrow(RangeError)
+    expect(resolveAnchor(snapshot, anchorAfter(snapshot, 2))).toEqual({
+      offset: 1,
+      liveness: 'live',
+    })
     expect(anchorAfter(snapshot, 1)).toMatchObject({ kind: 'anchor' })
     expect(anchorAfter(snapshot, 3)).toMatchObject({ kind: 'anchor' })
   })
@@ -558,6 +562,31 @@ describe('piece table', () => {
       runRandomAnchorScenario(seed)
     }
   }, 10_000)
+
+  test('reports the unusual line terminators ingestion folded away', () => {
+    // The fold is deliberate — U+2028 is a forced break to CSS and not a row to
+    // us — but it edits the document at a spot nobody typed at, here putting a
+    // hard break inside a string literal. A host cannot warn about that unless
+    // the snapshot says it happened.
+    const folded = createPieceTableSnapshot('const a = "x\u2028y";\r\nconst b = 1;\r\n')
+
+    expectSnapshotText(folded, 'const a = "x\ny";\nconst b = 1;\n')
+    expect(pieceTableContainsUnusualLineTerminators(folded)).toBe(true)
+    expect(
+      pieceTableContainsUnusualLineTerminators(createPieceTableSnapshot('const b = 1;\r\n')),
+    ).toBe(false)
+  })
+
+  test('carries an already-ingested answer through a pre-normalized snapshot', () => {
+    // Folded text no longer holds the evidence, so a caller that normalized the
+    // document itself has to hand its own finding in with the text.
+    const snapshot = createPieceTableSnapshot('a\nb', {
+      normalized: true,
+      containsUnusualLineTerminators: true,
+    })
+
+    expect(pieceTableContainsUnusualLineTerminators(snapshot)).toBe(true)
+  })
 
   test('applies non-overlapping batch edits against the original snapshot', () => {
     const snapshot = createPieceTableSnapshot('abcdef')

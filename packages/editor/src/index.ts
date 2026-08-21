@@ -26,7 +26,18 @@ export type {
   EditorBracketMatchPluginOptions,
   EditorDocumentLinkPluginOptions,
   EditorOccurrenceHighlightPluginOptions,
+  EditorSuspiciousCharactersOptions,
+  SuspiciousCharacterKind,
+  SuspiciousCharacterRange,
 } from './editor'
+export { suspiciousCharacterRanges } from './editor'
+export { createEditorOptionSync, EDITOR_OPTION_DESCRIPTORS } from './editor/optionDescriptors'
+export type {
+  EditorControlledOptionName,
+  EditorControlledSelection,
+  EditorOptionDescriptor,
+  EditorOptionSync,
+} from './editor/optionDescriptors'
 export {
   Anchor,
   anchorAfter,
@@ -56,13 +67,44 @@ export {
 } from './public/document'
 export {
   createEditorCapabilityToken,
+  createEditorLanguageFeatureToken,
   EDITOR_FIND_FEATURE,
   EDITOR_FIND_FEATURE_ID,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
+  EditorDecorationStore,
+  editorLanguageConfiguration,
+  projectDecorationRangeThroughEdits,
+  registerEditorLanguageConfiguration,
 } from './public/extensions'
-export type { EditorFindFeature } from './public/extensions'
-export { applyEditorTheme, editorThemesEqual, mergeEditorThemes } from './public/rendering'
+export type {
+  EditorAutoClosingPair,
+  EditorBlockCommentTokens,
+  EditorBracketPair,
+  EditorCommentTokens,
+  EditorDecoration,
+  EditorDecorationRange,
+  EditorDecorationSpec,
+  EditorDecorationSurface,
+  EditorEnterAction,
+  EditorFindFeature,
+  EditorFoldingRules,
+  EditorIndentationRules,
+  EditorLanguageConfiguration,
+  EditorOnEnterRule,
+} from './public/extensions'
+export {
+  applyEditorTheme,
+  darkenEditorColor,
+  editorColorReference,
+  editorColorValue,
+  editorThemesEqual,
+  firstEditorColor,
+  lightenEditorColor,
+  mergeEditorThemes,
+  registerEditorColor,
+  transparentEditorColor,
+} from './public/rendering'
 export {
   createEditorSyntaxSession,
   createEmptySyntaxResult,
@@ -176,6 +218,8 @@ export type {
   EditorInjectedTextRow,
   EditorInjectedTextRowProvider,
   EditorInjectedTextRowProviderContext,
+  EditorLanguageFeatureSelector,
+  EditorLanguageFeatureToken,
   EditorLogEditorContext,
   EditorLogError,
   EditorLogEvent,
@@ -192,6 +236,7 @@ export type {
   EditorPluginLifecycleState,
   EditorResolvedSelection,
   EditorSelectionRange,
+  EditorTrackedRanges,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionProvider,
@@ -213,10 +258,15 @@ export type {
   EditorBlockSize,
   EditorBlockSurfaceSlot,
   EditorBlockVerticalSurface,
+  EditorColorDefaults,
+  EditorColorId,
+  EditorColorTransform,
+  EditorColorValue,
   EditorCursorLineHighlightOptions,
   EditorSyntaxTheme,
   EditorSyntaxThemeColor,
   EditorTheme,
+  EditorThemeType,
   FixedSize,
   HiddenCharactersMode,
   MaxSize,

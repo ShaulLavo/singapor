@@ -112,3 +112,45 @@
 .editor-scope-line-active[data-editor-scope-line-level='5'] {
   background: var(--editor-scope-line-active-color-5);
 }
+
+/* The layer is a box over the scope the stack heads, in content coordinates, and is JS-positioned
+   on the rows of that scope. It exists to be the stack's containing block: a sticky box is held
+   inside the one it belongs to, so the stack is pinned to the top of the viewport while this box is
+   on screen and is slid up and out of it, pixel by pixel, as the box's end passes — which is the
+   push-out, computed by the browser on every frame instead of on every notification. */
+.editor-sticky-scroll {
+  /* Resolved here, on a box that inherits the editor's gutter width, because the stack is a text
+     view of its own and shadows that width with a gutter width of its own. */
+  --editor-sticky-scroll-inset: calc(
+    var(--editor-gutter-width, 0px) + var(--editor-sticky-scroll-leading, 0px)
+  );
+
+  left: 0;
+  min-width: max(100%, var(--editor-sticky-scroll-content-width, 0px));
+  pointer-events: none;
+  position: absolute;
+  z-index: var(--editor-z-overlay-surface);
+}
+
+/* Compound so that it outranks the text view's own rules whichever order the two stylesheets happen
+   to load in, rather than only when this one loads second. */
+.editor-virtualized.editor-sticky-scroll-lines {
+  --editor-sticky-scroll-shadow: rgba(0, 0, 0, 0.42);
+
+  /* The insets hold the stack clear of the gutter and of whatever width another overlay claimed on
+     an edge, so it covers text and nothing else. Sticking sideways as well as vertically keeps it
+     off the gutter no matter how far the content is scrolled. The shadow is what separates a
+     mirrored line from the real line beneath it. */
+  box-shadow: 0 6px 6px -6px var(--editor-sticky-scroll-shadow);
+  left: var(--editor-sticky-scroll-inset, 0px);
+  /* Nothing about the stack is scrollable: its height is exactly the lines it holds, and a scrollbar
+     of its own would move it out of step with the rows it mirrors. */
+  overflow: hidden;
+  pointer-events: none;
+  position: sticky;
+  top: 0;
+  width: calc(
+    var(--editor-sticky-scroll-viewport-width, 0px) - var(--editor-sticky-scroll-inset, 0px) -
+      var(--editor-sticky-scroll-trailing, 0px)
+  );
+}

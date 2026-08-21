@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { EditorCommandId } from '../src/editor/commands'
 import type { EditorOptions, HighlightRegistry } from '../src/editor/types'
 import {
   childContainingNode,
@@ -12,20 +13,25 @@ import {
   type EditorDisplayProjection,
 } from '../src/editor/displayProjectionRegistry'
 import {
+  defaultEditorCommandPacks,
   defaultEditorKeyBindings,
+  defaultEditorKeymapLayers,
+  editorCommandPackForCommand,
   editorKeyBindings,
+  editorKeymapLayersForBindings,
   editorKeymapLayersForCommandPacks,
+  filterEditorKeymapLayersByCommandPacks,
   readonlySafeEditorCommandPacks,
 } from '../src/editor/keymap'
 import {
   foldMarkerFromRange,
   foldRangeKey,
   foldRangesEqual,
-  projectSyntaxFoldsThroughLineEdit,
+  projectSyntaxFoldsThroughEdit,
   rejectCrossingFoldRanges,
 } from '../src/editor/folds'
 import { mouseSelectionAutoScrollDelta } from '../src/editor/mouseSelection'
-import { nextWordOffset, previousWordOffset } from '../src/editor/navigation'
+import { nextWordOffset, previousWordOffset } from '../src/textRanges'
 import { lineRangeAtOffset, wordRangeAtOffset } from '../src/editor/textRanges'
 import { appendTiming, eventStartMs, mergeChangeTimings } from '../src/editor/timing'
 import { createDocumentSession, type DocumentSessionChange } from '../src/documentSession'
@@ -66,7 +72,7 @@ describe('editor fold helpers', () => {
     const fold = foldRange({ startIndex: 4, endIndex: 20, startLine: 1, endLine: 5 })
 
     expect(foldRangeKey(fold)).toBe('typescript:block:4:20')
-    expect(foldMarkerFromRange(fold, new Set([foldRangeKey(fold)]))).toMatchObject({
+    expect(foldMarkerFromRange(fold, true)).toMatchObject({
       key: 'typescript:block:4:20',
       startOffset: 4,
       endOffset: 20,
@@ -76,32 +82,47 @@ describe('editor fold helpers', () => {
     expect(foldRangesEqual([fold], [{ ...fold, endLine: 6 }])).toBe(false)
   })
 
-  it('projects folds through line edits and records key remaps', () => {
+  it('projects folds through edits that add a line', () => {
     const fold = foldRange({ startIndex: 10, endIndex: 30, startLine: 2, endLine: 6 })
-    const projection = projectSyntaxFoldsThroughLineEdit(
+    const projected = projectSyntaxFoldsThroughEdit(
       [fold],
       { from: 0, to: 0, text: 'a\n' },
       'function f() {\n  return 1;\n}\n',
     )
 
-    expect(projection?.folds[0]).toMatchObject({
+    expect(projected?.[0]).toMatchObject({
       startIndex: 12,
       endIndex: 32,
       startLine: 3,
       endLine: 7,
     })
-    expect(projection?.keyMap.get(foldRangeKey(fold))).toBe('typescript:block:12:32')
+  })
+
+  it('projects folds through edits that stay on one line', () => {
+    const fold = foldRange({ startIndex: 10, endIndex: 30, startLine: 2, endLine: 6 })
+    const projected = projectSyntaxFoldsThroughEdit(
+      [fold],
+      { from: 0, to: 0, text: 'a' },
+      'function f() {\n  return 1;\n}\n',
+    )
+
+    expect(projected?.[0]).toMatchObject({
+      startIndex: 11,
+      endIndex: 31,
+      startLine: 2,
+      endLine: 6,
+    })
   })
 
   it('projects folds from snapshot ranges without materializing full text', () => {
     const fold = foldRange({ startIndex: 9, endIndex: 18, startLine: 3, endLine: 5 })
-    const projection = projectSyntaxFoldsThroughLineEdit(
+    const projected = projectSyntaxFoldsThroughEdit(
       [fold],
       { from: 0, to: 6, text: 'x' },
       lazyTextSnapshot('aa\nbb\ncc\ndd\nee\n'),
     )
 
-    expect(projection?.folds[0]).toMatchObject({
+    expect(projected?.[0]).toMatchObject({
       startIndex: 4,
       startLine: 1,
     })
@@ -177,33 +198,33 @@ describe('editor fold helpers', () => {
 })
 
 describe('EditorFoldState', () => {
-  it('syncs markers and remaps collapsed fold keys through projections', () => {
+  it('syncs markers and re-keys a collapsed region onto a reparsed fold', () => {
     const setFoldState = vi.fn()
-    const state = new EditorFoldState({ setFoldState }, () =>
-      createPieceTableSnapshot('function f() {\n  return 1;\n}\n'),
+    const snapshot = createPieceTableSnapshot('function f() {\n  return 1;\n}\n')
+    const state = new EditorFoldState(
+      { setFoldState },
+      () => snapshot,
+      () => [],
     )
     const fold = foldRange({ startIndex: 0, endIndex: 28, startLine: 0, endLine: 2 })
 
     state.setFoldProjections([foldProjection([fold])])
-    state.toggle(foldMarkerFromRange(fold, new Set()))
-    const projectedFold = { ...fold, startIndex: 2, endIndex: 30, startLine: 1, endLine: 3 }
-    state.applyProjectedEdit(
-      {
-        folds: [projectedFold],
-        keyMap: new Map([[foldRangeKey(fold), 'typescript:block:2:30']]),
-      },
-      [foldProjection([projectedFold])],
-    )
+    state.toggle(foldMarkerFromRange(fold, false))
+    const reparsedFold = { ...fold, startIndex: 13, type: 'statement_block' }
+    state.setFoldProjections([foldProjection([reparsedFold])])
 
     const [markers, foldMap] = setFoldState.mock.lastCall ?? []
-    expect(markers?.[0]).toMatchObject({ key: 'typescript:block:2:30', collapsed: true })
+    expect(markers?.[0]).toMatchObject({ key: foldRangeKey(reparsedFold), collapsed: true })
     expect(foldMap).not.toBeNull()
   })
 
   it('keeps markers for nested folds and collapses the outer range when both are folded', () => {
     const setFoldState = vi.fn()
-    const state = new EditorFoldState({ setFoldState }, () =>
-      createPieceTableSnapshot('function f() {\n  if (x) {\n    y();\n  }\n}\n'),
+    const snapshot = createPieceTableSnapshot('function f() {\n  if (x) {\n    y();\n  }\n}\n')
+    const state = new EditorFoldState(
+      { setFoldState },
+      () => snapshot,
+      () => [],
     )
     const outer = foldRange({ startIndex: 14, endIndex: 40, startLine: 0, endLine: 4 })
     const inner = foldRange({ startIndex: 25, endIndex: 38, startLine: 1, endLine: 3 })
@@ -315,6 +336,90 @@ describe('default editor keybindings', () => {
     expect(commands).toContain('editor.action.selectHighlights')
     expect(commands).toContain('editor.action.changeAll')
     expect(commands).not.toContain('editor.action.moveSelectionToNextFindMatch')
+  })
+
+  // A binding whose hotkey a later layer takes is dropped from the resolved keymap, so asking for
+  // the exact chord back is asking whether the command is still reachable at all.
+  it.each([
+    ['mac', 'cursorColumnSelectLeft', { alt: true, key: 'ArrowLeft', mod: true, shift: true }],
+    ['mac', 'cursorColumnSelectRight', { alt: true, key: 'ArrowRight', mod: true, shift: true }],
+    ['mac', 'cursorColumnSelectUp', { alt: true, key: 'ArrowUp', mod: true, shift: true }],
+    ['mac', 'cursorColumnSelectDown', { alt: true, key: 'ArrowDown', mod: true, shift: true }],
+    ['mac', 'cursorColumnSelectPageUp', { alt: true, key: 'PageUp', mod: true, shift: true }],
+    ['mac', 'cursorColumnSelectPageDown', { alt: true, key: 'PageDown', mod: true, shift: true }],
+    ['windows', 'cursorColumnSelectLeft', { alt: true, key: 'ArrowLeft' }],
+    ['windows', 'cursorColumnSelectRight', { alt: true, key: 'ArrowRight' }],
+    ['windows', 'cursorColumnSelectUp', { alt: true, key: 'ArrowUp', mod: true, shift: true }],
+    ['windows', 'cursorColumnSelectDown', { alt: true, key: 'ArrowDown', mod: true, shift: true }],
+    ['windows', 'cursorColumnSelectPageUp', { alt: true, key: 'PageUp', mod: true, shift: true }],
+    [
+      'windows',
+      'cursorColumnSelectPageDown',
+      { alt: true, key: 'PageDown', mod: true, shift: true },
+    ],
+    ['linux', 'cursorColumnSelectLeft', { alt: true, key: 'ArrowLeft' }],
+    ['linux', 'cursorColumnSelectRight', { alt: true, key: 'ArrowRight' }],
+    ['linux', 'cursorColumnSelectUp', { key: 'ArrowUp', mod: true }],
+    ['linux', 'cursorColumnSelectDown', { key: 'ArrowDown', mod: true }],
+    ['linux', 'cursorColumnSelectPageUp', { alt: true, key: 'PageUp', mod: true, shift: true }],
+    ['linux', 'cursorColumnSelectPageDown', { alt: true, key: 'PageDown', mod: true, shift: true }],
+  ] as const)('leaves %s a chord for %s', (platform, command, hotkey) => {
+    expect(defaultEditorKeyBindings(platform)).toContainEqual({ command, hotkey })
+  })
+
+  // Both helpers answer through the classification, so a command belonging to no pack is dropped
+  // from a host's own layer however many packs the host turned on — and dropped silently, because
+  // a filter that kept nothing looks from outside like one that had nothing to keep.
+  it('keeps a host layer bound to the commands the editor ships no key of its own for', () => {
+    const commands: readonly EditorCommandId[] = [
+      'editor.action.jumpToBracket',
+      'editor.action.toggleWordWrap',
+      'editor.action.trimTrailingWhitespace',
+      'editor.action.sortLinesAscending',
+      'editor.action.sortLinesDescending',
+      'editor.action.joinLines',
+      'editor.action.duplicateSelection',
+      'editor.action.transformToUppercase',
+      'editor.action.transformToLowercase',
+      'editor.action.transformToTitlecase',
+    ]
+    const bindings = commands.map((command, index) => ({
+      hotkey: { alt: true, key: `F${index + 1}` },
+      command,
+    }))
+
+    for (const command of commands) {
+      expect(editorCommandPackForCommand(command)).not.toBeNull()
+    }
+    expect(
+      filterEditorKeymapLayersByCommandPacks(
+        [{ id: 'host', source: 'app', bindings }],
+        defaultEditorCommandPacks,
+      ).flatMap((layer) => layer.bindings),
+    ).toEqual(bindings)
+    expect(editorKeymapLayersForBindings(bindings).flatMap((layer) => layer.bindings)).toEqual(
+      expect.arrayContaining(bindings),
+    )
+  })
+
+  it('keeps column selection in a keymap a host has narrowed to packs', () => {
+    const commands = filterEditorKeymapLayersByCommandPacks(
+      defaultEditorKeymapLayers('linux'),
+      readonlySafeEditorCommandPacks,
+    )
+      .flatMap((layer) => layer.bindings)
+      .map((binding) => binding.command)
+
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        'cursorColumnSelectLeft',
+        'cursorColumnSelectRight',
+        'cursorColumnSelectUp',
+        'cursorColumnSelectDown',
+        'cursorColumnSelectPageUp',
+        'cursorColumnSelectPageDown',
+      ]),
+    )
   })
 
   it('uses VS Code platform-specific edit shortcut shapes', () => {

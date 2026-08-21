@@ -97,12 +97,74 @@ type JsonRpcResponseError = {
   readonly data?: unknown
 }
 
+type JsonRpcRequestId = number | string
+
+/**
+ * The legend this worker publishes, and it is awkward on purpose.
+ *
+ * This worker is a conformance fixture for the semantic-token seam as much as it is the example
+ * app's language server, and a fixture that only exercises the easy path proves nothing about the
+ * servers the product actually runs. So the three shapes that break decoders are here by
+ * construction rather than by accident:
+ *
+ * - **`function` is the name at two distinct indices.** Legends are not sets, and real ones ship the
+ *   same name several times; a decoder that inverts the legend into a name-to-index map mis-decodes
+ *   every duplicate. Here TypeScript's `function` and its `member` both answer to `function`, which
+ *   is the legend a server that draws no method/function distinction really does publish.
+ * - **`typeAlias` is not one of LSP's standard type names**, and the editor's theme has no rule for
+ *   it at any prefix, so every span carrying it paints nothing until the host supplies a
+ *   `scopeAliases` entry — Contract §C4. A legend whose non-standard names outnumber its standard
+ *   ones is the ordinary case for a real server, not the exception.
+ * - **`local` is a modifier the editor's precedence ranks below `readonly`**, and TypeScript sets
+ *   both on the same token for every reference to a local `const`. Only the higher-ranked one
+ *   reaches the scope, so a `const` reference paints as a constant while a `let` reference beside it
+ *   paints as a variable.
+ *
+ * Both arrays are index-aligned with TypeScript's own `classifier.v2020` enums — `TokenType` is
+ * class, enum, interface, namespace, typeParameter, type, parameter, variable, enumMember, property,
+ * function, member, and `TokenModifier` is declaration, static, async, readonly, defaultLibrary,
+ * local. Those are internal `const enum`s the public API does not expose, so the order is written
+ * out here; keeping it aligned is what lets the encoder pass TypeScript's index through as the
+ * legend index untouched.
+ */
+const SEMANTIC_TOKEN_LEGEND: lsp.SemanticTokensLegend = {
+  tokenTypes: [
+    'class',
+    'enum',
+    'interface',
+    'namespace',
+    'typeParameter',
+    'typeAlias',
+    'parameter',
+    'variable',
+    'enumMember',
+    'property',
+    'function',
+    'function',
+  ],
+  tokenModifiers: ['declaration', 'static', 'async', 'readonly', 'defaultLibrary', 'local'],
+}
+
+/** `encoded = ((typeIndex + 1) << 8) | modifierSet`, TypeScript's own packing. */
+const SEMANTIC_TOKEN_TYPE_OFFSET = 8
+const SEMANTIC_TOKEN_MODIFIER_MASK = 255
+/** `getEncodedSemanticClassifications` answers `(start, length, encoded)` triples. */
+const SEMANTIC_CLASSIFICATION_STRIDE = 3
+
 let compilerOptionsOverride: ts.CompilerOptions = {}
 let diagnosticDelayMs = DEFAULT_DIAGNOSTIC_DELAY_MS
 let workspaceFiles = new Map<string, string>()
 let servicePromise: Promise<TypeScriptServiceState> | null = null
 const documents = new Map<lsp.DocumentUri, WorkerDocument>()
 const diagnosticTimers = new Map<lsp.DocumentUri, ReturnType<typeof setTimeout>>()
+/**
+ * Requests that have been dispatched and not yet answered, so `$/cancelRequest` can take one back
+ * out again before its answer is posted.
+ *
+ * An id is removed when its response is posted and when it is cancelled, whichever happens first,
+ * so the set holds only what is genuinely in flight.
+ */
+const inFlightRequests = new Set<JsonRpcRequestId>()
 
 const workerGlobal = globalThis as unknown as DedicatedWorkerGlobalScope
 workerGlobal.onmessage = (event: MessageEvent<unknown>): void => {
@@ -121,12 +183,45 @@ function handleIncomingMessage(data: unknown): void {
 }
 
 async function handleRequest(message: lsp.RequestMessage): Promise<void> {
+  const id = requestId(message)
+  if (id !== null) inFlightRequests.add(id)
+
   try {
     const result = await requestResult(message)
+    if (!claimResponse(id)) return
     postResponse(message.id ?? null, result)
   } catch (error) {
+    if (!claimResponse(id)) return
     postResponseError(message.id ?? null, error)
   }
+}
+
+/**
+ * Whether a response for this id may still be posted.
+ *
+ * A cancelled request answers nothing at all. The protocol also allows a `RequestCancelled` error
+ * response, but by the time `$/cancelRequest` reaches this worker the client has already rejected
+ * that request locally and forgotten its id (`LspClient.abortRequest`), so a late error has nowhere
+ * to land — and a cancellation that abandons real work is the point of §C8, not response
+ * suppression.
+ */
+function claimResponse(id: JsonRpcRequestId | null): boolean {
+  if (id === null) return true
+  return inFlightRequests.delete(id)
+}
+
+function handleCancelRequest(params: unknown): void {
+  if (!isRecord(params)) return
+
+  const id = params.id
+  if (typeof id !== 'number' && typeof id !== 'string') return
+  inFlightRequests.delete(id)
+}
+
+function requestId(message: lsp.RequestMessage): JsonRpcRequestId | null {
+  const id = message.id
+  if (typeof id === 'number' || typeof id === 'string') return id
+  return null
 }
 
 function handleNotification(message: lsp.NotificationMessage): void {
@@ -146,11 +241,16 @@ async function requestResult(message: lsp.RequestMessage): Promise<unknown> {
   if (message.method === 'textDocument/references') return referencesResult(message.params)
   if (message.method === 'textDocument/implementation') return implementationResult(message.params)
   if (message.method === 'textDocument/typeDefinition') return typeDefinitionResult(message.params)
+  if (message.method === 'textDocument/semanticTokens/full')
+    return semanticTokensFullResult(message.params)
+  if (message.method === 'textDocument/semanticTokens/range')
+    return semanticTokensRangeResult(message.params)
   throw rpcError(METHOD_NOT_FOUND, `Method not implemented: ${message.method}`)
 }
 
 function routeNotification(message: lsp.NotificationMessage): void {
   if (message.method === 'initialized') return
+  if (message.method === '$/cancelRequest') return handleCancelRequest(message.params)
   if (message.method === 'exit') return shutdownWorkerState()
   if (message.method === 'textDocument/didOpen') return handleDidOpen(message.params)
   if (message.method === 'textDocument/didChange') return handleDidChange(message.params)
@@ -184,6 +284,11 @@ function initializeResult(params: unknown): lsp.InitializeResult {
       referencesProvider: true,
       implementationProvider: true,
       typeDefinitionProvider: true,
+      semanticTokensProvider: {
+        legend: SEMANTIC_TOKEN_LEGEND,
+        full: true,
+        range: true,
+      },
     },
   } as lsp.InitializeResult
 }
@@ -412,6 +517,183 @@ async function typeDefinitionResult(params: unknown): Promise<lsp.Location[]> {
   )
 }
 
+/**
+ * Whole-document tokens, and Milestone 2's measurements say when a host should ask for them.
+ *
+ * On a warm service a 100-line span classifies in 0.380 ms against 22.514 ms for the whole of a
+ * 5,027-line file, and this worker has one message loop with no queue — so those 22 ms are time no
+ * completion (0.212 ms) and no hover (0.114 ms) can use. Classification is linear in the span asked
+ * for and carries no fixed cost worth naming, which is what makes the split worth making.
+ *
+ * Both requests are answered rather than one: `full` is what a host has to ask on open, when there
+ * is no viewport yet and the answer is bounded by the document. **The demand signal of §C8 should be
+ * answered with `range`**, and the fixture is built around that being the hot path.
+ */
+async function semanticTokensFullResult(params: unknown): Promise<lsp.SemanticTokens | null> {
+  const requested = documentFromTextDocumentParams(params)
+  if (!requested) return null
+
+  const settled = await settledService(requested)
+  if (!settled) return null
+
+  return {
+    data: encodeSemanticTokens(settled.env, settled.document, {
+      start: 0,
+      length: settled.document.text.length,
+    }),
+  }
+}
+
+/** See `semanticTokensFullResult` for which of the two a host should be asking. */
+async function semanticTokensRangeResult(params: unknown): Promise<lsp.SemanticTokens | null> {
+  const requested = documentFromTextDocumentParams(params)
+  if (!requested) return null
+
+  const range = lspRangeFromParams(params)
+  if (!range) return null
+
+  const settled = await settledService(requested)
+  if (!settled) return null
+
+  // One scan of the document, not three. `lspPositionToOffset` walks the text a character at a time
+  // from offset zero, so asking it for both ends of a range cost two full passes before
+  // `encodeSemanticTokens` made a third building the very array that answers both — a fixed
+  // O(document) charge on a per-viewport question, larger than the classification it wraps and
+  // growing with the file rather than with the window.
+  const text = settled.document.text
+  const lineStarts = documentLineStarts(text)
+  const start = offsetAtPosition(lineStarts, text.length, range.start)
+  const end = offsetAtPosition(lineStarts, text.length, range.end)
+  return {
+    data: encodeSemanticTokens(
+      settled.env,
+      settled.document,
+      { start, length: Math.max(end - start, 0) },
+      lineStarts,
+    ),
+  }
+}
+
+/**
+ * The service and the document together, once both have settled — or nothing if the document moved
+ * out from under the request while we waited.
+ *
+ * `ensureService()` can suspend for a long time — the first call fetches the lib set over the
+ * network, and `handleSetWorkspaceFiles` invalidates the service so that recurs — and notifications
+ * are routed the moment they arrive, with nothing serialising them behind an in-flight request. So
+ * a `didChange` lands freely inside that window, `createService` builds its environment from the
+ * *new* text, and a handler still holding the object it captured before the await would encode
+ * span offsets taken from the new document against line starts taken from the old one: an answer
+ * consistent with neither version, which no host-side version check can reconcile. Re-reading the
+ * map after the await is what `publishDiagnosticsForUri` already does, for the same reason.
+ */
+async function settledService(requested: WorkerDocument): Promise<{
+  readonly env: VirtualTypeScriptEnvironment
+  readonly document: WorkerDocument
+} | null> {
+  const state = await ensureService()
+
+  const current = documents.get(requested.uri)
+  if (!isCurrentDocument(requested, current)) return null
+
+  return { document: current, env: state.env }
+}
+
+/** Where `position` lands, against line starts the caller has already built. */
+function offsetAtPosition(
+  lineStarts: readonly number[],
+  textLength: number,
+  position: lsp.Position,
+): number {
+  const lineStart = lineStarts[position.line]
+  if (lineStart === undefined) return textLength
+
+  const lineEnd = lineStarts[position.line + 1] ?? textLength
+  const offset = lineStart + position.character
+  return offset > lineEnd ? lineEnd : offset
+}
+
+/**
+ * TypeScript's absolute triples, re-encoded as LSP's relative 5-tuples.
+ *
+ * `getEncodedSemanticClassifications` answers `(start, length, encoded)` in document offsets, where
+ * `encoded = ((typeIndex + 1) << 8) | modifierSet`. The `+ 1` is how TypeScript spells "no
+ * classification", so a triple that decodes to -1 is dropped rather than encoded as type zero.
+ *
+ * **The first tuple's `deltaLine` is measured from line zero even when the caller asked for a range
+ * halfway down the file.** LSP's cursor starts at the top of the document, not at the top of the
+ * request; encoding it relative to the range start is invisible until a host scrolls, at which point
+ * every span in the answer paints a screenful too high.
+ *
+ * Nothing here crosses a newline: TypeScript classifies identifiers, and a client that has not
+ * declared `multilineTokenSupport` must not be sent one (Contract §C1).
+ */
+function encodeSemanticTokens(
+  env: VirtualTypeScriptEnvironment,
+  document: WorkerDocument,
+  span: ts.TextSpan,
+  precomputedLineStarts?: readonly number[],
+): number[] {
+  const classifications = env.languageService.getEncodedSemanticClassifications(
+    document.fileName,
+    span,
+    ts.SemanticClassificationFormat.TwentyTwenty,
+  )
+  const spans = classifications.spans
+  const lineStarts = precomputedLineStarts ?? documentLineStarts(document.text)
+  const data: number[] = []
+  let previousLine = 0
+  let previousCharacter = 0
+
+  for (
+    let index = 0;
+    index + SEMANTIC_CLASSIFICATION_STRIDE <= spans.length;
+    index += SEMANTIC_CLASSIFICATION_STRIDE
+  ) {
+    const start = spans[index] as number
+    const length = spans[index + 1] as number
+    const encoded = spans[index + 2] as number
+    const tokenType = (encoded >> SEMANTIC_TOKEN_TYPE_OFFSET) - 1
+    if (tokenType < 0 || tokenType >= SEMANTIC_TOKEN_LEGEND.tokenTypes.length) continue
+
+    const line = lineForOffset(lineStarts, start)
+    const character = start - (lineStarts[line] as number)
+    data.push(
+      line - previousLine,
+      line === previousLine ? character - previousCharacter : character,
+      length,
+      tokenType,
+      encoded & SEMANTIC_TOKEN_MODIFIER_MASK,
+    )
+    previousLine = line
+    previousCharacter = character
+  }
+
+  return data
+}
+
+function documentLineStarts(text: string): readonly number[] {
+  const starts = [0]
+  for (let index = text.indexOf('\n'); index !== -1; index = text.indexOf('\n', index + 1)) {
+    starts.push(index + 1)
+  }
+  return starts
+}
+
+// Bisection rather than `offsetToLspPosition` per token: that one walks the text from the start on
+// every call, which turns one classification of a large file into a quadratic scan of it.
+function lineForOffset(lineStarts: readonly number[], offset: number): number {
+  let low = 0
+  let high = lineStarts.length - 1
+  while (low < high) {
+    const middle = (low + high + 1) >> 1
+    if ((lineStarts[middle] as number) <= offset) low = middle
+    else high = middle - 1
+  }
+
+  return low
+}
+
 function ensureService(): Promise<TypeScriptServiceState> {
   if (servicePromise) return servicePromise
 
@@ -422,15 +704,24 @@ function ensureService(): Promise<TypeScriptServiceState> {
   return servicePromise
 }
 
-async function createService(): Promise<TypeScriptServiceState> {
+// The lib files come off the TypeScript playground CDN, which is the right source for a worker
+// running in a browser and the wrong one for a test — no suite of ours may depend on the network
+// being reachable, and a fetch of a hundred-odd `.d.ts` files is the slowest thing here by far.
+// `libraryFiles` lets a caller hand in the same libs read from `node_modules/typescript/lib`
+// instead. Omitted — which is every call the worker itself makes — the fetch is untouched.
+async function createService(
+  libraryFiles?: ReadonlyMap<string, string>,
+): Promise<TypeScriptServiceState> {
   const projectConfig = readProjectConfig()
   const compilerOptions = resolvedCompilerOptions(projectConfig)
-  const fsMap = await createDefaultMapFromCDN(
-    vfsLibraryCompilerOptions(compilerOptions),
-    ts.version,
-    false,
-    ts,
-  )
+  const fsMap = libraryFiles
+    ? new Map(libraryFiles)
+    : await createDefaultMapFromCDN(
+        vfsLibraryCompilerOptions(compilerOptions),
+        ts.version,
+        false,
+        ts,
+      )
   addWorkspaceFiles(fsMap)
   addReactJsxRuntimeFallbackFiles(fsMap)
   addOpenDocuments(fsMap)
@@ -1039,6 +1330,33 @@ function textDocumentPositionParams(params: unknown): {
   }
 }
 
+function documentFromTextDocumentParams(params: unknown): WorkerDocument | null {
+  if (!isRecord(params)) return null
+  if (!isRecord(params.textDocument)) return null
+  if (typeof params.textDocument.uri !== 'string') return null
+
+  return documentForUri(params.textDocument.uri)
+}
+
+function lspRangeFromParams(params: unknown): lsp.Range | null {
+  if (!isRecord(params)) return null
+  if (!isRecord(params.range)) return null
+
+  const start = lspPositionFromValue(params.range.start)
+  const end = lspPositionFromValue(params.range.end)
+  if (!start || !end) return null
+
+  return { start, end }
+}
+
+function lspPositionFromValue(value: unknown): lsp.Position | null {
+  if (!isRecord(value)) return null
+  if (typeof value.line !== 'number') return null
+  if (typeof value.character !== 'number') return null
+
+  return { line: value.line, character: value.character }
+}
+
 function referencesIncludeDeclaration(params: unknown): boolean {
   if (!isRecord(params)) return true
   if (!isRecord(params.context)) return true
@@ -1128,6 +1446,7 @@ export const __typeScriptLspWorkerInternalsForTests = {
   applyContentChange,
   applyContentChanges,
   collectDiagnostics,
+  createService,
   defaultCompilerOptions,
   fileNameToDocumentUri,
 }

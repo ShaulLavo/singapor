@@ -2,11 +2,7 @@
   "compilerOptions": {
     "target": "ES2023",
     "module": "ESNext",
-    "lib": [
-      "ES2023",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -20,53 +16,21 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "paths": {
-      "@singapor/core": [
-        "./src/index.ts"
-      ],
-      "@singapor/core/debug": [
-        "./src/debug.ts"
-      ],
-      "@singapor/core/document": [
-        "./src/public/document.ts"
-      ],
-      "@singapor/core/editor": [
-        "./src/editor.ts"
-      ],
-      "@singapor/core/extensions": [
-        "./src/public/extensions.ts"
-      ],
-      "@singapor/core/internal": [
-        "./src/internal.ts"
-      ],
-      "@singapor/core/logging": [
-        "./src/logging/index.ts"
-      ],
-      "@singapor/core/logging/evlog": [
-        "./src/logging/evlog.ts"
-      ],
-      "@singapor/core/rendering": [
-        "./src/public/rendering.ts"
-      ],
-      "@singapor/core/secondary-views": [
-        "./src/public/secondaryViews.ts"
-      ],
-      "@singapor/core/shiki": [
-        "./src/shiki/index.ts"
-      ],
-      "@singapor/core/syntax": [
-        "./src/public/syntax.ts"
-      ],
-      "@singapor/core/testing": [
-        "./src/public/testing.ts"
-      ]
+      "@singapor/core": ["./src/index.ts"],
+      "@singapor/core/debug": ["./src/debug.ts"],
+      "@singapor/core/document": ["./src/public/document.ts"],
+      "@singapor/core/editor": ["./src/editor.ts"],
+      "@singapor/core/extensions": ["./src/public/extensions.ts"],
+      "@singapor/core/internal": ["./src/internal.ts"],
+      "@singapor/core/logging": ["./src/logging/index.ts"],
+      "@singapor/core/logging/evlog": ["./src/logging/evlog.ts"],
+      "@singapor/core/rendering": ["./src/public/rendering.ts"],
+      "@singapor/core/secondary-views": ["./src/public/secondaryViews.ts"],
+      "@singapor/core/shiki": ["./src/shiki/index.ts"],
+      "@singapor/core/syntax": ["./src/public/syntax.ts"],
+      "@singapor/core/testing": ["./src/public/testing.ts"]
     }
   },
-  "include": [
-    "src",
-    "test",
-    "../../global.d.ts"
-  ],
-  "exclude": [
-    "dist"
-  ]
+  "include": ["src", "test", "../../global.d.ts"],
+  "exclude": ["dist"]
 }

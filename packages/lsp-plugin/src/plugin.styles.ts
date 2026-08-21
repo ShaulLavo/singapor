@@ -115,6 +115,18 @@ export const DIAGNOSTIC_STYLES: Record<
     backgroundColor: DIAGNOSTIC_ERROR_BACKGROUND,
     color: DIAGNOSTIC_ERROR,
     textDecoration: `underline wavy ${DIAGNOSTIC_ERROR_UNDERLINE}`,
+    // The only diagnostic style that declares a `color`, and therefore the only one that contends
+    // for one. Left implicit it sat at 0 alongside every syntax token highlight, so whether an
+    // error's red text survived over a syntax-coloured identifier came down to which style key the
+    // document's shared registry had seen first — a function of session history. Declaring it puts
+    // the error above the semantic layer and below every find highlight, which is the order the five
+    // producers of a `color` are meant to paint in.
+    //
+    // It carries a background and an underline as well, and find's three styles all carry a
+    // background too — so this number has to differ from all of theirs, not just from the one that
+    // also declares a colour. Sharing a number with the find match would leave *that* contest to
+    // registration order, which is the thing being fixed rather than a different question.
+    zIndex: 3,
   },
   warning: { backgroundColor: DIAGNOSTIC_WARNING_BACKGROUND },
   information: { backgroundColor: DIAGNOSTIC_INFORMATION_BACKGROUND },

@@ -29,3 +29,13 @@ export {
 export { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from './captures'
 export { packEditorTokens, packedEditorTokenTransfers, unpackEditorTokens } from './packedTokens'
 export type { PackedEditorTokens } from './packedTokens'
+export { createSemanticTokenStyles } from './semanticTokens'
+export type {
+  SemanticTokenDropReason,
+  SemanticTokenPayload,
+  SemanticTokenPushResult,
+  SemanticTokenRangeRequest,
+  SemanticTokenSpan,
+  SemanticTokenStyleOptions,
+  SemanticTokenStyles,
+} from './semanticTokens'

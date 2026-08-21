@@ -1,13 +1,36 @@
 import type { EditorTokenStyle } from './tokens'
 
-const STYLE_PROPERTIES: ReadonlyArray<{
+/**
+ * Every field that makes a style its own style.
+ *
+ * Deliberately wider than what a highlight can paint: a highlighter with real theme data
+ * distinguishes an italic comment from an upright one, and folding those together here would key
+ * both onto one group and lose a distinction the theme went to the trouble of making. Identity is
+ * one question; what reaches CSS is another, and HIGHLIGHT_DECLARATIONS answers that one.
+ */
+const STYLE_KEYS: ReadonlyArray<keyof EditorTokenStyle> = [
+  'color',
+  'backgroundColor',
+  'fontStyle',
+  'fontWeight',
+  'textDecoration',
+]
+
+/**
+ * The subset a `::highlight()` rule can actually apply.
+ *
+ * Highlight pseudo-elements admit colour, background-colour, text-decoration, text-shadow and
+ * text-stroke and nothing else (CSS Pseudo-Elements 4) — a font property declared here is parsed,
+ * kept, and silently ignored at paint. The range side of the house already knows this;
+ * VirtualizedTextHighlightStyle offers no font properties at all. Emitting them on the token side
+ * only produced rules that lied about what they did.
+ */
+const HIGHLIGHT_DECLARATIONS: ReadonlyArray<{
   key: keyof EditorTokenStyle
   cssProperty: string
 }> = [
   { key: 'color', cssProperty: 'color' },
   { key: 'backgroundColor', cssProperty: 'background-color' },
-  { key: 'fontStyle', cssProperty: 'font-style' },
-  { key: 'fontWeight', cssProperty: 'font-weight' },
   { key: 'textDecoration', cssProperty: 'text-decoration' },
 ]
 
@@ -17,13 +40,13 @@ export function clamp(value: number, min: number, max: number): number {
 
 export function serializeTokenStyle(style: EditorTokenStyle): string {
   const obj: Record<string, unknown> = {}
-  for (const { key } of STYLE_PROPERTIES) obj[key] = style[key]
+  for (const key of STYLE_KEYS) obj[key] = style[key]
   return JSON.stringify(obj)
 }
 
 export function normalizeTokenStyle(style: EditorTokenStyle): EditorTokenStyle | null {
   const normalized: EditorTokenStyle = {}
-  for (const { key } of STYLE_PROPERTIES) {
+  for (const key of STYLE_KEYS) {
     if (style[key]) (normalized as Record<string, unknown>)[key] = style[key]
   }
   return Object.keys(normalized).length > 0 ? normalized : null
@@ -31,7 +54,7 @@ export function normalizeTokenStyle(style: EditorTokenStyle): EditorTokenStyle |
 
 export function buildHighlightRule(name: string, style: EditorTokenStyle): string {
   const declarations: string[] = []
-  for (const { key, cssProperty } of STYLE_PROPERTIES) {
+  for (const { key, cssProperty } of HIGHLIGHT_DECLARATIONS) {
     if (style[key]) declarations.push(`${cssProperty}: ${style[key]};`)
   }
   return `::highlight(${name}) { ${declarations.join(' ')} }`

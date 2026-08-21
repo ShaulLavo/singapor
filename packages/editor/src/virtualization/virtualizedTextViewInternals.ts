@@ -106,6 +106,14 @@ export interface VirtualizedTextViewInternal {
   readonly selectionHighlightName: string
   readonly selectionHighlight: Highlight | null
   readonly rangeHighlightGroups: Map<string, VirtualizedTextHighlightGroup>
+  // A range rule depends only on a group's name and style, so a repaint that moves ranges around
+  // cannot change the rule set. Counting the changes that *can* — a group added, removed, or
+  // restyled — is what keeps `rebuildStyleRules` off the O(groups^2) path a per-keystroke repaint
+  // of many groups would otherwise put it on. Worth about 1% of a keystroke at the live group
+  // count, which is smaller than it sounds and was once recorded as far larger; see the correction
+  // in docs/plan-semantic-tokens.md under Milestone 5.
+  rangeHighlightRuleVersion: number
+  renderedRangeHighlightRuleVersion: number
   selectionHighlightRegistered: boolean
   model: VirtualizedTextViewModelState
   text: string

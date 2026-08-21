@@ -58,7 +58,13 @@ type PendingRequest = {
   readonly abortCleanup?: () => void
 }
 
-type RequestOptions = {
+/**
+ * Per-request overrides. Both matter to a caller the default was not written for: `timeoutMs`
+ * because a cold server on a large project will blow past the 3s default on its first answer, and
+ * `signal` because aborting sends `$/cancelRequest` on the wire — a server that honours it abandons
+ * real work, which is not the same thing as suppressing a response that was already computed.
+ */
+export type RequestOptions = {
   readonly timeoutMs?: number
   readonly signal?: AbortSignal
 }

@@ -694,6 +694,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorScopeStyleRule",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorScopeStyles",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorScrollMode",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
@@ -1090,6 +1102,48 @@
         },
         {
           "kind": "type",
+          "name": "SemanticTokenDropReason",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenPayload",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenPushResult",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenRangeRequest",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenSpan",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenStyleOptions",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenStyles",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "SuspiciousCharacterKind",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
@@ -1252,6 +1306,12 @@
         },
         {
           "kind": "unknown",
+          "name": "createEditorScopeStyles",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "createEditorSyntaxSession",
           "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
@@ -1308,6 +1368,18 @@
           "kind": "unknown",
           "name": "createPieceTableWalker",
           "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createSemanticTokenLayer",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createSemanticTokenStyles",
+          "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1644,6 +1716,30 @@
           "kind": "unknown",
           "name": "resolveMergeConflict",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SEMANTIC_TOKEN_Z_INDEX",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SemanticTokenLayer",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SemanticTokenLayerController",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SemanticTokenLayerOptions",
+          "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -3483,6 +3579,36 @@
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
+          "kind": "type",
+          "name": "SemanticTokenDropReason",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenPayload",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenPushResult",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenRangeRequest",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenSpan",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
           "kind": "unknown",
           "name": "createEditorCapabilityToken",
           "source": "packages/editor/src/plugins.ts",
@@ -3492,6 +3618,12 @@
           "kind": "unknown",
           "name": "createEditorLanguageFeatureToken",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createSemanticTokenLayer",
+          "source": "packages/editor/src/semanticTokenLayer.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {
@@ -3558,6 +3690,30 @@
           "kind": "unknown",
           "name": "reindentEditsForRanges",
           "source": "packages/editor/src/editor/reindent.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SEMANTIC_TOKEN_Z_INDEX",
+          "source": "packages/editor/src/semanticTokenLayer.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SemanticTokenLayer",
+          "source": "packages/editor/src/semanticTokenLayer.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SemanticTokenLayerController",
+          "source": "packages/editor/src/semanticTokenLayer.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "SemanticTokenLayerOptions",
+          "source": "packages/editor/src/semanticTokenLayer.ts",
           "via": "packages/editor/src/public/extensions.ts"
         }
       ],
@@ -4653,6 +4809,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorScopeStyleRule",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorScopeStyles",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorSyntaxCapture",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
@@ -4778,6 +4946,54 @@
           "via": "packages/editor/src/public/syntax.ts"
         },
         {
+          "kind": "type",
+          "name": "SemanticTokenDropReason",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenPayload",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenPushResult",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenRangeRequest",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenSpan",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenStyleOptions",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SemanticTokenStyles",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createEditorScopeStyles",
+          "source": "packages/editor/src/theme.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
           "kind": "unknown",
           "name": "createEditorSyntaxSession",
           "source": "packages/editor/src/syntax/index.ts",
@@ -4792,6 +5008,12 @@
         {
           "kind": "unknown",
           "name": "createEmptySyntaxSession",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createSemanticTokenStyles",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
         },

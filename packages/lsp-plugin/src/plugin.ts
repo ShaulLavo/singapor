@@ -11,7 +11,7 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
-import type { LspClient, LspWorkspace } from '@singapor/lsp'
+import type { LspClient, LspNotificationHandler } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
@@ -33,6 +33,7 @@ import { FormatOnTypeController } from './formatOnType'
 import { HoverDefinitionController } from './hoverDefinitionController'
 import { SignatureHelpController } from './signatureHelpController'
 import { DocumentHighlightController } from './documentHighlightController'
+import { SemanticTokenLayerOwner, type LanguageServerSemanticTokensOptions } from './semanticTokens'
 import { createRenameWidgetController, type RenameWidgetController } from './renameWidget'
 import {
   workspaceEditForDocument,
@@ -54,6 +55,7 @@ import type {
 import { formattingChangesText, formattingEdits, formattingOptions } from './formatting'
 import type { TextEdit } from '@singapor/core'
 import type {
+  LanguageServerConnectionContext,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticSummary,
   LanguageServerNavigationOptions,
@@ -62,6 +64,10 @@ import type {
   LanguageServerReferencesResult,
   LanguageServerStatus,
 } from './types'
+// Re-exported so `@singapor/lsp-plugin` keeps handing this out from where it always did; it is
+// defined in `types.ts` because the narrow factory's options need it and a shared vocabulary module
+// that imports the module consuming it is a cycle.
+export type { LanguageServerConnectionContext } from './types'
 
 export type { LanguageServerResolvedOptions } from './pluginTypes'
 
@@ -72,11 +78,6 @@ const DEFAULT_NAMESPACE = 'lsp-plugin'
 const DEFAULT_TIMING_PREFIX = 'lspPlugin'
 const DEFAULT_DIAGNOSTICS_SOURCE_ID = 'editor.lsp-plugin.diagnostics'
 const DEFAULT_COMPLETION_ACCEPT_TIMING_NAME = 'lspPlugin.completion.accept'
-
-export type LanguageServerConnectionContext = {
-  readonly client: LspClient
-  readonly workspace: LspWorkspace
-}
 
 export type LanguageServerCommandTarget = {
   goToDefinitionFromSelection(): boolean
@@ -108,6 +109,12 @@ export type LanguageServerAdapterPluginOptions = {
   readonly hoverMarkdownCodeBackground?: boolean
   readonly initializationOptions?: unknown
   readonly timeoutMs?: number
+  /** See LanguageServerPluginOptions.capabilities. */
+  readonly capabilities?: lsp.ClientCapabilities
+  /** See LanguageServerPluginOptions.clientInfo. */
+  readonly clientInfo?: lsp.InitializeParams['clientInfo']
+  /** See LanguageServerPluginOptions.notificationHandlers. Merged, never replacing. */
+  readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   createTransport(): ReturnType<LspConnectionTransportFactory>
   readonly defaultHighlightPrefix?: string
   readonly documentSync?: Omit<DocumentSyncOptions, 'onDocumentClosed'>
@@ -139,6 +146,11 @@ export type LanguageServerAdapterPluginOptions = {
     readonly navigationTimingNamePrefix?: string
   }
   readonly commands?: readonly LanguageServerCommandSpec[]
+  /**
+   * Turns on the semantic token layer. Supplying nothing here creates no layer and fires no demand
+   * signal, so a host that paints no semantic colour pays nothing for the feature existing.
+   */
+  readonly semanticTokens?: LanguageServerSemanticTokensOptions
   onConnectionCreated?(context: LanguageServerConnectionContext): EditorDisposable | void
   onConnected?(context: LanguageServerConnectionContext): void
   readonly onStatusChange?: (status: LanguageServerStatus) => void
@@ -159,6 +171,9 @@ type LanguageServerResolvedAdapterOptions = {
   readonly hoverMarkdownCodeBackground: boolean
   readonly initializationOptions: unknown
   readonly timeoutMs: number
+  readonly capabilities?: lsp.ClientCapabilities
+  readonly clientInfo?: lsp.InitializeParams['clientInfo']
+  readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   createTransport(): ReturnType<LspConnectionTransportFactory>
   readonly defaultHighlightPrefix: string
   readonly documentSync: Omit<DocumentSyncOptions, 'onDocumentClosed'>
@@ -180,6 +195,7 @@ type LanguageServerResolvedAdapterOptions = {
     readonly navigationTimingNamePrefix: string
   }
   readonly commands: readonly LanguageServerCommandSpec[]
+  readonly semanticTokens?: LanguageServerSemanticTokensOptions
   onConnectionCreated?(context: LanguageServerConnectionContext): EditorDisposable | void
   onConnected?(context: LanguageServerConnectionContext): void
   readonly onStatusChange?: (status: LanguageServerStatus) => void
@@ -202,10 +218,16 @@ export function createLanguageServerPlugin(
     hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
     initializationOptions: options.initializationOptions,
     timeoutMs: options.timeoutMs,
+    capabilities: options.capabilities,
+    clientInfo: options.clientInfo,
+    notificationHandlers: options.notificationHandlers,
     createTransport: createWebSocketLspTransportFactory(
       options.webSocketRoute,
       options.webSocketTransportOptions,
     ),
+    semanticTokens: options.semanticTokens,
+    onConnectionCreated: options.onConnectionCreated,
+    onConnected: options.onConnected,
     onStatusChange: options.onStatusChange,
     onDiagnostics: options.onDiagnostics,
     onInteractiveReady: options.onInteractiveReady,
@@ -349,6 +371,8 @@ class LanguageServerContribution implements EditorViewContribution {
   private readonly codeActions: CodeActionController
   /** Absent rather than idle when switched off, so nothing watches the typing at all. */
   private readonly formatOnType: FormatOnTypeController | null
+  /** Absent unless the host asked for semantic colour; see LanguageServerSemanticTokensOptions. */
+  private readonly semanticTokens: SemanticTokenLayerOwner | null
   private rename: RenameWidgetController | null = null
   /** The symbol an open prompt is renaming, which is what the prompt has to stay beside. */
   private renamePromptRange: OffsetRange | null = null
@@ -370,6 +394,9 @@ class LanguageServerContribution implements EditorViewContribution {
         rootUri: options.rootUri,
         initializationOptions: options.initializationOptions,
         timeoutMs: options.timeoutMs,
+        capabilities: options.capabilities,
+        clientInfo: options.clientInfo,
+        notificationHandlers: options.notificationHandlers,
         createTransport: options.createTransport,
       },
       {
@@ -446,6 +473,9 @@ class LanguageServerContribution implements EditorViewContribution {
     this.formatOnType = options.formatOnType
       ? new FormatOnTypeController({ context, editFeature: options.completion.editFeature })
       : null
+    this.semanticTokens = options.semanticTokens
+      ? new SemanticTokenLayerOwner(context, options.semanticTokens)
+      : null
     this.state.register(this)
     this.connection.connect()
     this.update(context.getSnapshot(), 'document', null)
@@ -467,6 +497,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.documentHighlights.update(snapshot, kind)
     this.codeActions.update(kind)
     this.formatOnType?.update(snapshot, kind, change ?? null)
+    this.semanticTokens?.update(snapshot, kind)
   }
 
   public dispose(): void {
@@ -484,6 +515,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.documentHighlights.dispose()
     this.codeActions.dispose()
     this.formatOnType?.dispose()
+    this.semanticTokens?.dispose()
     this.rename?.dispose()
     this.connection.dispose()
   }
@@ -713,6 +745,9 @@ function resolveAdapterOptions(
     hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground ?? false,
     initializationOptions: options.initializationOptions,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    capabilities: options.capabilities,
+    clientInfo: options.clientInfo,
+    notificationHandlers: options.notificationHandlers,
     createTransport: options.createTransport,
     defaultHighlightPrefix: options.defaultHighlightPrefix ?? DEFAULT_HIGHLIGHT_PREFIX,
     documentSync: options.documentSync ?? {},
@@ -721,6 +756,7 @@ function resolveAdapterOptions(
     formatOnType: options.formatOnType ?? true,
     hoverDefinition: resolveHoverDefinitionOptions(options),
     commands: options.commands ?? LANGUAGE_SERVER_COMMANDS,
+    semanticTokens: options.semanticTokens,
     onConnectionCreated: options.onConnectionCreated,
     onConnected: options.onConnected,
     onStatusChange: options.onStatusChange,

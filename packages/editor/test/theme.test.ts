@@ -331,6 +331,8 @@ const SYNTAX = {
   number: 'var(--editor-syntax-number)',
   property: 'var(--editor-syntax-property)',
   string: 'var(--editor-syntax-string)',
+  textEmphasis: 'var(--editor-syntax-text-emphasis)',
+  textStrong: 'var(--editor-syntax-text-strong)',
   type: 'var(--editor-syntax-type)',
   typeDefinition: 'var(--editor-syntax-type-definition)',
   typeParameter: 'var(--editor-syntax-type-parameter)',
@@ -340,6 +342,11 @@ const SYNTAX = {
 
 // Every scope the previous exact-match and first-segment tables covered, with the style each one
 // resolved to then. The trie is only allowed to add resolutions for scopes those tables missed.
+//
+// text.emphasis and text.strong carry a colour that the original tables did not give them. They
+// declared a font property and nothing else, which a ::highlight() rule cannot apply — so those two
+// scopes were registered, grouped and painted with a rule that did nothing at all. Their entries
+// here are the fix, not a drift.
 const COVERED_SCOPE_STYLES: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
   ['attribute', { color: SYNTAX.attribute }],
   ['comment', { color: SYNTAX.comment, fontStyle: 'italic' }],
@@ -361,10 +368,10 @@ const COVERED_SCOPE_STYLES: ReadonlyArray<readonly [string, Record<string, unkno
   ['punctuation.bracket', { color: SYNTAX.bracket }],
   ['string', { color: SYNTAX.string }],
   ['tag', { color: SYNTAX.keyword }],
-  ['text.emphasis', { fontStyle: 'italic' }],
+  ['text.emphasis', { color: SYNTAX.textEmphasis, fontStyle: 'italic' }],
   ['text.literal', { color: SYNTAX.string }],
   ['text.reference', { color: SYNTAX.property }],
-  ['text.strong', { fontWeight: 700 }],
+  ['text.strong', { color: SYNTAX.textStrong, fontWeight: 700 }],
   ['text.title', { color: SYNTAX.keywordDeclaration, fontWeight: 700 }],
   ['text.uri', { color: SYNTAX.string, textDecoration: 'underline' }],
   ['type', { color: SYNTAX.type }],

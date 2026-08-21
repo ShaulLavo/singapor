@@ -106,15 +106,35 @@ export {
   transparentEditorColor,
 } from './public/rendering'
 export {
+  createSemanticTokenLayer,
+  SEMANTIC_TOKEN_Z_INDEX,
+  type SemanticTokenLayer,
+  type SemanticTokenLayerController,
+  type SemanticTokenLayerOptions,
+} from './public/extensions'
+export {
+  createEditorScopeStyles,
   createEditorSyntaxSession,
   createEmptySyntaxResult,
   createEmptySyntaxSession,
+  createSemanticTokenStyles,
   createSyntaxLanguageConfiguration,
   createSyntaxProjectionTag,
   createSyntaxSnapshotTag,
   isEditorSyntaxLanguage,
   styleForTreeSitterCapture,
   treeSitterCapturesToEditorTokens,
+} from './public/syntax'
+export type {
+  EditorScopeStyleRule,
+  EditorScopeStyles,
+  SemanticTokenDropReason,
+  SemanticTokenPayload,
+  SemanticTokenPushResult,
+  SemanticTokenRangeRequest,
+  SemanticTokenSpan,
+  SemanticTokenStyleOptions,
+  SemanticTokenStyles,
 } from './public/syntax'
 export {
   defaultEditorCommandPacks,

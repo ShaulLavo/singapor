@@ -45,9 +45,7 @@ export function workspaceEditForDocument(
   return plan.documents.find((document) => document.uri === uri)?.edits ?? []
 }
 
-function planFromChanges(
-  changes: lsp.WorkspaceEdit['changes'],
-): readonly WorkspaceEditDocument[] {
+function planFromChanges(changes: lsp.WorkspaceEdit['changes']): readonly WorkspaceEditDocument[] {
   if (!changes) return []
 
   return Object.entries(changes).map(([uri, edits]) => ({ edits, uri }))

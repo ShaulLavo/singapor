@@ -120,9 +120,7 @@ const loadConfiguredTheme = (options: ShikiHighlighterPluginOptions, owner: Shik
     themes: preloadThemes(options),
   })
 
-const preloadThemes = (
-  options: ShikiHighlighterPluginOptions,
-): readonly string[] | undefined => {
+const preloadThemes = (options: ShikiHighlighterPluginOptions): readonly string[] | undefined => {
   const themes = options.preloadThemes
   if (typeof themes === 'function') return themes()
 

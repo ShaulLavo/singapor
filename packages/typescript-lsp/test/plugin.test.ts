@@ -9,10 +9,13 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
+  SemanticTokenLayer,
 } from '@singapor/core/extensions'
 import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
-import type { LspWebSocketLike, LspWorkerLike } from '@singapor/lsp'
+import type { LspClient, LspWebSocketLike, LspWorkerLike } from '@singapor/lsp'
+import { semanticTokensClientCapability } from '@singapor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type * as lsp from 'vscode-languageserver-protocol'
 import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'
 
 type Listener = (event: Event) => void
@@ -183,6 +186,58 @@ describe('createTypeScriptLspPlugin', () => {
 
     contribution.dispose()
     expect(worker.terminated).toBe(true)
+  })
+
+  /**
+   * The four options a host needs to paint semantic colour through this plugin, and the one thing
+   * they must not cost it. A capability block only matters if it reaches `initialize`, a layer only
+   * matters if it reaches the host, and a client handle is the only way to ask for tokens at all —
+   * while the workspace-file sync this plugin registers on its own connection has to survive a host
+   * that also wants the connection.
+   */
+  it('passes capabilities, a client handle and a semantic token layer through to the host', async () => {
+    const worker = new FakeWorker()
+    // Held on an object: each of these is assigned inside a callback, and a bare local would be
+    // narrowed to `null` for the rest of the test whatever the callback did with it.
+    const handed: { client: LspClient | null; layer: SemanticTokenLayer | null } = {
+      client: null,
+      layer: null,
+    }
+    const plugin = createTypeScriptLspPlugin({
+      diagnosticDelayMs: 0,
+      workerFactory: () => worker,
+      capabilities: semanticTokensClientCapability({ requests: { full: true, range: true } }),
+      clientInfo: { name: 'example-app' },
+      semanticTokens: {
+        onLayer: (layer) => {
+          handed.layer = layer
+        },
+      },
+      onConnectionCreated: (context) => {
+        handed.client = context.client
+      },
+    })
+    const provider = activatePlugin(plugin)
+    const contribution = provider.createContribution(viewContributionContext(editorSnapshot()))
+    if (!contribution) throw new Error('missing contribution')
+
+    const initialize = message(worker.sent[0])
+    const params = initialize.params as lsp.InitializeParams
+    expect(params.capabilities.textDocument?.semanticTokens?.requests).toEqual({
+      full: true,
+      range: true,
+    })
+    expect(params.clientInfo).toEqual({ name: 'example-app' })
+    expect(handed.client).not.toBeNull()
+    expect(handed.layer).not.toBeNull()
+
+    worker.receive(initializeResponse(initialize))
+    await flushPromises()
+    plugin.setWorkspaceFiles([{ path: 'src/other.ts', text: 'export const other = 1' }])
+
+    expect(sentMethods(worker)).toContain('editor/typescript/setWorkspaceFiles')
+
+    contribution.dispose()
   })
 
   it('routes worker crashes through owned worker transport', () => {

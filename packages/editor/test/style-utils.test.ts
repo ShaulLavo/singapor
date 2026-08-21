@@ -80,10 +80,34 @@ describe('buildHighlightRule', () => {
     const rule = buildHighlightRule('tok-1', {
       color: '#fff',
       backgroundColor: '#000',
-      fontWeight: 700,
+      textDecoration: 'underline',
     })
     expect(rule).toBe(
-      '::highlight(tok-1) { color: #fff; background-color: #000; font-weight: 700; }',
+      '::highlight(tok-1) { color: #fff; background-color: #000; text-decoration: underline; }',
+    )
+  })
+
+  // A ::highlight() rule can only apply colour, background-colour, text-decoration, text-shadow and
+  // text-stroke. A font property emitted here is parsed and then ignored, so the rule claimed
+  // something it never did — and for a style that declared nothing else, the whole rule was inert.
+  it('emits no font declarations, because a highlight cannot apply them', () => {
+    expect(
+      buildHighlightRule('tok-3', { color: '#fff', fontStyle: 'italic', fontWeight: 700 }),
+    ).toBe('::highlight(tok-3) { color: #fff; }')
+    expect(buildHighlightRule('tok-4', { fontStyle: 'italic', fontWeight: 700 })).toBe(
+      '::highlight(tok-4) {  }',
+    )
+  })
+
+  // The other half of the split: dropping a font property from the CSS must not drop it from the
+  // style's identity. Two tokens differing only in weight are two styles to a highlighter that has
+  // real theme data, and collapsing them onto one key would paint the second with the first's rule.
+  it('keeps font properties in the style key', () => {
+    expect(serializeTokenStyle({ color: '#f00', fontWeight: 700 })).not.toBe(
+      serializeTokenStyle({ color: '#f00', fontWeight: 400 }),
+    )
+    expect(serializeTokenStyle({ color: '#f00', fontStyle: 'italic' })).not.toBe(
+      serializeTokenStyle({ color: '#f00', fontStyle: 'normal' }),
     )
   })
 

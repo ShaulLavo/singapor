@@ -1,8 +1,21 @@
-import type { EditorPlugin } from '@singapor/core/extensions'
-import type { LspWebSocketTransportOptions } from '@singapor/lsp'
+import type { EditorDisposable, EditorPlugin } from '@singapor/core/extensions'
+import type {
+  LspClient,
+  LspNotificationHandler,
+  LspWebSocketTransportOptions,
+  LspWorkspace,
+} from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
+import type { LanguageServerSemanticTokensOptions } from './semanticTokens'
+
 export type LanguageServerStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+/** The connection a host is handed the moment it exists. See LanguageServerPluginOptions. */
+export type LanguageServerConnectionContext = {
+  readonly client: LspClient
+  readonly workspace: LspWorkspace
+}
 
 export type LanguageServerDiagnosticCounts = {
   readonly error: number
@@ -48,8 +61,35 @@ export type LanguageServerPluginOptions = {
   readonly hoverMarkdownCodeBackground?: boolean
   readonly initializationOptions?: unknown
   readonly timeoutMs?: number
+  /**
+   * Merged over `defaultClientCapabilities()`, so a host declares only what it adds. Build a
+   * semantic-tokens block with `semanticTokensClientCapability()` from `@singapor/lsp` rather than
+   * by hand: it refuses the flags this editor cannot honour, each of which a real server acts on.
+   */
+  readonly capabilities?: lsp.ClientCapabilities
+  /** At least one real server branches on this. The value is the host's to pick. */
+  readonly clientInfo?: lsp.InitializeParams['clientInfo']
+  /**
+   * Merged around the plugin's own handlers. An entry for `textDocument/publishDiagnostics` runs
+   * after the plugin's and cannot displace it, because the diagnostics feature hangs off it.
+   */
+  readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   readonly webSocketRoute: string | URL
   readonly webSocketTransportOptions?: LspWebSocketTransportOptions
+  /**
+   * Turns on the semantic token layer, and is how the host gets hold of one: a layer needs a
+   * viewport, a snapshot and a lifecycle, so the contribution creates it and hands it over through
+   * `onLayer`. Supplying nothing creates no layer and fires no demand signal.
+   */
+  readonly semanticTokens?: LanguageServerSemanticTokensOptions
+  /**
+   * Hands the host the connection the moment it exists, which is the only way to reach the
+   * `LspClient` — and therefore the only way to issue a request, override the timeout for one, or
+   * cancel one. Returning a disposable ties the host's own controller to the connection's life.
+   */
+  onConnectionCreated?(context: LanguageServerConnectionContext): EditorDisposable | void
+  /** The same context again, once `initialize` has come back and server capabilities are known. */
+  onConnected?(context: LanguageServerConnectionContext): void
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void

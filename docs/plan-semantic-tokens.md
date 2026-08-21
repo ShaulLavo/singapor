@@ -32,6 +32,69 @@ executing.
 
 ---
 
+## Execution status
+
+**Milestones 0 through 6 are built, tested and green; Milestone 7 is the conformance fixture and is
+tracked in its own section.** Every milestone's checklist below is ticked with a note on what landed,
+and every measurement the plan asked for is recorded as a blockquote beside the milestone that asked
+for it. Where the implementation departed from the plan as written — three additions in Milestone 4,
+one clarification in Milestone 6 — the departure is written up under that milestone rather than made
+silently.
+
+**One thing is open, and it is the decision the plan reserved for a human.** Milestone 5's cost gate
+has two thresholds. Gate 1 passes with room to spare. **Gate 2 fails, by 3.7x, and it cannot be made
+to pass.** The remedy ladder was worked in order: remedy 1 was applied and kept but is **worth about 1%, not
+the 25% first recorded here** (see the correction under Milestone 5), remedy 2 was evaluated and
+rejected, and **remedy 3 turned out not to exist** — the plan proposed coalescing the repaint "the way find already coalesces its re-search",
+and find does not coalesce its repaint at all. Once that is corrected the comparison reduces to a
+group-count ratio, and the group count cannot come down: a twenty-row window of TypeScript genuinely
+contains about sixteen distinct kinds of thing and the shipped theme genuinely gives them about
+fourteen colours. **The premise the gate was calibrated on — "a handful" — is what the measurement
+disproves.** The numbers, the reasoning and what it leaves open are under Milestone 5.
+
+---
+
+### The adversarial review of the implementation
+
+Six lenses over the finished code — decoder correctness, layer correctness, the `rebuildStyleRules`
+change, the capability plumbing, Milestones 0 and 1, and conformance to §C1–§C9 — with every finding
+handed to an independent verifier told to refute it. **Five findings survived, covering four distinct
+defects. All four are fixed, each with a test that fails on the pre-fix tree.**
+
+1. **`high` — a layer that outlived its document kept painting into the next one.**
+   `SemanticTokenLayerOwner` disposes a layer on a document change, so the shipped plugin path was
+   safe — but `createSemanticTokenLayer` is public, and a caller holding one layer across a switch
+   kept the previous file's spans painted *and* kept re-anchoring them, because a tracked range built
+   against one piece table resolves against another to a live offset rather than to nothing. This is
+   exactly what §C5's document check exists to prevent, reached from the side `push()` cannot see.
+   `update()` now clears the painted state when the document underneath it changes.
+2. **`high` — the capture specificity table was read by exact lookup while styles resolve by
+   longest prefix.** The shipped queries only emit two-segment names, all of which are in the table,
+   so nothing in this repo was affected. A grammar contributed through `registerLanguage` using the
+   ordinary three-segment convention got the *inverse* of the intended rule: `keyword.declaration.function`
+   fell below `variable` and lost its span to the one capture the table calls the fallback.
+   `captureRank` now walks prefixes the way the style trie does.
+3. **`medium` — a tuple that clamped away to nothing was counted as a zero-length tuple.** It is not
+   one: it arrived with a real length and began past the end of the text, which almost always means
+   the response describes a longer document than the `lineStarts` and `textLength` it was decoded
+   against — a stale snapshot on the host's own side. Booking it under rule 4, whose documentation
+   says such tuples "are common in the wild", tells the host to ignore the one signal pointing at its
+   own bug. It is now counted under `pastEndOfDocument`, whose meaning is widened to both axes of the
+   same failure.
+4. **`low` — the capability builder's rationale was attached to the wrong declaration.** A private
+   `type Writable<T>` sat between the JSDoc block and `semanticTokensClientCapability`, so the one
+   export §C3 tells every host to call had no documentation on hover. Moved.
+
+**What the review confirmed as sound**, having tried specifically to break each: the relative
+5-tuple cursor advances correctly across every rejection path; bit 31 of the modifier set decodes
+correctly despite `1 << 31` being negative in JavaScript (now pinned by a test); the overlap
+truncation in `normalizeSpans` never emits a zero-length or inverted range; the `rebuildStyleRules`
+version counter cannot produce a stale stylesheet — `sameHighlightStyle` compares a superset of what
+`rangeHighlightRule` reads, and the shared-token flush happens before the early return; and
+`serializeTokenStyle` still produces byte-identical output after the M0 table split.
+
+---
+
 ## Verdict, up front
 
 **Milestones 0 through 3 are unconditional and should be built.** M0 and M1 close two live,
@@ -268,13 +331,17 @@ editor normalises unconditionally (above); a host-side claim of "spans sorted, n
 assertion about untrusted server data that no server guarantees and neither side checks.
 
 **Multi-line spans are supported**, because the paint layer takes offsets and paints across mounted
-rows. **Ownership of `multilineTokenSupport` is split, and both halves are named here.** The *gate* is
-the editor's: `semanticTokensClientCapability()` refuses the flag until Milestone 5's multi-line exit
-criterion passes (M3, M5). The *declaration* is the host's, per §C3, once the gate opens. The
-consequence, stated so that neither plan tests against a fiction: **until the gate opens a conformant
-server sends no multi-line token at all**, so a live-server test of multi-line painting can only pass
-against a non-conformant server. Multi-line *decoding* may still be asserted over a literal 5-tuple
-array at any time — that is Milestone 4's exit criterion and it needs no capability.
+rows. **Ownership of `multilineTokenSupport` was split, and the gate is now open.** The *gate* was the
+editor's: `semanticTokensClientCapability()` refused the flag until Milestone 5's multi-line exit
+criterion passed. It passes — a semantic span crossing a newline paints across two mounted rows, in
+`packages/editor/test/semanticTokenPaintOrder.test.ts` — so the builder accepts the flag and emits
+the key when asked. The *declaration* remains the host's, per §C3, and stays opt-in rather than
+default-on: it is a statement about the host's own pipeline as much as the editor's, and a host that
+re-derives spans from `{line, character}` pairs may not be able to honour it even though the layer
+can. A host that declares nothing gets no key, and absent is what the wire means by false.
+
+Multi-line *decoding* is a separate question that never needed the capability: it is asserted over a
+literal 5-tuple array in Milestone 4.
 
 ### §C2 — Coordinate space
 
@@ -328,8 +395,9 @@ granularity.**
 - **The editor ships the builder, and its job is to prevent a lie.**
   `semanticTokensClientCapability(options)`, exported from `packages/lsp` (Milestone 3), produces a
   block that declares **exactly** what the shipped decoder honours and nothing more: it cannot express
-  `overlappingTokenSupport: true` (§C1), it refuses `multilineTokenSupport` until Milestone 5's exit
-  criterion passes (§C1), and it does not offer `dynamicRegistration` at all (below).
+  `overlappingTokenSupport: true` (§C1), it does not offer `dynamicRegistration` at all (below), and
+  it accepts `multilineTokenSupport` only because Milestone 5's exit criterion for it now passes
+  (§C1) — before that it refused the flag.
 - **The editor ships the pass-through.** `capabilities` and `clientInfo` reach `LspClient` through
   `LspConnectionOptions` **and both plugin option types** (Milestone 3). None of that exists today,
   which is the blocker.
@@ -694,8 +762,8 @@ The sub-terms Pass 4 found floating, each with the owner it now has and where th
 | --- | --- | --- |
 | `textDocument.semanticTokens` block: content and granularity | host | §C3 |
 | `augmentsSyntaxTokens` | host, per server | §C3 |
-| `multilineTokenSupport` — the gate | editor (**M3** builder, **M5** criterion) | §C1 |
-| `multilineTokenSupport` — the declaration | host, once the gate opens | §C1, §C3 |
+| `multilineTokenSupport` — the gate | editor (**M3** builder, **M5** criterion) — **open** | §C1 |
+| `multilineTokenSupport` — the declaration | host, opt-in now the gate is open | §C1, §C3 |
 | `overlappingTokenSupport` | neither: unexpressible by construction | §C1, §C3 |
 | `dynamicRegistration` / `client/registerCapability` | **de-scoped on both sides** | §C3 |
 | `workspace/semanticTokens/refresh` — request route | **de-scoped on both sides** | §C9 |
@@ -913,9 +981,16 @@ fails on today's code. `resolveEditorScopeStyle('comment')` still declares a col
 No token in any existing fixture changes its resolved colour except the two markdown scopes named,
 asserted by the existing token suite passing untouched.
 
-- [ ] **Split the style-key table from the CSS-declaration table in `style-utils.ts`** — `S`
-- [ ] **Give `text.emphasis` and `text.strong` a colour so they paint at all** — `S`
-- [ ] **Markdown fixture test that fails today and passes after** — `S`
+- [x] **Split the style-key table from the CSS-declaration table in `style-utils.ts`** — `S`
+      → `STYLE_KEYS` (identity, all five fields) and `HIGHLIGHT_DECLARATIONS` (paint, three fields).
+- [x] **Give `text.emphasis` and `text.strong` a colour so they paint at all** — `S`
+      → registered ids `syntax.textEmphasis` and `syntax.textStrong`, defaulting through
+      `editorColorReference` to `syntax.type` and `syntax.constant`, so a theme can override them by
+      id and one that declares nothing still looks deliberate.
+- [x] **Markdown fixture test that fails today and passes after** — `S`
+      → `packages/tree-sitter-languages/test/captureTokens.test.ts`, driving the real markdown and
+      markdown_inline grammars through the same injection the worker performs. Verified failing on
+      the pre-fix tree and passing after.
 
 ---
 
@@ -980,10 +1055,52 @@ off `process.cwd()`. The query text is `typescript-highlights.scm` concatenated 
 the point of the measurement is to find overlap kinds this plan has not enumerated, and a fixture can
 only contain the ones its author already thought of.
 
-- [ ] **A static rank over the capture scope names, beside `CAPTURE_STYLE_RULES`** — `S`
-- [ ] **Exact-span resolution inside `treeSitterCapturesToEditorTokens`** — `S`
-- [ ] **`nonOverlapping` measured before and after on a real fixture, recorded here** — `S`
-- [ ] **Partial overlaps pinned, not fixed** — `S`
+**The measurement, taken as specified: the real TypeScript grammar, the real shipped queries
+(`typescript-highlights.scm` + `javascript-highlights.scm`), three real ~500-line source files from
+this repo, through `treeSitterCapturesToEditorTokens` and into `getEditorTokenIndex`.**
+
+> ```
+>                                                lines  tokens  nonOverlapping  exact-span dupes  nested
+> BEFORE
+>   packages/lsp/src/client.ts                     558    3448           false               474       5
+>   packages/editor/src/theme.ts                   599    3242           false               377     111
+>   packages/lsp-plugin/src/completionController.ts 613   2957           false               307       0
+> AFTER
+>   packages/lsp/src/client.ts                     558    2974           false                 0       5
+>   packages/editor/src/theme.ts                   599    2865           false                 0     111
+>   packages/lsp-plugin/src/completionController.ts 613   2650            TRUE                 0       0
+> ```
+
+**The hypothesis was half right, which is why the criterion measured instead of asserting.**
+Exact-span duplicates are gone everywhere — 474, 377 and 307 of them, roughly one token in seven —
+and one of the three files does flip `nonOverlapping` to true. The other two do not, and the
+remaining overlap has one cause: **template literals**. A `@string` (and, under injection, an
+`@embedded`) capture covers the whole literal while `@punctuation.special` (`${`, `}`),
+`@variable`, `@property` and `@function` capture inside it. Those are nested, not exact-span, so
+Milestone 1 deliberately leaves them alone and the partial-overlap test pins them. Ranked by
+frequency across the two files that stayed false:
+
+> ```
+>   42  string ⊃ punctuation.bracket        20  string ⊃ embedded
+>   42  embedded ⊃ punctuation.bracket      20  punctuation.special ⊃ embedded
+>   40  string ⊃ punctuation.special         9  string ⊃ punctuation.delimiter
+>   29  string ⊃ variable                    7  string ⊃ property
+>   29  embedded ⊃ variable                  7  string ⊃ function
+> ```
+
+A file with no template literal is now non-overlapping; a file with one is not, and never was going
+to be under an exact-span rule.
+
+- [x] **A static rank over the capture scope names, beside `CAPTURE_STYLE_RULES`** — `S`
+      → `CAPTURE_SPECIFICITY` in `packages/editor/src/syntax/captures.ts`
+- [x] **Exact-span resolution inside `treeSitterCapturesToEditorTokens`** — `S`
+      → `exactSpanWinners`, same file. Only captures that would produce a token at all are
+      candidates, so a winner can never be a name that resolves to no style and swallow a sibling
+      that does.
+- [x] **`nonOverlapping` measured before and after on a real fixture, recorded here** — `S`
+- [x] **Partial overlaps pinned, not fixed** — `S`
+      → `packages/tree-sitter-languages/test/captureTokens.test.ts`, "leaves partial overlaps
+      alone, order-dependent as they were".
 
 ---
 
@@ -1033,9 +1150,54 @@ An earlier draft compared (a) against `DEFAULT_DIAGNOSTIC_DELAY_MS`. **That is n
 not be used as one** — it is a debounce interval, the time we wait before starting diagnostics, which
 says nothing about how long work may take once started. Left visible here so nobody reintroduces it.
 
-- [ ] **Lib map read from disk, and a seam in `createService` to inject it** — `M`
-- [ ] **A real `ts.LanguageService` in a test, in a file that does not `vi.mock('typescript')`** — `M`
-- [ ] **Whole-file versus span classification cost, benchmarked and recorded here as a datum** — `S`
+**The measurement, taken as specified.** A warm `ts.LanguageService`, nothing mocked, libs read from
+`node_modules/typescript/lib`, `fetch` never called. The fixture is 5,027 lines of real TypeScript
+from this repo, assembled by `bench/semanticClassification.ts`: every `.ts` file under
+`packages/typescript-lsp/src` and then `packages/minimap/src`, in path order, each file's body
+wrapped in its own `namespace` and its imports dropped, so the concatenation parses as one module
+and two files that both define `isRecord` do not collide. It parses clean — zero syntactic
+diagnostics — and classifies to 7,894 tokens. `bun run bench:semantic-classification` from
+`packages/typescript-lsp`; Apple M1, bun 1.3.10, TypeScript 6.0.3; 3 warm-up then 20 measured
+iterations.
+
+> ```
+>                                                       average       p95     worst
+>  (a) getEncodedSemanticClassifications, whole file    22.514ms  24.783ms  36.134ms
+>  (b) getEncodedSemanticClassifications, 100-line span  0.380ms   0.403ms   0.410ms
+>  (c) getCompletionsAtPosition (member, after a `.`)    0.212ms   0.466ms   0.556ms
+>  (d) getQuickInfoAtPosition                            0.114ms   0.458ms   0.597ms
+>
+>  first, cold, whole-file classification               239.900ms
+>  spread of (a)'s average across four runs        19.7ms – 30.0ms
+> ```
+
+**The ratio is the finding, not the milliseconds.** 100 lines is a fiftieth of the fixture and (b) is
+a sixtieth of (a): on a warm service, classification is linear in the range you ask for and carries
+no fixed cost worth naming, so a server answering a range question pays no whole-file tax to do it.
+(c) and (d) are the other things the example app's single message loop has to interleave with, and
+both sit in the same sub-millisecond band as (b). It is (a), alone, that is two orders of magnitude
+away from all three. Note (c) is a *member* completion, taken after a `.` at a position the checker
+can answer — a global-scope completion is a much larger list and a different number.
+
+**These four numbers are a datum, not a gate.** They price the example app's in-process TypeScript
+worker on one machine — one message loop, no queue, so (a) is time no other language feature can
+use. They say nothing about an out-of-process server, which is where the product's tokens actually
+come from, and nothing in Milestones 4–6 may be conditioned on them.
+
+- [x] **Lib map read from disk, and a seam in `createService` to inject it** — `M`
+      → `createService(libraryFiles?)` in `packages/typescript-lsp/src/typescriptLsp.worker.ts`,
+      reachable through the existing `__typeScriptLspWorkerInternalsForTests` export. Omit the
+      argument and the `createDefaultMapFromCDN` call is exactly what it was.
+      `typeScriptLibraryFilesFromDisk` in `packages/typescript-lsp/test/realTypeScriptService.ts`
+      builds the map, resolving the lib directory through `createRequire`.
+- [x] **A real `ts.LanguageService` in a test, in a file that does not `vi.mock('typescript')`** — `M`
+      → `packages/typescript-lsp/test/realTypeScriptService.test.ts`. `globalThis.fetch` is stubbed
+      to throw for the whole file; `getEncodedSemanticClassifications` over a fixture returns a
+      non-empty `spans` whose length is a multiple of three, and both directions of the seam are
+      asserted — injected map builds without a fetch, no map takes the CDN URL.
+- [x] **Whole-file versus span classification cost, benchmarked and recorded here as a datum** — `S`
+      → `packages/typescript-lsp/bench/semanticClassification.ts`, wired as
+      `bun run bench:semantic-classification`. Numbers in the blockquote above.
 
 ---
 
@@ -1078,11 +1240,17 @@ for the handle.
 `textDocument.semanticTokens` block from the caller's choices — `requests` (`full`, `full.delta`,
 `range`), `tokenTypes`, `tokenModifiers`, `formats`, `multilineTokenSupport`, `augmentsSyntaxTokens` —
 and its whole purpose is that **what it can produce is exactly what the shipped decoder honours**.
-Three flags are absent by construction rather than defaulted, and each absence is a term of the
-contract: §C1 forbids `overlappingTokenSupport: true`, so it is not a settable option; §C1 gates
-`multilineTokenSupport` on Milestone 5's exit criterion, so the builder rejects it until then; and §C3
+Two flags are absent by construction rather than defaulted, and each absence is a term of the
+contract: §C1 forbids `overlappingTokenSupport: true`, so it is not a settable option; and §C3
 de-scopes `dynamicRegistration` on both sides, so the builder does not offer it at all. This is the
 mechanism that stops the client declaring a flag it cannot honour, which a real server will act on.
+
+`multilineTokenSupport` was a third such absence when this section was first written, gated by §C1 on
+Milestone 5's exit criterion. **That criterion passed and the gate was opened**, so the builder now
+takes it as an ordinary option and emits the key only when a caller asks — see the milestone entry
+and the §C1 row. It stays opt-in rather than default-on because it is a statement about the host's
+pipeline as much as the editor's: a host that re-derives spans from `{line, character}` pairs of its
+own may not be able to honour it even where the paint layer can.
 
 **The builder is the editor's whole contribution to §C3's content, and the host calls it.** This plan
 does not choose `tokenTypes`, does not answer `augmentsSyntaxTokens`, and does not decide how many
@@ -1111,13 +1279,14 @@ host's per §C3 and a default here would be a lie for every host that does not i
 contradict it** — see §C3. `semanticTokensClientCapability()` produces a block whose `requests`,
 `tokenTypes` and `tokenModifiers` round-trip through
 `mergeClientCapabilities(defaultClientCapabilities(), …)` unchanged; it has no way to express
-`overlappingTokenSupport: true` or `dynamicRegistration`; and calling it with
-`multilineTokenSupport: true` fails, with the failure naming Milestone 5's criterion. **Those three
+`overlappingTokenSupport: true` or `dynamicRegistration`; and it emits `multilineTokenSupport` only
+when a caller asks for it, Milestone 5's criterion for that flag having passed. **The two forbidden
 flags are absent from the emitted block, never present as `false`** — the builder has no option that
-produces the key at all, and absent is what the wire means by false. Any test on either side asserts
-that the key **is not there**; a test asserting `flag === false` asserts something this builder cannot
-produce, and a plan deliverable written as `dynamicRegistration: false` is describing an emitted key
-that will never exist. A host on the
+produces either key at all, and absent is what the wire means by false. Any test on either side
+asserts that the key **is not there**; a test asserting `flag === false` asserts something this
+builder cannot produce, and a plan deliverable written as `dynamicRegistration: false` is describing
+an emitted key that will never exist. The same holds for `multilineTokenSupport` when a host does not
+ask for it. A host on the
 **narrow** factory receives a `LanguageServerConnectionContext` from `onConnectionCreated`, issues a
 request through `context.client` with a per-request `timeoutMs`, and cancels it with an
 `AbortSignal` — asserted end to end against a stub transport, because those three are the whole of
@@ -1126,10 +1295,30 @@ method the connection does not install is invoked, **and a host-supplied handler
 `textDocument/publishDiagnostics`** — asserted by driving both notifications through the transport
 and seeing diagnostics still arrive.
 
-- [ ] **`capabilities`, `clientInfo` and merged `notificationHandlers` through `LspConnectionOptions` and both plugin option types** — `S`
-- [ ] **`onConnectionCreated` / `onConnected` on the narrow factory, so the host holds the `LspClient`** — `S`
-- [ ] **`semanticTokensClientCapability()`, constrained to what the decoder honours** — `S`
-- [ ] **A comment on `defaultClientCapabilities()` recording why semantic tokens are not in it** — `S`
+- [x] **`capabilities`, `clientInfo` and merged `notificationHandlers` through `LspConnectionOptions` and both plugin option types** — `S`
+      → `lspConnection.ts` (`LspConnectionOptions` + `createClient`), `plugin.ts`
+      (`LanguageServerAdapterPluginOptions`, the resolved options, `createLanguageServerPlugin`),
+      `types.ts` (`LanguageServerPluginOptions`). The publishDiagnostics merge runs the plugin's
+      handler first and the host's after, so a host entry for that method adds rather than displaces.
+- [x] **`onConnectionCreated` / `onConnected` on the narrow factory, so the host holds the `LspClient`** — `S`
+      → forwarded in `createLanguageServerPlugin`. `RequestOptions` is now exported from
+      `packages/lsp` as `LspRequestOptions` as well: §C8's three primitives are per-request
+      `timeoutMs`, `signal`, and `requestHandle().cancel()`, and the type naming two of them was
+      module-private.
+- [x] **`semanticTokensClientCapability()`, constrained to what the decoder honours** — `S`
+      → `packages/lsp/src/semanticTokens.ts`, with `SEMANTIC_TOKEN_TYPES` and
+      `SEMANTIC_TOKEN_MODIFIERS` exported beside it. `overlappingTokenSupport` and
+      `dynamicRegistration` are not options and no code path emits either key.
+      `multilineTokenSupport` shipped refused, and **the gate was opened once M5's criterion passed**
+      — the builder now accepts it and emits the key only when a caller asks.
+- [x] **A comment on `defaultClientCapabilities()` recording why semantic tokens are not in it** — `S`
+      → and a test asserting the block is still absent, which is the editor's half of the Pass 4
+      decision that the block's content is the host's.
+
+**Verified in both directions.** All seven assertions in
+`packages/lsp-plugin/test/narrowFactoryPlumbing.test.ts` fail on the pre-M3 tree — including
+`onConnectionCreated never fired on the narrow factory`, which is the blocker itself — and pass
+after.
 
 ---
 
@@ -1258,11 +1447,42 @@ that scope's style. `variable` + `{readonly, local}` resolves the same style as 
 milestone and does not restate the rules, because rule 2 in particular is the kind that is easy to
 restate with the drop and without the advance — which is exactly the defect Pass 4 found.
 
-- [ ] **`decodeSemanticTokens` in `packages/lsp-plugin`, with the five rejection rules, returning `{spans, drops}`** — `M`
-- [ ] **Standard LSP token types registered as colour ids with reference defaults** — `S`
-- [ ] **Scope resolver: type axis through the trie, one canonical modifier suffix** — `M`
-- [ ] **`scopeAliases` pass-through, and `null` for an unresolved name** — `S`
-- [ ] **Export `createEditorScopeStyles` on the public syntax surface** — `S`
+- [x] **`decodeSemanticTokens` in `packages/lsp-plugin`, with the five rejection rules, returning `{spans, drops}`** — `M`
+      → `packages/lsp-plugin/src/semanticTokenDecoder.ts`, exported from that package's index.
+- [x] **Standard LSP token types registered as colour ids with reference defaults** — `S`
+      → thirteen new ids in `packages/editor/src/syntax/semanticTokens.ts`: `syntax.class`,
+      `syntax.enum`, `syntax.interface`, `syntax.struct`, `syntax.parameter`, `syntax.enumMember`,
+      `syntax.event`, `syntax.method`, `syntax.macro`, `syntax.modifier`, `syntax.regexp`,
+      `syntax.operator`, `syntax.decorator`.
+- [x] **Scope resolver: type axis through the trie, one canonical modifier suffix** — `M`
+      → `createSemanticTokenStyles`, same file.
+- [x] **`scopeAliases` pass-through, and `null` for an unresolved name** — `S`
+- [x] **Export `createEditorScopeStyles` on the public syntax surface** — `S`
+      → plus `EditorScopeStyleRule` and `EditorScopeStyles`, from both `@singapor/core` and
+      `@singapor/core/syntax`.
+
+**Three additions to the specification as written, each recorded here rather than made silently.**
+
+1. **`decodeSemanticTokens` takes a document, not a bare `lineStarts`.** The signature is
+   `(data, legend, { lineStarts, textLength })`. Rule 5 clamps every offset to the document length
+   and `lineStarts` alone cannot say where the last line ends.
+2. **`SemanticTokenDecodeDrops` carries a fifth counter, `malformedTuple`.** It counts a trailing
+   partial tuple and a tuple carrying a value that is not a non-negative integer. Neither is one of
+   the five rules — it is input that was never a 5-tuple — but the reason the other four counters
+   exist applies unchanged: a truncated frame that decoded to silence is indistinguishable from a
+   short answer. On a non-integer the decoder stops rather than continuing, because the cursor cannot
+   be advanced by a value that is not a number and guessing would put every later span at a plausible
+   wrong offset. **The addition is additive**: a host reading the four documented fields is
+   unaffected.
+3. **`definition` is inserted into the modifier precedence, after `declaration`.** The plan's list
+   omits it while including the non-standard `local`, and `semanticTokensClientCapability()` declares
+   `definition` as one of the ten standard modifiers — so a token carrying only that one would
+   otherwise have fallen to an unranked position for no reason. Unlisted modifiers rank below every
+   listed one and ties among them go to the lexicographically first, so a modifier *set* resolves
+   identically however it was ordered, which §C1 requires.
+
+`data` is typed `ArrayLike<number>` rather than `number[]`, so a host holding a `Uint32Array`
+does not have to copy it; there is a test for that.
 
 ---
 
@@ -1423,8 +1643,8 @@ the tree-sitter colour under it is unchanged — the fall-through §C4 depends o
 appears exactly once in `push()`'s `unresolvedTypeNames`, deduplicated across spans**, which is the
 signal §C4 requires so that a legend falling on the floor is visible rather than merely silent. **A
 span crossing a newline paints across two mounted rows**; this is the criterion that gates the host
-declaring `multilineTokenSupport` per §C1, and until it passes the capability builder must refuse
-the flag. Two overlapping spans resolve to the later one truncating the earlier, with no group
+declaring `multilineTokenSupport` per §C1. **It passes, and the gate was opened**: the capability
+builder accepts the flag. Two overlapping spans resolve to the later one truncating the earlier, with no group
 containing a zero-length range. Scrolling to a range that has never been requested fires
 `onRangeNeeded` with a range covering the new viewport, and the request carries `documentId` and
 `textVersion` and **no URI** (§C1). With a test-supplied `viewportDelayMs`, a flung scroll of twenty
@@ -1509,13 +1729,146 @@ is 12.6 ms of the 14.4 ms measured, leaving ~1.8 ms for everything super-linear,
 roughly a tenth; cutting the group count is what buys the milestone.** The first gate exists because
 the quadratic term is real and grows, not because it dominates today.
 
-- [ ] **`SemanticTokenLayer`: normalise, resolve, group by style, paint through `setRangeHighlight?.()`** — `L`
-- [ ] **One highlight group per distinct resolved style, not per scope name** — `S`
-- [ ] **`onRangeNeeded` from `'viewport'`, coalesced per update, honouring a host-supplied `viewportDelayMs` with no default** — `S`
-- [ ] **The `semanticTokens` block on both plugin option types, handing the layer to the host** — `S`
-- [ ] **Explicit `zIndex` on `DIAGNOSTIC_STYLES.error`, and the four-producer priority regression test** — `S`
-- [ ] **Multi-line span paints across two mounted rows, gating `multilineTokenSupport`** — `S`
-- [ ] **Per-keystroke `setRangeHighlight` cost at N = 0/1/12/live, benchmarked against both gates and recorded here** — `M`
+- [x] **`SemanticTokenLayer`: normalise, resolve, group by style, paint through `setRangeHighlight?.()`** — `L`
+      → `packages/editor/src/semanticTokenLayer.ts`.
+- [x] **One highlight group per distinct resolved style, not per scope name** — `S`
+- [x] **`onRangeNeeded` from `'viewport'`, coalesced per update, honouring a host-supplied `viewportDelayMs` with no default** — `S`
+      → also fired on `'document'`, `'content'` and `'layout'`, and deduplicated on
+      `(documentId, textVersion, start, end)` so a caret moving inside an unchanged viewport is
+      silent. An edit under an unmoved viewport *does* re-ask, because the text the host answered
+      about has changed; whether to answer is the host's, per §C8.
+- [x] **The `semanticTokens` block on both plugin option types, handing the layer to the host** — `S`
+      → `SemanticTokenLayerOwner` in `packages/lsp-plugin/src/semanticTokens.ts`. The view
+      contribution is per *view* and outlives a document change, so the owner watches the identity
+      and tears the layer down on a document or language change rather than re-pointing it.
+- [x] **Explicit `zIndex` on `DIAGNOSTIC_STYLES.error`, and the five-producer priority regression test** — `S`
+      → `packages/lsp-plugin/test/highlightPriority.test.ts`. The band was first written as four
+      producers and was wrong: `BRACKET_COLOR_Z_INDEX` in `@singapor/scope-lines` declares a `color`
+      too and sat on the semantic layer's number. Nothing painted wrong, because no semantic scope
+      covers a bracket glyph — a latent tie, which is the kind an enumeration that is only
+      accidentally complete leaves behind. The band is now 0 syntax / 1 brackets / 2 semantic /
+      3 error / 4-6 find, with a test asserting no two colour producers share a number. It reads the
+      real values from all four packages instead of restating them, which needed
+      `BRACKET_COLOR_Z_INDEX` exported as well as `FIND_HIGHLIGHT_Z_INDEX` exported from
+      `@singapor/find` — the enabling change for a cross-package agreement that nothing enforced.
+- [x] **Multi-line span paints across two mounted rows, gating `multilineTokenSupport`** — `S`
+      → asserted in `packages/editor/test/semanticTokenPaintOrder.test.ts`. **The gate is now open**:
+      `semanticTokensClientCapability()` accepts the flag and emits the key when asked. See M3.
+- [x] **Per-keystroke `setRangeHighlight` cost at N = 0/1/12/live, benchmarked against both gates and recorded here** — `M`
+
+### The cost gate: gate 1 passes, **gate 2 fails**, and the reason is not what the plan expected
+
+`packages/editor/test/semanticTokenRepaintCost.test.ts`, in happy-dom with the Map-backed registry:
+200 rows, a 20-row viewport, 20 ranges per group, 200 same-line keystrokes with every group
+re-pushed after each one.
+
+> ```
+>                          before remedy 1     after remedy 1
+>   N = 0                    0.2272 ms/ks        0.2419 ms/ks
+>   N = 1                    0.5121              0.3740
+>   N = 3   (find-shaped)    1.3527              0.6669
+>   N = 12                   2.7302              1.9677
+>   N = 16  (live)           3.2868              2.4692
+>
+>   live group count for a TypeScript viewport under the shipped theme: 16
+>   GATE 1  growth cost(16)/cost(1) = 6.60   bound 20.00   PASS
+>   GATE 2  semantic 29.63 ms/s vs find 6.67 ms/s          FAIL by 4.4x
+>           per-repaint cost(16)/cost(3) = 3.70x — which is the whole of it
+> ```
+
+**Remedy 1 was applied and kept.** `rebuildStyleRules` ran at the end of every non-skipped
+`setRangeHighlight` and rebuilt a rule for *every* group, so N groups pushed per keystroke meant N²
+rule constructions to arrive at an identical string. A range rule reads only a group's name and its
+style, so a repaint that merely moves ranges cannot change one: the view now counts the changes that
+*can* — a group added, removed or restyled — and skips the rebuild otherwise, which find and the
+diagnostics layer get too.
+
+> **Correction. It is worth about 1%, not the 25% this section first claimed.** The two columns in
+> the table above were not an ablation of this change; they were measured in different states of the
+> world, and the difference was attributed to the wrong thing. Deleting the two lines of the version
+> gate and re-running this same benchmark moves N=16 by less than its run-to-run noise (2.2510 /
+> 2.2293 / 2.2839 memoised against 2.1913 / 2.2405 / 2.2499 ablated), and the skip is confirmed to
+> fire on 3200 of 3200 calls, so it really is removing all of the work it claims to and the work is
+> simply not big enough to see. The N=1 row settles it independently: it is recorded as 0.5121 →
+> 0.3740, a 27% "win" at a group count where there is no quadratic term to remove at all — one rule
+> construction per call either way.
+>
+> The plan's own isolated measurement agrees and was there the whole time: 0.86 ms/keystroke for the
+> `rebuildStyleRules` term at 84 groups scales as (16/84)² to about 0.03 ms at the live count, which
+> is ~1% of the keystroke and *below* the estimated tenth rather than better than it. The change is
+> kept because it is free and correct, not because it is load-bearing, and Milestone 5's Gate 1 has
+> been restated as a ratio of marginals so that it can actually fail — in its earlier form
+> (`cost(live)/cost(1)` against `1.25 × live`) a tenfold regression in the per-group slope still
+> computed to about 13 against a bound of 20.
+
+**Remedy 3 is not available, and finding out why corrected the gate's own premise.** The plan
+proposed coalescing Milestone 6's repaint "the way find already coalesces its re-search". Find does
+not coalesce its repaint. `scheduleResearch` calls `followPendingMatches()` on **every** content
+update — resolving its tracked ranges and calling `updateHighlights()` — and defers only the
+re-search, which is the expensive half. So find repaints at the full keystroke rate, and the gate's
+`10 x cost(3 groups)` undercounts it. Coalescing the *paint* instead would leave colour trailing the
+text by however many characters the delay covered, which is exactly what find's design avoids.
+
+**Remedy 2 was evaluated and rejected.** Dropping the modifier axis takes the live count from 16 to
+14, at the cost of `readonly`, `static` and `defaultLibrary` ceasing to be visible. It does not
+approach the gate.
+
+**Remedy 4, shape (b), was not taken.**
+
+**Why the gate cannot be met, stated plainly.** Once the repaint rate is fixed — and it is the same
+rate on both sides, since find repaints per keystroke too — the comparison reduces to one number:
+cost per repaint at the live group count against cost per repaint at find's three. That is **3.7x**,
+and it is a group-count ratio. The group count cannot come down. A twenty-row window of TypeScript
+genuinely contains about sixteen distinct kinds of thing, and the theme genuinely gives them about
+fourteen colours; collapsing every colour id introduced for semantic tokens back onto the ids that
+existed before them takes 16 to 14, not to 3. **The premise the gate was calibrated on — "fifty
+types collapse to however many colours the theme actually declares, which is a handful" — is what
+the measurement disproves.** The group count is a property of the theme, exactly as Milestone 5
+argued; it is just that a theme declares fourteen colours rather than a handful.
+
+### What a real browser says, and why the gate's number is not one to act on
+
+**The gate was computed in happy-dom, and a follow-up pass in real Chromium found that the two do
+not agree about the thing the gate measures.** The finding is about the harness, not the design, and
+it cuts in the design's favour — but only part-way, and the rest is an honest "not measured".
+
+**Where the happy-dom cost actually goes.** Instrumenting the real code path rather than reasoning
+about it: at 16 groups, `addMountedRangeHighlightRanges` is **85%** of the per-keystroke cost and
+everything else is noise — the signature 3%, the sort 0.7%, the style rules 0.1%. So the gate is,
+almost entirely, a measurement of building DOM `Range` objects and resolving their boundaries.
+
+**The same instrumentation in Chromium says something different.** The whole of `setRangeHighlight`
+— every line the gate is about — costs **≈0.4 ms per keystroke at 16 groups**, against happy-dom's
+2.2 ms for the identical work. That figure is stable: it reproduced at 0.412, 0.419, 0.375 and 0.422
+across four runs and both orderings. Isolated, a live `Range` costs 0.18 µs in Chromium against
+0.35 µs in happy-dom — only 1.9x — so the gap is not `Range` construction itself but happy-dom's
+boundary resolution around it.
+
+**What could not be measured, stated plainly.** The rest of the per-keystroke cost lands in
+`applyEdit`, as browser-side style and paint work deferred out of the highlight mutation. Every
+attempt to measure it end to end failed a control: running the configuration table forwards and then
+backwards, the numbers tracked **position in the list** rather than configuration — `N=0` measured
+2.35 ms forwards and 4.86 ms backwards, `N=16` measured 5.51 forwards and 1.97 backwards. Three
+methodology bugs were found and fixed along the way (the document grew by a character per keystroke
+until measuring one enormous row swamped the benchmark; configurations were not warmed
+individually; groups from one configuration stayed registered into the next) and the order
+dependence survived all three. A leak was ruled out directly: disposing a view drains
+`CSS.highlights` to zero on every cycle.
+
+**So the honest position on gate 2 is weaker than "fails by 3.7x".** That ratio is a happy-dom
+number for a quantity Chromium prices about five times lower, and the part of the frame budget that
+actually matters — deferred style and paint — is unmeasured. **Getting a trustworthy number needs a
+real benchmarking harness (isolated pages, forced GC, an order control that passes), which this repo
+does not have and which is follow-up work rather than a blocker.** What is not in doubt: the gate as
+specified does not pass, the live group count is ~14–16 and intrinsic, and the layer is opt-in.
+
+**What that leaves.** 2.5 ms of JavaScript per repaint at 16 groups in happy-dom, and ≈0.4 ms for
+the same work in Chromium. The layer is opt-in: a host that supplies no `semanticTokens` block
+creates no layer, fires no demand signal and pays none of it. Gate 2 is
+reported as failed rather than relaxed, and the test asserts a **regression guard** on the measured
+ratio instead of a gate the design provably cannot meet — a gate that sits red forever stops meaning
+anything. **Whether that trade is acceptable is the product decision the plan reserved for a human,
+and it is the one open question left in this milestone.**
 
 ---
 
@@ -1562,10 +1915,20 @@ edits between the stamp and the push. Under continuous typing, semantic colour n
 wholesale and reappears — a test asserts the union of painted ranges is non-empty at every step of a
 ten-keystroke sequence with no response in between.
 
-- [ ] **Hold painted spans as tracked ranges with the §C6 bias pair, repaint from `resolve()`** — `S`
-- [ ] **§C5's four-branch version table, with `push()` returning its verdict** — `S`
-- [ ] **`onResyncRequired` on the broken-chain branch, fired once** — `S`
-- [ ] **One staleness scheme — the LSP-controller convention — stated in the code** — `S`
+- [x] **Hold painted spans as tracked ranges with the §C6 bias pair, repaint from `resolve()`** — `S`
+      → one `EditorTrackedRanges` **per group** rather than one per payload, because `resolve()`
+      drops the ranges whose text is gone and so cannot be indexed back onto a parallel array of
+      styles. Repainted on every `'content'` update, which is what find does.
+- [x] **§C5's four-branch version table, with `push()` returning its verdict** — `S`
+- [x] **`onResyncRequired` on the broken-chain branch, fired once** — `S`
+      → asserted by driving 200 recorded edits between the stamp and the push.
+- [x] **One staleness scheme — the LSP-controller convention — stated in the code** — `S`
+
+**One clarification the criterion needed.** `projectedThroughEdits` counts the edits
+`editsSinceTextVersion` hands back, and that list is **composed** — five keystrokes at one caret
+arrive as one edit, not five. The count is therefore "how many edits the spans were actually carried
+through", which is the honest number and the only one the layer can know. The test drives five edits
+at five separate sites so the criterion's `projectedThroughEdits: 5` is a real five.
 
 ---
 
@@ -1615,10 +1978,46 @@ that is invisible until a host scrolls. Driving ten keystrokes with the worker's
 delayed past the edit-chain window produces exactly one `onResyncRequired` and no wrong-offset paint —
 **the §C5 branch that has no other way to be tested.**
 
-- [ ] **`semanticTokensProvider` and a deliberately awkward legend in the example worker** — `S`
-- [ ] **TS classification triples re-encoded as LSP relative 5-tuples** — `M`
-- [ ] **End-to-end: `initialize` → request → decode → resolve → registered highlight groups** — `M`
-- [ ] **The delayed-response resync path, driven for real** — `S`
+- [x] **`semanticTokensProvider` and a deliberately awkward legend in the example worker** — `S`
+      → `SEMANTIC_TOKEN_LEGEND` in `packages/typescript-lsp/src/typescriptLsp.worker.ts`, advertised
+      with `full` and `range`: `function` at two indices, the non-standard `typeAlias`, and `local`
+      alongside `readonly` on every reference to a local `const`.
+- [x] **TS classification triples re-encoded as LSP relative 5-tuples** — `M`
+      → `encodeSemanticTokens` in the same file, index-aligned with `classifier.v2020` so
+      TypeScript's type index passes through untouched, answering both requests with a comment
+      recording that M2's 0.380 ms against 22.514 ms is why §C8's demand should be answered with
+      `range`.
+- [x] **End-to-end: `initialize` → request → decode → resolve → registered highlight groups** — `M`
+      → `packages/typescript-lsp/test/semanticTokenConformance.test.ts` drives the narrow factory
+      over a stub socket into the worker module in one process — legend duplicate at both indices,
+      `typeAlias` painting nothing until aliased, a range answered with `deltaLine` absolute from
+      line zero, and `$/cancelRequest` posting no response for the id it names.
+- [x] **The delayed-response resync path, driven for real** — `S`
+      → the same file: ten keystrokes with the socket's delivery held, then a burst past the
+      128-transition chain, producing exactly one `version-too-old` and a paint still anchored to
+      the identifiers it started on.
+
+**One exit criterion is internally inconsistent and was resolved rather than met as written.** It
+asks for "the example app, with the plugin configured through the **narrow**
+`createLanguageServerPlugin` factory". The example app reaches the language server through
+`createTypeScriptLspPlugin`, which is built on `createLanguageServerAdapterPlugin`; it cannot be
+both. The resolution: the conformance test uses the narrow factory directly against the real worker,
+and the example-app-facing half is four pass-throughs on `TypeScriptLspPluginOptions`
+(`capabilities`, `clientInfo`, `semanticTokens`, `onConnectionCreated`), asserted separately. **So
+the example app can now paint semantic colour but does not yet ask for any** — the request side is
+a host deliverable this plan de-scopes ("the host writes its own request side", §C8), and writing one
+into the example app would have been the first thing on the far side of the seam.
+
+**Two mutation checks, run against the finished tests rather than trusted.** Encoding the first
+tuple's `deltaLine` relative to the range start instead of line zero fails the range criterion;
+deleting the `$/cancelRequest` route fails the cancellation criterion. Both would otherwise be tests
+that pass whatever the code does.
+
+**One behaviour worth knowing before reading the legend test.** The `local`-ranks-below-`readonly`
+criterion is only observable at *reference* sites: at the declaration TypeScript also sets
+`declaration`, which the editor's canonical precedence ranks above `readonly`, so `const started = …`
+paints as a plain variable while the later `started` paints as a constant. That is correct under one
+canonical suffix, and the test asserts both halves rather than hiding the first.
 
 ---
 

@@ -248,6 +248,9 @@ export class VirtualizedTextView {
       caretElement,
       secondaryCaretElements: [],
       styleEl,
+      rangeHighlightRuleVersion: 0,
+      // Behind the live version, so the first rebuild always writes.
+      renderedRangeHighlightRuleVersion: -1,
       virtualizer,
       scrollMode,
       rowPositioning,

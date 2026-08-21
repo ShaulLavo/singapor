@@ -30,13 +30,36 @@ import type { EditorFindOptions } from './types'
 // These three overlap by construction — the current match is always also a
 // match, and both sit inside the scope — so their stacking is declared rather
 // than left to the order the groups happen to reach the highlight registry in.
-const FIND_MATCH_STYLE = { backgroundColor: 'rgba(234, 179, 8, 0.34)', zIndex: 2 }
+//
+// The numbers are exported because they are half of a cross-package agreement: the highlight
+// priority space is one namespace that several subsystems write into, and priority is what settles
+// a contest between two of them that declare the same property. A regression test elsewhere asserts
+// the resulting order, and it can only do that by reading these rather than by restating them.
+//
+// They sit above the error diagnostic, which declares a background of its own at 2. `current` is the
+// only find style that declares a `color`, so it is the only one contending on that axis — but all
+// three declare a background, and so does the error, which is why none of them may share its number.
+// A tie there would put the background contest back where the numbers exist to take it out of:
+// registration order in the document's shared registry.
+export const FIND_HIGHLIGHT_Z_INDEX = {
+  scope: 4,
+  match: 5,
+  current: 6,
+} as const
+
+const FIND_MATCH_STYLE = {
+  backgroundColor: 'rgba(234, 179, 8, 0.34)',
+  zIndex: FIND_HIGHLIGHT_Z_INDEX.match,
+}
 const FIND_CURRENT_STYLE = {
   backgroundColor: 'rgba(245, 158, 11, 0.72)',
   color: '#111827',
-  zIndex: 3,
+  zIndex: FIND_HIGHLIGHT_Z_INDEX.current,
 }
-const FIND_SCOPE_STYLE = { backgroundColor: 'rgba(59, 130, 246, 0.22)', zIndex: 1 }
+const FIND_SCOPE_STYLE = {
+  backgroundColor: 'rgba(59, 130, 246, 0.22)',
+  zIndex: FIND_HIGHLIGHT_Z_INDEX.scope,
+}
 
 // Seeding stops here rather than pushing a multi-megabyte selection through the
 // find input and searching for it.

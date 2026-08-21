@@ -31,6 +31,10 @@ export type TypeScriptLspResolvedOptions = {
   readonly diagnosticDelayMs: number
   readonly hoverMarkdownCodeBackground: boolean
   readonly timeoutMs: number
+  readonly capabilities: TypeScriptLspPluginOptions['capabilities']
+  readonly clientInfo: TypeScriptLspPluginOptions['clientInfo']
+  readonly semanticTokens: TypeScriptLspPluginOptions['semanticTokens']
+  readonly onConnectionCreated: TypeScriptLspPluginOptions['onConnectionCreated']
   readonly workerFactory?: () => LspWorkerLike
   readonly webSocketRoute?: string | URL
   readonly webSocketTransportOptions?: LspWebSocketTransportOptions
@@ -52,6 +56,9 @@ export function createTypeScriptLspPlugin(
     hoverMarkdownCodeBackground: resolved.hoverMarkdownCodeBackground,
     initializationOptions: typeScriptInitializationOptions(resolved),
     timeoutMs: resolved.timeoutMs,
+    capabilities: resolved.capabilities,
+    clientInfo: resolved.clientInfo,
+    semanticTokens: resolved.semanticTokens,
     createTransport: typeScriptTransportFactory(resolved),
     defaultHighlightPrefix: 'editor-typescript-lsp',
     documentSync: {
@@ -134,12 +141,23 @@ class TypeScriptWorkspaceFiles {
   }
 }
 
+// The host's callback runs alongside the workspace-file registration rather than instead of it: the
+// handle it is being given is the only way to reach the `LspClient`, and taking the workspace sync
+// away as the price of holding it would be a trade nobody asked for.
 function registerTypeScriptConnection(
   context: LanguageServerConnectionContext,
   workspaceFiles: TypeScriptWorkspaceFiles,
   options: TypeScriptLspResolvedOptions,
 ): EditorDisposable {
-  return workspaceFiles.registerClient(context.client, options.onError)
+  const registration = workspaceFiles.registerClient(context.client, options.onError)
+  const hostRegistration = options.onConnectionCreated?.(context) ?? null
+
+  return {
+    dispose: () => {
+      hostRegistration?.dispose()
+      registration.dispose()
+    },
+  }
 }
 
 function typeScriptTransportFactory(
@@ -174,6 +192,10 @@ function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResol
     diagnosticDelayMs: options.diagnosticDelayMs ?? DEFAULT_DIAGNOSTIC_DELAY_MS,
     hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground ?? false,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    capabilities: options.capabilities,
+    clientInfo: options.clientInfo,
+    semanticTokens: options.semanticTokens,
+    onConnectionCreated: options.onConnectionCreated,
     workerFactory: options.workerFactory,
     webSocketRoute: options.webSocketRoute,
     webSocketTransportOptions: options.webSocketTransportOptions,

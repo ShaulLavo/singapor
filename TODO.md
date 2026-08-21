@@ -209,7 +209,7 @@ with visible branches — Fred's marquee feature (Ctrl+Shift+Z):
   already computes the minimal single edit without materializing either document — exactly
   right for per-step display.
 - Arbitrary pairs need a real line-level diff (Myers or histogram over line hashes, ~100 lines
-  of code). `packages/diff` already renders hunks (`DiffView.ts`, `model.ts`) — only the
+  of code). `packages/diff` already renders hunks (`editorDiffPlugin.ts`, `model.ts`) — only the
   compute step is missing. Pull line text through the piece walker to keep avoiding full
   materialization.
 - Label nodes with the transaction metadata we already record (source, timestamp). Far-future

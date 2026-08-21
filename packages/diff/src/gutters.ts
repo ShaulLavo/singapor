@@ -1,9 +1,15 @@
-import type { EditorGutterContribution } from '@singapor/core/extensions'
 import type { DiffRenderRow } from './types'
 
 export type DiffGutterSide = 'old' | 'new' | 'stacked'
 export type DiffGutterNumberSide = Exclude<DiffGutterSide, 'stacked'>
 export type DiffGutterLaneKind = DiffGutterNumberSide | 'indicator'
+
+/**
+ * What a lane is coloured *as*, rather than what colour it ends up. The DOM gutter resolves the
+ * colour in CSS so a theme can override it; keeping the branching here means the rule that an
+ * addition tints the new lane and not the old one lives in exactly one place.
+ */
+export type DiffGutterLaneTone = 'added' | 'deleted' | 'hunk' | 'default'
 
 type DiffGutterLaneLayout = {
   readonly kind: DiffGutterLaneKind
@@ -20,40 +26,49 @@ const MIN_LINE_NUMBER_DIGITS = 2
 const GUTTER_NUMBER_RESERVED_WIDTH = 6
 const GUTTER_INDICATOR_WIDTH = 12
 
-export function createDiffGutterContribution(
-  side: DiffGutterSide,
-  getRows: () => readonly DiffRenderRow[],
-): EditorGutterContribution {
-  return {
-    id: `diff-${side}-gutter`,
-    className: 'editor-diff-gutter-cell',
-    createCell(document) {
-      return createDiffGutterCell(document)
-    },
-    width(context) {
-      return diffGutterWidth(side, getRows(), context.lineCount, context.metrics.characterWidth)
-    },
-    updateCell() {},
+/**
+ * The widest line number each lane has to fit, in digits.
+ *
+ * Computed once when a projection is built rather than inside `width()`. The gutter's width is
+ * invalidated far more often than the rows change, and the scan is over *every* projected row —
+ * which in overlay mode means every line of the file, since `createLiveDiffProjection` materializes
+ * a row per unchanged line. A 50,000-line file was re-scanning 50,000 rows and allocating a string
+ * per row, twice in stacked mode, on every gutter-width recompute.
+ */
+export type DiffGutterDigits = {
+  readonly old: number
+  readonly new: number
+}
+
+export function diffGutterDigits(rows: readonly DiffRenderRow[]): DiffGutterDigits {
+  let oldDigits = 0
+  let newDigits = 0
+  for (const row of rows) {
+    if (row.type === 'hunk' || row.type === 'empty') continue
+    oldDigits = Math.max(oldDigits, digitCount(row.oldLineNumber))
+    newDigits = Math.max(newDigits, digitCount(row.newLineNumber))
   }
+
+  return { old: oldDigits, new: newDigits }
 }
 
 export function diffGutterWidth(
   side: DiffGutterSide,
-  rows: readonly DiffRenderRow[],
+  digits: DiffGutterDigits,
   lineCount: number,
   characterWidth: number,
 ): number {
-  return diffGutterLayout(side, rows, lineCount, characterWidth).width
+  return diffGutterLayout(side, digits, lineCount, characterWidth).width
 }
 
 export function diffGutterLayout(
   side: DiffGutterSide,
-  rows: readonly DiffRenderRow[],
+  digits: DiffGutterDigits,
   lineCount: number,
   characterWidth: number,
 ): DiffGutterLayout {
   if (side !== 'stacked') {
-    const numberWidth = gutterNumberLaneWidth(side, rows, lineCount, characterWidth)
+    const numberWidth = gutterNumberLaneWidth(side, digits, lineCount, characterWidth)
     const width = numberWidth + GUTTER_INDICATOR_WIDTH
     return {
       lanes: [
@@ -64,8 +79,8 @@ export function diffGutterLayout(
     }
   }
 
-  const oldWidth = gutterNumberLaneWidth('old', rows, lineCount, characterWidth)
-  const newWidth = gutterNumberLaneWidth('new', rows, lineCount, characterWidth)
+  const oldWidth = gutterNumberLaneWidth('old', digits, lineCount, characterWidth)
+  const newWidth = gutterNumberLaneWidth('new', digits, lineCount, characterWidth)
   const indicatorLeft = oldWidth + newWidth
   return {
     lanes: [
@@ -79,42 +94,23 @@ export function diffGutterLayout(
 
 function diffGutterWidthCharacters(
   side: DiffGutterSide,
-  rows: readonly DiffRenderRow[],
+  digits: DiffGutterDigits,
   lineCount: number,
 ): number {
   if (side === 'stacked') {
     return (
-      diffGutterWidthCharacters('old', rows, lineCount) +
-      diffGutterWidthCharacters('new', rows, lineCount)
+      diffGutterWidthCharacters('old', digits, lineCount) +
+      diffGutterWidthCharacters('new', digits, lineCount)
     )
   }
 
-  let maxCharacters = String(Math.max(1, lineCount)).length
-  for (const row of rows) {
-    maxCharacters = Math.max(maxCharacters, lineNumberForRow(row, side).length)
-  }
-
+  const maxCharacters = Math.max(String(Math.max(1, lineCount)).length, digits[side])
   return Math.max(MIN_LINE_NUMBER_DIGITS, maxCharacters)
 }
 
-function createDiffGutterCell(document: Document): HTMLElement {
-  const element = document.createElement('span')
-  element.className = 'editor-diff-gutter'
-  element.setAttribute('aria-hidden', 'true')
-  return element
-}
-
-function diffGutterText(row: DiffRenderRow, side: DiffGutterSide): string {
-  if (side === 'stacked') {
-    const oldNumber = diffGutterNumberText(row, 'old')
-    const newNumber = diffGutterNumberText(row, 'new')
-    const indicator = diffGutterIndicatorText(row)
-    return [oldNumber, newNumber, indicator].filter(Boolean).join(' ')
-  }
-
-  const number = diffGutterNumberText(row, side)
-  const indicator = diffGutterIndicatorText(row)
-  return [number, indicator].filter(Boolean).join(' ')
+function digitCount(value: number | undefined): number {
+  if (value === undefined) return 0
+  return String(value).length
 }
 
 export function diffGutterNumberText(row: DiffRenderRow, side: DiffGutterNumberSide): string {
@@ -128,44 +124,48 @@ export function diffGutterIndicatorText(row: DiffRenderRow): string {
   return ''
 }
 
-export function diffGutterColor(
+/**
+ * Side-awareness in this gutter is **per lane, not per pane** (plan §3.3). In stacked mode one
+ * gutter carries both number lanes, and for a single addition row the old lane stays foreground
+ * while the new lane goes green — so a row-level class cannot express it and each lane carries its
+ * own tone.
+ *
+ * The indicator lane is deliberately side-agnostic: it shows `+`/`-` for the row as a whole.
+ */
+export function diffGutterLaneTone(
   row: DiffRenderRow,
-  side: DiffGutterNumberSide,
-  colors: {
-    readonly added: string
-    readonly deleted: string
-    readonly foreground: string
-    readonly hunk: string
-  },
-): string {
-  if (row.type === 'addition' && side !== 'old') return colors.added
-  if (row.type === 'deletion' && side !== 'new') return colors.deleted
-  if (row.type === 'hunk') return colors.hunk
-  return colors.foreground
+  kind: DiffGutterLaneKind,
+): DiffGutterLaneTone {
+  if (row.type === 'hunk') return 'hunk'
+  if (kind === 'indicator') {
+    if (row.type === 'addition') return 'added'
+    if (row.type === 'deletion') return 'deleted'
+    return 'default'
+  }
+
+  if (row.type === 'addition' && kind !== 'old') return 'added'
+  if (row.type === 'deletion' && kind !== 'new') return 'deleted'
+  return 'default'
 }
 
-export function diffGutterIndicatorColor(
-  row: DiffRenderRow,
-  colors: {
-    readonly added: string
-    readonly deleted: string
-    readonly foreground: string
-    readonly hunk: string
-  },
-): string {
-  if (row.type === 'addition') return colors.added
-  if (row.type === 'deletion') return colors.deleted
-  if (row.type === 'hunk') return colors.hunk
-  return colors.foreground
+/**
+ * Whether the gutter band behind a row is tinted. Unlike the lane tone this *is* per pane: a split
+ * old pane shows no tint behind an addition, because that row is a placeholder there.
+ */
+export function diffGutterRowTone(row: DiffRenderRow, side: DiffGutterSide): DiffGutterLaneTone {
+  if (row.type === 'addition' && side !== 'old') return 'added'
+  if (row.type === 'deletion' && side !== 'new') return 'deleted'
+  if (row.type === 'hunk') return 'hunk'
+  return 'default'
 }
 
 function gutterNumberLaneWidth(
   side: DiffGutterNumberSide,
-  rows: readonly DiffRenderRow[],
+  digits: DiffGutterDigits,
   lineCount: number,
   characterWidth: number,
 ): number {
-  const characters = diffGutterWidthCharacters(side, rows, lineCount)
+  const characters = diffGutterWidthCharacters(side, digits, lineCount)
   return Math.ceil(characters * characterWidth + GUTTER_NUMBER_RESERVED_WIDTH)
 }
 

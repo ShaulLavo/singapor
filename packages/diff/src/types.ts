@@ -1,16 +1,4 @@
-import type {
-  EditorSyntaxLanguageId,
-  EditorSyntaxProvider,
-  EditorToken,
-} from '@singapor/core/syntax'
-import type { EditorTheme } from '@singapor/core/rendering'
-import type { ResizablePaneHandleContext } from '@singapor/panes'
-
-export type DiffViewMode = 'split' | 'stacked'
-
-export type DiffSplitPaneId = 'old' | 'new'
-
-export type DiffSplitPaneLayout = Readonly<Record<DiffSplitPaneId, number>>
+import type { EditorSyntaxLanguageId, EditorSyntaxProvider } from '@singapor/core/syntax'
 
 export type DiffFileChangeType = 'change' | 'add' | 'delete' | 'rename' | 'rename-change'
 
@@ -45,13 +33,6 @@ export type DiffHunk = {
   readonly newLines: number
   readonly header: string
   readonly lines: readonly DiffHunkLine[]
-}
-
-export type DiffHunkLocation = {
-  readonly index: number
-  readonly row: number
-  readonly path: string
-  readonly hunk: DiffHunk
 }
 
 export type DiffFile = {
@@ -104,25 +85,6 @@ export type DiffRenderRow = {
   readonly inlineRanges?: readonly DiffInlineRange[]
 }
 
-export type DiffSyntaxTokens = {
-  readonly oldTokens?: readonly EditorToken[]
-  readonly newTokens?: readonly EditorToken[]
-}
-
-export type DiffSplitHandleContext = ResizablePaneHandleContext & {
-  readonly file: DiffFile
-}
-
-export type DiffSplitPaneOptions = {
-  readonly defaultLayout?: Partial<DiffSplitPaneLayout>
-  readonly minSize?: Partial<DiffSplitPaneLayout>
-  readonly maxSize?: Partial<DiffSplitPaneLayout>
-  readonly createHandle?: (context: DiffSplitHandleContext) => HTMLElement
-  readonly onLayoutChange?: (layout: DiffSplitPaneLayout, file: DiffFile) => void
-  readonly onLayoutChanged?: (layout: DiffSplitPaneLayout, file: DiffFile) => void
-  readonly disabled?: boolean
-}
-
 export type DiffSyntaxBackend =
   | {
       readonly kind: 'shiki'
@@ -132,15 +94,3 @@ export type DiffSyntaxBackend =
       readonly kind: 'tree-sitter'
       readonly provider?: EditorSyntaxProvider | null
     }
-
-export type DiffViewOptions = {
-  readonly mode?: DiffViewMode
-  readonly lineHeight?: number
-  readonly overscan?: number
-  readonly tabSize?: number
-  readonly syntaxHighlight?: boolean
-  readonly theme?: EditorTheme | null
-  readonly syntaxBackend?: DiffSyntaxBackend
-  readonly showFileList?: boolean
-  readonly splitPane?: DiffSplitPaneOptions
-}

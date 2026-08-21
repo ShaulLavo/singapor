@@ -1,5 +1,5 @@
 import { createMergeConflictPlugin, Editor, type EditorPlugin } from '@singapor/core/editor'
-import { createEditorDiffPlugin } from '@singapor/diff'
+import { createDiffPlugin } from '@singapor/diff'
 import '@singapor/core/style.css'
 import '@singapor/diff/style.css'
 import '@singapor/find/style.css'
@@ -54,7 +54,7 @@ export function mountApp(): void {
       console.warn('[typescript-lsp]', error)
     },
   })
-  const liveDiff = createEditorDiffPlugin()
+  const liveDiff = createDiffPlugin({ mode: 'overlay' })
   const languagePlugins: readonly EditorPlugin[] = [
     javaScript({ jsx: true }),
     typeScript({ tsx: true }),
@@ -103,12 +103,10 @@ export function mountApp(): void {
       liveDiff.setEnabled(false)
       editor.setPlugins(editPlugins)
       editorPane.editorHost.hidden = false
-      editorPane.diffHost.hidden = true
     },
     showDiff: () => {
       editor.setPlugins(diffPlugins)
       editorPane.editorHost.hidden = false
-      editorPane.diffHost.hidden = true
     },
   })
 

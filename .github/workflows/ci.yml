@@ -1,0 +1,68 @@
+name: CI
+
+# The health workflow runs `bun run health` and nothing else, so until now a pull request could go
+# green with a failing test suite — which is exactly how a stale e2e spec reached review on the
+# diff-as-editor branch. Typecheck, lint and unit tests all run here.
+#
+# `test:e2e` is deliberately not wired in yet: it needs a Playwright browser download and a built
+# example app, which is a different cost profile. It is a separate follow-up, not a reason to keep
+# the rest unrun.
+
+on:
+  pull_request:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      # `bun run test` runs each package's `vitest run`, and vitest's bin is a Node script — so the
+      # tests execute on Node, not on Bun, and the runner's default Node is older than this repo
+      # assumes. `packages/find` uses RegExp modifier groups (`(?s:a.b)`), which V8 only gained
+      # recently, so without this the suite fails on a feature the code legitimately relies on.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      # Six packages carry a `browser (chromium)` vitest project alongside their happy-dom one —
+      # geometry and cascade assertions happy-dom cannot answer. They need a real browser.
+      # Run the workspace's own Playwright, not `bunx playwright` — bare `bunx` fetches the latest
+      # from the registry, which downloads browsers into a revision directory the pinned 1.60.0
+      # does not look in, so the install "succeeds" and the launch still fails.
+      #
+      # Both browsers, deliberately: vitest browser mode runs `headless: true`, which launches
+      # `chrome-headless-shell`, a separate download from `chromium`.
+      - name: Install Playwright Chromium
+        working-directory: packages/editor
+        run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell
+
+      # Serialised on purpose. Each browser project starts its own vitest server, and running six
+      # of them at once on a two-core runner fights over ports and gets killed (exit 130) rather
+      # than reporting a real failure. Turbo still caches, so this is only slow on a cold branch.
+      - name: Test
+        run: bun run test -- --concurrency=1

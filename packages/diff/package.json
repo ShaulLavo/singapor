@@ -1,6 +1,6 @@
 {
   "name": "@singapor/diff",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "files": [
     "README.md",
     "dist"
@@ -31,7 +31,6 @@
   },
   "dependencies": {
     "@singapor/core": "workspace:*",
-    "@singapor/panes": "workspace:*",
     "diff": "^9.0.0"
   },
   "devDependencies": {

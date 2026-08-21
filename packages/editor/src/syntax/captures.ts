@@ -102,8 +102,12 @@ const CAPTURE_SCOPE_STYLES = createEditorScopeStyles(CAPTURE_STYLE_RULES)
  * capitalised identifier and `constant`'s is the strictest of them: `^[A-Z_][A-Z\d_]+$` where the
  * other two ask only for `^[A-Z]`.
  *
- * Only exact-span duplicates are resolved. A capture nested inside a larger one is a different
- * question with a different answer, and stays exactly as it was.
+ * The table resolves **every** overlap, not only exact-span duplicates. Exact spans were never a
+ * separate phenomenon: `text.title` containing `text.strong`, and `string` containing
+ * `punctuation.special`, land on the same registry-order lottery for the characters they share, so
+ * a rule that covered one shape and not the other left the defect in place wherever a grammar
+ * happened to nest. Resolution is per character rather than per capture — see
+ * `resolveOverlappingCaptures` — so a capture that loses only its middle survives on both sides.
  */
 const CAPTURE_SPECIFICITY: readonly string[] = [
   // Named a specific known thing.
@@ -124,13 +128,20 @@ const CAPTURE_SPECIFICITY: readonly string[] = [
   'constant',
   'function.method',
   'function',
-  'constructor',
   'namespace',
   'attribute',
   'property',
   'variable.parameter',
   // Named a lexical kind.
   'type',
+  // Below `type` deliberately, though it reads like a declaration role. The only shipped rule that
+  // produces it is javascript-highlights.scm's `((identifier) @constructor (#match? "^[A-Z]"))` —
+  // the identical capitalisation heuristic `((identifier) @type ...)` applies one file over, so
+  // neither knows more than the other about the span. Ranked above `type` it won every bare
+  // capitalised identifier and painted it `syntax.typeDefinition`, while the same name in a
+  // `type_identifier` position — which only `@type` claims — kept `syntax.type`: one class name,
+  // two different blues in one file.
+  'constructor',
   'tag',
   'text.title',
   'text.strong',
@@ -185,67 +196,203 @@ const sharedStyleForTreeSitterCapture = (captureName: string): EditorTokenStyle 
 export const treeSitterCapturesToEditorTokens = (
   captures: readonly EditorSyntaxCapture[],
 ): EditorToken[] => {
-  const tokens: EditorToken[] = []
+  const tokens = resolveOverlappingCaptures(captures)
   const indexBuilder = createEditorTokenIndexBuilder()
-  const winners = exactSpanWinners(captures)
-
-  for (let index = 0; index < captures.length; index += 1) {
-    const capture = captures[index]
-    if (!capture) continue
-    if (winners.get(captureSpanKey(capture)) !== index) continue
-
-    const token = captureToEditorToken(capture)
-    if (!token) continue
-
-    tokens.push(token)
-    appendEditorTokenIndexEntry(indexBuilder, token)
-  }
+  for (const token of tokens) appendEditorTokenIndexEntry(indexBuilder, token)
 
   finishEditorTokenIndex(tokens, indexBuilder)
   return tokens
 }
 
-const captureSpanKey = (capture: EditorSyntaxCapture): string =>
-  `${capture.startIndex}:${capture.endIndex}`
-
-/**
- * The index of the capture that gets to paint each exactly-duplicated span.
- *
- * Only captures that would produce a token at all are candidates: a capture whose name resolves to
- * no style paints nothing today, and letting one win a span would swallow a sibling that does
- * resolve — turning an ordering defect into a missing colour.
- */
-const exactSpanWinners = (captures: readonly EditorSyntaxCapture[]): Map<string, number> => {
-  const winners = new Map<string, number>()
-  const ranks = new Map<string, number>()
-
-  for (let index = 0; index < captures.length; index += 1) {
-    const capture = captures[index]
-    if (!capture) continue
-    if (capture.endIndex <= capture.startIndex) continue
-    if (!sharedStyleForTreeSitterCapture(capture.captureName)) continue
-
-    const key = captureSpanKey(capture)
-    const rank = captureRank(capture.captureName)
-    const incumbent = ranks.get(key)
-    if (incumbent !== undefined && incumbent <= rank) continue
-
-    ranks.set(key, rank)
-    winners.set(key, index)
-  }
-
-  return winners
+/** A capture that would paint something, with the two numbers that decide whether it gets to. */
+type CaptureCandidate = {
+  readonly start: number
+  readonly end: number
+  readonly rank: number
+  readonly style: EditorTokenStyle
 }
 
-const captureToEditorToken = (capture: EditorSyntaxCapture): EditorToken | null => {
-  if (capture.endIndex <= capture.startIndex) return null
+/**
+ * One style per character, chosen by specificity rather than by registry order.
+ *
+ * Overlapping captures are ordinary: `const MAX = 10` is claimed by four rules over the same three
+ * characters, a template literal's `${` is claimed by `string` and by `punctuation.special`, and a
+ * bold word inside a markdown heading is claimed by `text.title` and by `text.strong`. Every one of
+ * those pairs declares a `color`, each distinct style gets its own `Highlight` at the same
+ * priority, and equal-priority highlights paint in registry insertion order — which is "the first
+ * time this session's shared registry saw that style key". Left alone, the colour of those
+ * characters is a function of which document the session opened first.
+ *
+ * So the question is answered per character instead of per capture. Sweeping the boundaries in
+ * offset order gives every elementary interval one covering capture that outranks the rest, and
+ * neighbouring intervals that resolved to the same style are re-joined into one token. A capture
+ * that loses only its middle — the `string` around a `${` — comes back as two tokens, one either
+ * side of the hole, rather than being dropped whole or left to contend for the characters it kept.
+ *
+ * The output is non-overlapping and ascending by construction, which is strictly better input for
+ * the token index than the overlapping list this used to emit.
+ */
+const resolveOverlappingCaptures = (captures: readonly EditorSyntaxCapture[]): EditorToken[] => {
+  const candidates = captureCandidates(captures)
+  if (candidates.length === 0) return []
 
-  const style = sharedStyleForTreeSitterCapture(capture.captureName)
-  if (!style) return null
+  const boundaries = captureBoundaries(candidates)
+  // Checked rather than assumed, and rather than sorted: the worker hands these over already sorted
+  // by start, so the ordinary path pays one linear scan instead of an N log N sort. This is a public
+  // entry point, so the unsorted case still has to work.
+  const byStart = isSortedByStart(candidates)
+    ? candidates
+    : candidates.toSorted((left, right) => left.start - right.start)
+  const tokens: EditorToken[] = []
+  const active: CaptureCandidate[] = []
+  let admitted = 0
 
-  return {
-    start: capture.startIndex,
-    end: capture.endIndex,
-    style,
+  for (let index = 0; index + 1 < boundaries.length; index += 1) {
+    const start = boundaries[index] as number
+    admitted = admitCandidates(byStart, admitted, start, active)
+    evictClosedCandidates(active, start)
+
+    const winner = bestCandidate(active)
+    if (!winner) continue
+
+    appendCaptureToken(tokens, start, boundaries[index + 1] as number, winner.style)
   }
+
+  return tokens
+}
+
+/**
+ * The captures that could paint at all.
+ *
+ * A capture whose name resolves to no style paints nothing today, so it is not a candidate: letting
+ * one win a span would swallow a sibling that does resolve — turning an ordering defect into a
+ * missing colour.
+ */
+const captureCandidates = (captures: readonly EditorSyntaxCapture[]): CaptureCandidate[] => {
+  const candidates: CaptureCandidate[] = []
+  for (const capture of captures) {
+    if (!capture) continue
+    if (capture.endIndex <= capture.startIndex) continue
+
+    const style = sharedStyleForTreeSitterCapture(capture.captureName)
+    if (!style) continue
+
+    candidates.push({
+      end: capture.endIndex,
+      rank: captureRank(capture.captureName),
+      start: capture.startIndex,
+      style,
+    })
+  }
+
+  return candidates
+}
+
+const isSortedByStart = (candidates: readonly CaptureCandidate[]): boolean => {
+  for (let index = 1; index < candidates.length; index += 1) {
+    if (
+      (candidates[index] as CaptureCandidate).start <
+      (candidates[index - 1] as CaptureCandidate).start
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
+
+/**
+ * Every offset at which the answer can change, ascending and deduplicated.
+ *
+ * `Int32Array` rather than `number[]`: its `sort()` is numeric by definition, so it needs no
+ * comparator callback — which is the whole cost of sorting 2N boundaries on a large file. Document
+ * offsets are non-negative and nowhere near 2³¹.
+ */
+const captureBoundaries = (candidates: readonly CaptureCandidate[]): Int32Array => {
+  const offsets = new Int32Array(candidates.length * 2)
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index] as CaptureCandidate
+    offsets[index * 2] = candidate.start
+    offsets[index * 2 + 1] = candidate.end
+  }
+
+  offsets.sort()
+
+  const boundaries = new Int32Array(offsets.length)
+  let kept = 0
+  for (const offset of offsets) {
+    if (kept > 0 && boundaries[kept - 1] === offset) continue
+
+    boundaries[kept] = offset
+    kept += 1
+  }
+
+  return boundaries.subarray(0, kept)
+}
+
+/** Opens every candidate that has started by `offset`. Returns the new cursor into `byStart`. */
+const admitCandidates = (
+  byStart: readonly CaptureCandidate[],
+  cursor: number,
+  offset: number,
+  active: CaptureCandidate[],
+): number => {
+  let next = cursor
+  while (next < byStart.length && (byStart[next] as CaptureCandidate).start <= offset) {
+    active.push(byStart[next] as CaptureCandidate)
+    next += 1
+  }
+
+  return next
+}
+
+/** Drops every candidate whose span ended at or before `offset`, in place. */
+const evictClosedCandidates = (active: CaptureCandidate[], offset: number): void => {
+  let kept = 0
+  for (const candidate of active) {
+    if (candidate.end <= offset) continue
+
+    active[kept] = candidate
+    kept += 1
+  }
+
+  active.length = kept
+}
+
+/**
+ * The most specific candidate covering the current interval.
+ *
+ * Ties go to the earliest arrival — `>=` rather than `>` — so two equally ranked names resolve the
+ * same way for a given tree however the shared registry has been used, which is the whole point.
+ */
+const bestCandidate = (active: readonly CaptureCandidate[]): CaptureCandidate | null => {
+  let best: CaptureCandidate | null = null
+  for (const candidate of active) {
+    if (best && candidate.rank >= best.rank) continue
+    best = candidate
+  }
+
+  return best
+}
+
+/**
+ * Extends the previous token rather than starting one, when the style is the same object.
+ *
+ * `EditorScopeStyles.resolve` memoises per scope, so two capture names that inherit one rule share
+ * a style by reference — and a capture split around a more specific child is that one style on
+ * either side of the hole. Both cases want one token per contiguous run, not one per interval.
+ */
+const appendCaptureToken = (
+  tokens: EditorToken[],
+  start: number,
+  end: number,
+  style: EditorTokenStyle,
+): void => {
+  const previous = tokens[tokens.length - 1]
+  if (previous && previous.end === start && previous.style === style) {
+    previous.end = end
+    return
+  }
+
+  tokens.push({ end, start, style })
 }

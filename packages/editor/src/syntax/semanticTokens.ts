@@ -164,19 +164,36 @@ const SEMANTIC_SCOPE_STYLES = createEditorScopeStyles(SEMANTIC_SCOPE_RULES)
  * one present — becomes a suffix, which fits the trie the editor already has and bounds the scope
  * count at (types x modifiers + types) instead of (types x 2^modifiers).
  *
- * `definition` is not in the plan's list and is added here after `declaration`: it is a standard
- * modifier that `semanticTokensClientCapability()` declares, so a token carrying only that one would
- * otherwise fall through to an unranked position for no reason. `local` is not a standard modifier
- * and is kept because several real servers send it.
+ * The order is not a judgement about which modifier is most interesting. It is this: **a modifier
+ * the scope table has a rule for outranks every modifier it does not.** Only `defaultLibrary` and
+ * `readonly` have one — `function.defaultLibrary`, `variable.defaultLibrary`, `variable.readonly` —
+ * and a rule-less modifier resolves to exactly the base scope, because the trie walk stops at the
+ * missing child. So picking one is harmless in itself and harmful only in what it displaces.
+ *
+ * Ranked the other way round it displaced plenty. TypeScript sets `{declaration, readonly, local}`
+ * on the declaration site of a `const` and `{readonly, local}` on every reference to it, so
+ * `declaration` first painted `const MAX = 10` as a plain variable and `MAX` two lines down as a
+ * constant — and the syntactic layer, which resolves an all-caps identifier to the constant colour
+ * at *both*, was overpainted at one of them. Turning semantic tokens on made that file worse than
+ * leaving them off, in exactly the case the `variable.readonly` rule below exists to keep
+ * consistent.
+ *
+ * `defaultLibrary` sits above `readonly` on the same principle the capture table uses for
+ * `*.builtin`: it names one specific known thing, where `readonly` names a property of any symbol.
+ * Below those two the order is inert today and settles ties only if a rule is ever added.
+ * `definition` is not in the plan's list and is kept because `semanticTokensClientCapability()`
+ * declares it; `local` is not a standard modifier and is kept because several real servers send it.
  */
 const MODIFIER_PRECEDENCE: readonly string[] = [
+  // Carry a rule of their own.
+  'defaultLibrary',
+  'readonly',
+  // Resolve to the base scope, and are ranked only against each other.
   'declaration',
   'definition',
-  'readonly',
   'static',
   'abstract',
   'async',
-  'defaultLibrary',
   'deprecated',
   'documentation',
   'modification',

@@ -43,9 +43,9 @@ silently.
 
 **One thing is open, and it is the decision the plan reserved for a human.** Milestone 5's cost gate
 has two thresholds. Gate 1 passes with room to spare. **Gate 2 fails, by 3.7x, and it cannot be made
-to pass.** The remedy ladder was worked in order: remedy 1 was applied and kept (worth 25%, more than
-the plan's estimated tenth), remedy 2 was evaluated and rejected, and **remedy 3 turned out not to
-exist** — the plan proposed coalescing the repaint "the way find already coalesces its re-search",
+to pass.** The remedy ladder was worked in order: remedy 1 was applied and kept but is **worth about 1%, not
+the 25% first recorded here** (see the correction under Milestone 5), remedy 2 was evaluated and
+rejected, and **remedy 3 turned out not to exist** — the plan proposed coalescing the repaint "the way find already coalesces its re-search",
 and find does not coalesce its repaint at all. Once that is corrected the comparison reduces to a
 group-count ratio, and the group count cannot come down: a twenty-row window of TypeScript genuinely
 contains about sixteen distinct kinds of thing and the shipped theme genuinely gives them about
@@ -1735,9 +1735,15 @@ the quadratic term is real and grows, not because it dominates today.
       → `SemanticTokenLayerOwner` in `packages/lsp-plugin/src/semanticTokens.ts`. The view
       contribution is per *view* and outlives a document change, so the owner watches the identity
       and tears the layer down on a document or language change rather than re-pointing it.
-- [x] **Explicit `zIndex` on `DIAGNOSTIC_STYLES.error`, and the four-producer priority regression test** — `S`
-      → `packages/lsp-plugin/test/highlightPriority.test.ts`. It reads the real values from all
-      three packages instead of restating them, which needed `FIND_HIGHLIGHT_Z_INDEX` exported from
+- [x] **Explicit `zIndex` on `DIAGNOSTIC_STYLES.error`, and the five-producer priority regression test** — `S`
+      → `packages/lsp-plugin/test/highlightPriority.test.ts`. The band was first written as four
+      producers and was wrong: `BRACKET_COLOR_Z_INDEX` in `@singapor/scope-lines` declares a `color`
+      too and sat on the semantic layer's number. Nothing painted wrong, because no semantic scope
+      covers a bracket glyph — a latent tie, which is the kind an enumeration that is only
+      accidentally complete leaves behind. The band is now 0 syntax / 1 brackets / 2 semantic /
+      3 error / 4-6 find, with a test asserting no two colour producers share a number. It reads the
+      real values from all four packages instead of restating them, which needed
+      `BRACKET_COLOR_Z_INDEX` exported as well as `FIND_HIGHLIGHT_Z_INDEX` exported from
       `@singapor/find` — the enabling change for a cross-package agreement that nothing enforced.
 - [x] **Multi-line span paints across two mounted rows, gating `multilineTokenSupport`** — `S`
       → asserted in `packages/editor/test/semanticTokenPaintOrder.test.ts`. **The gate is now open**:
@@ -1768,8 +1774,26 @@ re-pushed after each one.
 `setRangeHighlight` and rebuilt a rule for *every* group, so N groups pushed per keystroke meant N²
 rule constructions to arrive at an identical string. A range rule reads only a group's name and its
 style, so a repaint that merely moves ranges cannot change one: the view now counts the changes that
-*can* — a group added, removed or restyled — and skips the rebuild otherwise. Worth 25% at N=16,
-better than the plan's estimated tenth, and it makes find and the diagnostics layer cheaper too.
+*can* — a group added, removed or restyled — and skips the rebuild otherwise, which find and the
+diagnostics layer get too.
+
+> **Correction. It is worth about 1%, not the 25% this section first claimed.** The two columns in
+> the table above were not an ablation of this change; they were measured in different states of the
+> world, and the difference was attributed to the wrong thing. Deleting the two lines of the version
+> gate and re-running this same benchmark moves N=16 by less than its run-to-run noise (2.2510 /
+> 2.2293 / 2.2839 memoised against 2.1913 / 2.2405 / 2.2499 ablated), and the skip is confirmed to
+> fire on 3200 of 3200 calls, so it really is removing all of the work it claims to and the work is
+> simply not big enough to see. The N=1 row settles it independently: it is recorded as 0.5121 →
+> 0.3740, a 27% "win" at a group count where there is no quadratic term to remove at all — one rule
+> construction per call either way.
+>
+> The plan's own isolated measurement agrees and was there the whole time: 0.86 ms/keystroke for the
+> `rebuildStyleRules` term at 84 groups scales as (16/84)² to about 0.03 ms at the live count, which
+> is ~1% of the keystroke and *below* the estimated tenth rather than better than it. The change is
+> kept because it is free and correct, not because it is load-bearing, and Milestone 5's Gate 1 has
+> been restated as a ratio of marginals so that it can actually fail — in its earlier form
+> (`cost(live)/cost(1)` against `1.25 × live`) a tenfold regression in the per-group slope still
+> computed to about 13 against a bound of 20.
 
 **Remedy 3 is not available, and finding out why corrected the gate's own premise.** The plan
 proposed coalescing Milestone 6's repaint "the way find already coalesces its re-search". Find does

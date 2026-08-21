@@ -32,6 +32,21 @@ const KEYSTROKES = 200
 const FIND_GROUPS = 3
 const FIND_REPAINTS_PER_SECOND = 10
 const KEYSTROKES_PER_SECOND = 12
+const GATE_TIMEOUT_MS = 60_000
+/** Rounds of every configuration, keeping each one's floor. See measureConfigurations. */
+const MEASUREMENT_ROUNDS = 3
+/**
+ * How much dearer a group is allowed to get as the count rises.
+ *
+ * Gate 1 compares the marginal cost of one more group high in the range against the same figure low
+ * in it. Linear cost gives ~1 whatever the constants are; a quadratic term c·N² gives
+ * c(live²-3²)/(live-3) over c·3²/3, which at the live count is above 6. Comparing marginals rather
+ * than totals is what makes the bound mean something: cost(live)/cost(1) carries the fixed
+ * `applyEdit` term in both halves, and that term is most of cost(1), so it dilutes any slope
+ * regression by roughly the ratio of the two — a tenfold slowdown of the measured path still lands
+ * under a bound of 1.25 × live.
+ */
+const SUPERLINEARITY_BOUND = 2.5
 
 const highlights = new Map<string, Highlight>()
 const registry: VirtualizedTextHighlightRegistry = {
@@ -84,6 +99,36 @@ function liveGroupCount(): number {
 
 function groupStyle(index: number): VirtualizedTextHighlightStyle {
   return { color: `rgb(${index % 256}, 100, 100)`, zIndex: SEMANTIC_TOKEN_Z_INDEX }
+}
+
+/**
+ * Every configuration, round-robin, keeping each one's fastest round.
+ *
+ * Both gates are ratios between two of these numbers, so anything that slows one configuration and
+ * not another lands directly on the verdict — and measuring them one after another does exactly
+ * that on a loaded machine. A ratio that normally reads 3-4x was seen at 12.8x from a single load
+ * spike landing inside one configuration's run, which is a false failure, and the plan's own
+ * forwards-and-backwards control failed for the same reason: the numbers tracked position in the
+ * list rather than group count.
+ *
+ * Interleaving spreads a spike across all five instead of concentrating it in one, and taking the
+ * minimum rather than the mean is the right estimator for "how fast can this go" — scheduler noise,
+ * GC and background load only ever add, so the floor is the signal and everything above it is the
+ * machine.
+ */
+function measureConfigurations(groupCounts: readonly number[]): Map<number, number> {
+  const best = new Map<number, number>()
+  for (let round = 0; round < MEASUREMENT_ROUNDS; round += 1) {
+    for (const groupCount of groupCounts) {
+      const elapsed = perKeystrokeMs(groupCount)
+      const incumbent = best.get(groupCount)
+      if (incumbent !== undefined && incumbent <= elapsed) continue
+
+      best.set(groupCount, elapsed)
+    }
+  }
+
+  return best
 }
 
 /**
@@ -146,63 +191,78 @@ describe('the per-keystroke cost of repainting semantic groups', () => {
     highlights.clear()
   })
 
-  it('reports the five numbers, and holds both gates to their measured verdicts', () => {
-    const live = liveGroupCount()
-    const measured = new Map<number, number>()
-    for (const groupCount of [0, 1, FIND_GROUPS, 12, live]) {
-      measured.set(groupCount, perKeystrokeMs(groupCount))
-    }
+  // Five timed configurations of 200 keystrokes each, three rounds of them. Comfortably inside a few
+  // seconds on an idle machine and past Vitest's 5s default on a loaded one, which is a flake and
+  // not a regression.
+  it(
+    'reports the five numbers, and holds both gates to their measured verdicts',
+    () => {
+      const live = liveGroupCount()
+      const measured = measureConfigurations([0, 1, FIND_GROUPS, 12, live])
 
-    const at = (groupCount: number): number => measured.get(groupCount) as number
-    const growth = at(live) / at(1)
-    const perRepaintRatio = at(live) / at(FIND_GROUPS)
-    const report = [...measured.entries()]
-      .map(([count, cost]) => `  N=${String(count).padStart(2)}  ${cost.toFixed(4)} ms/keystroke`)
-      .join('\n')
+      const at = (groupCount: number): number => measured.get(groupCount) as number
+      const marginalPerGroup = (from: number, to: number): number =>
+        (at(to) - at(from)) / (to - from)
+      const superlinearity = marginalPerGroup(FIND_GROUPS, live) / marginalPerGroup(0, FIND_GROUPS)
+      const perRepaintRatio = at(live) / at(FIND_GROUPS)
+      const report = [...measured.entries()]
+        .map(([count, cost]) => `  N=${String(count).padStart(2)}  ${cost.toFixed(4)} ms/keystroke`)
+        .join('\n')
 
-    console.log(
-      [
-        `\nper-keystroke setRangeHighlight cost (${ROW_COUNT} rows, ${VIEWPORT_ROWS}-row viewport, ${RANGES_PER_GROUP} ranges/group)`,
-        report,
-        `  live group count for a TypeScript viewport under the shipped theme: ${live}`,
-        `  GATE 1  growth cost(${live})/cost(1) = ${growth.toFixed(2)}  (bound ${(1.25 * live).toFixed(2)})  ${growth <= 1.25 * live ? 'PASS' : 'FAIL'}`,
-        `  GATE 2  semantic ${(KEYSTROKES_PER_SECOND * at(live)).toFixed(2)} ms/s vs find ${(FIND_REPAINTS_PER_SECOND * at(FIND_GROUPS)).toFixed(2)} ms/s  FAIL by ${((perRepaintRatio * KEYSTROKES_PER_SECOND) / FIND_REPAINTS_PER_SECOND).toFixed(1)}x`,
-        `          per-repaint cost(${live})/cost(${FIND_GROUPS}) = ${perRepaintRatio.toFixed(2)}x — which is the whole of it`,
-      ].join('\n'),
-    )
+      console.log(
+        [
+          `\nper-keystroke setRangeHighlight cost (${ROW_COUNT} rows, ${VIEWPORT_ROWS}-row viewport, ${RANGES_PER_GROUP} ranges/group)`,
+          report,
+          `  live group count for a TypeScript viewport under the shipped theme: ${live}`,
+          `  GATE 1  marginal ms/group ${marginalPerGroup(FIND_GROUPS, live).toFixed(4)} high vs ${marginalPerGroup(0, FIND_GROUPS).toFixed(4)} low = ${superlinearity.toFixed(2)}x  (bound ${SUPERLINEARITY_BOUND.toFixed(2)})  ${superlinearity <= SUPERLINEARITY_BOUND ? 'PASS' : 'FAIL'}`,
+          `  GATE 2  semantic ${(KEYSTROKES_PER_SECOND * at(live)).toFixed(2)} ms/s vs find ${(FIND_REPAINTS_PER_SECOND * at(FIND_GROUPS)).toFixed(2)} ms/s  FAIL by ${((perRepaintRatio * KEYSTROKES_PER_SECOND) / FIND_REPAINTS_PER_SECOND).toFixed(1)}x`,
+          `          per-repaint cost(${live})/cost(${FIND_GROUPS}) = ${perRepaintRatio.toFixed(2)}x — which is the whole of it`,
+        ].join('\n'),
+      )
 
-    /**
-     * Gate 1 — growth no worse than linear in live group count.
-     *
-     * `rebuildStyleRules` runs at the end of every non-skipped `setRangeHighlight`. It used to
-     * rebuild a rule for *every* group on every call, so N groups pushed per keystroke meant N^2
-     * rule constructions; it now skips entirely unless a group was added, removed or restyled, which
-     * a repaint that only moves ranges never does. This gate passes with room to spare.
-     */
-    expect(growth).toBeLessThanOrEqual(1.25 * live)
+      /**
+       * Gate 1 — growth no worse than linear in live group count.
+       *
+       * Stated as a ratio of *marginals* rather than of totals, because the earlier form
+       * (`cost(live)/cost(1)` against `1.25 × live`) could not fail. Most of `cost(1)` is the fixed
+       * `applyEdit` term, which sits in the numerator too, so a tenfold regression in the per-group
+       * slope still computed to about 13 against a bound of 20. Ablation settles it: deleting the
+       * `rebuildStyleRules` version gate and restoring the O(groups²) rebuild moves this test's
+       * verdict by less than its run-to-run noise.
+       *
+       * That memoisation is therefore **not** what makes this gate pass, and the earlier version of
+       * this comment claiming otherwise was wrong. The N² term it removes is a template-string
+       * construction per group per call — at the live count roughly 1% of the keystroke, which is
+       * what the plan's own isolated 84-group measurement extrapolates to. It is kept because it is
+       * free and correct, and its correctness is covered by `editor.test.ts`'s
+       * "updates semantic range highlights in place", not by the number below.
+       */
+      expect(superlinearity).toBeLessThanOrEqual(SUPERLINEARITY_BOUND)
 
-    /**
-     * Gate 2 — sustained-typing cost against find, the existing feature that re-pushes range
-     * highlights while you type. **This gate FAILS, and the failure is reported rather than
-     * relaxed.**
-     *
-     * The comparison reduces to one number: cost per repaint at the live group count against cost
-     * per repaint at find's three groups. It is invariant to the repaint *rate*, because whatever
-     * rate is chosen applies to both sides — so no amount of coalescing closes it. What closes it is
-     * a smaller group count, and the group count cannot get smaller: a twenty-row window of
-     * TypeScript genuinely contains about sixteen distinct kinds of thing, and the theme genuinely
-     * gives them about fourteen colours. Collapsing every colour id introduced for semantic tokens
-     * back onto the ids that existed before them takes 16 to 14, not to 3.
-     *
-     * That is the premise the gate was calibrated on — "fifty types collapse to however many colours
-     * the theme actually declares, which is a handful" — and the measurement disproves it. The
-     * absolute cost is 2.5 ms of JavaScript per repaint, and the layer is opt-in: a host that
-     * supplies no semantic-tokens block creates no layer and pays none of it.
-     *
-     * So the assertion below is a **regression guard on the measured ratio**, not the gate. It is
-     * deliberately not the gate, because a gate the design provably cannot meet would sit red
-     * forever and stop meaning anything.
-     */
-    expect(perRepaintRatio).toBeLessThanOrEqual(6)
-  })
+      /**
+       * Gate 2 — sustained-typing cost against find, the existing feature that re-pushes range
+       * highlights while you type. **This gate FAILS, and the failure is reported rather than
+       * relaxed.**
+       *
+       * The comparison reduces to one number: cost per repaint at the live group count against cost
+       * per repaint at find's three groups. It is invariant to the repaint *rate*, because whatever
+       * rate is chosen applies to both sides — so no amount of coalescing closes it. What closes it is
+       * a smaller group count, and the group count cannot get smaller: a twenty-row window of
+       * TypeScript genuinely contains about sixteen distinct kinds of thing, and the theme genuinely
+       * gives them about fourteen colours. Collapsing every colour id introduced for semantic tokens
+       * back onto the ids that existed before them takes 16 to 14, not to 3.
+       *
+       * That is the premise the gate was calibrated on — "fifty types collapse to however many colours
+       * the theme actually declares, which is a handful" — and the measurement disproves it. The
+       * absolute cost is 2.5 ms of JavaScript per repaint, and the layer is opt-in: a host that
+       * supplies no semantic-tokens block creates no layer and pays none of it.
+       *
+       * So the assertion below is a **regression guard on the measured ratio**, not the gate. It is
+       * deliberately not the gate, because a gate the design provably cannot meet would sit red
+       * forever and stop meaning anything.
+       */
+      expect(perRepaintRatio).toBeLessThanOrEqual(6)
+    },
+    GATE_TIMEOUT_MS,
+  )
 })

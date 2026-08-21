@@ -101,9 +101,32 @@ describe('the modifier axis', () => {
     expect(styles.scopeFor('variable', ['readonly'])).toBe('variable.readonly')
     expect(styles.scopeFor('variable', ['readonly', 'local'])).toBe('variable.readonly')
     expect(styles.scopeFor('variable', ['local', 'readonly'])).toBe('variable.readonly')
-    expect(styles.scopeFor('variable', ['declaration', 'readonly'])).toBe('variable.declaration')
     expect(styles.scopeFor('variable', [])).toBe('variable')
     expect(styles.scopeFor('variable')).toBe('variable')
+  })
+
+  /**
+   * The ranking rule, and the regression it exists to stop.
+   *
+   * A modifier the table has no rule for resolves to exactly the base scope, so choosing one is
+   * harmless in itself and harmful only in what it displaces. TypeScript sets
+   * `{declaration, readonly, local}` on the declaration site of a `const` and `{readonly, local}` on
+   * every reference to it — so with `declaration` ranked first, `const MAX = 10` painted as a plain
+   * variable while `MAX` two lines below painted as a constant, and the syntactic layer (which
+   * resolves an all-caps identifier to the constant colour at both) was overpainted at one of them.
+   */
+  it('prefers a modifier the table has a rule for over one it does not', () => {
+    expect(styles.scopeFor('variable', ['declaration', 'readonly'])).toBe('variable.readonly')
+    expect(styles.scopeFor('variable', ['readonly', 'declaration', 'local'])).toBe(
+      'variable.readonly',
+    )
+    expect(styles.scopeFor('function', ['declaration', 'defaultLibrary'])).toBe(
+      'function.defaultLibrary',
+    )
+    // The declaration site and every reference to it resolve alike, which is the point.
+    expect(styles.resolve('variable', ['declaration', 'readonly', 'local'])).toEqual(
+      styles.resolve('variable', ['readonly', 'local']),
+    )
   })
 
   it('resolves a modifier set the same way whatever order it arrived in', () => {

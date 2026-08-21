@@ -12,7 +12,7 @@ import { createStringTextSnapshot } from '@singapor/core/document'
 import type { DocumentSessionChange } from '@singapor/core/document'
 import './style.css'
 
-export { createBracketColorsPlugin } from './bracketColors'
+export { BRACKET_COLOR_Z_INDEX, createBracketColorsPlugin } from './bracketColors'
 export type { BracketColorsPluginOptions } from './bracketColors'
 export { createStickyScrollPlugin } from './stickyScroll'
 export type { StickyScrollPluginOptions } from './stickyScroll'

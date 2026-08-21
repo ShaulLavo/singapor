@@ -19,11 +19,16 @@ export type SemanticTokenDecodeDrops = {
   /** Rule 4: zero-length tuple. */
   readonly zeroLength: number
   /**
-   * Rule 5: the token began past the end of the document — either because `deltaLine` ran past the
-   * last line, or because the character offset ran past the end of the text on the line it did
-   * reach. Both axes of the same failure, and both usually mean one thing: the response describes a
-   * longer document than the `lineStarts` and `textLength` it was decoded against, i.e. the host's
-   * own snapshot has moved. Counting that under `zeroLength` would point the host at the server.
+   * Rule 5: the token began past the end of the text it addresses — either because `deltaLine` ran
+   * past the last line, or because `character` ran past the end of the line it did reach. Both axes
+   * of the same failure, and both usually mean one thing: the response describes a longer document
+   * than the `lineStarts` and `textLength` it was decoded against, i.e. the host's own snapshot has
+   * moved. Counting that under `zeroLength` would point the host at the server.
+   *
+   * The character axis is checked against `lineStarts[line + 1]`, not against `textLength`. Clamped
+   * to the document alone, a `character` past the end of line 1 of a long file is still a valid
+   * offset — one somewhere on line 3 — so the tuple decoded to a plausible span over unrelated text
+   * and reported nothing.
    */
   readonly pastEndOfDocument: number
   /** Rule 3: modifier bits beyond the legend's length. The SPAN SURVIVES; only the bits are lost. */
@@ -70,8 +75,10 @@ const MODIFIER_BITS = 32
  * 3. **Modifier bits beyond the legend's length are ignored, not errors.** The bitset is 32 bits
  *    wide and a legend may declare six.
  * 4. **Zero-length tuples are dropped.** They cannot paint and they are common in the wild.
- * 5. **Every offset is clamped to the document length**, and a tuple whose `deltaLine` runs past the
- *    last line is dropped rather than throwing.
+ * 5. **Every offset is clamped to the document length**, and a tuple that begins past the end of
+ *    the text it addresses — `deltaLine` past the last line, or `character` past the end of the
+ *    line it reached — is dropped rather than throwing. Only the *start* is held to the line: an
+ *    `end` beyond it is a multi-line span, which is a thing this decoder emits on purpose.
  *
  * Offsets come out absolute, in UTF-16 code units, which needs no encoding conversion at all: the
  * client declares `general.positionEncodings: ['utf-16']`, UTF-16 code units are JavaScript string
@@ -140,12 +147,21 @@ export function decodeSemanticTokens(
     }
 
     const lineStart = lineStarts[line] as number
+    // Where the line the tuple addresses actually stops. LSP's own `Position` rule says a character
+    // past the end of a line means the end of that line, so a `character` beyond it describes text
+    // that is not there — and clamping only to `textLength` cannot see that: `lineStart + character`
+    // lands on a perfectly valid offset somewhere further down the file. A stale host snapshot after
+    // a line was shortened produced exactly that, and the span painted on an unrelated line with
+    // every drop counter still reading zero.
+    const lineEnd = lineStarts[line + 1] ?? textLength
     const start = clampOffset(lineStart + character, textLength)
     const end = clampOffset(lineStart + character + length, textLength)
     // A tuple that clamped away to nothing is not a zero-length tuple — it arrived with a real
-    // length and began past the end of the text. Same failure as `deltaLine` overrunning, one axis
-    // over, so it is counted the same way.
-    if (end <= start) {
+    // length and began past the end of the text it addresses. Same failure as `deltaLine`
+    // overrunning, one axis over, so it is counted the same way. `end` is deliberately NOT clamped
+    // to the line: a span crossing a newline is a thing this decoder produces on purpose, for a
+    // client that declared `multilineTokenSupport`.
+    if (end <= start || start >= lineEnd) {
       pastEndOfDocument += 1
       continue
     }

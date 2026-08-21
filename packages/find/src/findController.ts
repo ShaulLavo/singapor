@@ -42,9 +42,9 @@ import type { EditorFindOptions } from './types'
 // A tie there would put the background contest back where the numbers exist to take it out of:
 // registration order in the document's shared registry.
 export const FIND_HIGHLIGHT_Z_INDEX = {
-  scope: 3,
-  match: 4,
-  current: 5,
+  scope: 4,
+  match: 5,
+  current: 6,
 } as const
 
 const FIND_MATCH_STYLE = {

@@ -613,12 +613,15 @@ describe('the TypeScript worker and the semantic token layer, end to end', () =>
     expect(colorAt(harness.editor, line + 'drift += '.length)).toBe(CONSTANT_COLOR)
     expect(colorAt(harness.editor, line)).toBe(VARIABLE_COLOR)
 
-    // The declaration site of that same constant is variable-coloured, because `declaration`
-    // outranks `readonly` in turn and `variable.declaration` carries no rule of its own. Exactly one
-    // modifier reaches the scope and it is the highest-ranked one present, which is the whole point
-    // of a single canonical precedence.
+    // The declaration site of that same constant is coloured the same as every reference to it.
+    // TypeScript sends `{declaration, readonly, local}` there and `{readonly, local}` here, and
+    // exactly one modifier reaches the scope — so which one the precedence picks decides whether one
+    // symbol has one colour. Picking `declaration`, which carries no rule and therefore resolves to
+    // the bare `variable`, painted the declaration site as a plain variable and overpainted the
+    // constant colour the syntactic layer had already put there: semantic colour that made the file
+    // worse than leaving the feature off.
     expect(colorAt(harness.editor, text.indexOf('const started') + 'const '.length)).toBe(
-      VARIABLE_COLOR,
+      CONSTANT_COLOR,
     )
   })
 

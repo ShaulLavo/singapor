@@ -530,32 +530,87 @@ async function typeDefinitionResult(params: unknown): Promise<lsp.Location[]> {
  * answered with `range`**, and the fixture is built around that being the hot path.
  */
 async function semanticTokensFullResult(params: unknown): Promise<lsp.SemanticTokens | null> {
-  const document = documentFromTextDocumentParams(params)
-  if (!document) return null
+  const requested = documentFromTextDocumentParams(params)
+  if (!requested) return null
 
-  const state = await ensureService()
+  const settled = await settledService(requested)
+  if (!settled) return null
+
   return {
-    data: encodeSemanticTokens(state.env, document, { start: 0, length: document.text.length }),
+    data: encodeSemanticTokens(settled.env, settled.document, {
+      start: 0,
+      length: settled.document.text.length,
+    }),
   }
 }
 
 /** See `semanticTokensFullResult` for which of the two a host should be asking. */
 async function semanticTokensRangeResult(params: unknown): Promise<lsp.SemanticTokens | null> {
-  const document = documentFromTextDocumentParams(params)
-  if (!document) return null
+  const requested = documentFromTextDocumentParams(params)
+  if (!requested) return null
 
   const range = lspRangeFromParams(params)
   if (!range) return null
 
-  const start = lspPositionToOffset(document.text, range.start)
-  const end = lspPositionToOffset(document.text, range.end)
-  const state = await ensureService()
+  const settled = await settledService(requested)
+  if (!settled) return null
+
+  // One scan of the document, not three. `lspPositionToOffset` walks the text a character at a time
+  // from offset zero, so asking it for both ends of a range cost two full passes before
+  // `encodeSemanticTokens` made a third building the very array that answers both — a fixed
+  // O(document) charge on a per-viewport question, larger than the classification it wraps and
+  // growing with the file rather than with the window.
+  const text = settled.document.text
+  const lineStarts = documentLineStarts(text)
+  const start = offsetAtPosition(lineStarts, text.length, range.start)
+  const end = offsetAtPosition(lineStarts, text.length, range.end)
   return {
-    data: encodeSemanticTokens(state.env, document, {
-      start,
-      length: Math.max(end - start, 0),
-    }),
+    data: encodeSemanticTokens(
+      settled.env,
+      settled.document,
+      { start, length: Math.max(end - start, 0) },
+      lineStarts,
+    ),
   }
+}
+
+/**
+ * The service and the document together, once both have settled — or nothing if the document moved
+ * out from under the request while we waited.
+ *
+ * `ensureService()` can suspend for a long time — the first call fetches the lib set over the
+ * network, and `handleSetWorkspaceFiles` invalidates the service so that recurs — and notifications
+ * are routed the moment they arrive, with nothing serialising them behind an in-flight request. So
+ * a `didChange` lands freely inside that window, `createService` builds its environment from the
+ * *new* text, and a handler still holding the object it captured before the await would encode
+ * span offsets taken from the new document against line starts taken from the old one: an answer
+ * consistent with neither version, which no host-side version check can reconcile. Re-reading the
+ * map after the await is what `publishDiagnosticsForUri` already does, for the same reason.
+ */
+async function settledService(requested: WorkerDocument): Promise<{
+  readonly env: VirtualTypeScriptEnvironment
+  readonly document: WorkerDocument
+} | null> {
+  const state = await ensureService()
+
+  const current = documents.get(requested.uri)
+  if (!isCurrentDocument(requested, current)) return null
+
+  return { document: current, env: state.env }
+}
+
+/** Where `position` lands, against line starts the caller has already built. */
+function offsetAtPosition(
+  lineStarts: readonly number[],
+  textLength: number,
+  position: lsp.Position,
+): number {
+  const lineStart = lineStarts[position.line]
+  if (lineStart === undefined) return textLength
+
+  const lineEnd = lineStarts[position.line + 1] ?? textLength
+  const offset = lineStart + position.character
+  return offset > lineEnd ? lineEnd : offset
 }
 
 /**
@@ -577,6 +632,7 @@ function encodeSemanticTokens(
   env: VirtualTypeScriptEnvironment,
   document: WorkerDocument,
   span: ts.TextSpan,
+  precomputedLineStarts?: readonly number[],
 ): number[] {
   const classifications = env.languageService.getEncodedSemanticClassifications(
     document.fileName,
@@ -584,7 +640,7 @@ function encodeSemanticTokens(
     ts.SemanticClassificationFormat.TwentyTwenty,
   )
   const spans = classifications.spans
-  const lineStarts = documentLineStarts(document.text)
+  const lineStarts = precomputedLineStarts ?? documentLineStarts(document.text)
   const data: number[] = []
   let previousLine = 0
   let previousCharacter = 0

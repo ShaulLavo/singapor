@@ -1457,9 +1457,18 @@ export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
 
   // A range rule reads only a group's name and its style, so a call that moved ranges around cannot
   // have changed any of them. Without this, a repaint that pushes N groups rebuilds every rule N
-  // times — quadratic in the live group count, on the keystroke path, to arrive at the same string.
+  // times to arrive at the same string — quadratic in the live group count, on the keystroke path.
+  //
+  // Measured rather than assumed, because it was assumed once and the number was wrong: ablating
+  // these two lines moves the semantic layer's own repaint benchmark by less than its noise at the
+  // live group count of sixteen. N² template-string constructions are cheap, and 16² of them is
+  // about 1% of a keystroke. It is kept because it is free and correct — not because it is
+  // load-bearing, and no benchmark here can witness it.
+  //
   // The element's connection is only ever toggled by the rule set going empty or non-empty, which
-  // is itself a version change, so skipping the sync along with the rebuild is safe.
+  // is itself a version change, so skipping the sync along with the rebuild is safe. That the
+  // version moves whenever a group is added, removed or restyled is what `editor.test.ts`'s
+  // "updates semantic range highlights in place" covers.
   if (view.rangeHighlightRuleVersion === view.renderedRangeHighlightRuleVersion) return
   view.renderedRangeHighlightRuleVersion = view.rangeHighlightRuleVersion
 

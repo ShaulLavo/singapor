@@ -44,10 +44,20 @@ type BracketLevelPaint = {
   readonly style: VirtualizedTextHighlightStyle
 }
 
-// A level colour has to replace the one the grammar gave the bracket, and the grammar reaches that
-// same glyph through the same painting mechanism at the default rank: left equal, which of the two
-// wins would come down to the order the two happened to register in.
-const BRACKET_COLOR_Z_INDEX = 1
+/**
+ * Where depth colouring sits in the shared highlight priority band.
+ *
+ * A level colour has to replace the one the grammar gave the bracket, and the grammar reaches that
+ * same glyph through the same painting mechanism at the default rank: left equal, which of the two
+ * wins would come down to the order the two happened to register in.
+ *
+ * Exported because the band is one document-global namespace shared across packages, and this is
+ * the fifth producer to declare a `color` in it. It sat on the semantic token layer's number until
+ * the band was renumbered — a tie no one had noticed because no semantic scope covers a bracket
+ * glyph today, which makes it the kind of thing that surfaces the first time a host writes a
+ * `scopeAliases` entry mapping a server's `brace` onto `operator`.
+ */
+export const BRACKET_COLOR_Z_INDEX = 1
 
 /*
  * Depth is painted with registered colour ids, so a theme restyles nesting the way it restyles

@@ -194,12 +194,11 @@ describe('exact-span capture overlaps', () => {
   })
 
   /**
-   * Pinned, not fixed. A capture nested inside a larger one is not an exact-span duplicate, so
-   * nothing chooses between the two and both still become tokens — which one paints where they
-   * cover the same characters remains a function of registry order. Milestone 1 deliberately does
-   * not extend the ranking to cover it; this test exists so that a change which does is visible.
+   * Siblings are not an overlap and must not be merged into one. `obj` and `prop` abut but claim
+   * different characters, so both survive with their own colours — the resolver only ever chooses
+   * where two captures want the same character.
    */
-  it('leaves partial overlaps alone, order-dependent as they were', () => {
+  it('keeps abutting captures as separate tokens', () => {
     const source = 'const value = obj.prop\n'
     const tokens = treeSitterCapturesToEditorTokens(parseTypeScript(source))
     const [start, end] = spanOf(source, 'obj.prop')
@@ -207,6 +206,54 @@ describe('exact-span capture overlaps', () => {
 
     expect(nested.length).toBeGreaterThan(1)
     expect(nested.some((token) => token.start !== start || token.end !== end)).toBe(true)
+  })
+
+  /**
+   * A template literal is the shipped grammar's own nested overlap: `@string` covers the whole
+   * literal and `@punctuation.special` covers each `${`/`}` inside it. The container is not dropped
+   * for losing its middle — it comes back either side of the hole — and no character ends up
+   * claimed by both.
+   */
+  it('splits a string around the interpolation markers nested in it', () => {
+    const source = 'const greeting = `hello ${name} there`\n'
+    const tokens = treeSitterCapturesToEditorTokens(parseTypeScript(source))
+    const [start, end] = spanOf(source, '`hello ${name} there`')
+    const inside = tokens.filter((token) => token.start >= start && token.end <= end)
+    const stringStyle = styleForTreeSitterCapture('string')
+
+    expect(
+      inside.filter((token) => token.style.color === stringStyle?.color).length,
+    ).toBeGreaterThan(1)
+    expect(
+      inside.filter(
+        (token) => token.style.color === styleForTreeSitterCapture('punctuation.special')?.color,
+      ).length,
+    ).toBeGreaterThan(0)
+    expect(
+      inside.every((token, index) => index === 0 || token.start >= (inside[index - 1]?.end ?? 0)),
+    ).toBe(true)
+  })
+
+  /**
+   * `((identifier) @constructor (#match? "^[A-Z]"))` and `((identifier) @type (#match? "^[A-Z]"))`
+   * are the same heuristic in two shipped query files, so neither knows more about the span than the
+   * other. With `constructor` ranked as a declaration role it won every bare capitalised identifier
+   * and painted it `syntax.typeDefinition`, while the same name in a `type_identifier` position —
+   * which only `@type` claims — kept `syntax.type`. One class name, two different blues in one file.
+   */
+  it('paints a class name the same colour wherever it appears', () => {
+    const source = 'class Widget {}\nconst w = new Widget()\nlet z: Widget\n'
+    const tokens = treeSitterCapturesToEditorTokens(parseTypeScript(source))
+    const colors = [...source.matchAll(/Widget/g)]
+      .map((match) => match.index)
+      .map(
+        (start) =>
+          tokens.find((token) => token.start <= start && token.end > start)?.style.color ?? null,
+      )
+
+    expect(colors).toHaveLength(3)
+    expect(new Set(colors).size).toBe(1)
+    expect(colors[0]).toBe(styleForTreeSitterCapture('type')?.color)
   })
 })
 
@@ -256,14 +303,62 @@ describe('markdown emphasis and strong', () => {
   })
 
   // Plain markdown text carries no capture at all, so it paints in the editor's foreground. A
-  // colour equal to that one would be no more visible than the font property it replaced.
-  it('gives them a colour the surrounding plain text does not have', () => {
+  // colour equal to another markdown scope's would be no more informative than the font property it
+  // replaced. That these ids resolve to something other than the foreground is theme.test.ts's
+  // question; that they are distinct from their neighbours is this one's.
+  it('gives them a colour no other markdown scope shares', () => {
     const tokens = treeSitterCapturesToEditorTokens(parseMarkdown(FIXTURE))
     const [plainStart] = spanOf(FIXTURE, 'plain')
     const covering = tokens.filter((token) => token.start <= plainStart && token.end > plainStart)
 
     expect(covering).toHaveLength(0)
-    expect(styleForTreeSitterCapture('text.emphasis')?.color).toBeTruthy()
-    expect(styleForTreeSitterCapture('text.strong')?.color).toBeTruthy()
+
+    // The three that can cover one character: a heading holds bold, and bold holds emphasis. Other
+    // markdown scopes are free to share a hue — `text.literal` and `text.uri` do, and are told apart
+    // by an underline — because they never contend for the same span.
+    const colors = ['text.emphasis', 'text.strong', 'text.title'].map(
+      (scope) => styleForTreeSitterCapture(scope)?.color,
+    )
+    expect(colors.every((color) => typeof color === 'string' && color.length > 0)).toBe(true)
+    expect(new Set(colors).size).toBe(colors.length)
+  })
+
+  /**
+   * The contest those colours would otherwise have created, and why exact-span resolution had to
+   * widen to containment.
+   *
+   * A markdown heading is captured as `text.title` over the whole line, and a bold word inside it as
+   * `text.strong` over part of it. Once both declare a `color` they are two `Highlight`s at the same
+   * priority over the same characters, and the CSS Custom Highlight API resolves that by registry
+   * insertion order — "which style key this session's shared registry saw first". Before the colours
+   * landed the contest did not exist, because `text.strong` declared only `fontWeight`, which a
+   * `::highlight()` rule cannot apply. So the fix for one defect created another, and only
+   * per-character resolution closes both.
+   */
+  it('resolves a bold word inside a heading rather than leaving the two to contend', () => {
+    const heading = '# A **B** C\n'
+    const tokens = treeSitterCapturesToEditorTokens(parseMarkdown(heading))
+    const [boldStart, boldEnd] = spanOf(heading, '**B**')
+    const covering = tokens.filter((token) => token.start < boldEnd && token.end > boldStart)
+
+    expect(covering).toHaveLength(1)
+  })
+
+  /**
+   * The guarantee that makes registry order stop mattering at all: no two tokens claim a character.
+   * Asserted over both grammars, because it is a property of the resolver rather than of a fixture.
+   */
+  it('emits tokens that never overlap', () => {
+    for (const tokens of [
+      treeSitterCapturesToEditorTokens(parseMarkdown(FIXTURE)),
+      treeSitterCapturesToEditorTokens(parseMarkdown('# A **B** C\n\ntext with `code` in it\n')),
+      treeSitterCapturesToEditorTokens(parseTypeScript('const x = `a ${b} c`\nconst MAX = 10\n')),
+    ]) {
+      expect(tokens.length).toBeGreaterThan(0)
+      const overlapping = tokens.filter(
+        (token, index) => index > 0 && token.start < (tokens[index - 1]?.end ?? 0),
+      )
+      expect(overlapping).toEqual([])
+    }
   })
 })

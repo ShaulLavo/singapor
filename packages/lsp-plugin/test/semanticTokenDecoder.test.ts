@@ -174,6 +174,32 @@ describe('decodeSemanticTokens', () => {
     expect(result.drops.zeroLength).toBe(0)
   })
 
+  /**
+   * The half of the character axis that `textLength` alone cannot see, and the reason the check is
+   * against `lineStarts[line + 1]`.
+   *
+   * Line 0 is fifteen characters long and the document is forty-seven, so a tuple placed at line 0
+   * character 40 — what a host holding a snapshot from before that line was shortened sends —
+   * has a start that clamps to nothing at all. It is a perfectly valid offset: it lands on line 3.
+   * Decoded that way it painted `ird =` in the middle of an unrelated line and reported a clean
+   * decode, which is worse than dropping it, because the host has no way to notice.
+   */
+  it('drops a tuple beginning past the end of its own line, not of the document', () => {
+    const result = decodeSemanticTokens([0, 40, 5, 0, 0], LEGEND, DOCUMENT)
+
+    expect(result.spans).toEqual([])
+    expect(result.drops.pastEndOfDocument).toBe(1)
+    expect(result.drops.zeroLength).toBe(0)
+  })
+
+  /** The same tuple one character earlier still fits, so the bound is the line end and not a guess. */
+  it('keeps a tuple that ends exactly at the end of its line', () => {
+    const result = decodeSemanticTokens([0, 14, 1, 0, 0], LEGEND, DOCUMENT)
+
+    expect(result.spans).toEqual([{ start: 14, end: 15, tokenType: 'variable' }])
+    expect(result.drops).toEqual(NO_DROPS)
+  })
+
   it('keeps the two axes of that failure in one counter', () => {
     // Three real-length tuples against a three-character document: all of them start past its end.
     const stale = decodeSemanticTokens([0, 10, 5, 0, 0, 0, 6, 5, 0, 0, 0, 6, 5, 0, 0], LEGEND, {

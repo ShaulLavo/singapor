@@ -30,6 +30,8 @@ type Harness = {
   readonly requests: { start: number; end: number; documentId: string; textVersion: number }[]
   readonly resyncs: string[]
   setSnapshot(next: Partial<EditorViewSnapshot>): void
+  /** The live object the context hands the layer, so a test can watch what the layer reads off it. */
+  snapshot(): EditorViewSnapshot
   update(kind: Parameters<ReturnType<typeof createSemanticTokenLayer>['update']>[1]): void
 }
 
@@ -76,6 +78,7 @@ function harness(options: Partial<SemanticTokenLayerOptions> = {}): Harness {
     setSnapshot: (next) => {
       snapshot = { ...snapshot, ...next }
     },
+    snapshot: () => snapshot,
     update: (kind) => layer.update(snapshot, kind),
   }
 }
@@ -262,11 +265,88 @@ describe('painting', () => {
     expect(ranges.every((range) => range.end > range.start)).toBe(true)
   })
 
-  it('drops an earlier span an overlap would have emptied', () => {
+  /** Two that begin together: the shorter is the more specific, and the longer keeps its tail. */
+  it('keeps the tail of the longer span when two begin together', () => {
     const test = harness()
     test.layer.push(payload([span(4, 10, 'keyword'), span(4, 12, 'keyword')]))
 
-    expect([...test.groups.values()][0]?.ranges).toEqual([{ start: 4, end: 12 }])
+    expect([...test.groups.values()][0]?.ranges).toEqual([
+      { start: 4, end: 10 },
+      { start: 10, end: 12 },
+    ])
+  })
+
+  /**
+   * The case a single-element lookback lost. Popping the container and keeping only its head threw
+   * away everything after the nested span — a server that marks one interpolation inside a template
+   * literal used to lose the rest of the literal's colour, with `paintedSpans` reporting a clean
+   * paint. Every character either span described is still described by one of them.
+   */
+  it('splits a containing span around a nested one rather than dropping its tail', () => {
+    const test = harness()
+    const result = test.layer.push(payload([span(0, 10, 'string'), span(4, 6, 'variable')]))
+
+    const painted = [...test.groups.values()]
+      .flatMap((group) => group.ranges)
+      .toSorted((left, right) => left.start - right.start)
+    expect(painted).toEqual([
+      { start: 0, end: 4 },
+      { start: 4, end: 6 },
+      { start: 6, end: 10 },
+    ])
+    // Two colours, not one: the container is still a string on both sides of the hole.
+    expect(test.groups.size).toBe(2)
+    expect([...test.groups.values()].find((group) => group.ranges.length === 2)?.ranges).toEqual([
+      { start: 0, end: 4 },
+      { start: 6, end: 10 },
+    ])
+    expect(result.status === 'painted' && result.paintedSpans).toBe(3)
+  })
+
+  /** Three deep, which is where a lookback that only ever inspects the last resolved span gives up. */
+  it('resolves nesting deeper than one level without losing a character', () => {
+    const test = harness()
+    test.layer.push(
+      payload([span(0, 20, 'string'), span(4, 16, 'keyword'), span(8, 12, 'variable')]),
+    )
+
+    const painted = [...test.groups.values()]
+      .flatMap((group) => group.ranges)
+      .toSorted((left, right) => left.start - right.start)
+    expect(painted).toEqual([
+      { start: 0, end: 4 },
+      { start: 4, end: 8 },
+      { start: 8, end: 12 },
+      { start: 12, end: 16 },
+      { start: 16, end: 20 },
+    ])
+  })
+
+  /**
+   * `fullText` is a lazy getter that walks the piece table and joins the whole document into a
+   * string, and `Editor.getSnapshot()` rebuilds the snapshot object — and so the memo — on every
+   * call. Reading `.length` off it cost one whole-document serialisation per push. `textSnapshot`
+   * carries the same number for free, so a snapshot that has one must never be asked for its text.
+   */
+  it('reads the document length without materialising the document', () => {
+    const test = harness()
+    let materialised = 0
+    test.setSnapshot({
+      textSnapshot: { length: TEXT.length } as EditorViewSnapshot['textSnapshot'],
+    })
+    const snapshot = test.snapshot()
+    Object.defineProperty(snapshot, 'fullText', {
+      configurable: true,
+      get: () => {
+        materialised += 1
+        return TEXT
+      },
+    })
+
+    const result = test.layer.push(payload([span(0, 5, 'keyword')]))
+
+    expect(result.status).toBe('painted')
+    expect(materialised).toBe(0)
   })
 
   /**

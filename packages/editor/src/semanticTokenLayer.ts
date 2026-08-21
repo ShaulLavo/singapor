@@ -21,12 +21,17 @@ import type { VirtualizedTextHighlightStyle } from './virtualization/virtualized
  * Where the semantic layer sits in the shared highlight priority space.
  *
  * Priority only decides between highlights that declare the *same* property — the CSS Custom
- * Highlight API resolves per property — so the only contest here is for `color`, and only three
- * producers declare one: syntax token highlights at 0, this layer, and an error diagnostic. Semantic
- * colour must beat the syntactic colour it refines, and must lose to an error squiggle and to the
+ * Highlight API resolves per property — so the only contest here is for `color`, and five producers
+ * declare one: syntax token highlights at 0, bracket depth colouring at 1, this layer, an error
+ * diagnostic, and the current find match. Semantic colour must beat the syntactic colour it refines
+ * and the depth colour that refines it in turn, and must lose to an error squiggle and to the
  * current find match, which are both answers to a question the user just asked.
+ *
+ * Two rather than one because bracket depth colouring already held one, and a tie in this namespace
+ * is resolved by registry insertion order — which is the defect the band exists to remove, not a
+ * place to leave one. `packages/lsp-plugin/test/highlightPriority.test.ts` holds the whole order.
  */
-export const SEMANTIC_TOKEN_Z_INDEX = 1
+export const SEMANTIC_TOKEN_Z_INDEX = 2
 
 /**
  * Which edge absorbs text typed against a painted span, and which does not.
@@ -224,7 +229,7 @@ export function createSemanticTokenLayer(
       }
       if (payload.textVersion > snapshot.textVersion) return dropped('version-ahead', options)
       if (payload.textVersion === snapshot.textVersion) {
-        return paint(payload.spans, snapshot.fullText.length, 0)
+        return paint(payload.spans, snapshot, 0)
       }
 
       // The text moved between the request and the answer, which is the ordinary case rather than
@@ -234,7 +239,7 @@ export function createSemanticTokenLayer(
       const edits = snapshot.editsSinceTextVersion?.(payload.textVersion)
       if (!edits) return dropped('version-too-old', options)
 
-      return paint(projectSpans(payload.spans, edits), snapshot.fullText.length, edits.length)
+      return paint(projectSpans(payload.spans, edits), snapshot, edits.length)
     },
 
     clear() {
@@ -266,9 +271,10 @@ export function createSemanticTokenLayer(
 
   function paint(
     spans: readonly SemanticTokenSpan[],
-    textLength: number,
+    snapshot: EditorViewSnapshot,
     projectedThroughEdits: number,
   ): SemanticTokenPushResult {
+    const textLength = documentLength(snapshot)
     const unresolved = new Set<string>()
     const groups = new Map<string, PaintedGroup>()
     let paintedSpans = 0
@@ -305,7 +311,7 @@ export function createSemanticTokenLayer(
       group.tracked = context.trackRanges?.(group.ranges, SEMANTIC_TOKEN_STICKINESS) ?? null
     }
     painted = groups
-    paintedDocumentId = context.getSnapshot().documentId
+    paintedDocumentId = snapshot.documentId
 
     return {
       paintedSpans,
@@ -366,9 +372,16 @@ function dropped(
  * host's claim to have done it: spans arrive in any order, zero-length ones cannot paint, offsets
  * past the end of the text are a real thing servers send, and overlaps are not supported.
  *
- * Where two spans overlap the later one by `start` wins and the earlier is truncated, because LSP's
- * `overlappingTokenSupport` defaults to false and this editor does not honour it. That is also why
- * the capability builder cannot declare it.
+ * Where two spans overlap the more specific one wins — later `start`, or the shorter of two that
+ * begin together — because LSP's `overlappingTokenSupport` defaults to false and this editor does
+ * not honour it. That is also why the capability builder cannot declare it.
+ *
+ * The loser is **truncated, not discarded**. A span nested inside another comes back as the outer's
+ * head, the inner, and the outer's tail: three spans covering exactly the characters the two
+ * described. Popping the outer and keeping only its head — which is what a single-element lookback
+ * does — silently dropped everything after the nested span, so a server that marked one
+ * interpolation inside a template literal lost the rest of the literal's colour and `paintedSpans`
+ * reported a clean paint.
  */
 function normalizeSpans(
   spans: readonly SemanticTokenSpan[],
@@ -384,18 +397,133 @@ function normalizeSpans(
   }
 
   clamped.sort((left, right) => left.start - right.start || left.end - right.end)
+  // The conformant case, and the one worth keeping free: a non-overlapping set is already the
+  // answer, so nothing below it allocates.
+  if (!hasOverlappingSpan(clamped)) return clamped
 
+  return resolveOverlappingSpans(clamped)
+}
+
+function hasOverlappingSpan(sorted: readonly SemanticTokenSpan[]): boolean {
+  let maxEnd = -1
+  for (const span of sorted) {
+    if (span.start < maxEnd) return true
+    maxEnd = span.end > maxEnd ? span.end : maxEnd
+  }
+
+  return false
+}
+
+/**
+ * One owner per character, then contiguous runs of one owner rejoined into a span.
+ *
+ * Same sweep the capture resolver runs, with "most specific" spelled in offsets rather than in
+ * scope names, because there is no ranking to appeal to here — the spans come from one server's
+ * legend and carry no relative authority.
+ */
+function resolveOverlappingSpans(
+  sorted: readonly SemanticTokenSpan[],
+): readonly SemanticTokenSpan[] {
+  const boundaries = spanBoundaries(sorted)
   const resolved: SemanticTokenSpan[] = []
-  for (const span of clamped) {
-    const previous = resolved.at(-1)
-    if (previous && previous.end > span.start) {
-      resolved.pop()
-      if (previous.start < span.start) resolved.push({ ...previous, end: span.start })
+  const active: SemanticTokenSpan[] = []
+  let admitted = 0
+  let owner: SemanticTokenSpan | null = null
+
+  for (let index = 0; index + 1 < boundaries.length; index += 1) {
+    const start = boundaries[index] as number
+    const end = boundaries[index + 1] as number
+    admitted = admitSpans(sorted, admitted, start, active)
+    evictClosedSpans(active, start)
+
+    const winner = innermostSpan(active)
+    if (!winner) {
+      owner = null
+      continue
     }
-    resolved.push(span)
+
+    const previous = resolved[resolved.length - 1]
+    if (owner === winner && previous && previous.end === start) {
+      resolved[resolved.length - 1] = { ...previous, end }
+      continue
+    }
+
+    owner = winner
+    resolved.push(winner.start === start && winner.end === end ? winner : { ...winner, end, start })
   }
 
   return resolved
+}
+
+function spanBoundaries(spans: readonly SemanticTokenSpan[]): number[] {
+  const offsets: number[] = []
+  for (const span of spans) offsets.push(span.start, span.end)
+  offsets.sort((left, right) => left - right)
+
+  const boundaries: number[] = []
+  for (const offset of offsets) {
+    if (boundaries[boundaries.length - 1] === offset) continue
+    boundaries.push(offset)
+  }
+
+  return boundaries
+}
+
+function admitSpans(
+  sorted: readonly SemanticTokenSpan[],
+  cursor: number,
+  offset: number,
+  active: SemanticTokenSpan[],
+): number {
+  let next = cursor
+  while (next < sorted.length && (sorted[next] as SemanticTokenSpan).start <= offset) {
+    active.push(sorted[next] as SemanticTokenSpan)
+    next += 1
+  }
+
+  return next
+}
+
+function evictClosedSpans(active: SemanticTokenSpan[], offset: number): void {
+  let kept = 0
+  for (const span of active) {
+    if (span.end <= offset) continue
+
+    active[kept] = span
+    kept += 1
+  }
+
+  active.length = kept
+}
+
+/** Latest to begin, and the shorter of two that begin together. Ties go to the earlier arrival. */
+function innermostSpan(active: readonly SemanticTokenSpan[]): SemanticTokenSpan | null {
+  let best: SemanticTokenSpan | null = null
+  for (const span of active) {
+    if (best && !isInnerSpan(span, best)) continue
+    best = span
+  }
+
+  return best
+}
+
+function isInnerSpan(span: SemanticTokenSpan, incumbent: SemanticTokenSpan): boolean {
+  if (span.start !== incumbent.start) return span.start > incumbent.start
+  return span.end < incumbent.end
+}
+
+/**
+ * How long the document is, without materialising it.
+ *
+ * `fullText` is a lazy getter that walks the piece table and joins the whole document into a
+ * string, and its memo lives on the snapshot object — which `Editor.getSnapshot()` builds fresh on
+ * every call, so nothing amortises it. Reading `.length` off it therefore cost one whole-document
+ * serialisation per push: a megabyte-scale allocation and a full tree walk, to learn a number
+ * `textSnapshot` holds directly. The fallback is for hosts and harnesses that supply a snapshot
+ * without one.
+ */
+function documentLength(snapshot: EditorViewSnapshot): number {
+  return snapshot.textSnapshot?.length ?? snapshot.fullText.length
 }
 
 function clampOffset(offset: number, textLength: number): number {

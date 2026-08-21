@@ -34,9 +34,11 @@ if (Object.keys(entries).length === 0) {
 }
 
 await rm(distRoot, { recursive: true, force: true })
+// CSS lands before the JS that imports it, so a watching dev server never sees
+// a dist where index.js exists and its `import './style.css'` cannot resolve.
+await copyCss()
 await buildJavaScript()
 await emitDeclarations()
-await copyCss()
 
 async function readManifest(): Promise<PackageManifest> {
   const content = await readFile(packageJsonPath, 'utf8')

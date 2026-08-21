@@ -42,8 +42,11 @@ jobs:
 
       # Six packages carry a `browser (chromium)` vitest project alongside their happy-dom one —
       # geometry and cascade assertions happy-dom cannot answer. They need a real browser.
+      # Both, deliberately: vitest browser mode runs `headless: true`, which launches
+      # `chrome-headless-shell` — a separate download from `chromium`, and the one whose absence
+      # the first attempt failed on.
       - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps chromium chromium-headless-shell
 
       # Serialised on purpose. Each browser project starts its own vitest server, and running six
       # of them at once on a two-core runner fights over ports and gets killed (exit 130) rather

@@ -5,6 +5,7 @@ import {
   diffGutterLayout,
   diffGutterNumberText,
   diffGutterRowTone,
+  type DiffGutterDigits,
   type DiffGutterLaneKind,
   type DiffGutterLayout,
   type DiffGutterSide,
@@ -13,15 +14,19 @@ import type { DiffRenderRow } from './types'
 
 export type DiffGutterOptions = {
   readonly side: DiffGutterSide
-  /** Every row, for the width computation. Not addressable by index — see `resolveRow`. */
-  readonly getRows: () => readonly DiffRenderRow[]
+  /**
+   * The widest line number each lane must fit, computed once when the projection is built. Passing
+   * rows here instead would make `width()` re-scan every projected row on every width
+   * invalidation — which in overlay mode is every line of the file.
+   */
+  readonly getDigits: () => DiffGutterDigits
   /**
    * Which diff row a rendered gutter row is showing. The two modes answer this differently and the
    * gutter must not guess: in `document` mode the projection array index *is* the buffer row (§C4),
    * but in `overlay` mode the array interleaves injected deletion rows, so position and buffer row
    * diverge after the first deletion and the lookup has to go through `rowsByBufferRow`.
    *
-   * Indexing `getRows()` positionally here is what broke overlay numbering once already.
+   * Indexing a projection array positionally here is what broke overlay numbering once already.
    */
   readonly resolveRow: (row: EditorGutterRowContext) => DiffRenderRow | null
   readonly isEnabled?: () => boolean
@@ -66,7 +71,7 @@ export function createDiffGutterContribution(options: DiffGutterOptions): Editor
 
       const layout = diffGutterLayout(
         options.side,
-        options.getRows(),
+        options.getDigits(),
         context.lineCount,
         context.metrics.characterWidth,
       )

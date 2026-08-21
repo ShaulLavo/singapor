@@ -57,7 +57,7 @@ export class DiffSyntaxController {
   private readonly scheduler = new EditorSecondaryViewScheduler()
   private readonly key = `diff.syntax.${nextSyntaxControllerId++}`
   private sessions: { dispose(): void }[] = []
-  private sources: readonly DiffSyntaxTokenSource[] = []
+  private sources: readonly IndexedTokenSource[] = []
   private sourcesFile: DiffFile | null = null
   private file: DiffFile | null = null
   private rows: readonly DiffRenderRow[] = []
@@ -108,11 +108,7 @@ export class DiffSyntaxController {
       return
     }
 
-    this.tokens = projectDiffSyntaxTokens({
-      rows: this.rows,
-      side: this.options.side,
-      sources: this.sources,
-    })
+    this.tokens = projectIndexedTokens(this.rows, this.options.side, this.sources)
   }
 
   private load(file: DiffFile): void {
@@ -186,7 +182,10 @@ export class DiffSyntaxController {
 
     this.disposeSessions()
     this.sessions = sessions
-    this.sources = sources
+    // Indexed here, once per parse. The index depends only on the token streams, and expansion
+    // does not change those — so rebuilding it inside every re-projection would be repeated work
+    // plus a fresh Map and N arrays of garbage on each toggle.
+    this.sources = indexTokenSources(sources)
     this.sourcesFile = file
     this.reproject()
     this.options.onDidChangeTokens()
@@ -207,12 +206,19 @@ export function projectDiffSyntaxTokens({
   side,
   sources,
 }: ProjectDiffSyntaxTokensOptions): readonly EditorToken[] {
+  return projectIndexedTokens(rows, side, indexTokenSources(sources))
+}
+
+function projectIndexedTokens(
+  rows: readonly DiffRenderRow[],
+  side: DiffSyntaxSide,
+  sources: readonly IndexedTokenSource[],
+): readonly EditorToken[] {
   const projectedTokens: EditorToken[] = []
-  const indexed = indexTokenSources(sources)
   let rowOffset = 0
 
   for (const row of rows) {
-    const source = tokenSourceForRow(indexed, row, side)
+    const source = tokenSourceForRow(sources, row, side)
     if (source) {
       appendRowSyntaxTokens(projectedTokens, {
         lineStarts: source.lineStarts,

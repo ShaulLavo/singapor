@@ -8,6 +8,7 @@ import type {
   EditorPluginContext,
   EditorViewContribution,
   EditorViewContributionContext,
+  EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
 import type { DocumentSessionChange } from '@singapor/core/document'
@@ -20,18 +21,37 @@ import {
   type DiffDocumentModeViolation,
 } from './diffRows'
 import { DiffSyntaxController } from './diffSyntax'
-import type { DiffGutterLayout, DiffGutterSide } from './gutters'
+import {
+  diffGutterDigits,
+  type DiffGutterDigits,
+  type DiffGutterLayout,
+  type DiffGutterSide,
+} from './gutters'
 import { createLiveDiffProjection, type LiveDiffProjection } from './liveProjection'
 import { createTextDiff } from './model'
 import { createSplitProjection, createStackedProjection } from './projection'
+import { createDiffRegionStore, type DiffRegionStore } from './regions'
 import type { DiffFile, DiffRenderRow, DiffSyntaxBackend, DiffTextFile } from './types'
 
 export type DiffPluginMode = 'document' | 'overlay'
 
 export type DiffPluginOptions = {
-  /** §C1. `document` is the parity path; `overlay` is explicitly non-parity — see §C2. */
-  readonly mode?: DiffPluginMode
+  /**
+   * §C1. `document` is the parity path; `overlay` is explicitly non-parity — see §C2.
+   *
+   * Required, with no default. The factory this replaced took no arguments and was always overlay,
+   * so the natural migration — rename the call, keep the empty argument list — would otherwise
+   * produce a plugin that mounts, registers everything, renders nothing and reports no error,
+   * because `setBaseFile` and `setEnabled` both early-return outside overlay mode.
+   */
+  readonly mode: DiffPluginMode
   readonly side?: DiffGutterSide
+  /**
+   * Expansion state, shared when a host drives two sides of one diff. Omit it and the plugin keeps
+   * a private store; pass one store to both split plugins and a toggle on either side moves both.
+   * See regions.ts — this is what holds §C7 together.
+   */
+  readonly regions?: DiffRegionStore
   readonly syntaxBackend?: DiffSyntaxBackend
   readonly syntaxHighlight?: boolean
 }
@@ -41,9 +61,10 @@ export type DiffPlugin = EditorPlugin & {
   setFile(file: DiffFile | null): void
   getRows(): readonly DiffRenderRow[]
   /**
-   * Projected syntax tokens for the current rows. `Editor.setText` clears tokens
-   * (Editor.ts:648), so the host applies these immediately after every `setText` or an expansion
-   * toggle repaints uncoloured — §C10.
+   * Projected syntax tokens for the current rows. `Editor.setText` clears tokens — via
+   * `resetOwnedDocument` -> `setDocument` -> `setContent`, which calls `setTokens([])` — so the
+   * host applies these immediately after every `setText`, or an expansion toggle repaints
+   * uncoloured (§C10).
    */
   getTokens(): readonly EditorToken[]
   onDidChangeRows(listener: () => void): EditorDisposable
@@ -80,11 +101,11 @@ let nextDiffPluginId = 0
  * rows. Non-parity by construction; see §C2 and test/overlayModeLimits.test.ts before reaching for
  * it.
  */
-export function createDiffPlugin(options: DiffPluginOptions = {}): DiffPlugin {
+export function createDiffPlugin(options: DiffPluginOptions): DiffPlugin {
   const runtime = new DiffPluginRuntime(options)
 
   return {
-    name: `editor-diff-${options.mode ?? 'document'}`,
+    name: `editor-diff-${options.mode}`,
     activate(context) {
       return runtime.activate(context)
     },
@@ -109,9 +130,11 @@ class DiffPluginRuntime {
   private readonly rowListeners = new Set<() => void>()
   private readonly tokenListeners = new Set<() => void>()
 
+  private readonly regions: DiffRegionStore
   private file: DiffFile | null = null
   private rows: readonly DiffRenderRow[] = []
-  private expandedRegions = new Set<string>()
+  private digits: DiffGutterDigits = { old: 0, new: 0 }
+  private expandableRows = false
   private violations: readonly DiffDocumentModeViolation[] = []
 
   private baseFile: DiffTextFile | null = null
@@ -122,10 +145,14 @@ class DiffPluginRuntime {
   private view: DiffViewContribution | null = null
   private injectedRowsListener: (() => void) | null = null
   private lastGutterLayout: DiffGutterLayout | null = null
+  private readonly regionSubscription: EditorDisposable
 
   constructor(private readonly options: DiffPluginOptions) {
-    this.mode = options.mode ?? 'document'
+    this.mode = options.mode
     this.side = options.side ?? 'stacked'
+    this.regions = options.regions ?? createDiffRegionStore()
+    // A shared store means the sibling side's toggle lands here too.
+    this.regionSubscription = this.regions.onDidChange(() => this.handleRegionsChanged())
     // Overlay mode is switched on by the host once it has a base file; document mode is live from
     // the moment it has one.
     this.enabled = this.mode === 'document'
@@ -152,7 +179,7 @@ class DiffPluginRuntime {
       context.registerGutterContribution(
         createDiffGutterContribution({
           side: this.side,
-          getRows: () => this.gutterRows(),
+          getDigits: () => this.gutterDigits(),
           resolveRow: (row) => this.resolveGutterRow(row),
           isEnabled: () => this.enabled,
           onLayout: (layout) => this.publishGutterLayout(layout),
@@ -165,6 +192,7 @@ class DiffPluginRuntime {
         createContribution: (viewContext) => this.createViewContribution(viewContext),
       }),
       { dispose: () => this.syntax.dispose() },
+      { dispose: () => this.regionSubscription.dispose() },
     ]
 
     if (this.mode === 'overlay') {
@@ -184,10 +212,10 @@ class DiffPluginRuntime {
   setFile(file: DiffFile | null): void {
     if (this.mode !== 'document') return
 
-    // Expansion state is keyed by region identity, not ordinal (§C5), but it still belongs to one
-    // file — carrying it onto a different path would expand unrelated regions.
-    if (file?.path !== this.file?.path) this.expandedRegions = new Set()
     this.file = file
+    // The store decides whether this counts as the same diff, and drops expansion if not. Both
+    // sides of a split share it, so both are told once.
+    this.regions.setFile(file)
     this.rebuildRows()
     this.syntax.setFile(file, this.rows)
     this.notifyRows()
@@ -203,14 +231,22 @@ class DiffPluginRuntime {
   }
 
   getExpandedRegions(): ReadonlySet<string> {
-    return this.expandedRegions
+    return this.regions.getExpandedRegions()
   }
 
   toggleRegion(key: string): void {
     if (this.mode !== 'document') return
     if (!this.file) return
 
-    if (!this.expandedRegions.delete(key)) this.expandedRegions.add(key)
+    // The store fans the change back to every plugin reading it, this one included, so the rebuild
+    // happens in `handleRegionsChanged` rather than here.
+    this.regions.toggleRegion(key)
+  }
+
+  private handleRegionsChanged(): void {
+    if (this.mode !== 'document') return
+    if (!this.file) return
+
     this.rebuildRows()
     // Same file, different rows: the parsed token streams still apply, so this re-projects
     // synchronously and `getTokens()` is correct before the host's `setText` returns (§C10).
@@ -233,7 +269,10 @@ class DiffPluginRuntime {
   }
 
   private rebuildRows(): void {
-    this.rows = projectRows(this.file, this.side, this.expandedRegions)
+    this.rows = projectRows(this.file, this.side, this.regions.getExpandedRegions())
+    // Both derived once here rather than per gutter-width recompute and per mousemove.
+    this.digits = diffGutterDigits(this.rows)
+    this.expandableRows = this.rows.some((row) => row.type === 'hunk' && row.expandable === true)
   }
 
   private notifyRows(): void {
@@ -276,9 +315,9 @@ class DiffPluginRuntime {
     }
   }
 
-  private gutterRows(): readonly DiffRenderRow[] {
-    if (this.mode === 'overlay') return this.liveProjection.rows
-    return this.rows
+  private gutterDigits(): DiffGutterDigits {
+    if (this.mode === 'overlay') return diffGutterDigits(this.liveProjection.rows)
+    return this.digits
   }
 
   /**
@@ -352,6 +391,7 @@ class DiffPluginRuntime {
       mode: this.mode,
       side: this.side,
       getRows: () => this.getRows(),
+      hasExpandableRows: () => this.expandableRows,
       toggleRegion: (key) => this.toggleRegion(key),
       reportViolations: (violations) => {
         this.violations = violations
@@ -478,6 +518,7 @@ type DiffViewOptions = {
   readonly mode: DiffPluginMode
   readonly side: DiffGutterSide
   readonly getRows: () => readonly DiffRenderRow[]
+  readonly hasExpandableRows: () => boolean
   readonly toggleRegion: (key: string) => void
   readonly reportViolations: (violations: readonly DiffDocumentModeViolation[]) => void
   readonly detach: (contribution: DiffViewContribution) => void
@@ -513,9 +554,19 @@ class DiffViewContribution implements EditorViewContribution {
     this.context.scrollElement.addEventListener('mouseleave', this.handleMouseLeave)
   }
 
-  update(snapshot: EditorViewSnapshot): void {
+  /**
+   * The snapshot is kept for every update kind — the pointer hit-test reads it — but the two
+   * derived jobs below are not per-frame work.
+   *
+   * `update` is called for `'viewport'` too, which `Editor.handleViewportChange` fires on every
+   * scroll frame. Running the §C4 self-check there allocated a `Set`, spread it into an array and
+   * walked every mounted row on the exact path the Aug-2026 scroll work hardened — to answer a
+   * question that can only change when the rows or the projection do.
+   */
+  update(snapshot: EditorViewSnapshot, kind: EditorViewContributionUpdateKind): void {
     this.snapshot = snapshot
     if (this.options.mode !== 'document') return
+    if (kind === 'viewport' || kind === 'selection') return
 
     this.options.reportViolations(documentModeViolations(snapshot, this.options.getRows()))
     this.applyInlineHighlights()
@@ -547,16 +598,37 @@ class DiffViewContribution implements EditorViewContribution {
     this.options.detach(this)
   }
 
+  /**
+   * Inline word-diff tint, isolated from everything else this contribution does.
+   *
+   * `EditorViewContributionController` responds to a throw out of `update()` by disposing and
+   * unregistering the whole contribution — which would take the pointer handling with it, and the
+   * comment on this class is a long argument that the pointer half is *not* optional: a gutter
+   * click is the only way to expand a region. `setRangeHighlight` reaches an unguarded
+   * `new Highlight()` whenever there are ranges to paint, so on any engine without the CSS Custom
+   * Highlight API the first diff carrying word-diff ranges would silently disable expansion.
+   *
+   * Losing the tint is a cosmetic degradation. Losing expansion is not, so they do not share a
+   * `try` boundary.
+   */
   private applyInlineHighlights(): void {
     const rows = this.options.getRows()
     if (rows === this.lastHighlightRows) return
 
     this.lastHighlightRows = rows
-    this.context.setRangeHighlight?.(
-      this.options.highlightName,
-      diffInlineHighlightRanges(rows),
-      INLINE_HIGHLIGHT_STYLE,
-    )
+    try {
+      this.context.setRangeHighlight?.(
+        this.options.highlightName,
+        diffInlineHighlightRanges(rows),
+        INLINE_HIGHLIGHT_STYLE,
+      )
+    } catch (error) {
+      this.context.log?.({
+        action: 'editor.diff.inline_highlight_failed',
+        level: 'warn',
+        error: { message: error instanceof Error ? error.message : String(error) },
+      })
+    }
   }
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
@@ -595,6 +667,11 @@ class DiffViewContribution implements EditorViewContribution {
 
   private expandableRowAt(event: MouseEvent): DiffRenderRow | null {
     if (this.options.mode !== 'document') return null
+    // A diff with no skipped ranges has no expandable separator anywhere, so the answer is
+    // structurally null and the hit-test below is pure cost. It runs on every mousemove, and over
+    // the gutter band `closest()` misses by construction — that is this class's whole premise — so
+    // every one of those events would otherwise fall through to a forced layout read.
+    if (!this.options.hasExpandableRows()) return null
 
     const index = this.rowIndexAt(event)
     if (index === null) return null
@@ -619,6 +696,10 @@ class DiffViewContribution implements EditorViewContribution {
     const snapshot = this.snapshot
     if (!snapshot) return null
 
+    // `getBoundingClientRect` forces a style and layout flush, and the render pass writes
+    // `--editor-gutter-width` and the spacer sizes every frame — so a mousemove interleaved with
+    // scrolling would synchronously lay out the editor subtree. Reached only when the diff
+    // actually has something expandable.
     const bounds = this.context.scrollElement.getBoundingClientRect()
     if (clientY < bounds.top || clientY > bounds.bottom) return null
 

@@ -5,11 +5,27 @@ import type {
 import type { EditorViewSnapshot } from '@singapor/core/extensions'
 import type { DiffRenderRow } from './types'
 
+/**
+ * Row decorations for the rows that actually need one.
+ *
+ * A context row carries no tint and no cursor, so the decoration it used to get was two freshly
+ * built strings saying "ordinary line" — for every line of the file, rebuilt on every `setFile` and
+ * every `toggleRegion`, and then copied twice more by the editor before reaching the view. On a
+ * fully expanded large diff the overwhelming majority of rows are context.
+ *
+ * Only rows that differ from the default are emitted now, which is the shape the overlay path
+ * already had (`LiveDiffProjectionBuilder.decorateDocumentRow` decorates changed rows only). The
+ * `--editor-diff-*` variable block a host overrides is declared on `.editor-diff-view` as well as
+ * on the row classes, so an undecorated row still inherits it from the container.
+ */
 export function diffRowDecorations(
   rows: readonly DiffRenderRow[],
 ): ReadonlyMap<number, VirtualizedTextRowDecoration> {
   const decorations = new Map<number, VirtualizedTextRowDecoration>()
-  for (const [index, row] of rows.entries()) decorations.set(index, decorationForRow(row))
+  for (const [index, row] of rows.entries()) {
+    const decoration = decorationForRow(row)
+    if (decoration) decorations.set(index, decoration)
+  }
   return decorations
 }
 
@@ -38,12 +54,21 @@ function appendInlineRanges(
   }
 }
 
-function decorationForRow(row: DiffRenderRow): VirtualizedTextRowDecoration {
-  const suffix = row.type
+/**
+ * `null` for a row that needs no decoration.
+ *
+ * The gutter class is the bare `editor-diff-gutter-row` only: the `-${type}` suffixes matched no
+ * rule once the gutter tint moved to `data-diff-row-tone` on the cell, so emitting them was a
+ * template literal per row producing a class that styled nothing. The bare class stays — it is
+ * where the `--editor-diff-*` block is declared, and a host overrides on it.
+ */
+function decorationForRow(row: DiffRenderRow): VirtualizedTextRowDecoration | null {
+  if (row.type === 'context') return null
+
   const expandable = row.expandable ? ' editor-diff-row-expandable' : ''
   return {
-    className: `editor-diff-row editor-diff-row-${suffix}${expandable}`,
-    gutterClassName: `editor-diff-gutter-row editor-diff-gutter-row-${suffix}`,
+    className: `editor-diff-row editor-diff-row-${row.type}${expandable}`,
+    gutterClassName: 'editor-diff-gutter-row',
   }
 }
 

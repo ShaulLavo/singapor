@@ -131,7 +131,27 @@ those is therefore forbidden in a `document`-mode diff editor. This is also what
 unusable here** — `blockRows.length > 0` sets `hasModelRowProjections()` true (`:790`) and kills the
 identity outright.
 
-### §C5 — The plugin owns expansion state and publishes it
+### §C5 — Expansion state is shared, not mirrored
+
+> [!WARNING]
+> **Revised after review.** The original text said the plugin owns expansion state and hosts must
+> not mirror it. That is right about mirroring and wrong about ownership: split mode is *two*
+> plugin instances, so "each owns its own" means one gutter click expands the left pane and leaves
+> the right where it was — breaking §C7, the one property split exists to hold. Measured
+> `left=4 right=2` on a single click.
+>
+> Expansion is now a **store the sides share**: `createDiffRegionStore()`, passed to both plugins
+> via the `regions` option. Still not mirroring — there is one set, and both sides read it. A
+> stacked host passes nothing and gets a private store. Pinned by `test/splitMode.test.ts`.
+>
+> Also revised: expansion is per **diff**, not per path. A region key is `"{oldStart}:{newStart}"`,
+> absolute line numbers, so any edit above a collapsed region renumbers it and a retained key
+> matches nothing — the region silently re-collapses. The store therefore resets when the file's
+> content identity changes, which gives the same visible outcome honestly instead of by accident.
+> Making expansion actually survive a refetch needs region identity that does not move with line
+> numbers; that is a design change and is not attempted here.
+
+### §C5 (original) — The plugin owns expansion state and publishes it
 
 Collapsed regions are keyed `"{oldStart}:{newStart}"` (`projection.ts:246-248`), not by hunk ordinal.
 
@@ -433,6 +453,17 @@ lands. Read back via `plugin.getDocumentModeViolations()`.
 **M3 (original text).** Absorb `document` mode; expose §C3/§C5; port §3.4. Add the §C4/§C7 assertion:
 equal row counts across panes after every `setText`, and fail loudly if wrap, folds, blocks, inline maps
 or injected rows are active on a `document`-mode diff editor.
+
+> [!NOTE]
+> **Row decorations changed shape after review.** `document` mode emitted a decoration for every
+> row, including the context rows that all share one class — two freshly built strings per line,
+> rebuilt on every `setFile` and `toggleRegion`, then copied twice more by the editor. It now emits
+> only rows that differ from the default, which is the shape overlay already had. Consequence for
+> the platform half: **a context row no longer carries `editor-diff-row`**, so the `--editor-diff-*`
+> overrides must reach it by inheritance from `.editor-diff-view` on the container — which the
+> platform plan §5 already requires be stamped. Context rows use none of the tint variables
+> themselves. The gutter class dropped its `-${type}` suffix at the same time; the suffix matched no
+> rule once the tint moved to `data-diff-row-tone`, and the bare `editor-diff-gutter-row` stays.
 
 **M4 — Delete, and port the spec.** ✅ Everything in §5 is gone. One behaviour the old code encoded
 only implicitly had to be made explicit: `DiffDecorationContribution` must repaint cells **before**

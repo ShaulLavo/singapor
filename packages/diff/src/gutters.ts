@@ -26,23 +26,49 @@ const MIN_LINE_NUMBER_DIGITS = 2
 const GUTTER_NUMBER_RESERVED_WIDTH = 6
 const GUTTER_INDICATOR_WIDTH = 12
 
+/**
+ * The widest line number each lane has to fit, in digits.
+ *
+ * Computed once when a projection is built rather than inside `width()`. The gutter's width is
+ * invalidated far more often than the rows change, and the scan is over *every* projected row —
+ * which in overlay mode means every line of the file, since `createLiveDiffProjection` materializes
+ * a row per unchanged line. A 50,000-line file was re-scanning 50,000 rows and allocating a string
+ * per row, twice in stacked mode, on every gutter-width recompute.
+ */
+export type DiffGutterDigits = {
+  readonly old: number
+  readonly new: number
+}
+
+export function diffGutterDigits(rows: readonly DiffRenderRow[]): DiffGutterDigits {
+  let oldDigits = 0
+  let newDigits = 0
+  for (const row of rows) {
+    if (row.type === 'hunk' || row.type === 'empty') continue
+    oldDigits = Math.max(oldDigits, digitCount(row.oldLineNumber))
+    newDigits = Math.max(newDigits, digitCount(row.newLineNumber))
+  }
+
+  return { old: oldDigits, new: newDigits }
+}
+
 export function diffGutterWidth(
   side: DiffGutterSide,
-  rows: readonly DiffRenderRow[],
+  digits: DiffGutterDigits,
   lineCount: number,
   characterWidth: number,
 ): number {
-  return diffGutterLayout(side, rows, lineCount, characterWidth).width
+  return diffGutterLayout(side, digits, lineCount, characterWidth).width
 }
 
 export function diffGutterLayout(
   side: DiffGutterSide,
-  rows: readonly DiffRenderRow[],
+  digits: DiffGutterDigits,
   lineCount: number,
   characterWidth: number,
 ): DiffGutterLayout {
   if (side !== 'stacked') {
-    const numberWidth = gutterNumberLaneWidth(side, rows, lineCount, characterWidth)
+    const numberWidth = gutterNumberLaneWidth(side, digits, lineCount, characterWidth)
     const width = numberWidth + GUTTER_INDICATOR_WIDTH
     return {
       lanes: [
@@ -53,8 +79,8 @@ export function diffGutterLayout(
     }
   }
 
-  const oldWidth = gutterNumberLaneWidth('old', rows, lineCount, characterWidth)
-  const newWidth = gutterNumberLaneWidth('new', rows, lineCount, characterWidth)
+  const oldWidth = gutterNumberLaneWidth('old', digits, lineCount, characterWidth)
+  const newWidth = gutterNumberLaneWidth('new', digits, lineCount, characterWidth)
   const indicatorLeft = oldWidth + newWidth
   return {
     lanes: [
@@ -68,22 +94,23 @@ export function diffGutterLayout(
 
 function diffGutterWidthCharacters(
   side: DiffGutterSide,
-  rows: readonly DiffRenderRow[],
+  digits: DiffGutterDigits,
   lineCount: number,
 ): number {
   if (side === 'stacked') {
     return (
-      diffGutterWidthCharacters('old', rows, lineCount) +
-      diffGutterWidthCharacters('new', rows, lineCount)
+      diffGutterWidthCharacters('old', digits, lineCount) +
+      diffGutterWidthCharacters('new', digits, lineCount)
     )
   }
 
-  let maxCharacters = String(Math.max(1, lineCount)).length
-  for (const row of rows) {
-    maxCharacters = Math.max(maxCharacters, lineNumberForRow(row, side).length)
-  }
-
+  const maxCharacters = Math.max(String(Math.max(1, lineCount)).length, digits[side])
   return Math.max(MIN_LINE_NUMBER_DIGITS, maxCharacters)
+}
+
+function digitCount(value: number | undefined): number {
+  if (value === undefined) return 0
+  return String(value).length
 }
 
 export function diffGutterNumberText(row: DiffRenderRow, side: DiffGutterNumberSide): string {
@@ -134,11 +161,11 @@ export function diffGutterRowTone(row: DiffRenderRow, side: DiffGutterSide): Dif
 
 function gutterNumberLaneWidth(
   side: DiffGutterNumberSide,
-  rows: readonly DiffRenderRow[],
+  digits: DiffGutterDigits,
   lineCount: number,
   characterWidth: number,
 ): number {
-  const characters = diffGutterWidthCharacters(side, rows, lineCount)
+  const characters = diffGutterWidthCharacters(side, digits, lineCount)
   return Math.ceil(characters * characterWidth + GUTTER_NUMBER_RESERVED_WIDTH)
 }
 

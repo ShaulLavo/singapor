@@ -1,0 +1,44 @@
+name: CI
+
+# The health workflow runs `bun run health` and nothing else, so until now a pull request could go
+# green with a failing test suite — which is exactly how a stale e2e spec reached review on the
+# diff-as-editor branch. Typecheck, lint and unit tests all run here.
+#
+# `test:e2e` is deliberately not wired in yet: it needs a Playwright browser download and a built
+# example app, which is a different cost profile. It is a separate follow-up, not a reason to keep
+# the rest unrun.
+
+on:
+  pull_request:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test

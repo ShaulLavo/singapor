@@ -7,6 +7,7 @@ import {
 } from '@singapor/core/syntax'
 import { createDiffPlugin, createTextDiff, diffSyntaxBackend, joinRenderLines } from '../src'
 import { createDiffGutterContribution } from '../src/diffGutter'
+import { diffGutterDigits } from '../src/gutters'
 import { projectDiffSyntaxTokens } from '../src/diffSyntax'
 import type { DiffFile, DiffGutterSide, DiffPlugin, DiffRenderRow, DiffSyntaxBackend } from '../src'
 import { installHighlightPolyfill } from './support/highlightPolyfill'
@@ -202,17 +203,17 @@ describe('diff plugin — gutter (§3.3)', () => {
     // Driven at the contribution directly: producing a transposed split from real projections
     // needs a contrived pair of files, because the projected row count floors both lanes equally.
     const published: string[] = []
-    let rows: readonly DiffRenderRow[] = [numberedRow(1000, 10)]
+    let digits = diffGutterDigits([numberedRow(1000, 10)])
     const contribution = createDiffGutterContribution({
       side: 'stacked',
-      getRows: () => rows,
+      getDigits: () => digits,
       resolveRow: () => null,
       onLayout: (layout) => published.push(layout.lanes.map((lane) => lane.width).join(',')),
     })
 
     const width = () => contribution.width({ lineCount: 1, metrics: laneMetrics })
     const first = width()
-    rows = [numberedRow(10, 1000)]
+    digits = diffGutterDigits([numberedRow(10, 1000)])
     const second = width()
 
     expect(second).toBe(first)

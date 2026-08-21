@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  diffGutterDigits,
   diffGutterIndicatorText,
   diffGutterLaneTone,
   diffGutterNumberText,
@@ -9,10 +10,21 @@ import {
 import type { DiffRenderRow } from '../src'
 
 describe('diff gutters', () => {
+  it('takes lane digits from the rows once, ignoring rows with no number', () => {
+    const digits = diffGutterDigits([
+      lineRow({ oldLineNumber: 7, newLineNumber: 1234 }),
+      { type: 'hunk', text: 'Show 2 unmodified lines', oldLineNumber: 99999 },
+      { type: 'empty', text: 'No changes', newLineNumber: 99999 },
+    ])
+
+    // Hunk and empty rows render no number, so they must not widen a lane.
+    expect(digits).toEqual({ old: 1, new: 4 })
+  })
+
   it('reserves separate gutters for stacked old/new line numbers', () => {
     const rows = [lineRow({ oldLineNumber: 999, newLineNumber: 1001 })]
 
-    expect(diffGutterWidth('stacked', rows, 1, 8)).toBe(80)
+    expect(diffGutterWidth('stacked', diffGutterDigits(rows), 1, 8)).toBe(80)
   })
 
   it('formats stacked old/new line numbers as separate lane labels', () => {
@@ -30,7 +42,7 @@ describe('diff gutters', () => {
   it('reserves width from sparse source line numbers', () => {
     const rows = [lineRow({ newLineNumber: 12345 })]
 
-    expect(diffGutterWidth('new', rows, 1, 8)).toBe(58)
+    expect(diffGutterWidth('new', diffGutterDigits(rows), 1, 8)).toBe(58)
   })
 
   it('tones only the side a change belongs to (§3.3, trap 2)', () => {

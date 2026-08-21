@@ -33,9 +33,14 @@ const editor = new Editor(host, {
 const push = () => {
   // Tokens go back on immediately: `setText` clears them on its way through
   // `resetOwnedDocument` -> `setDocument` -> `setContent`, so a toggle would otherwise repaint
-  // uncoloured. A host that would rather keep the document alive across a toggle can use
-  // `Editor.syncText`, which computes the minimal prefix/suffix edit instead of tearing the
-  // document down — for an expansion that edit is exactly the inserted lines.
+  // uncoloured.
+  //
+  // `Editor.syncText` is the cheaper alternative — it computes the minimal prefix/suffix edit
+  // rather than tearing the document down, and for an expansion that edit is exactly the inserted
+  // lines. It is not the default here because it also preserves caret and selection across rows
+  // that have moved, and an expansion moves every row below the region: a reader holding a
+  // selection would find it pointing at different text. Worth taking if your host has no selection
+  // to lose.
   editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
   editor.setTokens(plugin.getTokens())
 }

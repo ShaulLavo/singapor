@@ -351,6 +351,14 @@ function createShikiLineFn(
       lang,
       theme,
       grammarState,
+      // Shiki defaults this to 500ms and textmate measures it on the wall clock, so a loaded
+      // machine gives a different answer than an idle one for the same line. On a bail it returns
+      // the whole line as one token and the incoming stack UNADVANCED — which here is worse than
+      // slow: the unadvanced state is what the next line is tokenized from and what the cache
+      // keeps, so one late line silently re-colours the rest of the document. A budget that has
+      // to be right about correctness cannot be read off the clock; 0 turns the guard off
+      // (`if (timeLimit !== 0)` in textmate's _tokenizeString).
+      tokenizeTimeLimit: 0,
     })
 
     return {

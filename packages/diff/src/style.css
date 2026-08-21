@@ -54,6 +54,23 @@
   --editor-gutter-foreground: var(--editor-diff-gutter-foreground, #71717a) !important;
 }
 
+/*
+ * No caret. A diff is a real `Editor`, so it brings one — and a caret is an insertion point, which
+ * a diff does not have: the document is a synthetic projection, `editability` is readonly and the
+ * host's keymap is empty, so a blinking bar claims an affordance that is not there.
+ *
+ * `display: none` on the layer rather than a transparent caret, so the blink animation stops
+ * running rather than animating something invisible. Selection is untouched — it paints from its
+ * own range highlight, so a reader can still select and copy.
+ *
+ * Scoped to `.editor-diff-view`, which is the host's element (see the note above): a host that
+ * wants the caret back simply does not stamp the class, and loses the `--editor-diff-*` block with
+ * it.
+ */
+.editor-diff-view .editor-virtualized-caret-layer {
+  display: none;
+}
+
 .editor-diff-row-addition {
   background: var(--editor-diff-added-bg);
 }

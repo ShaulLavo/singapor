@@ -104,6 +104,57 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
     expect(view.style.cursor).toBe('')
   })
 
+  it('refuses a caret on a separator it cannot expand', () => {
+    // A partial diff — a patch with no file text behind it — still shows how much was skipped and
+    // cannot open it. The label is real buffer text either way, and a collapsed caret copies its
+    // own line, so resting one here would put `Show 2 unmodified lines` on the clipboard.
+    const { plugin, host } = mountDiff({ file: partialSkippedDiff() })
+    const separator = plugin.getRows().findIndex((row) => row.type === 'hunk')
+    expect(separator).toBeGreaterThanOrEqual(0)
+    expect(plugin.getRows()[separator]?.expandable).toBe(false)
+
+    // Dispatched at the scroll element, which is where a real press in the gutter band lands and
+    // the only place happy-dom delivers one — it does not bubble a mousedown from a row.
+    const view = queryScrollElement(host)
+    const mousedown = pointerEvent('mousedown', 0)
+    view.dispatchEvent(mousedown)
+
+    expect(mousedown.defaultPrevented).toBe(true)
+    // And it is still only *expandable* separators that answer a click or show a pointer.
+    view.dispatchEvent(pointerEvent('mousemove', 0))
+    expect(view.style.cursor).toBe('')
+  })
+
+  it('refuses a press on a separator at every click count', async () => {
+    // Asserted on FOCUS, which is the one thing that discriminates here.
+    // `defaultPrevented` cannot: the editor's own mousedown handler calls `preventDefault()` for
+    // its own reasons, so the flag reads true whether or not the plugin refused. Nor can the caret:
+    // happy-dom gives every element a zero-sized rect, so the editor's word- and line-selection
+    // paths resolve an offset at the end of the document no matter where the press was, with or
+    // without this plugin. What IS decisive is that `InputSelectionController.handleMouseDown`
+    // calls `view.focusInput()` immediately after its `defaultPrevented` guard — so an editor that
+    // never took focus is an editor whose handler never ran.
+    const { host } = mountDiff({ file: prefixSkippedDiff() })
+    const view = queryScrollElement(host)
+
+    // 2 selects a word of `Show 2 unmodified lines`, 3 the whole line, 4 the whole document.
+    for (const detail of [1, 2, 3, 4]) {
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
+      view.dispatchEvent(
+        new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          clientY: 0,
+          detail,
+        }),
+      )
+      await flushPromises()
+
+      expect(host.contains(document.activeElement)).toBe(false)
+    }
+  })
+
   it('toggles the unmodified tail after the last hunk', () => {
     // Ported from DiffView.test.ts:136-151. A trailing region carries `hunkIndex === undefined`
     // (projection.ts:294-310) — the case a hunk-ordinal mirror can never address, which is why
@@ -517,6 +568,12 @@ function mountDiff(options: MountOptions = {}): {
   return { editor, host, plugin }
 }
 
+/** A patch with no file text behind it: separators that report a skipped range but cannot open it. */
+function partialSkippedDiff(): DiffFile {
+  const file = prefixSkippedDiff()
+  return { ...file, isPartial: true, oldLines: [], newLines: [] }
+}
+
 function singleHunkDiff(): DiffFile {
   return createTextDiff({
     oldFile: { path: 'note.txt', text: 'one\ntwo\n' },
@@ -616,8 +673,9 @@ function clickRow(host: HTMLElement, row: number): void {
   element.dispatchEvent(pointerEvent('click', 0))
 }
 
+/** `cancelable`, or `preventDefault()` is a no-op and `defaultPrevented` can never be true. */
 function pointerEvent(type: string, clientY: number): MouseEvent {
-  return new MouseEvent(type, { bubbles: true, button: 0, clientY, detail: 1 })
+  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientY, detail: 1 })
 }
 
 function createRecordingSyntaxBackend(

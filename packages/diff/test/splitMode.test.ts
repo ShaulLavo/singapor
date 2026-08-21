@@ -91,6 +91,29 @@ describe('split mode alignment (§C7)', () => {
     expect(left.plugin.getExpandedRegions().size).toBe(0)
   })
 
+  it('still hears a toggle after the editor that hosted it was torn down and rebuilt', () => {
+    // React StrictMode makes mount -> unmount -> mount the *normal* development path, and a host
+    // holding the plugin in a `useMemo` re-activates the same instance against a fresh editor. The
+    // region subscription is torn down with the activation, so if it is only ever created in the
+    // constructor the second mount renders correctly and is deaf to every gutter click after it.
+    const regions = createDiffRegionStore()
+    const file = prefixSkippedDiff()
+    const plugin = createDiffPlugin({
+      mode: 'document',
+      side: 'stacked',
+      regions,
+      syntaxHighlight: false,
+    })
+    plugin.setFile(file)
+    remount(plugin).editor.dispose()
+    const second = remount(plugin)
+
+    regions.toggleRegion(plugin.getRows().find((row) => row.type === 'hunk')!.expandKey!)
+
+    expect(plugin.getRows().map((row) => row.text)).toContain('Hide 2 unmodified lines')
+    expect(second.host.textContent).toContain('alpha')
+  })
+
   it('keeps expansion when the identical file is pushed again', () => {
     const left = mount('old', prefixSkippedDiff())
     const key = left.plugin.getRows().find((row) => row.type === 'hunk')!.expandKey!
@@ -101,6 +124,29 @@ describe('split mode alignment (§C7)', () => {
     // Same path, same content, same hunks — a plain re-push must not close what the reader opened.
     expect([...left.plugin.getExpandedRegions()]).toEqual([key])
   })
+
+  /** Mounts an existing plugin instance on a fresh editor, the way a remount does. */
+  function remount(plugin: DiffPlugin): { editor: Editor; host: HTMLElement } {
+    const host = document.createElement('div')
+    host.className = 'editor-diff-view'
+    document.body.appendChild(host)
+
+    const editor = new Editor(host, {
+      cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
+      documentMode: 'static',
+      editability: 'readonly',
+      keymap: { defaultBindings: false, layers: [] },
+      plugins: [plugin],
+      tabSize: 4,
+    })
+    mounted.push({ editor, host })
+    plugin.onDidChangeRows(() => {
+      editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
+      editor.setTokens(plugin.getTokens())
+    })
+    editor.setText(joinRenderLines(plugin.getRows()), { languageId: null })
+    return { editor, host }
+  }
 
   function mount(
     side: DiffGutterSide,

@@ -134,6 +134,7 @@ class DiffPluginRuntime {
   private file: DiffFile | null = null
   private rows: readonly DiffRenderRow[] = []
   private digits: DiffGutterDigits = { old: 0, new: 0 }
+  private hunkRows = false
   private expandableRows = false
   private violations: readonly DiffDocumentModeViolation[] = []
 
@@ -152,6 +153,23 @@ class DiffPluginRuntime {
     this.side = options.side ?? 'stacked'
     this.regions = options.regions ?? createDiffRegionStore()
     // A shared store means the sibling side's toggle lands here too.
+    //
+    // Held for the plugin's whole life, and never released. Every narrower lifetime is wrong:
+    //
+    // - torn down with the ACTIVATION, next to the syntax controller, which is the obvious place:
+    //   the first deactivation is then terminal. The plugin is re-activated against a fresh editor,
+    //   renders correctly, and is silently deaf to every expansion toggle after that. React
+    //   StrictMode makes mount -> unmount -> mount the normal development path, so a host that gets
+    //   this wrong sees gutter clicks do nothing at all.
+    // - created only on activation: a plugin driven headlessly as a projection source, with no
+    //   editor behind it, never sees its own `toggleRegion`.
+    // - released from `EditorPlugin.dispose`: that fires when an editor tears down, and a React
+    //   host reuses the same plugin instance across the next editor — so this is the first case
+    //   again with an extra step.
+    //
+    // Nothing leaks by holding it. The listener lives in the store, the store is the host's, and a
+    // host drops both together; a plugin the host builds and never mounts — StrictMode
+    // double-invokes the `useMemo` that builds one — is collected with it.
     this.regionSubscription = this.regions.onDidChange(() => this.handleRegionsChanged())
     // Overlay mode is switched on by the host once it has a base file; document mode is live from
     // the moment it has one.
@@ -192,7 +210,6 @@ class DiffPluginRuntime {
         createContribution: (viewContext) => this.createViewContribution(viewContext),
       }),
       { dispose: () => this.syntax.dispose() },
-      { dispose: () => this.regionSubscription.dispose() },
     ]
 
     if (this.mode === 'overlay') {
@@ -272,6 +289,7 @@ class DiffPluginRuntime {
     this.rows = projectRows(this.file, this.side, this.regions.getExpandedRegions())
     // Both derived once here rather than per gutter-width recompute and per mousemove.
     this.digits = diffGutterDigits(this.rows)
+    this.hunkRows = this.rows.some((row) => row.type === 'hunk')
     this.expandableRows = this.rows.some((row) => row.type === 'hunk' && row.expandable === true)
   }
 
@@ -391,6 +409,7 @@ class DiffPluginRuntime {
       mode: this.mode,
       side: this.side,
       getRows: () => this.getRows(),
+      hasHunkRows: () => this.hunkRows,
       hasExpandableRows: () => this.expandableRows,
       toggleRegion: (key) => this.toggleRegion(key),
       reportViolations: (violations) => {
@@ -518,6 +537,7 @@ type DiffViewOptions = {
   readonly mode: DiffPluginMode
   readonly side: DiffGutterSide
   readonly getRows: () => readonly DiffRenderRow[]
+  readonly hasHunkRows: () => boolean
   readonly hasExpandableRows: () => boolean
   readonly toggleRegion: (key: string) => void
   readonly reportViolations: (violations: readonly DiffDocumentModeViolation[]) => void
@@ -631,10 +651,26 @@ class DiffViewContribution implements EditorViewContribution {
     }
   }
 
+  /**
+   * Keeps the caret off a separator row, expandable or not.
+   *
+   * A separator is chrome, not content — but its label is real buffer text, because the host's
+   * document is `joinRenderLines(rows)` and there is nowhere else for the label to live. So the
+   * editor will happily rest a caret in the middle of `Show 12 unmodified lines`, and a collapsed
+   * caret copies its own line: Cmd+C would put that sentence on the clipboard. Refusing the
+   * mousedown is the whole of what can be done from here. A drag that *crosses* a separator still
+   * covers it, and always will while the label occupies offsets — giving these rows an offset
+   * space of their own is the parallel coordinate system §C2 rules out.
+   *
+   * Every click count, not just the first. `InputSelectionController.handleMouseDown` branches on
+   * `event.detail` before it looks at anything else — 2 selects a word, 3 selects the line, 4 or
+   * more selects the whole document — and it yields only to `defaultPrevented`. Letting the second
+   * press of a double-click through therefore selects a word of `Show 12 unmodified lines`, which
+   * is the same defect one press further in.
+   */
   private readonly handleMouseDown = (event: MouseEvent): void => {
     if (event.button !== 0) return
-    if (event.detail !== 1) return
-    if (!this.expandableRowAt(event)) return
+    if (!this.hunkRowAt(event)) return
 
     // Beats the editor's own mousedown, which would otherwise place a caret on the separator.
     event.preventDefault()
@@ -666,19 +702,30 @@ class DiffViewContribution implements EditorViewContribution {
   }
 
   private expandableRowAt(event: MouseEvent): DiffRenderRow | null {
-    if (this.options.mode !== 'document') return null
     // A diff with no skipped ranges has no expandable separator anywhere, so the answer is
-    // structurally null and the hit-test below is pure cost. It runs on every mousemove, and over
+    // structurally null and the hit-test below is pure cost. This runs on every mousemove, and over
     // the gutter band `closest()` misses by construction — that is this class's whole premise — so
     // every one of those events would otherwise fall through to a forced layout read.
     if (!this.options.hasExpandableRows()) return null
+
+    const row = this.hunkRowAt(event)
+    return row?.expandable ? row : null
+  }
+
+  /**
+   * The separator under the pointer, whether or not it can be expanded. A partial diff — a plain
+   * patch with no file text behind it — has separators that say how much was skipped and cannot
+   * open them, and those are still not somewhere a caret belongs.
+   */
+  private hunkRowAt(event: MouseEvent): DiffRenderRow | null {
+    if (this.options.mode !== 'document') return null
+    if (!this.options.hasHunkRows()) return null
 
     const index = this.rowIndexAt(event)
     if (index === null) return null
 
     const row = this.options.getRows()[index]
-    if (row?.type !== 'hunk') return null
-    return row.expandable ? row : null
+    return row?.type === 'hunk' ? row : null
   }
 
   private rowIndexAt(event: MouseEvent): number | null {
@@ -698,8 +745,9 @@ class DiffViewContribution implements EditorViewContribution {
 
     // `getBoundingClientRect` forces a style and layout flush, and the render pass writes
     // `--editor-gutter-width` and the spacer sizes every frame — so a mousemove interleaved with
-    // scrolling would synchronously lay out the editor subtree. Reached only when the diff
-    // actually has something expandable.
+    // scrolling would synchronously lay out the editor subtree. The callers gate it: a mousemove
+    // reaches here only on a diff with an expandable separator, a press only on one with a
+    // separator at all.
     const bounds = this.context.scrollElement.getBoundingClientRect()
     if (clientY < bounds.top || clientY > bounds.bottom) return null
 

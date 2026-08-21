@@ -10,6 +10,7 @@ import type {
   EditorViewContributionContext,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
+import type { DocumentSessionChange } from '@singapor/core/document'
 import type { EditorToken } from '@singapor/core/syntax'
 import { createDiffGutterContribution } from './diffGutter'
 import {
@@ -120,7 +121,7 @@ class DiffPluginRuntime {
   private decoration: DiffDecorationContribution | null = null
   private view: DiffViewContribution | null = null
   private injectedRowsListener: (() => void) | null = null
-  private pendingGutterLayout: DiffGutterLayout | null = null
+  private lastGutterLayout: DiffGutterLayout | null = null
 
   constructor(private readonly options: DiffPluginOptions) {
     this.mode = options.mode ?? 'document'
@@ -311,7 +312,7 @@ class DiffPluginRuntime {
     this.decoration = contribution
     contribution.refresh()
     return {
-      handleEditorChange: () => contribution.refresh(),
+      handleEditorChange: (change) => contribution.handleEditorChange(change),
       dispose: () => {
         if (this.decoration === contribution) this.decoration = null
         contribution.dispose()
@@ -352,23 +353,19 @@ class DiffPluginRuntime {
       },
     })
     this.view = contribution
-    if (this.pendingGutterLayout) {
-      contribution.applyGutterLayout(this.pendingGutterLayout)
-      this.pendingGutterLayout = null
-    }
+    if (this.lastGutterLayout) contribution.applyGutterLayout(this.lastGutterLayout)
     return contribution
   }
 
   private publishGutterLayout(layout: DiffGutterLayout): void {
-    // `width()` can run before the view contribution exists — and again after one is torn down —
-    // so hold the layout until there is somewhere to put it. A recreated contribution mounts a
-    // fresh scroll element with no custom properties on it, and the gutter's own memo would not
-    // republish an unchanged layout, so dropping this would leave the columns unset.
-    if (!this.view) {
-      this.pendingGutterLayout = layout
-      return
-    }
-    this.view.applyGutterLayout(layout)
+    // Retained, never consumed. `width()` can run before a view contribution exists, and a
+    // contribution can be torn down and rebuilt later on a fresh scroll element carrying none of
+    // these custom properties. The gutter memoizes on the layout, so it will not republish an
+    // unchanged one — leaving a replacement contribution with no other way to learn the geometry,
+    // and `.editor-diff-gutter` falling back to `1fr 1fr 12px`, which is the drift the whole
+    // custom-property dance exists to avoid.
+    this.lastGutterLayout = layout
+    this.view?.applyGutterLayout(layout)
   }
 
   private createSyntaxController(): DiffSyntaxController {
@@ -402,12 +399,38 @@ type DiffDecorationOptions = {
 }
 
 class DiffDecorationContribution {
+  private lastTextSnapshot: unknown = undefined
+
   constructor(
     private readonly context: EditorDecorationContributionContext,
     private readonly options: DiffDecorationOptions,
   ) {}
 
+  /**
+   * The editor's notification, which is not the same thing as "the text changed".
+   *
+   * Rebuilding an overlay projection materializes the whole document and runs `structuredPatch`
+   * over it, synchronously. `handleEditorChange` also fires for selection-only changes —
+   * `DocumentSessionChange.kind` is one of edit/selection/undo/redo/none — and a caret move cannot
+   * alter the diff, so paying for one is pure waste on the typing path. Text-snapshot identity is
+   * the second guard, for the notification paths that carry no change object at all.
+   *
+   * Plugin-state changes (`setBaseFile`, `setEnabled`) call `refresh()` directly and are never
+   * skipped: the text is the same but the diff it produces is not.
+   */
+  handleEditorChange(change: DocumentSessionChange | null): void {
+    if (this.options.mode === 'overlay') {
+      if (change?.kind === 'selection') return
+
+      const snapshot = this.context.getTextSnapshot?.() ?? null
+      if (snapshot !== null && snapshot === this.lastTextSnapshot) return
+    }
+
+    this.refresh()
+  }
+
   refresh(): void {
+    this.lastTextSnapshot = this.context.getTextSnapshot?.() ?? null
     if (this.options.mode === 'document') {
       this.context.setRowDecorations(
         ROW_DECORATION_SOURCE,

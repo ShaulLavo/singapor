@@ -199,17 +199,18 @@ export function projectDiffSyntaxTokens({
   sources,
 }: ProjectDiffSyntaxTokensOptions): readonly EditorToken[] {
   const projectedTokens: EditorToken[] = []
+  const indexed = indexTokenSources(sources)
   let rowOffset = 0
 
   for (const row of rows) {
-    const source = tokenSourceForRow(sources, row, side)
+    const source = tokenSourceForRow(indexed, row, side)
     if (source) {
       appendRowSyntaxTokens(projectedTokens, {
         lineStarts: source.lineStarts,
         row,
         rowOffset,
         side: source.side,
-        tokens: source.tokens,
+        tokensByLine: source.tokensByLine,
       })
     }
     rowOffset += row.text.length + 1
@@ -304,7 +305,13 @@ async function shikiDiffSyntaxService(
 }
 
 function loadShikiModule(): Promise<typeof import('@singapor/core/shiki')> {
-  shikiModulePromise ??= import('@singapor/core/shiki')
+  // A rejected promise must not be what the cache holds. One failed chunk load would otherwise be
+  // replayed to every later `setFile` for the lifetime of the page, so a transient network blip
+  // would turn shiki highlighting off permanently rather than for one file.
+  shikiModulePromise ??= import('@singapor/core/shiki').catch((error: unknown) => {
+    shikiModulePromise = null
+    throw error
+  })
   return shikiModulePromise
 }
 
@@ -431,11 +438,77 @@ function diffSyntaxLanguageId(file: DiffFile): string | null {
   return file.languageId ?? languageIdForPath(file.path)
 }
 
-function tokenSourceForRow(
+type IndexedTokenSource = {
+  readonly lineStarts: readonly number[]
+  readonly side: DiffSyntaxSourceSide
+  /** Tokens touching each source line, keyed by 1-based line number. */
+  readonly tokensByLine: ReadonlyMap<number, readonly EditorToken[]>
+}
+
+/**
+ * Buckets each source's tokens by the lines they touch, once per projection.
+ *
+ * Without this every row scans every token in its side's stream, so a projection costs
+ * rows x tokens — and re-projection sits on the synchronous expansion-toggle path, where a
+ * thousand-row file against ten thousand tokens is tens of millions of comparisons per click.
+ *
+ * Deliberately built by locating each token's own lines rather than by walking rows in order:
+ * nothing here may assume the token stream is sorted, because tree-sitter and shiki are separate
+ * producers, and a projection's rows do not visit source lines monotonically once expanded
+ * regions interleave.
+ */
+function indexTokenSources(
   sources: readonly DiffSyntaxTokenSource[],
+): readonly IndexedTokenSource[] {
+  return sources.map((source) => ({
+    lineStarts: source.lineStarts,
+    side: source.side,
+    tokensByLine: tokensByLine(source),
+  }))
+}
+
+function tokensByLine(source: DiffSyntaxTokenSource): ReadonlyMap<number, readonly EditorToken[]> {
+  const byLine = new Map<number, EditorToken[]>()
+  const { lineStarts } = source
+
+  for (const token of source.tokens) {
+    if (token.end <= token.start) continue
+
+    // A token can begin mid-line and run past the terminator, so it lands in every line it
+    // overlaps; bucketing by its start alone would drop it from all but the first.
+    for (
+      let line = lineIndexAtOffset(lineStarts, token.start);
+      line < lineStarts.length;
+      line += 1
+    ) {
+      if (lineStarts[line]! >= token.end) break
+
+      const bucket = byLine.get(line + 1)
+      if (bucket) bucket.push(token)
+      else byLine.set(line + 1, [token])
+    }
+  }
+
+  return byLine
+}
+
+/** The 0-based index of the line containing `offset`: the last line starting at or before it. */
+function lineIndexAtOffset(lineStarts: readonly number[], offset: number): number {
+  let low = 0
+  let high = lineStarts.length - 1
+  while (low < high) {
+    const middle = (low + high + 1) >> 1
+    if (lineStarts[middle]! <= offset) low = middle
+    else high = middle - 1
+  }
+  return Math.max(0, low)
+}
+
+function tokenSourceForRow(
+  sources: readonly IndexedTokenSource[],
   row: DiffRenderRow,
   side: DiffSyntaxSide,
-): DiffSyntaxTokenSource | null {
+): IndexedTokenSource | null {
   const sourceSide = sourceSideForRow(row, side)
   return sources.find((source) => source.side === sourceSide) ?? null
 }
@@ -447,13 +520,13 @@ function appendRowSyntaxTokens(
     row,
     rowOffset,
     side,
-    tokens,
+    tokensByLine: rowTokensByLine,
   }: {
     readonly lineStarts: readonly number[]
     readonly row: DiffRenderRow
     readonly rowOffset: number
     readonly side: DiffSyntaxSourceSide
-    readonly tokens: readonly EditorToken[]
+    readonly tokensByLine: ReadonlyMap<number, readonly EditorToken[]>
   },
 ): void {
   const lineNumber = sourceLineNumberForRow(row, side)
@@ -468,7 +541,7 @@ function appendRowSyntaxTokens(
     lineStart + row.text.length,
   )
 
-  for (const token of tokens) {
+  for (const token of rowTokensByLine.get(lineNumber) ?? []) {
     appendProjectedToken(projectedTokens, token, lineStart, lineEnd, rowOffset)
   }
 }

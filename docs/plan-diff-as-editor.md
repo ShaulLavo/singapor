@@ -111,7 +111,7 @@ has no document-mutating member; `EditorRowDecorationContributionContext.setRowD
 (`:390-393`) is decorations only; `EditorViewContributionContext` (`:257-320`) has no text API. So the
 split is forced, not chosen:
 
-```
+```text
 plugin.setFile(file)            // host pushes the DiffFile
 plugin.getRows()                // -> readonly DiffRenderRow[]
 plugin.onDidChangeRows(cb)      // fires on file change and region toggle
@@ -135,7 +135,7 @@ identity outright.
 
 Collapsed regions are keyed `"{oldStart}:{newStart}"` (`projection.ts:246-248`), not by hunk ordinal.
 
-```
+```text
 plugin.getExpandedRegions(): ReadonlySet<string>
 plugin.toggleRegion(key: string): void
 ```
@@ -286,7 +286,7 @@ gutter clicks") pins §3.4.
 
 ### 3.1 Shape
 
-```
+```ts
 createDiffPlugin({
   mode: 'document' | 'overlay',        // §C1
   side: 'old' | 'new' | 'stacked',

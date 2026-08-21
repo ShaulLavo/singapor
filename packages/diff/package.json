@@ -31,7 +31,6 @@
   },
   "dependencies": {
     "@singapor/core": "workspace:*",
-    "@singapor/panes": "workspace:*",
     "diff": "^9.0.0"
   },
   "devDependencies": {

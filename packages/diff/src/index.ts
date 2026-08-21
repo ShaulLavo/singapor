@@ -1,32 +1,27 @@
 import './style.css'
 
-export { DiffView } from './DiffView'
-export { createEditorDiffPlugin } from './editorDiffPlugin'
+export { createDiffPlugin } from './editorDiffPlugin'
 export { annotateInlineChanges } from './inline'
+export { joinRenderLines } from './lines'
 export { createLiveDiffProjection } from './liveProjection'
 export { createTextDiff, parseGitPatch } from './model'
 export { createSplitProjection, createStackedProjection } from './projection'
-export type { EditorDiffPlugin } from './editorDiffPlugin'
+export { diffSyntaxBackend, projectDiffSyntaxTokens } from './diffSyntax'
+export type { DiffPlugin, DiffPluginMode, DiffPluginOptions } from './editorDiffPlugin'
+export type { DiffDocumentModeViolation } from './diffRows'
+export type { DiffGutterSide } from './gutters'
 export type { LiveDiffProjection } from './liveProjection'
 export type {
   CreateTextDiffOptions,
   DiffFile,
   DiffFileChangeType,
   DiffHunk,
-  DiffHunkLocation,
   DiffHunkLine,
   DiffInlineRange,
   DiffLineType,
   DiffRenderRow,
   DiffRenderRowType,
-  DiffSplitHandleContext,
-  DiffSplitPaneId,
-  DiffSplitPaneLayout,
-  DiffSplitPaneOptions,
   DiffSyntaxBackend,
-  DiffSyntaxTokens,
   DiffTextFile,
-  DiffViewMode,
-  DiffViewOptions,
   ParseGitPatchOptions,
 } from './types'

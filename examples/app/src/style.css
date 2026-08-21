@@ -108,8 +108,7 @@ body {
   overflow: hidden;
 }
 
-#editor-host,
-#diff-host {
+#editor-host {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -117,8 +116,7 @@ body {
   overflow: hidden;
 }
 
-#editor-host[hidden],
-#diff-host[hidden] {
+#editor-host[hidden] {
   display: none;
 }
 

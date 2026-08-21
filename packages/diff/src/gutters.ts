@@ -1,9 +1,15 @@
-import type { EditorGutterContribution } from '@singapor/core/extensions'
 import type { DiffRenderRow } from './types'
 
 export type DiffGutterSide = 'old' | 'new' | 'stacked'
 export type DiffGutterNumberSide = Exclude<DiffGutterSide, 'stacked'>
 export type DiffGutterLaneKind = DiffGutterNumberSide | 'indicator'
+
+/**
+ * What a lane is coloured *as*, rather than what colour it ends up. The DOM gutter resolves the
+ * colour in CSS so a theme can override it; keeping the branching here means the rule that an
+ * addition tints the new lane and not the old one lives in exactly one place.
+ */
+export type DiffGutterLaneTone = 'added' | 'deleted' | 'hunk' | 'default'
 
 type DiffGutterLaneLayout = {
   readonly kind: DiffGutterLaneKind
@@ -19,23 +25,6 @@ export type DiffGutterLayout = {
 const MIN_LINE_NUMBER_DIGITS = 2
 const GUTTER_NUMBER_RESERVED_WIDTH = 6
 const GUTTER_INDICATOR_WIDTH = 12
-
-export function createDiffGutterContribution(
-  side: DiffGutterSide,
-  getRows: () => readonly DiffRenderRow[],
-): EditorGutterContribution {
-  return {
-    id: `diff-${side}-gutter`,
-    className: 'editor-diff-gutter-cell',
-    createCell(document) {
-      return createDiffGutterCell(document)
-    },
-    width(context) {
-      return diffGutterWidth(side, getRows(), context.lineCount, context.metrics.characterWidth)
-    },
-    updateCell() {},
-  }
-}
 
 export function diffGutterWidth(
   side: DiffGutterSide,
@@ -97,26 +86,6 @@ function diffGutterWidthCharacters(
   return Math.max(MIN_LINE_NUMBER_DIGITS, maxCharacters)
 }
 
-function createDiffGutterCell(document: Document): HTMLElement {
-  const element = document.createElement('span')
-  element.className = 'editor-diff-gutter'
-  element.setAttribute('aria-hidden', 'true')
-  return element
-}
-
-function diffGutterText(row: DiffRenderRow, side: DiffGutterSide): string {
-  if (side === 'stacked') {
-    const oldNumber = diffGutterNumberText(row, 'old')
-    const newNumber = diffGutterNumberText(row, 'new')
-    const indicator = diffGutterIndicatorText(row)
-    return [oldNumber, newNumber, indicator].filter(Boolean).join(' ')
-  }
-
-  const number = diffGutterNumberText(row, side)
-  const indicator = diffGutterIndicatorText(row)
-  return [number, indicator].filter(Boolean).join(' ')
-}
-
 export function diffGutterNumberText(row: DiffRenderRow, side: DiffGutterNumberSide): string {
   return lineNumberForRow(row, side)
 }
@@ -128,35 +97,39 @@ export function diffGutterIndicatorText(row: DiffRenderRow): string {
   return ''
 }
 
-export function diffGutterColor(
+/**
+ * Side-awareness in this gutter is **per lane, not per pane** (plan §3.3). In stacked mode one
+ * gutter carries both number lanes, and for a single addition row the old lane stays foreground
+ * while the new lane goes green — so a row-level class cannot express it and each lane carries its
+ * own tone.
+ *
+ * The indicator lane is deliberately side-agnostic: it shows `+`/`-` for the row as a whole.
+ */
+export function diffGutterLaneTone(
   row: DiffRenderRow,
-  side: DiffGutterNumberSide,
-  colors: {
-    readonly added: string
-    readonly deleted: string
-    readonly foreground: string
-    readonly hunk: string
-  },
-): string {
-  if (row.type === 'addition' && side !== 'old') return colors.added
-  if (row.type === 'deletion' && side !== 'new') return colors.deleted
-  if (row.type === 'hunk') return colors.hunk
-  return colors.foreground
+  kind: DiffGutterLaneKind,
+): DiffGutterLaneTone {
+  if (row.type === 'hunk') return 'hunk'
+  if (kind === 'indicator') {
+    if (row.type === 'addition') return 'added'
+    if (row.type === 'deletion') return 'deleted'
+    return 'default'
+  }
+
+  if (row.type === 'addition' && kind !== 'old') return 'added'
+  if (row.type === 'deletion' && kind !== 'new') return 'deleted'
+  return 'default'
 }
 
-export function diffGutterIndicatorColor(
-  row: DiffRenderRow,
-  colors: {
-    readonly added: string
-    readonly deleted: string
-    readonly foreground: string
-    readonly hunk: string
-  },
-): string {
-  if (row.type === 'addition') return colors.added
-  if (row.type === 'deletion') return colors.deleted
-  if (row.type === 'hunk') return colors.hunk
-  return colors.foreground
+/**
+ * Whether the gutter band behind a row is tinted. Unlike the lane tone this *is* per pane: a split
+ * old pane shows no tint behind an addition, because that row is a placeholder there.
+ */
+export function diffGutterRowTone(row: DiffRenderRow, side: DiffGutterSide): DiffGutterLaneTone {
+  if (row.type === 'addition' && side !== 'old') return 'added'
+  if (row.type === 'deletion' && side !== 'new') return 'deleted'
+  if (row.type === 'hunk') return 'hunk'
+  return 'default'
 }
 
 function gutterNumberLaneWidth(

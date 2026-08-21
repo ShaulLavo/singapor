@@ -1,5 +1,5 @@
 import type { Editor } from '@singapor/core/editor'
-import type { DiffTextFile, EditorDiffPlugin } from '@singapor/diff'
+import type { DiffPlugin, DiffTextFile } from '@singapor/diff'
 import type { TypeScriptLspDefinitionTarget } from '@singapor/typescript-lsp'
 import type { Sidebar } from './components/sidebar.ts'
 import type { StatusBar } from './components/statusBar.ts'
@@ -37,7 +37,7 @@ export class SourceController {
   private readonly statusBar: StatusBar
   private readonly editor: Editor
   private readonly sourceWorkspace: SourceWorkspace | null
-  private readonly liveDiff: EditorDiffPlugin | null
+  private readonly liveDiff: DiffPlugin | null
   private readonly viewHosts: SourceViewHosts | null
   private activeView: 'edit' | 'diff' = 'edit'
 
@@ -47,7 +47,7 @@ export class SourceController {
     statusBar: StatusBar,
     editor: Editor,
     sourceWorkspace: SourceWorkspace | null = null,
-    liveDiff: EditorDiffPlugin | null = null,
+    liveDiff: DiffPlugin | null = null,
     viewHosts: SourceViewHosts | null = null,
   ) {
     this.topBar = topBar
@@ -60,8 +60,6 @@ export class SourceController {
     this.topBar.setHandlers({
       onEditMode: () => this.showEditMode(),
       onDiffMode: () => this.showDiffMode(),
-      onSplitDiff: () => undefined,
-      onStackedDiff: () => undefined,
     })
   }
 
@@ -175,7 +173,6 @@ export class SourceController {
     this.liveDiff?.setEnabled(false)
     this.viewHosts?.showEditor()
     this.topBar.setViewMode('edit')
-    this.topBar.setDiffControlsVisible(false)
     this.editor.focus()
   }
 
@@ -186,7 +183,6 @@ export class SourceController {
     this.liveDiff?.setEnabled(true)
     this.viewHosts?.showDiff()
     this.topBar.setViewMode('diff')
-    this.topBar.setDiffControlsVisible(false)
     this.editor.focus()
   }
 

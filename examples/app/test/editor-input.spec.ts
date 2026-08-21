@@ -261,11 +261,8 @@ test('shows current file changes in editable live stacked diff mode', async ({ p
   await page.getByRole('button', { name: 'Diff' }).click()
 
   await expect(page.locator('#editor-host')).toBeVisible()
-  await expect(page.locator('#diff-host')).toBeHidden()
-  await expect(page.getByRole('button', { name: 'Split' })).toBeHidden()
-  await expect(page.getByRole('button', { name: 'Stacked' })).toBeHidden()
-  await expect(page.locator('.editor-live-diff-gutter').first()).toBeVisible()
-  await expect.poll(() => firstVisibleGutterContribution(page)).toBe('editor-diff-gutter')
+  await expect(page.locator('.editor-diff-gutter').first()).toBeVisible()
+  await expect.poll(() => firstVisibleGutterContribution(page)).toBe('editor-diff-gutter-stacked')
   await expect(page.locator('[data-editor-gutter-contribution="line-gutter"]')).toHaveCount(0)
   await expect(page.locator('.editor-diff-row-addition')).toContainText('abcXYZ')
   await expect(page.locator('.editor-diff-row-deletion')).toContainText('abc')
@@ -292,7 +289,7 @@ test('shows current file changes in editable live stacked diff mode', async ({ p
 
   await page.getByRole('button', { name: 'Edit' }).click()
 
-  await expect(page.locator('.editor-live-diff-gutter:not([hidden])')).toHaveCount(0)
+  await expect(page.locator('.editor-diff-gutter:not([hidden])')).toHaveCount(0)
   await expect(
     page.locator('[data-editor-gutter-contribution="line-gutter"]').first(),
   ).toBeVisible()

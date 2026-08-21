@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Editor } from '@singapor/core/editor'
-import { createEditorDiffPlugin } from '../src'
+import { createDiffPlugin } from '../src'
 
-describe('createEditorDiffPlugin', () => {
+describe('createDiffPlugin (overlay mode)', () => {
   let container: HTMLElement | null = null
   let editor: Editor | null = null
 
@@ -16,7 +16,7 @@ describe('createEditorDiffPlugin', () => {
   it('renders live injected deletions, recomputes after edits, and clears when disabled', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
-    const plugin = createEditorDiffPlugin()
+    const plugin = createDiffPlugin({ mode: 'overlay' })
     editor = new Editor(container, { plugins: [plugin] })
 
     editor.openDocument({ documentId: 'note.txt', text: 'a\nb\nadd\n' })
@@ -25,8 +25,11 @@ describe('createEditorDiffPlugin', () => {
 
     expect(container.querySelector('.editor-diff-row-deletion')?.textContent).toBe('remove')
     expect(container.querySelector('.editor-diff-row-addition')?.textContent).toBe('add')
-    expect(visibleDiffGutterTexts()).toContain('2-')
-    expect(visibleDiffGutterTexts()).toContain('3+')
+    // In document order, not as a membership check. `toContain('2-')` passes just as happily on a
+    // gutter whose numbers have all slid down a row, which is exactly the regression that reached
+    // review: overlay's projection array interleaves injected deletions, so indexing it by buffer
+    // row labels `b` as the deleted line and steals `add`'s `+`.
+    expect(visibleDiffGutterTexts()).toEqual(['11', '2-', '32', '3+', '44'])
 
     editor.edit({
       from: editor.materializeFullText().length,
@@ -47,7 +50,7 @@ describe('createEditorDiffPlugin', () => {
 })
 
 function visibleDiffGutterTexts(): string[] {
-  return [...document.querySelectorAll<HTMLElement>('.editor-live-diff-gutter')]
+  return [...document.querySelectorAll<HTMLElement>('.editor-diff-gutter')]
     .filter((element) => !element.hidden)
     .map((element) => element.textContent ?? '')
 }

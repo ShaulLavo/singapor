@@ -11,7 +11,7 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
-import type { LspClient, LspNotificationHandler, LspWorkspace } from '@singapor/lsp'
+import type { LspClient, LspNotificationHandler } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
@@ -55,6 +55,7 @@ import type {
 import { formattingChangesText, formattingEdits, formattingOptions } from './formatting'
 import type { TextEdit } from '@singapor/core'
 import type {
+  LanguageServerConnectionContext,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticSummary,
   LanguageServerNavigationOptions,
@@ -63,6 +64,10 @@ import type {
   LanguageServerReferencesResult,
   LanguageServerStatus,
 } from './types'
+// Re-exported so `@singapor/lsp-plugin` keeps handing this out from where it always did; it is
+// defined in `types.ts` because the narrow factory's options need it and a shared vocabulary module
+// that imports the module consuming it is a cycle.
+export type { LanguageServerConnectionContext } from './types'
 
 export type { LanguageServerResolvedOptions } from './pluginTypes'
 
@@ -73,11 +78,6 @@ const DEFAULT_NAMESPACE = 'lsp-plugin'
 const DEFAULT_TIMING_PREFIX = 'lspPlugin'
 const DEFAULT_DIAGNOSTICS_SOURCE_ID = 'editor.lsp-plugin.diagnostics'
 const DEFAULT_COMPLETION_ACCEPT_TIMING_NAME = 'lspPlugin.completion.accept'
-
-export type LanguageServerConnectionContext = {
-  readonly client: LspClient
-  readonly workspace: LspWorkspace
-}
 
 export type LanguageServerCommandTarget = {
   goToDefinitionFromSelection(): boolean

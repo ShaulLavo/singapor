@@ -331,13 +331,17 @@ editor normalises unconditionally (above); a host-side claim of "spans sorted, n
 assertion about untrusted server data that no server guarantees and neither side checks.
 
 **Multi-line spans are supported**, because the paint layer takes offsets and paints across mounted
-rows. **Ownership of `multilineTokenSupport` is split, and both halves are named here.** The *gate* is
-the editor's: `semanticTokensClientCapability()` refuses the flag until Milestone 5's multi-line exit
-criterion passes (M3, M5). The *declaration* is the host's, per §C3, once the gate opens. The
-consequence, stated so that neither plan tests against a fiction: **until the gate opens a conformant
-server sends no multi-line token at all**, so a live-server test of multi-line painting can only pass
-against a non-conformant server. Multi-line *decoding* may still be asserted over a literal 5-tuple
-array at any time — that is Milestone 4's exit criterion and it needs no capability.
+rows. **Ownership of `multilineTokenSupport` was split, and the gate is now open.** The *gate* was the
+editor's: `semanticTokensClientCapability()` refused the flag until Milestone 5's multi-line exit
+criterion passed. It passes — a semantic span crossing a newline paints across two mounted rows, in
+`packages/editor/test/semanticTokenPaintOrder.test.ts` — so the builder accepts the flag and emits
+the key when asked. The *declaration* remains the host's, per §C3, and stays opt-in rather than
+default-on: it is a statement about the host's own pipeline as much as the editor's, and a host that
+re-derives spans from `{line, character}` pairs may not be able to honour it even though the layer
+can. A host that declares nothing gets no key, and absent is what the wire means by false.
+
+Multi-line *decoding* is a separate question that never needed the capability: it is asserted over a
+literal 5-tuple array in Milestone 4.
 
 ### §C2 — Coordinate space
 
@@ -391,8 +395,9 @@ granularity.**
 - **The editor ships the builder, and its job is to prevent a lie.**
   `semanticTokensClientCapability(options)`, exported from `packages/lsp` (Milestone 3), produces a
   block that declares **exactly** what the shipped decoder honours and nothing more: it cannot express
-  `overlappingTokenSupport: true` (§C1), it refuses `multilineTokenSupport` until Milestone 5's exit
-  criterion passes (§C1), and it does not offer `dynamicRegistration` at all (below).
+  `overlappingTokenSupport: true` (§C1), it does not offer `dynamicRegistration` at all (below), and
+  it accepts `multilineTokenSupport` only because Milestone 5's exit criterion for it now passes
+  (§C1) — before that it refused the flag.
 - **The editor ships the pass-through.** `capabilities` and `clientInfo` reach `LspClient` through
   `LspConnectionOptions` **and both plugin option types** (Milestone 3). None of that exists today,
   which is the blocker.
@@ -757,8 +762,8 @@ The sub-terms Pass 4 found floating, each with the owner it now has and where th
 | --- | --- | --- |
 | `textDocument.semanticTokens` block: content and granularity | host | §C3 |
 | `augmentsSyntaxTokens` | host, per server | §C3 |
-| `multilineTokenSupport` — the gate | editor (**M3** builder, **M5** criterion) | §C1 |
-| `multilineTokenSupport` — the declaration | host, once the gate opens | §C1, §C3 |
+| `multilineTokenSupport` — the gate | editor (**M3** builder, **M5** criterion) — **open** | §C1 |
+| `multilineTokenSupport` — the declaration | host, opt-in now the gate is open | §C1, §C3 |
 | `overlappingTokenSupport` | neither: unexpressible by construction | §C1, §C3 |
 | `dynamicRegistration` / `client/registerCapability` | **de-scoped on both sides** | §C3 |
 | `workspace/semanticTokens/refresh` — request route | **de-scoped on both sides** | §C9 |
@@ -1268,13 +1273,14 @@ host's per §C3 and a default here would be a lie for every host that does not i
 contradict it** — see §C3. `semanticTokensClientCapability()` produces a block whose `requests`,
 `tokenTypes` and `tokenModifiers` round-trip through
 `mergeClientCapabilities(defaultClientCapabilities(), …)` unchanged; it has no way to express
-`overlappingTokenSupport: true` or `dynamicRegistration`; and calling it with
-`multilineTokenSupport: true` fails, with the failure naming Milestone 5's criterion. **Those three
+`overlappingTokenSupport: true` or `dynamicRegistration`; and it emits `multilineTokenSupport` only
+when a caller asks for it, Milestone 5's criterion for that flag having passed. **The two forbidden
 flags are absent from the emitted block, never present as `false`** — the builder has no option that
-produces the key at all, and absent is what the wire means by false. Any test on either side asserts
-that the key **is not there**; a test asserting `flag === false` asserts something this builder cannot
-produce, and a plan deliverable written as `dynamicRegistration: false` is describing an emitted key
-that will never exist. A host on the
+produces either key at all, and absent is what the wire means by false. Any test on either side
+asserts that the key **is not there**; a test asserting `flag === false` asserts something this
+builder cannot produce, and a plan deliverable written as `dynamicRegistration: false` is describing
+an emitted key that will never exist. The same holds for `multilineTokenSupport` when a host does not
+ask for it. A host on the
 **narrow** factory receives a `LanguageServerConnectionContext` from `onConnectionCreated`, issues a
 request through `context.client` with a per-request `timeoutMs`, and cancels it with an
 `AbortSignal` — asserted end to end against a stub transport, because those three are the whole of
@@ -1296,9 +1302,9 @@ and seeing diagnostics still arrive.
 - [x] **`semanticTokensClientCapability()`, constrained to what the decoder honours** — `S`
       → `packages/lsp/src/semanticTokens.ts`, with `SEMANTIC_TOKEN_TYPES` and
       `SEMANTIC_TOKEN_MODIFIERS` exported beside it. `overlappingTokenSupport` and
-      `dynamicRegistration` are not options and no code path emits either key;
-      `multilineTokenSupport` is typed `false` and throws on a truthy value, with the message naming
-      Milestone 5's criterion. **Re-open this item when M5's multi-line criterion passes.**
+      `dynamicRegistration` are not options and no code path emits either key.
+      `multilineTokenSupport` shipped refused, and **the gate was opened once M5's criterion passed**
+      — the builder now accepts it and emits the key only when a caller asks.
 - [x] **A comment on `defaultClientCapabilities()` recording why semantic tokens are not in it** — `S`
       → and a test asserting the block is still absent, which is the editor's half of the Pass 4
       decision that the block's content is the host's.
@@ -1631,8 +1637,8 @@ the tree-sitter colour under it is unchanged — the fall-through §C4 depends o
 appears exactly once in `push()`'s `unresolvedTypeNames`, deduplicated across spans**, which is the
 signal §C4 requires so that a legend falling on the floor is visible rather than merely silent. **A
 span crossing a newline paints across two mounted rows**; this is the criterion that gates the host
-declaring `multilineTokenSupport` per §C1, and until it passes the capability builder must refuse
-the flag. Two overlapping spans resolve to the later one truncating the earlier, with no group
+declaring `multilineTokenSupport` per §C1. **It passes, and the gate was opened**: the capability
+builder accepts the flag. Two overlapping spans resolve to the later one truncating the earlier, with no group
 containing a zero-length range. Scrolling to a range that has never been requested fires
 `onRangeNeeded` with a range covering the new viewport, and the request carries `documentId` and
 `textVersion` and **no URI** (§C1). With a test-supplied `viewportDelayMs`, a flung scroll of twenty

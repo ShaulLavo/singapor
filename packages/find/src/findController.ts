@@ -32,14 +32,19 @@ import type { EditorFindOptions } from './types'
 // than left to the order the groups happen to reach the highlight registry in.
 //
 // The numbers are exported because they are half of a cross-package agreement: the highlight
-// priority space is one namespace that four subsystems write into, and `current` is the only find
-// style that declares a `color`, so it is the only one that contends with syntax tokens, semantic
-// tokens and error diagnostics at all. A regression test elsewhere asserts the relative order of
-// all four, and it can only do that by reading these rather than by restating them.
+// priority space is one namespace that several subsystems write into, and priority is what settles
+// a contest between two of them that declare the same property. A regression test elsewhere asserts
+// the resulting order, and it can only do that by reading these rather than by restating them.
+//
+// They sit above the error diagnostic, which declares a background of its own at 2. `current` is the
+// only find style that declares a `color`, so it is the only one contending on that axis — but all
+// three declare a background, and so does the error, which is why none of them may share its number.
+// A tie there would put the background contest back where the numbers exist to take it out of:
+// registration order in the document's shared registry.
 export const FIND_HIGHLIGHT_Z_INDEX = {
-  scope: 1,
-  match: 2,
-  current: 3,
+  scope: 3,
+  match: 4,
+  current: 5,
 } as const
 
 const FIND_MATCH_STYLE = {

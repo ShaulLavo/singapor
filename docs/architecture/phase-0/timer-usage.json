@@ -67,6 +67,14 @@
       "snippet": "setTimeout(handler, timeout)) as typeof globalThis.setTimeout"
     },
     {
+      "api": "setTimeout",
+      "file": "packages/editor/src/semanticTokenLayer.ts",
+      "id": "packages/editor/src/semanticTokenLayer.ts:setTimeout:7075ce6e49",
+      "justification": "Coalesces the demand signal against the viewport rather than against rendering. `'viewport'` is fired once per scroll event and is not throttled at source, so a flung scroll is one update per frame; `cancel()` on every input is what turns that into one question per pause. The delay itself is the host's number — this editor names none.",
+      "line": 170,
+      "snippet": "demandTimer = setTimeout(() => {"
+    },
+    {
       "api": "requestAnimationFrame",
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:requestAnimationFrame:f20775aa16",
@@ -103,7 +111,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 903,
+      "line": 906,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -111,7 +119,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 912,
+      "line": 915,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -215,7 +223,7 @@
       "file": "packages/lsp/src/client.ts",
       "id": "packages/lsp/src/client.ts:setTimeout:373e9c94c5",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 380,
+      "line": 386,
       "snippet": "const timeout = setTimeout(() => this.timeoutRequest(id), options.timeoutMs ?? this.timeoutMs)"
     },
     {
@@ -247,7 +255,7 @@
       "file": "packages/typescript-lsp/src/typescriptLsp.worker.ts",
       "id": "packages/typescript-lsp/src/typescriptLsp.worker.ts:setTimeout:c3b02c6bab",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 287,
+      "line": 392,
       "snippet": "const timer = setTimeout(() => {"
     }
   ]

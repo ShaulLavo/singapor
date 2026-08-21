@@ -123,7 +123,20 @@ const wire: {
   handleWorkerMessage: ((event: MessageEvent) => void) | null
 } = { socket: null, handleWorkerMessage: null }
 
+/**
+ * Both hooks as they were before the worker was imported, captured so they can be put back.
+ *
+ * The environment is shared with whatever runs next, so a fixture that installs a `postMessage` of
+ * its own and walks away leaves later tests posting into a socket that no longer exists.
+ */
+const original: {
+  postMessage: typeof globalThis.postMessage
+  onmessage: ((event: MessageEvent) => void) | null
+} = { postMessage: globalThis.postMessage, onmessage: workerGlobal().onmessage }
+
 beforeAll(async () => {
+  original.postMessage = globalThis.postMessage
+  original.onmessage = workerGlobal().onmessage
   await import('../src/typescriptLsp.worker')
   wire.handleWorkerMessage = workerGlobal().onmessage
   workerGlobal().onmessage = null
@@ -133,7 +146,8 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
-  workerGlobal().onmessage = null
+  workerGlobal().onmessage = original.onmessage
+  globalThis.postMessage = original.postMessage
   wire.socket = null
 })
 

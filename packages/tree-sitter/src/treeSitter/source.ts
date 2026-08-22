@@ -320,7 +320,9 @@ const isHighSurrogate = (codeUnit: number): boolean => codeUnit >= 0xd800 && cod
 // little-endian, but check rather than assume — a wrong decode is silent.
 const HOST_IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1
 const utf16Decoder =
-  HOST_IS_LITTLE_ENDIAN && typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16le') : null
+  HOST_IS_LITTLE_ENDIAN && typeof TextDecoder !== 'undefined'
+    ? new TextDecoder('utf-16le', { ignoreBOM: true })
+    : null
 
 const readUtf16Text = (units: Uint16Array, start: number, end: number): string => {
   if (!utf16Decoder) return readUtf16TextExact(units, start, end)

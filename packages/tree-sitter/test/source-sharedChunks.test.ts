@@ -61,4 +61,10 @@ describe('shared-utf16 source chunks', () => {
     const text = `${padding}🎉${'b'.repeat(64)}`
     expect(readAll(text, true)).toBe(readAll(text, false))
   })
+
+  it('preserves U+FEFF at a shared chunk boundary', () => {
+    const text = `${'a'.repeat(16 * 1024)}\uFEFFtail`
+    const { descriptor, input } = resolveShared(text)
+    expect(readTreeSitterInputRange(input, 0, descriptor.length)).toBe(text)
+  })
 })

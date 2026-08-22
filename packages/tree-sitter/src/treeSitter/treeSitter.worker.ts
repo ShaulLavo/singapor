@@ -354,7 +354,7 @@ const parseFullDocument = async (
       context,
       oldDocument: null,
       inputEdits: [],
-      changedRanges: null,
+      injectionRanges: null,
       degraded,
     }),
   )
@@ -393,6 +393,7 @@ const editDocument = async (
     const changedRanges = runWorkerPhase('changed ranges', () =>
       treeChangedRanges(reusableTree, rootLayer.tree),
     )
+    const injectionRanges = injectionRangesForEdits(changedRanges, request.edits, source.length)
     const degraded: TreeSitterDegradedState[] = []
     const parsedDocument = await runAsyncWorkerPhase('parse injections', () =>
       parseParsedDocument({
@@ -404,7 +405,7 @@ const editDocument = async (
         context,
         oldDocument: cached,
         inputEdits: request.inputEdits,
-        changedRanges,
+        injectionRanges,
         degraded,
       }),
     )
@@ -548,6 +549,37 @@ const treeChangedRanges = (oldTree: Tree, newTree: Tree): TreeSitterSyntaxRange[
     .getChangedRanges(newTree)
     .map((range) => ({ startIndex: range.startIndex, endIndex: range.endIndex }))
 
+const injectionRangesForEdits = (
+  changedRanges: readonly TreeSitterSyntaxRange[],
+  edits: TreeSitterEditRequest['edits'],
+  documentLength: number,
+): TreeSitterSyntaxRange[] => {
+  const ranges = [...changedRanges]
+  const sortedEdits = edits.toSorted((left, right) => left.from - right.from || left.to - right.to)
+  let offset = 0
+
+  for (const edit of sortedEdits) {
+    const startIndex = edit.from + offset
+    const endIndex = startIndex + edit.text.length
+    const range = nonEmptyEditRange(startIndex, endIndex, documentLength)
+    if (range) ranges.push(range)
+    offset += edit.text.length - (edit.to - edit.from)
+  }
+
+  return ranges
+}
+
+const nonEmptyEditRange = (
+  startIndex: number,
+  endIndex: number,
+  documentLength: number,
+): TreeSitterSyntaxRange | null => {
+  if (endIndex > startIndex) return { startIndex, endIndex }
+  if (documentLength === 0) return null
+  if (startIndex < documentLength) return { startIndex, endIndex: startIndex + 1 }
+  return { startIndex: documentLength - 1, endIndex: documentLength }
+}
+
 const createCancellationContext = (
   cancellationBuffer: SharedArrayBuffer | undefined,
   budgetMs: number,
@@ -648,7 +680,7 @@ type ParseParsedDocumentOptions = {
   readonly context: CancellationContext
   readonly oldDocument: ParsedDocument | null
   readonly inputEdits: readonly TreeSitterEditRequest['inputEdits'][number][]
-  readonly changedRanges: readonly TreeSitterSyntaxRange[] | null
+  readonly injectionRanges: readonly TreeSitterSyntaxRange[] | null
   readonly degraded: TreeSitterDegradedState[]
 }
 
@@ -730,14 +762,7 @@ const prepareReusableLayers = (
   const reusableLayers: ReusableLayer[] = []
   try {
     for (const layer of oldDocument.layers) {
-      if (layer.kind === 'root') continue
-
-      const tree = editReusableTree(layer.tree, inputEdits)
-      reusableLayers.push({
-        // Included ranges stay in document code units; only query cursor bounds use UTF-16 bytes.
-        layer: { ...layer, tree, ranges: tree.getIncludedRanges() },
-        state: 'available',
-      })
+      appendReusableLayer(reusableLayers, layer, inputEdits)
     }
 
     return reusableLayers
@@ -745,6 +770,21 @@ const prepareReusableLayers = (
     for (const reusable of reusableLayers) reusable.layer.tree.delete()
     throw error
   }
+}
+
+const appendReusableLayer = (
+  reusableLayers: ReusableLayer[],
+  layer: ParsedLayer,
+  inputEdits: ParseParsedDocumentOptions['inputEdits'],
+): void => {
+  if (layer.kind === 'root') return
+
+  const tree = editReusableTree(layer.tree, inputEdits)
+  reusableLayers.push({
+    // Included ranges stay in document code units; only query cursor bounds use UTF-16 bytes.
+    layer: { ...layer, tree, ranges: tree.getIncludedRanges() },
+    state: 'available',
+  })
 }
 
 const reservedLayerIds = (
@@ -766,7 +806,7 @@ const appendInjectionLayers = async (
     'find injections',
     [] as InjectionPlan[],
     options.degraded,
-    () => findInjections(parent, runtime, options.source, options.context, options.changedRanges),
+    () => findInjections(parent, runtime, options.source, options.context, options.injectionRanges),
   )
 
   for (const plan of plans) {
@@ -854,7 +894,7 @@ const resolveInjectionPlan = (
   const ranges = mergedCombinedRanges(
     plan,
     reusable.layer.ranges,
-    options.changedRanges ?? [],
+    options.injectionRanges ?? [],
     options.source,
   )
   return { ...plan, id: reusable.layer.id, key: reusable.layer.key, ranges }
@@ -949,7 +989,7 @@ const carryReusableLayer = async (
   reusable: ReusableLayer,
   options: ParseInjectionContext,
 ): Promise<ParsedLayer | null> => {
-  const changedRanges = options.changedRanges ?? []
+  const changedRanges = options.injectionRanges ?? []
   const layerChanged = reusable.layer.ranges.some((range) => {
     return rangeIntersectsChangedRanges(range, changedRanges)
   })

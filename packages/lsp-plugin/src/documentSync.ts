@@ -86,9 +86,18 @@ export class DocumentSync {
     if (diagnostics.uri !== active.uri) return
     if (diagnostics.version !== null && diagnostics.version !== active.lspVersion) return
 
-    this.diagnosticItems = diagnostics.diagnostics
-    this.presenter.render(active.fullText, diagnostics.diagnostics)
-    this.presenter.publishSummary(active.uri, diagnostics.version, diagnostics.diagnostics)
+    this.replaceDiagnostics(active, diagnostics.version, diagnostics.diagnostics)
+  }
+
+  public pullDiagnostics(
+    uri: lsp.DocumentUri,
+    version: number,
+    diagnostics: readonly lsp.Diagnostic[],
+  ): void {
+    const active = this.document
+    if (!active || active.uri !== uri || active.lspVersion !== version) return
+
+    this.replaceDiagnostics(active, version, diagnostics)
   }
 
   public clearDiagnostics(): void {
@@ -113,6 +122,16 @@ export class DocumentSync {
 
     if (active.textVersion === descriptor.textVersion) return
     this.updateDocument(descriptor, change, snapshot)
+  }
+
+  private replaceDiagnostics(
+    active: ActiveDocument,
+    version: number | null,
+    diagnostics: readonly lsp.Diagnostic[],
+  ): void {
+    this.diagnosticItems = diagnostics
+    this.presenter.render(active.fullText, diagnostics)
+    this.presenter.publishSummary(active.uri, version, diagnostics)
   }
 
   private openDocument(descriptor: DocumentDescriptor): void {

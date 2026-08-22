@@ -172,6 +172,9 @@ export class LspConnectionPool {
         this.#emit(entry, 'ready', { durationMs: Math.round(entry.readyAt - entry.createdAt) })
         for (const lease of leasesOf(entry)) lease.callbacks.onConnected()
       },
+      onDiagnosticRefresh: () => {
+        for (const lease of leasesOf(entry)) lease.callbacks.onDiagnosticRefresh?.()
+      },
       onUnavailable: () => {
         entry.connected = false
         this.#retire(entry)

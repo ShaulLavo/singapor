@@ -42,6 +42,9 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
   general: {
     positionEncodings: ['utf-16'],
   },
+  workspace: {
+    diagnostics: { refreshSupport: true },
+  },
   textDocument: {
     synchronization: {
       didSave: false,
@@ -54,6 +57,10 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
     publishDiagnostics: {
       tagSupport: { valueSet: [DIAGNOSTIC_TAG_UNNECESSARY, DIAGNOSTIC_TAG_DEPRECATED] },
       versionSupport: true,
+    },
+    diagnostic: {
+      dynamicRegistration: false,
+      relatedDocumentSupport: false,
     },
     completion: {
       contextSupport: true,

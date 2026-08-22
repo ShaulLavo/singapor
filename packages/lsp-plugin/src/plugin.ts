@@ -64,6 +64,7 @@ import type {
   DiagnosticMarkerDirection,
   LanguageServerNavigationCommand,
 } from './pluginTypes'
+import { PullDiagnosticsController } from './pullDiagnostics'
 import { formattingChangesText, formattingEdits, formattingOptions } from './formatting'
 import type { TextEdit } from '@singapor/core'
 import type {
@@ -376,6 +377,7 @@ class LanguageServerCompletionEditContribution implements EditorEditContribution
 }
 
 type ViewLanguageServerLane = LanguageServerSetLane & {
+  readonly pullDiagnostics: PullDiagnosticsController | null
   readonly sync: DocumentSync
 }
 
@@ -503,6 +505,7 @@ class LanguageServerContribution implements EditorViewContribution {
       if (!lane.sync.shouldSync(kind, snapshot)) continue
 
       lane.sync.sync(snapshot, change ?? null)
+      lane.pullDiagnostics?.synchronize()
     }
     this.completion.update(snapshot, kind, change ?? null)
     this.signatureHelp.update(snapshot, kind, change ?? null)
@@ -519,7 +522,10 @@ class LanguageServerContribution implements EditorViewContribution {
     this.state.unregister(this)
     this.hoverDefinition.dispose()
     this.completion.hide()
-    for (const lane of this.lanes) lane.sync.close()
+    for (const lane of this.lanes) {
+      lane.pullDiagnostics?.dispose()
+      lane.sync.close()
+    }
     this.diagnostics.clear()
     this.completionSources.dispose()
     this.completion.dispose()
@@ -594,6 +600,7 @@ class LanguageServerContribution implements EditorViewContribution {
     let lane: ViewLanguageServerLane | null = null
     const diagnostics = this.diagnostics.forLane(options.id, options.onDiagnostics)
     const connection = acquireResolvedLanguageServerLane(options, {
+      onDiagnosticRefresh: () => lane?.pullDiagnostics?.refresh(),
       onPublishDiagnostics: (params) => {
         if (options.features.diagnostics === undefined) return
         if (!lane) return
@@ -607,6 +614,7 @@ class LanguageServerContribution implements EditorViewContribution {
       onUnavailable: () => {
         if (!lane) return
 
+        lane.pullDiagnostics?.cancel()
         lane.sync.clearDiagnostics()
         this.syncSemanticTokens(this.context.getSnapshot(), 'document')
       },
@@ -615,10 +623,29 @@ class LanguageServerContribution implements EditorViewContribution {
       ...this.options.documentSync,
       onDocumentClosed: () => this.completion.hide(),
     })
+    const pullDiagnostics =
+      options.features.diagnostics === undefined
+        ? null
+        : new PullDiagnosticsController({
+            client: connection.client,
+            getDocument: () => {
+              const active = sync.activeDocument
+              return active ? { uri: active.uri, version: active.lspVersion } : null
+            },
+            publish: (document, items) => {
+              sync.pullDiagnostics(document.uri, document.version, items)
+              this.codeActions.diagnosticsChanged()
+            },
+            onRequestError: (error) => {
+              if (options.onRequestError) options.onRequestError('textDocument/diagnostic', error)
+              else this.options.onRequestError?.(options.id, 'textDocument/diagnostic', error)
+            },
+          })
     lane = {
       connection,
       features: options.features,
       id: options.id,
+      pullDiagnostics,
       onRequestError: (method, error) => {
         if (options.onRequestError) options.onRequestError(method, error)
         else this.options.onRequestError?.(options.id, method, error)
@@ -639,6 +666,7 @@ class LanguageServerContribution implements EditorViewContribution {
     const snapshot = this.context.getSnapshot()
     if (!lane.sync.shouldSync('document', snapshot)) return
     lane.sync.sync(snapshot, null)
+    lane.pullDiagnostics?.synchronize()
     this.syncSemanticTokens(snapshot, 'document')
   }
 

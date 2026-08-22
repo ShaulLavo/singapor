@@ -295,6 +295,72 @@ describe('host notification handlers', () => {
   })
 })
 
+describe('document pull diagnostics', () => {
+  it('pulls a pull-only lane into the composite and re-pulls after server refresh', async () => {
+    const harness = await narrowPlugin()
+
+    expect(harness.initializeParams.capabilities.textDocument?.diagnostic).toBeDefined()
+    expect(harness.initializeParams.capabilities.workspace?.diagnostics?.refreshSupport).toBe(true)
+
+    await harness.answerInitialize({
+      diagnosticProvider: {
+        identifier: 'eslint',
+        interFileDependencies: false,
+        workspaceDiagnostics: false,
+      },
+    })
+    await flushPromises()
+
+    const first = harness.socket.find('textDocument/diagnostic')
+    expect(first?.params).toEqual({
+      identifier: 'eslint',
+      textDocument: { uri: 'file:///src/index.ts' },
+    })
+
+    harness.socket.receive({
+      jsonrpc: '2.0',
+      id: first?.id,
+      result: {
+        kind: 'full',
+        resultId: 'eslint-1',
+        items: [
+          {
+            message: 'pull-only diagnostic',
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+            severity: 1,
+          },
+        ],
+      },
+    })
+    await flushPromises()
+
+    expect(harness.diagnostics.at(-1)?.diagnostics).toEqual([
+      expect.objectContaining({ message: 'pull-only diagnostic' }),
+    ])
+
+    harness.socket.receive({
+      jsonrpc: '2.0',
+      id: 'diagnostic-refresh',
+      method: 'workspace/diagnostic/refresh',
+      params: null,
+    })
+    await flushPromises()
+
+    const pulls = harness.socket
+      .messages()
+      .filter((message) => message.method === 'textDocument/diagnostic')
+    expect(pulls).toHaveLength(2)
+    expect(pulls[1]?.params).toEqual({
+      identifier: 'eslint',
+      previousResultId: 'eslint-1',
+      textDocument: { uri: 'file:///src/index.ts' },
+    })
+    expect(
+      harness.socket.messages().find((message) => message.id === 'diagnostic-refresh'),
+    ).toMatchObject({ result: null })
+  })
+})
+
 function activate(
   plugin: ReturnType<typeof createLanguageServerPlugin>,
 ): EditorViewContributionProvider {

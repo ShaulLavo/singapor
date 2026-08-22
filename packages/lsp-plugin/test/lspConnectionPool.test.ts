@@ -73,6 +73,7 @@ function connectionOptions(overrides: Partial<LspConnectionOptions> = {}): LspCo
 function callbacks() {
   return {
     onConnected: vi.fn<() => void>(),
+    onDiagnosticRefresh: vi.fn<() => void>(),
     onPublishDiagnostics: vi.fn<(params: unknown) => void>(),
     onStatusChange: vi.fn<(status: LanguageServerStatus) => void>(),
     onUnavailable: vi.fn<() => void>(),
@@ -212,6 +213,52 @@ describe('LspConnectionPool', () => {
 
     expect(first.onPublishDiagnostics).toHaveBeenCalledTimes(1)
     expect(second.onPublishDiagnostics).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers diagnostic refresh requests to every borrower and acknowledges the server', async () => {
+    const provider = pool.provider(KEY)
+    const first = callbacks()
+    const second = callbacks()
+    provider.acquire(connectionOptions(), first)
+    provider.acquire(connectionOptions(), second)
+    const transport = FakeTransport.created[0]
+    if (!transport) throw new Error('missing transport')
+    completeHandshake(transport)
+    await flush()
+
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 'refresh',
+      method: 'workspace/diagnostic/refresh',
+      params: null,
+    })
+    await flush()
+
+    expect(first.onDiagnosticRefresh).toHaveBeenCalledTimes(1)
+    expect(second.onDiagnosticRefresh).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(transport.sent.at(-1) ?? '{}')).toMatchObject({ id: 'refresh', result: null })
+  })
+
+  it('delivers pooled diagnostic refresh notifications to every borrower', async () => {
+    const provider = pool.provider(KEY)
+    const first = callbacks()
+    const second = callbacks()
+    provider.acquire(connectionOptions(), first)
+    provider.acquire(connectionOptions(), second)
+    const transport = FakeTransport.created[0]
+    if (!transport) throw new Error('missing transport')
+    completeHandshake(transport)
+    await flush()
+    const sentBefore = transport.sent.length
+
+    transport.receive({
+      jsonrpc: '2.0',
+      method: 'workspace/diagnostic/refresh',
+    })
+
+    expect(first.onDiagnosticRefresh).toHaveBeenCalledTimes(1)
+    expect(second.onDiagnosticRefresh).toHaveBeenCalledTimes(1)
+    expect(transport.sent).toHaveLength(sentBefore)
   })
 
   it('stops delivering to a borrower that released', async () => {

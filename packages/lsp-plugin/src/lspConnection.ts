@@ -12,6 +12,8 @@ import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { LanguageServerStatus } from './types'
 
+const DIAGNOSTIC_REFRESH_METHOD = 'workspace/diagnostic/refresh'
+
 export type LspConnectionTransportFactory = () => LspManagedTransport | Promise<LspManagedTransport>
 
 export type LspConnectionOptions = {
@@ -38,6 +40,7 @@ export type LspConnectionOptions = {
 
 export type LspConnectionCallbacks = {
   onConnected(): void
+  onDiagnosticRefresh?(): void
   onUnavailable(): void
   onPublishDiagnostics(params: unknown): void
   onStatusChange?: (status: LanguageServerStatus) => void
@@ -110,10 +113,21 @@ export class LspConnection {
       // notification too must not be able to take it away. Its handler runs after ours.
       notificationHandlers: {
         ...hostHandlers,
+        [DIAGNOSTIC_REFRESH_METHOD]: (client, params, message) => {
+          this.callbacks.onDiagnosticRefresh?.()
+          hostHandlers?.[DIAGNOSTIC_REFRESH_METHOD]?.(client, params, message)
+          return true
+        },
         'textDocument/publishDiagnostics': (client, params, message) => {
           this.callbacks.onPublishDiagnostics(params)
           hostHandlers?.['textDocument/publishDiagnostics']?.(client, params, message)
           return true
+        },
+      },
+      serverRequestHandlers: {
+        [DIAGNOSTIC_REFRESH_METHOD]: () => {
+          this.callbacks.onDiagnosticRefresh?.()
+          return null
         },
       },
     })

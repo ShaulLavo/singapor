@@ -354,6 +354,7 @@ const parseFullDocument = async (
       context,
       oldDocument: null,
       inputEdits: [],
+      changedRanges: null,
       degraded,
     }),
   )
@@ -403,6 +404,7 @@ const editDocument = async (
         context,
         oldDocument: cached,
         inputEdits: request.inputEdits,
+        changedRanges,
         degraded,
       }),
     )
@@ -646,6 +648,7 @@ type ParseParsedDocumentOptions = {
   readonly context: CancellationContext
   readonly oldDocument: ParsedDocument | null
   readonly inputEdits: readonly TreeSitterEditRequest['inputEdits'][number][]
+  readonly changedRanges: readonly TreeSitterSyntaxRange[] | null
   readonly degraded: TreeSitterDegradedState[]
 }
 
@@ -655,6 +658,16 @@ type PendingInjectionPlan = Omit<InjectionPlan, 'id' | 'key'> & {
 
 type InjectionGroup = Omit<PendingInjectionPlan, 'kind' | 'patternIndex' | 'ranges'> & {
   ranges: TreeSitterRange[]
+}
+
+type ReusableLayer = {
+  readonly layer: ParsedLayer
+  state: 'available' | 'consumed' | 'carried'
+}
+
+type ParseInjectionContext = ParseParsedDocumentOptions & {
+  readonly reusableLayers: ReusableLayer[]
+  readonly reservedLayerIds: Set<string>
 }
 
 const parseRootLayer = (
@@ -681,31 +694,79 @@ const parseRootLayer = (
 const parseParsedDocument = async (
   options: ParseParsedDocumentOptions,
 ): Promise<ParsedDocument> => {
-  const layers: ParsedLayer[] = [options.rootLayer]
-  await appendInjectionLayers(layers, options.rootLayer, options)
-
-  return {
-    snapshotVersion: options.snapshotVersion,
-    languageId: options.languageId,
-    source: options.source,
-    layers,
-    degraded: options.degraded,
-    size: options.source.length,
-    lastUsed: nextUse++,
+  const reusableLayers = prepareReusableLayers(options.oldDocument, options.inputEdits)
+  const context: ParseInjectionContext = {
+    ...options,
+    reusableLayers,
+    reservedLayerIds: reservedLayerIds(options.rootLayer, reusableLayers),
   }
+
+  try {
+    const parsedLayers: ParsedLayer[] = []
+    await appendInjectionLayers(parsedLayers, options.rootLayer, context)
+    await appendCarriedLayers(parsedLayers, context)
+    const layers = orderParsedLayers(options.rootLayer, parsedLayers)
+
+    return {
+      snapshotVersion: options.snapshotVersion,
+      languageId: options.languageId,
+      source: options.source,
+      layers,
+      degraded: options.degraded,
+      size: options.source.length,
+      lastUsed: nextUse++,
+    }
+  } finally {
+    disposeAvailableReusableLayers(reusableLayers)
+  }
+}
+
+const prepareReusableLayers = (
+  oldDocument: ParsedDocument | null,
+  inputEdits: ParseParsedDocumentOptions['inputEdits'],
+): ReusableLayer[] => {
+  if (!oldDocument) return []
+
+  const reusableLayers: ReusableLayer[] = []
+  try {
+    for (const layer of oldDocument.layers) {
+      if (layer.kind === 'root') continue
+
+      const tree = editReusableTree(layer.tree, inputEdits)
+      reusableLayers.push({
+        // Included ranges stay in document code units; only query cursor bounds use UTF-16 bytes.
+        layer: { ...layer, tree, ranges: tree.getIncludedRanges() },
+        state: 'available',
+      })
+    }
+
+    return reusableLayers
+  } catch (error) {
+    for (const reusable of reusableLayers) reusable.layer.tree.delete()
+    throw error
+  }
+}
+
+const reservedLayerIds = (
+  rootLayer: ParsedLayer,
+  reusableLayers: readonly ReusableLayer[],
+): Set<string> => {
+  const ids = new Set([rootLayer.id])
+  for (const reusable of reusableLayers) ids.add(reusable.layer.id)
+  return ids
 }
 
 const appendInjectionLayers = async (
   layers: ParsedLayer[],
   parent: ParsedLayer,
-  options: ParseParsedDocumentOptions,
+  options: ParseInjectionContext,
 ): Promise<void> => {
   const runtime = await ensureRuntime(parent.languageId)
   const plans = runOptionalWorkerPhase(
     'find injections',
     [] as InjectionPlan[],
     options.degraded,
-    () => findInjections(parent, runtime, options.source, options.context),
+    () => findInjections(parent, runtime, options.source, options.context, options.changedRanges),
   )
 
   for (const plan of plans) {
@@ -727,56 +788,262 @@ const appendInjectionLayers = async (
 
 const parseInjectionLayer = async (
   plan: InjectionPlan,
-  options: ParseParsedDocumentOptions,
+  options: ParseInjectionContext,
 ): Promise<ParsedLayer> => {
   const runtime = await ensureRuntime(plan.languageId)
-  const oldTree = reuseLayer(options.oldDocument, plan, options.inputEdits)
+  const reusable = takeReusableLayer(options.reusableLayers, plan)
+  const resolvedPlan = resolveInjectionPlan(plan, reusable, options)
+  const oldTree = reusable?.layer.tree ?? null
 
   try {
     const tree = parseInjectedSource(
       runtime.parser,
       options.source,
-      plan.ranges,
+      resolvedPlan.ranges,
       oldTree,
       options.context,
     )
-    return { ...plan, tree }
+    return { ...resolvedPlan, tree }
   } finally {
     oldTree?.delete()
   }
 }
 
-const reuseLayer = (
-  oldDocument: ParsedDocument | null,
+const takeReusableLayer = (
+  reusableLayers: readonly ReusableLayer[],
   plan: InjectionPlan,
-  inputEdits: ParseParsedDocumentOptions['inputEdits'],
-): Tree | null => {
-  const oldLayer = matchingOldLayer(oldDocument, plan)
-  if (!oldLayer) return null
-  return editReusableTree(oldLayer.tree, inputEdits)
+): ReusableLayer | null => {
+  const reusable =
+    reusableLayers.find((candidate) => reusableLayerOverlapsPlan(candidate, plan)) ??
+    reusableLayers.find((candidate) => reusableCombinedLayerMatchesPlan(candidate, plan)) ??
+    null
+  if (!reusable) return null
+
+  reusable.state = 'consumed'
+  return reusable
 }
 
-const matchingOldLayer = (
-  oldDocument: ParsedDocument | null,
+const reusableLayerOverlapsPlan = (reusable: ReusableLayer, plan: InjectionPlan): boolean => {
+  if (!reusableLayerMatchesPlan(reusable, plan)) return false
+  return rangesOverlap(reusable.layer.ranges, plan.ranges)
+}
+
+const reusableCombinedLayerMatchesPlan = (
+  reusable: ReusableLayer,
   plan: InjectionPlan,
-): ParsedLayer | null => {
-  if (!oldDocument) return null
+): boolean => {
+  if (plan.kind !== 'combined-injection') return false
+  if (!reusableLayerMatchesPlan(reusable, plan)) return false
+  return reusable.layer.key === plan.key
+}
 
-  const exact = oldDocument.layers.find((layer) => {
-    return (
-      layer.key === plan.key && layer.kind === plan.kind && layer.languageId === plan.languageId
-    )
-  })
-  if (exact) return exact
+const reusableLayerMatchesPlan = (reusable: ReusableLayer, plan: InjectionPlan): boolean => {
+  if (reusable.state !== 'available') return false
+  if (reusable.layer.kind !== plan.kind) return false
+  if (reusable.layer.languageId !== plan.languageId) return false
+  return reusable.layer.parentId === plan.parentId
+}
 
-  return (
-    oldDocument.layers.find((layer) => {
-      if (layer.kind !== plan.kind) return false
-      if (layer.languageId !== plan.languageId) return false
-      if (layer.parentId !== plan.parentId) return false
-      return rangesOverlap(layer.ranges, plan.ranges)
-    }) ?? null
+const resolveInjectionPlan = (
+  plan: InjectionPlan,
+  reusable: ReusableLayer | null,
+  options: ParseInjectionContext,
+): InjectionPlan => {
+  if (!reusable) return reserveInjectionPlanIdentity(plan, options.reservedLayerIds)
+
+  const ranges = mergedCombinedRanges(
+    plan,
+    reusable.layer.ranges,
+    options.changedRanges ?? [],
+    options.source,
   )
+  return { ...plan, id: reusable.layer.id, key: reusable.layer.key, ranges }
+}
+
+const reserveInjectionPlanIdentity = (
+  plan: InjectionPlan,
+  reservedIds: Set<string>,
+): InjectionPlan => {
+  if (!reservedIds.has(plan.id)) {
+    reservedIds.add(plan.id)
+    return plan
+  }
+
+  let ordinal = 1
+  while (reservedIds.has(`${plan.id}:new-${ordinal}`)) ordinal += 1
+
+  const id = `${plan.id}:new-${ordinal}`
+  reservedIds.add(id)
+  return { ...plan, id, key: id }
+}
+
+const mergedCombinedRanges = (
+  plan: InjectionPlan,
+  reusableRanges: readonly TreeSitterRange[],
+  changedRanges: readonly TreeSitterSyntaxRange[],
+  source: TreeSitterPieceTableInput,
+): TreeSitterRange[] => {
+  if (plan.kind !== 'combined-injection') return [...plan.ranges]
+
+  const ranges = rangesWithoutBridgeNewlines(plan.ranges, source)
+  const reusableContentRanges = rangesWithoutBridgeNewlines(reusableRanges, source)
+  for (const range of reusableContentRanges) {
+    if (rangeIntersectsChangedRanges(range, changedRanges)) continue
+    appendUniqueRange(ranges, range)
+  }
+
+  return rangesWithBridgeNewlines(sortRanges(ranges), source)
+}
+
+const rangesWithoutBridgeNewlines = (
+  ranges: readonly TreeSitterRange[],
+  source: TreeSitterPieceTableInput,
+): TreeSitterRange[] =>
+  ranges.filter((range, index) => !isBridgeNewlineRange(range, ranges, index, source))
+
+const isBridgeNewlineRange = (
+  range: TreeSitterRange,
+  ranges: readonly TreeSitterRange[],
+  index: number,
+  source: TreeSitterPieceTableInput,
+): boolean => {
+  const previous = ranges[index - 1]
+  const next = ranges[index + 1]
+  if (!previous || !next) return false
+  if (range.endIndex !== range.startIndex + 1) return false
+  if (range.endPosition.row !== range.startPosition.row + 1) return false
+  if (range.endPosition.column !== 0) return false
+  if (range.startPosition.row !== previous.endPosition.row) return false
+  if (range.endIndex > next.startIndex) return false
+  return readTreeSitterInputRange(source, range.startIndex, range.endIndex) === '\n'
+}
+
+const appendUniqueRange = (ranges: TreeSitterRange[], range: TreeSitterRange): void => {
+  const exists = ranges.some((candidate) => {
+    return candidate.startIndex === range.startIndex && candidate.endIndex === range.endIndex
+  })
+  if (!exists) ranges.push(range)
+}
+
+const appendCarriedLayers = async (
+  layers: ParsedLayer[],
+  options: ParseInjectionContext,
+): Promise<void> => {
+  const availableParentIds = new Set([options.rootLayer.id])
+  for (const layer of layers) availableParentIds.add(layer.id)
+
+  for (const reusable of options.reusableLayers) {
+    if (reusable.state !== 'available') continue
+    if (!reusable.layer.parentId) continue
+    if (!availableParentIds.has(reusable.layer.parentId)) continue
+
+    const carried = await carryReusableLayer(reusable, options)
+    if (!carried) continue
+
+    layers.push(carried)
+    availableParentIds.add(carried.id)
+  }
+}
+
+const carryReusableLayer = async (
+  reusable: ReusableLayer,
+  options: ParseInjectionContext,
+): Promise<ParsedLayer | null> => {
+  const changedRanges = options.changedRanges ?? []
+  const layerChanged = reusable.layer.ranges.some((range) => {
+    return rangeIntersectsChangedRanges(range, changedRanges)
+  })
+  if (!layerChanged) {
+    reusable.state = 'carried'
+    return reusable.layer
+  }
+
+  if (reusable.layer.kind !== 'combined-injection') return null
+  const contentRanges = rangesWithoutBridgeNewlines(reusable.layer.ranges, options.source)
+  const untouchedRanges = contentRanges.filter((range) => {
+    return !rangeIntersectsChangedRanges(range, changedRanges)
+  })
+  if (untouchedRanges.length === 0) return null
+  return reparsePartialCombinedLayer(reusable, untouchedRanges, options)
+}
+
+const reparsePartialCombinedLayer = async (
+  reusable: ReusableLayer,
+  ranges: readonly TreeSitterRange[],
+  options: ParseInjectionContext,
+): Promise<ParsedLayer | null> => {
+  const plan = injectionPlanForLayer(reusable.layer, ranges)
+  try {
+    return await parseInjectionLayer(plan, options)
+  } catch (error) {
+    if (error instanceof SyntaxRequestCancelled) throw error
+    recordOptionalWorkerPhaseFailure('parse injection', error, options.degraded, 'injection-failed')
+    return null
+  }
+}
+
+const injectionPlanForLayer = (
+  layer: ParsedLayer,
+  ranges: readonly TreeSitterRange[],
+): InjectionPlan => ({
+  id: layer.id,
+  key: layer.key,
+  kind: layer.kind as InjectionPlan['kind'],
+  parentId: layer.parentId ?? 'root',
+  parentLanguageId: layer.parentLanguageId ?? layer.languageId,
+  languageId: layer.languageId,
+  depth: layer.depth,
+  ranges,
+})
+
+const rangeIntersectsChangedRanges = (
+  range: Pick<TreeSitterRange, 'startIndex' | 'endIndex'>,
+  changedRanges: readonly TreeSitterSyntaxRange[],
+): boolean =>
+  changedRanges.some((changedRange) => {
+    return indexesIntersectRange(range.startIndex, range.endIndex, changedRange)
+  })
+
+const orderParsedLayers = (
+  rootLayer: ParsedLayer,
+  injectionLayers: readonly ParsedLayer[],
+): ParsedLayer[] => {
+  const children = new Map<string, ParsedLayer[]>()
+  for (const layer of injectionLayers) {
+    if (!layer.parentId) continue
+    const siblings = children.get(layer.parentId) ?? []
+    siblings.push(layer)
+    children.set(layer.parentId, siblings)
+  }
+
+  const ordered = [rootLayer]
+  appendOrderedChildren(ordered, rootLayer.id, children)
+  return ordered
+}
+
+const appendOrderedChildren = (
+  ordered: ParsedLayer[],
+  parentId: string,
+  children: ReadonlyMap<string, ParsedLayer[]>,
+): void => {
+  const childLayers = children.get(parentId)?.toSorted(compareParsedLayers) ?? []
+  for (const layer of childLayers) {
+    ordered.push(layer)
+    appendOrderedChildren(ordered, layer.id, children)
+  }
+}
+
+const compareParsedLayers = (left: ParsedLayer, right: ParsedLayer): number => {
+  const leftRange = rangeSpan(left.ranges)
+  const rightRange = rangeSpan(right.ranges)
+  return leftRange.startIndex - rightRange.startIndex || leftRange.endIndex - rightRange.endIndex
+}
+
+const disposeAvailableReusableLayers = (reusableLayers: readonly ReusableLayer[]): void => {
+  for (const reusable of reusableLayers) {
+    if (reusable.state !== 'available') continue
+    reusable.layer.tree.delete()
+  }
 }
 
 const rangesOverlap = (
@@ -790,24 +1057,53 @@ const findInjections = (
   runtime: Runtime,
   source: TreeSitterPieceTableInput,
   context: CancellationContext,
+  changedRanges: readonly TreeSitterSyntaxRange[] | null,
 ): InjectionPlan[] => {
   if (parent.depth >= MAX_INJECTION_DEPTH) return []
 
   const query = ensureQuery(runtime, 'injection')
   if (!query) return []
 
-  const matches = query.matches(parent.tree.rootNode, {
-    progressCallback: () => isCancelled(context),
-  })
-  assertNotCancelled(context)
-
   const singles: PendingInjectionPlan[] = []
   const groups = new Map<string, InjectionGroup>()
-  for (const match of matches) {
-    addInjectionMatchPlan(parent, match, source, singles, groups)
+  const seen = new Set<string>()
+  if (!changedRanges) {
+    const matches = query.matches(parent.tree.rootNode, queryOptions(context))
+    assertNotCancelled(context)
+    addUniqueInjectionMatches(parent, matches, source, singles, groups, seen)
+  }
+
+  for (const range of changedRanges ?? []) {
+    const matches = query.matches(parent.tree.rootNode, queryOptions(context, range))
+    assertNotCancelled(context)
+    addUniqueInjectionMatches(parent, matches, source, singles, groups, seen)
   }
 
   return singlesToPlans(singles).concat(groupsToPlans(groups, source)).sort(compareInjectionPlans)
+}
+
+const addUniqueInjectionMatches = (
+  parent: ParsedLayer,
+  matches: ReturnType<Query['matches']>,
+  source: TreeSitterPieceTableInput,
+  singles: PendingInjectionPlan[],
+  groups: Map<string, InjectionGroup>,
+  seen: Set<string>,
+): void => {
+  for (const match of matches) {
+    const key = injectionMatchKey(match)
+    if (seen.has(key)) continue
+
+    seen.add(key)
+    addInjectionMatchPlan(parent, match, source, singles, groups)
+  }
+}
+
+const injectionMatchKey = (match: ReturnType<Query['matches']>[number]): string => {
+  const captures = match.captures.map((capture) => {
+    return `${capture.name}:${capture.node.startIndex}:${capture.node.endIndex}`
+  })
+  return `${match.patternIndex}:${captures.join('|')}`
 }
 
 const addInjectionMatchPlan = (

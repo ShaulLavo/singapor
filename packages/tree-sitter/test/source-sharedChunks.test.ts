@@ -35,9 +35,7 @@ describe('shared-utf16 source chunks', () => {
   it('emits shared chunks when shared buffers are requested', () => {
     const { descriptor } = resolveShared(TEXT)
     expect(descriptor.chunks.length).toBeGreaterThan(1)
-    expect(new Set(descriptor.chunks.map((chunk) => chunk.kind))).toEqual(
-      new Set(['shared-utf16']),
-    )
+    expect(new Set(descriptor.chunks.map((chunk) => chunk.kind))).toEqual(new Set(['shared-utf16']))
   })
 
   it('decodes to the same text as the string path', () => {

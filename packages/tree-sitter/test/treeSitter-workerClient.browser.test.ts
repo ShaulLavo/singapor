@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import documentSessionSource from '../../editor/src/documentSession.ts?raw'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index.ts'
 
-import { applyBatchToPieceTable, createPieceTableSnapshot } from '@singapor/core/document'
+import {
+  applyBatchToPieceTable,
+  createPieceTableSnapshot,
+  type TextEdit,
+} from '@singapor/core/document'
 import {
   createAnchorSelection,
   createSelectionSet,
@@ -14,6 +18,8 @@ import {
   selectTreeSitterToken,
   shrinkTreeSitterSelection,
   TreeSitterWorkerClient,
+  type TreeSitterInjectionInfo,
+  type TreeSitterLanguageId,
 } from '../src'
 import { createTreeSitterEditPayload } from '../src/session.ts'
 
@@ -500,6 +506,155 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     expect(parsed?.captures.some((capture) => capture.languageId === 'css')).toBe(true)
   })
 
+  it('matches a full parse after edits around multiple tagged-template injections', async () => {
+    const text = [
+      'const first = html`<section>one</section>`;',
+      'const between = 1;',
+      'const second = html`<aside>two</aside>`;',
+    ].join('\n')
+    const scenarios = [
+      {
+        name: 'inside',
+        edit: { from: text.indexOf('one') + 1, to: text.indexOf('one') + 1, text: '!' },
+      },
+      {
+        name: 'between',
+        edit: { from: text.indexOf('between'), to: text.indexOf('between'), text: 'middle' },
+      },
+      { name: 'before', edit: { from: 0, to: 0, text: '// header\n' } },
+    ] satisfies readonly { readonly name: string; readonly edit: TextEdit }[]
+
+    for (const scenario of scenarios) {
+      const result = await compareIncrementalInjectionsWithFullParse(workerClient, {
+        documentId: `tagged-templates-${scenario.name}.ts`,
+        languageId: 'typescript',
+        text,
+        edit: scenario.edit,
+      })
+
+      expect(result.incremental.injections.map((injection) => injection.languageId)).toEqual([
+        'html',
+      ])
+      expect(injectionSignature(result.incremental.injections)).toEqual(
+        injectionSignature(result.full.injections),
+      )
+    }
+  })
+
+  it('matches a full parse after edits around multiple markdown fences', async () => {
+    const text = [
+      '# Title',
+      '',
+      '```html',
+      '<main>one</main>',
+      '```',
+      '',
+      'Between fences.',
+      '',
+      '```css',
+      '.two { color: red; }',
+      '```',
+      '',
+      '```javascript',
+      'const three = 3;',
+      '```',
+      '',
+      '```html',
+      '<aside>four</aside>',
+      '```',
+    ].join('\n')
+    const scenarios = [
+      {
+        name: 'inside',
+        edit: { from: text.indexOf('four'), to: text.indexOf('four'), text: 'number ' },
+      },
+      {
+        name: 'between',
+        edit: { from: text.indexOf('Between'), to: text.indexOf('Between'), text: 'Still ' },
+      },
+      { name: 'before', edit: { from: 0, to: 0, text: 'Preface\n\n' } },
+    ] satisfies readonly { readonly name: string; readonly edit: TextEdit }[]
+
+    for (const scenario of scenarios) {
+      const result = await compareIncrementalInjectionsWithFullParse(workerClient, {
+        documentId: `markdown-fences-${scenario.name}.md`,
+        languageId: 'markdown',
+        text,
+        edit: scenario.edit,
+      })
+      const languages = new Set(
+        result.incremental.injections.map((injection) => injection.languageId),
+      )
+
+      expect(languages).toEqual(
+        new Set(['css', 'html', 'javascript', 'markdown_inline'] satisfies TreeSitterLanguageId[]),
+      )
+      expect(injectionSignature(result.incremental.injections)).toEqual(
+        injectionSignature(result.full.injections),
+      )
+    }
+  })
+
+  it('creates and destroys tagged-template injections incrementally', async () => {
+    const incomplete = [
+      'const first = html`<main>hello</main>`;',
+      'const second = html`<aside>new</aside>',
+    ].join('\n')
+    const created = await compareIncrementalInjectionsWithFullParse(workerClient, {
+      documentId: 'create-template-injection.ts',
+      languageId: 'typescript',
+      text: incomplete,
+      edit: { from: incomplete.length, to: incomplete.length, text: '`' },
+    })
+
+    expect(created.initial.injections.map((injection) => injection.languageId)).toEqual(['html'])
+    expect(created.incremental.injections.map((injection) => injection.languageId)).toEqual([
+      'html',
+    ])
+
+    const complete = [
+      'const first = html`<main>hello</main>`;',
+      'const second = html`<aside>old</aside>`;',
+    ].join('\n')
+    const secondTag = complete.lastIndexOf('html')
+    const destroyed = await compareIncrementalInjectionsWithFullParse(workerClient, {
+      documentId: 'destroy-template-injection.ts',
+      languageId: 'typescript',
+      text: complete,
+      edit: { from: secondTag, to: secondTag + 'html'.length, text: '' },
+    })
+
+    expect(destroyed.initial.injections.map((injection) => injection.languageId)).toEqual(['html'])
+    expect(destroyed.incremental.injections.map((injection) => injection.languageId)).toEqual([
+      'html',
+    ])
+  })
+
+  it('matches a full parse after an edit inside a nested markdown-html-script injection', async () => {
+    const text = [
+      '# Nested',
+      '',
+      '```html',
+      '<main><script>const value = 1;</script></main>',
+      '```',
+    ].join('\n')
+    const valueIndex = text.indexOf('1;')
+    const result = await compareIncrementalInjectionsWithFullParse(workerClient, {
+      documentId: 'nested-markdown-injection.md',
+      languageId: 'markdown',
+      text,
+      edit: { from: valueIndex, to: valueIndex + 1, text: '2' },
+    })
+    const languages = new Set(
+      result.incremental.injections.map((injection) => injection.languageId),
+    )
+
+    expect(languages).toEqual(new Set(['html', 'javascript', 'markdown_inline']))
+    expect(injectionSignature(result.incremental.injections)).toEqual(
+      injectionSignature(result.full.injections),
+    )
+  })
+
   it('expands and shrinks structural selections through the cached syntax tree', async () => {
     const documentId = 'file.ts'
     const snapshot = createPieceTableSnapshot('const answer = 1;\n')
@@ -594,4 +749,63 @@ function captureSignature(captures: readonly CaptureSignatureInput[]): string[] 
       return `${capture.startIndex}:${capture.endIndex}:${capture.captureName}:${languageId}`
     })
     .sort()
+}
+
+type IncrementalInjectionScenario = {
+  readonly documentId: string
+  readonly languageId: TreeSitterLanguageId
+  readonly text: string
+  readonly edit: TextEdit
+}
+
+async function compareIncrementalInjectionsWithFullParse(
+  workerClient: TreeSitterWorkerClient,
+  scenario: IncrementalInjectionScenario,
+) {
+  const snapshot = createPieceTableSnapshot(scenario.text)
+  const initial = await workerClient.parse({
+    documentId: scenario.documentId,
+    snapshotVersion: 1,
+    languageId: scenario.languageId,
+    snapshot,
+  })
+  if (!initial) throw new Error(`Initial parse failed for ${scenario.documentId}`)
+
+  const nextSnapshot = applyBatchToPieceTable(snapshot, [scenario.edit])
+  const payload = createTreeSitterEditPayload({
+    documentId: scenario.documentId,
+    previousSnapshotVersion: 1,
+    snapshotVersion: 2,
+    languageId: scenario.languageId,
+    previousSnapshot: snapshot,
+    nextSnapshot,
+    edits: [scenario.edit],
+  })
+  if (!payload) throw new Error(`Edit payload failed for ${scenario.documentId}`)
+
+  const incremental = await workerClient.edit(payload)
+  if (!incremental) throw new Error(`Incremental parse failed for ${scenario.documentId}`)
+
+  const full = await workerClient.parse({
+    documentId: `${scenario.documentId}:full`,
+    snapshotVersion: 1,
+    languageId: scenario.languageId,
+    snapshot: nextSnapshot,
+  })
+  if (!full) throw new Error(`Full parse failed for ${scenario.documentId}`)
+
+  expect(captureSignature(incremental.captures)).toEqual(captureSignature(full.captures))
+  expect(injectionSignature(incremental.injections)).toEqual(injectionSignature(full.injections))
+  return { initial, incremental, full }
+}
+
+function injectionSignature(injections: readonly TreeSitterInjectionInfo[]): string[] {
+  return injections.map((injection) => {
+    return [
+      injection.parentLanguageId,
+      injection.languageId,
+      injection.startIndex,
+      injection.endIndex,
+    ].join(':')
+  })
 }

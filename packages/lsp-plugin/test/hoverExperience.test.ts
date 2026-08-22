@@ -125,7 +125,7 @@ describe('hover surface interaction and presentation', () => {
     expect(element.getAttribute('role')).toBe('dialog')
     expect(element.style.minWidth).toBe('150px')
     expect(element.style.maxWidth).toBe('750px')
-    expect(element.style.borderRadius).toBe('4px')
+    expect(element.style.borderRadius).toBe('2px')
     expect(element.style.fontFamily).toContain('--editor-font-family')
     expect(element.style.boxShadow).toContain('28px')
 

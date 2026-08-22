@@ -1,4 +1,4 @@
-import type { EditorDisposable, EditorPlugin } from '@singapor/core/extensions'
+import type { EditorDisposable, EditorPlugin, EditorViewSnapshot } from '@singapor/core/extensions'
 import type {
   LspClient,
   LspNotificationHandler,
@@ -7,7 +7,6 @@ import type {
 } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import type { DocumentSyncOptions } from './documentSync'
 import type { LspConnectionProvider } from './lspConnection'
 import type { LanguageServerSemanticTokensOptions } from './semanticTokens'
 
@@ -58,6 +57,16 @@ export type LanguageServerReferencesResult = {
   readonly targets: readonly LanguageServerDefinitionTarget[]
 }
 
+export type LanguageServerDocumentSyncOptions = {
+  /**
+   * The language id sent to the server when the editor and protocol use different names.
+   * Returning undefined keeps the editor's id.
+   */
+  languageIdForDocument?(languageId: string, uri: lsp.DocumentUri): string | undefined
+  shouldSyncLanguageId?(languageId: string, snapshot: EditorViewSnapshot): boolean
+  shouldSyncUri?(uri: lsp.DocumentUri, snapshot: EditorViewSnapshot): boolean
+}
+
 export type LanguageServerPluginOptions = {
   readonly rootUri?: lsp.DocumentUri | null
   readonly hoverMarkdownCodeBackground?: boolean
@@ -76,8 +85,8 @@ export type LanguageServerPluginOptions = {
    * after the plugin's and cannot displace it, because the diagnostics feature hangs off it.
    */
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
-  /** Which documents reach the server, and under what `languageId`. See DocumentSyncOptions. */
-  readonly documentSync?: Omit<DocumentSyncOptions, 'onDocumentClosed'>
+  /** Which documents reach the server, and under what language id. */
+  readonly documentSync?: LanguageServerDocumentSyncOptions
   readonly webSocketRoute: string | URL
   readonly webSocketTransportOptions?: LspWebSocketTransportOptions
   /**

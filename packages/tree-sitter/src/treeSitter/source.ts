@@ -31,17 +31,10 @@ export type TreeSitterSourceDescriptorOptions = {
   readonly useSharedBuffers?: boolean
 }
 
-type ResolvedTreeSitterSourceChunk =
-  | {
-      readonly kind: 'shared-utf16'
-      readonly units: Uint16Array
-      readonly length: number
-    }
-  | {
-      readonly kind: 'string'
-      readonly text: string
-      readonly length: number
-    }
+type ResolvedTreeSitterSourceChunk = {
+  readonly text: string
+  readonly length: number
+}
 
 export type TreeSitterSourceCache = Map<string, Map<string, ResolvedTreeSitterSourceChunk>>
 
@@ -283,25 +276,27 @@ const cacheChunkPayloads = (
   for (const chunk of chunks) cache.set(chunk.chunkId, resolveChunkPayload(chunk))
 }
 
+/**
+ * Shared chunks decode once, here. The parser reads a chunk hundreds of times
+ * in ≤4096-unit slices, and decoding per read cost ~18x the whole parse; the
+ * buffer is filled once and never mutated, so one decode is safe. The
+ * SharedArrayBuffer still earns its keep by keeping the copy off the main
+ * thread at postMessage time.
+ */
 const resolveChunkPayload = (
   chunk: TreeSitterSourceChunkPayload,
 ): ResolvedTreeSitterSourceChunk => {
-  if (chunk.kind === 'string') {
-    return { kind: 'string', text: chunk.text, length: chunk.text.length }
-  }
+  if (chunk.kind === 'string') return { text: chunk.text, length: chunk.text.length }
 
   const units = new Uint16Array(chunk.buffer, 0, chunk.length)
-  return { kind: 'shared-utf16', units, length: chunk.length }
+  return { text: readUtf16Text(units, 0, chunk.length), length: chunk.length }
 }
 
 const readResolvedChunkText = (
   chunk: ResolvedTreeSitterSourceChunk,
   start: number,
   end: number,
-): string => {
-  if (chunk.kind === 'string') return chunk.text.slice(start, end)
-  return readUtf16Text(chunk.units, start, end)
-}
+): string => chunk.text.slice(start, end)
 
 const safeParserReadEnd = (
   chunk: ResolvedTreeSitterSourceChunk,
@@ -316,14 +311,36 @@ const safeParserReadEnd = (
   return Math.max(start + 1, end - 1)
 }
 
-const readResolvedChunkCodeUnit = (chunk: ResolvedTreeSitterSourceChunk, index: number): number => {
-  if (chunk.kind === 'string') return chunk.text.charCodeAt(index)
-  return chunk.units[index] ?? Number.NaN
-}
+const readResolvedChunkCodeUnit = (chunk: ResolvedTreeSitterSourceChunk, index: number): number =>
+  chunk.text.charCodeAt(index)
 
 const isHighSurrogate = (codeUnit: number): boolean => codeUnit >= 0xd800 && codeUnit <= 0xdbff
 
+// Uint16Array is host-endian; the decoder is not. Every browser target is
+// little-endian, but check rather than assume — a wrong decode is silent.
+const HOST_IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1
+const utf16Decoder =
+  HOST_IS_LITTLE_ENDIAN && typeof TextDecoder !== 'undefined'
+    ? new TextDecoder('utf-16le', { ignoreBOM: true })
+    : null
+
 const readUtf16Text = (units: Uint16Array, start: number, end: number): string => {
+  if (!utf16Decoder) return readUtf16TextExact(units, start, end)
+
+  // `slice`, not a subview: Chrome refuses to decode a shared view, and slicing
+  // yields an unshared copy. The copy is free next to the decode (~5x the
+  // fromCharCode loop, which spreads thousands of arguments per call).
+  const copy = units.slice(start, end)
+  const decoded = utf16Decoder.decode(new Uint8Array(copy.buffer, copy.byteOffset, copy.byteLength))
+
+  // TextDecoder rewrites an unpaired surrogate to U+FFFD, and chunks split on a
+  // fixed 16KB grid, so any pair straddling a boundary would corrupt silently.
+  // Pay for the exact path only when a replacement char is actually present.
+  if (!decoded.includes('�')) return decoded
+  return readUtf16TextExact(units, start, end)
+}
+
+const readUtf16TextExact = (units: Uint16Array, start: number, end: number): string => {
   let text = ''
   for (let index = start; index < end; index += UTF16_READ_BATCH) {
     text += String.fromCharCode(...units.subarray(index, Math.min(index + UTF16_READ_BATCH, end)))

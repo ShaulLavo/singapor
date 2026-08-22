@@ -61,6 +61,9 @@ jobs:
         working-directory: packages/editor
         run: ./node_modules/.bin/playwright install --with-deps chromium chromium-headless-shell
 
+      - name: Test tree-sitter browser worker
+        run: bun run --cwd packages/tree-sitter test:browser
+
       # Serialised on purpose. Each browser project starts its own vitest server, and running six
       # of them at once on a two-core runner fights over ports and gets killed (exit 130) rather
       # than reporting a real failure. Turbo still caches, so this is only slow on a cold branch.

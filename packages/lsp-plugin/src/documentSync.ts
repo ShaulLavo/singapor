@@ -15,6 +15,7 @@ import type * as lsp from 'vscode-languageserver-protocol'
 import { editsForChange, projectDiagnosticsInSnapshot } from './diagnosticProjection'
 import { pathOrUriToDocumentUri } from './paths'
 import type { ActiveDocument, DocumentDescriptor } from './pluginTypes'
+import type { LanguageServerDocumentSyncOptions } from './types'
 
 export type DocumentSyncDiagnosticsPresenter = {
   clear(): void
@@ -26,16 +27,8 @@ export type DocumentSyncDiagnosticsPresenter = {
   ): void
 }
 
-export type DocumentSyncOptions = {
+export type DocumentSyncOptions = LanguageServerDocumentSyncOptions & {
   onDocumentClosed(): void
-  /**
-   * The `languageId` to open this document with, when the view's id is not the protocol's name for
-   * it — a host whose ids come from a grammar table calls `.tsx` `typescript`, but tsserver needs
-   * `typescriptreact` to parse it as JSX. `undefined` keeps the view's id.
-   */
-  languageIdForDocument?(languageId: string, uri: lsp.DocumentUri): string | undefined
-  shouldSyncLanguageId?(languageId: string, snapshot: EditorViewSnapshot): boolean
-  shouldSyncUri?(uri: lsp.DocumentUri, snapshot: EditorViewSnapshot): boolean
 }
 
 export class DocumentSync {

@@ -776,12 +776,7 @@ export class Editor {
 
   setSyntaxFolds(folds: readonly FoldRange[]): void {
     this.runInOperation(() => {
-      if (folds.length > 0) this.grammarDescribedFolds = true
-      // The fallback leaves the registry before the grammar's answer enters it: the registry
-      // validates every fold projection against the whole set, and the two describe the same
-      // blocks with geometry that may cross.
-      this.syncFallbackFoldProjection()
-      this.setSyntaxFoldProjection(folds)
+      this.adoptSyntaxFoldProjection(folds)
       this.foldState.setFoldProjections(this.foldProjections())
     })
   }
@@ -1949,6 +1944,14 @@ export class Editor {
     return true
   }
 
+  private adoptSyntaxFoldProjection(folds: readonly FoldRange[]): void {
+    if (folds.length > 0) this.grammarDescribedFolds = true
+    // The fallback leaves before the grammar enters: the registry validates the whole fold set,
+    // and the two descriptions of the same blocks may cross.
+    this.syncFallbackFoldProjection()
+    this.setSyntaxFoldProjection(folds)
+  }
+
   private logRejectedSyntaxFoldProjection(rejected: readonly FoldRangeRejection[]): void {
     const first = rejected[0]
     if (!first) return
@@ -2970,7 +2973,8 @@ export class Editor {
    * recompute: the rows it describes come from the text itself, not from the parse.
    */
   private applySyntaxFoldProjection(folds: readonly FoldRange[] | null): void {
-    if (folds) this.setSyntaxFoldProjection(folds)
+    if (folds && folds.length > 0) this.adoptSyntaxFoldProjection(folds)
+    if (folds?.length === 0) this.setSyntaxFoldProjection(folds)
 
     this.scheduleFallbackFoldProjection()
   }

@@ -479,6 +479,19 @@ describe('fold commands', () => {
     expect(visibleText()).not.toContain('}')
   })
 
+  it('lets projected syntax folds displace a live indentation fallback', async () => {
+    await open(CROSSING_TEXT, [])
+    expect(visibleFoldToggles()).toHaveLength(1)
+
+    editor['applySyntaxFoldProjection']([blockFold(CROSSING_TEXT, 2, 4)])
+
+    editor.setSelection(rowEnd(CROSSING_TEXT, 2))
+    expect(editor.dispatchCommand('editor.fold')).toBe(true)
+    expect(visibleText()).toContain('  two {')
+    expect(visibleText()).not.toContain('  three')
+    expect(visibleText()).not.toContain('}')
+  })
+
   it('declines a selection that would hide nothing', async () => {
     await openTree(9)
 

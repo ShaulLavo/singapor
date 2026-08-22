@@ -16,6 +16,7 @@ const workerOwner = vi.hoisted(() => ({
   loadTheme: vi.fn(),
 }))
 const createShikiWorkerOwner = vi.hoisted(() => vi.fn(() => workerOwner))
+const DEFAULT_SHIKI_WORKER_OWNER_KEY = Symbol.for('@singapor/core/shiki/default-worker-owner')
 
 vi.mock('../../src/shiki/workerClient', () => ({
   createShikiWorkerOwner,
@@ -23,6 +24,7 @@ vi.mock('../../src/shiki/workerClient', () => ({
 
 describe('createShikiHighlighterPlugin', () => {
   beforeEach(() => {
+    delete (globalThis as Record<PropertyKey, unknown>)[DEFAULT_SHIKI_WORKER_OWNER_KEY]
     createShikiWorkerOwner.mockClear()
     workerOwner.canUseWorker.mockClear()
     workerOwner.canUseWorker.mockReturnValue(true)
@@ -87,7 +89,7 @@ describe('createShikiHighlighterPlugin', () => {
     )
   })
 
-  it('creates an explicit worker owner for each activation', () => {
+  it('reuses one default worker owner across activations', () => {
     const first = activateHighlighterProvider({
       preloadLanguages: ['typescript', 'tsx'],
       preloadThemes: ['github-dark'],
@@ -97,8 +99,16 @@ describe('createShikiHighlighterPlugin', () => {
       preloadThemes: ['github-dark'],
     })
 
-    expect(createShikiWorkerOwner).toHaveBeenCalledTimes(2)
+    expect(createShikiWorkerOwner).toHaveBeenCalledTimes(1)
     expect(second).not.toBe(first)
+  })
+
+  it('keeps the default worker owner alive when the plugin disposes', () => {
+    const disposables = activateWithDisposables()
+
+    for (const disposable of disposables) disposable.dispose()
+
+    expect(workerOwner.dispose).not.toHaveBeenCalled()
   })
 
   it('re-registers a fresh provider when the theme changes and honors unsubscribe', () => {

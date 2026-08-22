@@ -34,8 +34,10 @@ moving, but the current packages include:
 - An optional Shiki highlighter plugin for hosts that prefer Shiki tokenization.
 - A Vite example app that wires the packages into a file-browser-style demo.
 
-For the implementation history, see [PROGRESS.md](PROGRESS.md). For system design and open
-architecture questions, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For current implementation status, see [PROGRESS.md](PROGRESS.md). Cross-project
+execution order lives in [Platform's canonical roadmap](../platform/PLAN.md).
+For system design and open architecture questions, see
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Packages
 
@@ -142,7 +144,10 @@ bun --cwd packages/editor run bench:virtualization
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md) - main-thread/worker split, core systems, data flow, and open questions.
-- [Progress](PROGRESS.md) - implementation phases, validation history, and current open areas.
+- [Progress](PROGRESS.md) - reconciled implementation status and verification boundaries.
+- [BiDi geometry plan](docs/plan-bidi-geometry.md) - the active standalone Editor plan; Tier B is open.
+- [TODO backlog](TODO.md) - unordered ideas and technical debt; not an execution index.
+- [Platform roadmap](../platform/PLAN.md) - authoritative cross-project execution order.
 - [Storage: Piece Table](docs/storage/piece-table.md) - treap-backed storage model.
 - [Positions: Types & Conversions](docs/positions/types-and-conversions.md) - offsets, points, and conversions.
 - [Positions: Anchors](docs/positions/anchors.md) - durable position references.

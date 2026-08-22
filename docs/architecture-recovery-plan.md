@@ -1,6 +1,14 @@
 # Architecture Recovery Plan
 
-Status: in progress
+Status: superseded as an execution source on 2026-08-22
+
+The delivered phases remain useful architecture history, but unchecked or
+forward-looking prose in this document no longer establishes work order. The
+remaining concrete debt belongs in [`TODO.md`](../TODO.md) until promoted into a
+bounded executable plan. Cross-project prerequisites and ownership are ordered
+by [Platform's canonical roadmap](../../platform/PLAN.md). Do not recreate
+deleted bridges or compatibility APIs merely to make this historical target
+shape literal.
 
 This document turns the architectural teardown into a phased recovery plan. It is deliberately large.
 The current system did not accumulate its problems in one subsystem, so it cannot be repaired by one
@@ -63,7 +71,8 @@ The editor should have these hard boundaries:
 - Document engine owns text, snapshots, anchors, transactions, undo, and redo.
 - Projection scheduler owns derived work ordering, cancellation, budget, and staleness.
 - Syntax engine owns parse state and syntax-derived projections for a snapshot.
-- View model owns visible rows, folded regions, block rows, and renderable ranges.
+- View model owns visible rows, folded regions, current anchored/injected
+  surfaces, and renderable ranges. Deleted block-surface APIs are not a target.
 - Renderer owns DOM, browser geometry, CSS highlights, and mounted-element lifetimes.
 - Extensions provide typed contributions into narrow registries.
 - Minimap and diff consume projections; they do not reconstruct private editor pipelines.

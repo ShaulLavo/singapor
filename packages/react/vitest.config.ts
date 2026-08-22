@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 
 // Against the editor's source, not its published build. Resolving @singapor/core
@@ -24,13 +25,40 @@ const coreSourceAliases = Object.entries(coreExports).flatMap(([subpath, target]
     },
   ]
 })
-
 export default defineConfig({
+  optimizeDeps: {
+    exclude: ['@singapor/core'],
+    include: ['react', 'react/jsx-dev-runtime', 'react/jsx-runtime', 'react-dom/client'],
+    noDiscovery: true,
+  },
   resolve: {
     alias: coreSourceAliases,
     conditions: ['browser'],
   },
   test: {
-    environment: 'happy-dom',
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'dom',
+          environment: 'happy-dom',
+          include: ['test/**/*.test.ts'],
+          exclude: ['test/**/*.browser.test.tsx'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'browser',
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright(),
+            instances: [{ browser: 'chromium' }],
+          },
+          include: ['test/**/*.browser.test.tsx'],
+        },
+      },
+    ],
   },
 })

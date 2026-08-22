@@ -2,6 +2,12 @@
 
 Backlog of larger ideas we want but are deliberately not doing right now.
 
+> This is an unordered product and technical-debt backlog, not an execution
+> index. Cross-project order is authoritative in
+> [Platform's `PLAN.md`](../platform/PLAN.md). The only active standalone Editor
+> executable plan is [BiDi geometry Tier B](docs/plan-bidi-geometry.md); promote
+> any other item into a bounded plan before implementation.
+
 Inspired by [Text Editor Data Structures](https://cdacamar.github.io/data%20structures/algorithms/benchmarking/text%20editors/c++/editor-data-structures/)
 (the fredbuf write-up, [repo](https://github.com/cdacamar/fredbuf)) — see also the discussion of
 where our persistent treap already differs from its immutable RB tree.

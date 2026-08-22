@@ -1,5 +1,11 @@
 # BiDi geometry — execution plan
 
+> **Status: Tier A M1-M5 complete; Tier B M6-M7 open, reconciled 2026-08-22.**
+> This is the only active standalone Editor executable plan. It may run in the
+> independent lane defined by
+> [Platform's canonical cross-project roadmap](../../platform/PLAN.md); no
+> environment work or Platform compatibility layer is required.
+
 What this is: the first scoping of bidirectional-text geometry in this editor. The Monaco/CodeMirror
 parity programme never carried it as a finding — it surfaced in milestone 2 as "the real finding
 hiding behind" the `mightContainRTL` item, which closed `[~]` because a flag proving you may skip

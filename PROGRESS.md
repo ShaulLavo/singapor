@@ -1,190 +1,65 @@
 # Progress
 
-Last updated: 2026-04-28
+Last reconciled: 2026-08-22 at Editor `42f07a7`
 
-## Current Status
+## Status
 
-Phase 6 browser-backed virtualization is implemented for fixed-height rows, long-line horizontal
-chunks, browser metric probes, native mounted-row geometry validation, syntax-driven fold toggles,
-FoldMap-fed virtual rows, and large-document/long-line benchmarks.
+The original storage, anchors, selection, Tree-sitter, display-transform, and
+browser-virtualization phases are implemented. The later Monaco/CodeMirror
+parity programme completed M1-M16 and both review passes; its executable plan
+was deleted under repository policy. The old instruction to start Phase 4
+Tree-sitter work was stale and has been removed.
 
-Latest committed Phase 1 work:
+Cross-project execution order is authoritative in
+[Platform's `PLAN.md`](../platform/PLAN.md). This file records Editor state; it
+does not define another sequence.
 
-- Commit `f51e08a` — `Build phase 1 storage foundation`
-- Commit `85ed5b5` — `Add editor planning docs and fix test runner`
+## Completed Baseline
 
-Validation after Phase 1:
+- Persistent piece-table documents, durable anchors, multi-selection editing,
+  undo/redo, folds, wrapped and virtualized rendering, minimap, diff, and merge
+  editing are live.
+- Tree-sitter syntax, highlighting, structural selection, indentation,
+  injections, bracket/tag matching, worker scheduling, and stale-result guards
+  are live.
+- Language configuration, auto-close/type-over/surround, snippets with linked
+  mirrors, completion filtering and resolution, signature help, document links,
+  semantic tokens, word-part and line operations, column selection, cursor
+  history, and clipboard behavior are live.
+- Editor documents support multiple views and explicit read-only editability.
+- BiDi geometry Tier A M1-M5 is complete and verified in
+  [`docs/plan-bidi-geometry.md`](docs/plan-bidi-geometry.md).
+- Broad block-surface APIs and temporary recovery bridges were deliberately
+  removed. They are not compatibility targets.
 
-- `bun run typecheck` passed
-- `bun run test` passed
-- `bun run lint` passed
-- `bun run build` passed
-- `bun run bench:piece-table` passed in `packages/editor`
-- Build still emits the existing Vite large chunk warning for the example app
+## Active Executable Work
 
-Validation after Phase 2:
+1. Shared Platform/Editor LSP routing work in
+   [Platform plan 050](../platform/plans/050-multi-server-lsp.md). This changes
+   cross-project contracts and must be verified in both repositories in one
+   milestone.
+2. BiDi Tier B M6-M7: caret affinity and visual cursor motion. This can execute
+   independently of Platform and environment work.
 
-- `bun run typecheck` passed in `packages/editor`
-- `bun run test` passed in `packages/editor`
-- `bun run lint` passed in `packages/editor`
-- `bun run bench:piece-table` passed in `packages/editor`
-- `bun run bench:anchors` passed in `packages/editor`
-- Follow-up liveness validation for delete/retype, replacement, boundary clamping, and undo/redo passed in `packages/editor`
-- Anchor benchmark now reports 10K/50K/100K-line resolution, reverse-index rebuild cost, invisible-piece delete/retype cost, and forced-GC memory samples
+No other item in [`TODO.md`](TODO.md) is executable merely because it appears in
+the backlog.
 
-Validation after Phase 3:
+## Superseded Sources
 
-- `bun run typecheck` passed
-- `bun run test` passed
-- `bun run lint` passed
-- `bun run build` passed
-- `bun run bench:piece-table` passed in `packages/editor`
-- `bun run bench:anchors` passed in `packages/editor`
+- `docs/parity-plan.md`: deleted after completion; Git history is the archive.
+- [`docs/architecture-recovery-plan.md`](docs/architecture-recovery-plan.md):
+  retained for architectural rationale, superseded as an execution source.
+- Older phase-by-phase validation logs in this file: superseded by the live
+  packages, focused tests, and commit history.
 
-## Done
+## Verification Boundary
 
-### Planning
-
-- Added `AGENTS.md` with project instructions for coding agents.
-- Added architecture and design docs for storage, positions, anchors, editing, display transforms, collaboration, performance, phases, and open work.
-- Locked the main storage direction: persistent treap-backed piece table.
-- Locked the position hierarchy: Offset, Point, Anchor.
-- Locked and implemented the anchor model.
-- Defined implementation phases and acceptance criteria.
-
-### Test Harness
-
-- Fixed the piece-table test import to use Vitest instead of `bun:test`.
-- Confirmed the normal repo test path runs through Turbo/Vitest.
-
-### Phase 1: Storage Foundation + Line-Break Augmentation
-
-- Changed `PieceBufferId` from the old `'original' | 'add'` union to an opaque branded string type.
-- Removed string-literal buffer comparisons from the piece-table implementation.
-- Replaced the single growing add string with append-only chunk buffers.
-- Added fresh opaque buffer IDs for inserted chunks.
-- Kept original text as its own immutable buffer chunk.
-- Decided to keep chunk storage exposed as `ReadonlyMap` at the type boundary; no debug-only accessor layer for now.
-- Added `Piece.lineBreaks`.
-- Added `subtreeLineBreaks` to treap nodes.
-- Maintained line-break aggregates through node creation, cloning, splitting, merging, and updates.
-- Added `offsetToPoint`.
-- Added `pointToOffset`.
-- Added public exports for the piece-table API from `@singapor/core`.
-- Added tests for:
-  - basic insert/delete
-  - snapshot isolation
-  - 1000 small insertions creating distinct buffer chunks
-  - large insert chunk splitting
-  - line-break aggregates through edits/splits
-  - offset-to-point conversion
-  - point-to-offset conversion with column clamping
-  - offset/point round trips
-  - deterministic randomized insert/delete/readback fuzz scenarios
-  - empty document, trailing newline, and very long single-line edge cases
-- Added a real piece-table insertion benchmark for the 1000+ insertion acceptance criterion.
-
-### Phase 2: Anchor System
-
-- Added anchor types, `Anchor.MIN`, and `Anchor.MAX`.
-- Added `anchorAt`, `anchorBefore`, and `anchorAfter`.
-- Enforced code-point boundaries when creating anchors.
-- Added `resolveAnchorLinear` as the correctness baseline.
-- Added indexed `resolveAnchor` using a snapshot-local lazy reverse-index cache keyed by `(buffer, piece.start)`.
-- Added `compareAnchors`.
-- Added `Piece.visible`.
-- Added `subtreeVisibleLength`; user-facing length, reads, edits, and point conversion now count visible pieces only.
-- Changed delete to mark affected pieces invisible instead of removing them physically.
-- Preserved deleted anchor resolution with liveness and replacement bias behavior.
-- Added `applyBatchToPieceTable` for non-overlapping batch edits against the original snapshot.
-- Added tests for:
-  - invisible-piece deletion
-  - sentinel resolution
-  - boundary creation and bias
-  - deleted liveness
-  - replacement bias
-  - real delete-and-retype liveness
-  - single and batched replacement liveness
-  - boundary clamping at document edges
-  - undo/redo liveness transitions
-  - surrogate-pair boundary rejection
-  - empty-snapshot real anchors
-  - indexed resolver parity with the linear baseline
-  - batch edits
-- Added `bench:anchors` for 10K, 50K, and 100K-line anchor resolution/index-cost measurements.
-- Extended `bench:anchors` with reverse-index node counts, rebuild timing, invisible-piece retention counts, delete/retype timing, and forced-GC memory samples.
-
-### Phase 3: Selection Model
-
-- Added `Selection<T>`, `SelectionGoal`, and anchor-backed `Selection<Anchor>` helpers.
-- Added `SelectionSet<T>` with a snapshot-scoped normalization-valid dirty flag.
-- Implemented snapshot-relative selection resolution.
-- Implemented lazy normalization by resolved offsets.
-- Locked merge behavior for overlapping or touching ranges and duplicate cursors.
-- Implemented selection-aware text replacement through `applyBatchToPieceTable`.
-- Implemented backspace for selected ranges and collapsed cursors, including surrogate-pair handling.
-- Added a minimal O(1) linked-stack snapshot+selection history helper for undo/redo boundaries.
-- Added tests for selection resolution, normalization, multi-selection edits, backspace, and undo/redo.
-
-### Phase 4: Tree-sitter Syntax System
-
-- Replace Shiki as the long-term syntax path.
-- Keep Tree-sitter parser creation, parsing, query execution, tree traversal, and injections worker-owned.
-- Add a worker-side language registry for parser and query assets.
-- Build a piece-table input adapter for Tree-sitter.
-- Translate batch edits into Tree-sitter input edits.
-- Tie parse results to document snapshots and reject stale syntax output.
-- Use Tree-sitter highlight queries for syntax decorations.
-- Use Tree-sitter queries for folds, structural selection, indentation, injections, and bracket/tag matching.
-- Keep active selections stored as anchors; Tree-sitter nodes are transient inputs for selection commands.
-- Benchmark parse/update/query time, memory, and GC at 10K, 50K, and 100K lines.
-
-### Phase 5: Display Transform Validation
-
-- Prototyped `FoldMap`.
-- Implemented `FoldPoint`.
-- Validated bidirectional conversion for visible positions.
-- Added a typed invalidation protocol using `InvalidatedRange<FoldPoint>`.
-- Added FoldMap edit updates that refresh anchor-backed fold ranges against the next snapshot.
-- Validated invalidation precision:
-  - edits inside folded interiors emit no output invalidation
-  - surviving boundary edits invalidate only the placeholder
-  - destroyed folds expand the placeholder invalidation
-  - outside edits pass through in `FoldPoint` space
-- Covered fold edge cases: boundaries, nesting, document edges, and edits inside folds.
-- Added `bench:fold-map` for single-layer conversion overhead.
-- Made the go/no-go decision: **go** for a second validation layer, with future transforms still measured independently.
-
-### Phase 6: Browser Layout + 2D Virtualization
-
-- Added browser metric probes for row height and character width.
-- Added mounted row records with horizontal chunk records.
-- Added long-line horizontal chunking so 50K-character lines mount only viewport-adjacent chunks.
-- Kept CSS Highlight syntax and selection painting scoped to mounted rows and chunks.
-- Switched caret positioning to native `Range` geometry when mounted, with an estimated fallback.
-- Added mounted-row native geometry validation for caret, selection, and hit testing.
-- Added FoldMap-backed virtual row mapping without changing buffer offsets.
-- Added syntax-driven fold gutter controls and collapsed-row placeholders.
-- Added `Editor.setFoldMap` and `VirtualizedTextView.setFoldMap`.
-- Added browser and happy-dom tests for vertical virtualization, horizontal chunking, native geometry, selection/highlight behavior, and FoldMap integration.
-- Added `bench:virtualization` for 100K-line documents and 50K-character lines.
-
-### Phase 7: Additional Transforms
-
-- Conditional on Phase 5 succeeding.
-- Likely candidates: wrapping and decoration-related transforms.
-- Scope still depends on FoldMap results.
-
-## Larger Open Areas
-
-- Layout system design is still open.
-- Main-thread versus worker layout split is still open.
-- Tree-sitter worker protocol, parser/query loading, memory policy, and worker scheduling are not designed yet.
-- Scheduler design is not started.
-- Decoration system design is deferred.
-- Undo/redo stack wiring has a minimal snapshot+selection helper; worker transaction ownership remains open.
-- Collaboration is not a current goal, but storage choices preserve future compatibility.
-
-## Immediate Next Step
-
-Start Phase 4 Tree-sitter syntax-system design and prototype the parser/query pipeline.
+- Pure Editor behavior: run the narrow package test and typecheck that could
+  catch the change.
+- Geometry, paint, hit testing, clipboard, or browser-worker lifecycle: use the
+  real-browser Vitest project.
+- Architecture-sensitive changes: run `bun run health` in addition to the
+  focused checks.
+- Cross-project contracts: verify the Editor producer first, then the Platform
+  contracts/server/web consumer and the already-running app. Do not leave a
+  compatibility alias between repositories.

@@ -33,6 +33,7 @@ export type ShikiHighlighterPluginOptions = {
 }
 
 const DEFAULT_THEME = 'github-dark'
+const DEFAULT_SHIKI_WORKER_OWNER_KEY = Symbol.for('@singapor/core/shiki/default-worker-owner')
 
 const DEFAULT_LANGUAGE_MAP: ShikiLanguageMap = {
   css: 'css',
@@ -51,8 +52,7 @@ export function createShikiHighlighterPlugin(
   return {
     name: 'shiki-highlighter',
     activate(context) {
-      const sharedOwner = options.workerOwner
-      const owner = sharedOwner ?? createShikiWorkerOwner()
+      const owner = options.workerOwner ?? defaultShikiWorkerOwner()
       let registration = context.registerHighlighter(createHighlighterProvider(options, owner))
 
       const reloadProvider = (): void => {
@@ -72,15 +72,19 @@ export function createShikiHighlighterPlugin(
             unsubscribeTheme?.()
           },
         },
-        {
-          dispose: () => {
-            if (sharedOwner) return
-            void owner.dispose().catch(() => undefined)
-          },
-        },
       ]
     },
   }
+}
+
+const defaultShikiWorkerOwner = (): ShikiWorkerOwner => {
+  const state = globalThis as Record<PropertyKey, unknown>
+  const existing = state[DEFAULT_SHIKI_WORKER_OWNER_KEY] as ShikiWorkerOwner | undefined
+  if (existing) return existing
+
+  const owner = createShikiWorkerOwner()
+  state[DEFAULT_SHIKI_WORKER_OWNER_KEY] = owner
+  return owner
 }
 
 const createHighlighterProvider = (

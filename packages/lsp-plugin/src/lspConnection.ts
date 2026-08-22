@@ -144,7 +144,9 @@ export class LspConnection {
     }
 
     this.transport = transport
-    this.removeTransportCloseListener = transport.onDidClose(() => this.handleTransportClose())
+    this.removeTransportCloseListener = transport.onDidClose((error) =>
+      this.handleTransportClose(error),
+    )
     void this.client
       .connect(transport)
       .then(() => this.handleConnected())
@@ -166,7 +168,7 @@ export class LspConnection {
     this.handleError(error)
   }
 
-  private handleTransportClose(): void {
+  private handleTransportClose(error?: unknown): void {
     if (this.disposed) return
 
     this.removeTransportCloseListener?.()
@@ -175,7 +177,7 @@ export class LspConnection {
     this.client.disconnect()
     this.setStatus('error')
     this.callbacks.onUnavailable()
-    this.handleError(new Error('LSP transport closed'))
+    this.handleError(error ?? new Error('LSP transport closed'))
   }
 
   private closeFailedConnection(): void {

@@ -230,10 +230,11 @@ describe('createTypeScriptLspPlugin', () => {
     })
     expect(params.clientInfo).toEqual({ name: 'example-app' })
     expect(handed.client).not.toBeNull()
-    expect(handed.layer).not.toBeNull()
+    expect(handed.layer).toBeNull()
 
     worker.receive(initializeResponse(initialize))
     await flushPromises()
+    expect(handed.layer).not.toBeNull()
     plugin.setWorkspaceFiles([{ path: 'src/other.ts', text: 'export const other = 1' }])
 
     expect(sentMethods(worker)).toContain('editor/typescript/setWorkspaceFiles')
@@ -421,12 +422,14 @@ describe('createTypeScriptLspPlugin', () => {
   it('reports hover request timeouts through the TypeScript adapter controller', async () => {
     vi.useFakeTimers()
     const worker = new FakeWorker()
-    const errors: unknown[] = []
+    const requestErrors: Array<{ readonly method: string; readonly error: unknown }> = []
+    const lifecycleErrors: unknown[] = []
     const context = viewContributionContext(editorSnapshot())
     const plugin = createTypeScriptLspPlugin({
       timeoutMs: 20,
       workerFactory: () => worker,
-      onError: (error) => errors.push(error),
+      onRequestError: (method, error) => requestErrors.push({ method, error }),
+      onError: (error) => lifecycleErrors.push(error),
     })
     const provider = activatePlugin(plugin)
     provider.createContribution(context)
@@ -443,7 +446,10 @@ describe('createTypeScriptLspPlugin', () => {
     await vi.advanceTimersByTimeAsync(25)
     await flushPromises()
 
-    expect(errors.map(errorMessage)).toEqual(['LSP request timed out: textDocument/hover'])
+    expect(requestErrors.map(({ method, error }) => [method, errorMessage(error)])).toEqual([
+      ['textDocument/hover', 'LSP request timed out: textDocument/hover'],
+    ])
+    expect(lifecycleErrors).toHaveLength(0)
   })
 
   it('cancels stale completion requests through the TypeScript adapter controller', async () => {
@@ -1668,6 +1674,11 @@ function initializeResponse(request: JsonMessage): JsonMessage {
         implementationProvider: true,
         referencesProvider: true,
         typeDefinitionProvider: true,
+        semanticTokensProvider: {
+          legend: { tokenTypes: [], tokenModifiers: [] },
+          full: true,
+          range: true,
+        },
       },
     },
   }

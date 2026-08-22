@@ -974,6 +974,7 @@ function resolvedLaneFromAdapterOptions(
     onConnected: options.onConnected,
     onStatusChange: options.onStatusChange,
     onInteractiveReady: options.onInteractiveReady,
+    onRequestError: (method, error) => options.onRequestError?.(options.name, method, error),
     onError: options.onError,
   }
 }

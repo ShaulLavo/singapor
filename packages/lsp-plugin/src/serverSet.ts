@@ -106,6 +106,14 @@ export class LanguageServerSet {
     if (!feature) return Promise.resolve(null as TResult)
 
     if (feature === 'navigation') {
+      const lanes = this.ready(feature, method)
+      const lane = lanes.length === 1 ? lanes[0] : undefined
+      if (lane) {
+        return this.requestSingle(lane, method, params, options, [], (result) =>
+          mergeNavigationResults([{ lane, result }]),
+        ) as Promise<TResult>
+      }
+
       return this.requestAll(feature, method, params, options).then(
         mergeNavigationResults,
       ) as Promise<TResult>

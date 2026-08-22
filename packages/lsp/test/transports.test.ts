@@ -96,6 +96,11 @@ class FakeWorker implements LspWorkerLike {
     for (const listener of this.listenersFor('message')) listener(event)
   }
 
+  public fail(message: string): void {
+    const event = new ErrorEvent('error', { message })
+    for (const listener of this.listenersFor('error')) listener(event)
+  }
+
   public listenerCount(type: string): number {
     return this.listenersFor(type).size
   }
@@ -238,5 +243,17 @@ describe('Worker LSP transport', () => {
 
     expect(worker.listenerCount('message')).toBe(0)
     expect(worker.terminated).toBe(true)
+  })
+
+  it('signals the worker error that closed the transport', () => {
+    const worker = new FakeWorker()
+    const transport = createWorkerLspTransport(worker)
+    const errors: unknown[] = []
+    transport.onDidClose((error) => errors.push(error))
+
+    worker.fail('worker crashed')
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toEqual(new Error('worker crashed'))
   })
 })

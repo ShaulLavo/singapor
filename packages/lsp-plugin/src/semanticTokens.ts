@@ -9,7 +9,7 @@ import type {
 } from '@singapor/core/extensions'
 import { createSemanticTokenLayer } from '@singapor/core/extensions'
 
-import type { LanguageServerConnectionContext } from './types'
+import type { LanguageServerConnectionContext } from './connectionContext'
 
 /** Which document a layer was created for. A layer never spans two. */
 export type LanguageServerSemanticTokensDocument = {

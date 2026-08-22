@@ -167,7 +167,7 @@
       "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
       "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:577752bab8",
       "justification": "Starts semantic work midway through pointer dwell so transient targets are skipped while network time overlaps the remaining dwell.",
-      "line": 313,
+      "line": 308,
       "snippet": "operation.dispatchTimer = setTimeout(() => {"
     },
     {
@@ -175,7 +175,7 @@
       "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
       "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:83ef4f201e",
       "justification": "Enforces the hover dwell before paint; cancellation clears it when the pointer leaves the identifier.",
-      "line": 318,
+      "line": 313,
       "snippet": "operation.revealTimer = setTimeout(() => {"
     },
     {
@@ -183,7 +183,7 @@
       "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
       "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:c104083303",
       "justification": "Delays the loading row until the active server set is observably slow; cancellation clears it on every target change.",
-      "line": 306,
+      "line": 301,
       "snippet": "operation.loadingTimer = setTimeout(() => this.revealHoverLoading(id), HOVER_LOADING_DELAY_MS)"
     },
     {
@@ -191,7 +191,7 @@
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:queueMicrotask:1d59545f0f",
       "justification": "Replays pooled connection state after `acquire` returns so callbacks cannot run inside the contribution constructor. The closure verifies that the lease is still active, and each acquisition schedules at most one replay.",
-      "line": 198,
+      "line": 200,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -199,7 +199,7 @@
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:setTimeout:ad7334dc0b",
       "justification": "Keeps a connection reusable for the configured grace period after its final lease releases. A new acquisition cancels the timer, and `#closeIdle` rechecks both the lease count and pool identity before disposal.",
-      "line": 213,
+      "line": 215,
       "snippet": "entry.idleTimer = setTimeout(() => this.#closeIdle(entry), this.#idleGraceMs)"
     },
     {

@@ -1,13 +1,10 @@
 import type { EditorDisposable, EditorPlugin, EditorViewSnapshot } from '@singapor/core/extensions'
-import type {
-  LspClient,
-  LspNotificationHandler,
-  LspWebSocketTransportOptions,
-  LspWorkspace,
-} from '@singapor/lsp'
+import type { LspClient, LspNotificationHandler, LspWebSocketTransportOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
+import type { LanguageServerConnectionContext } from './connectionContext'
 import type { LspConnectionProvider } from './lspConnection'
+export type { LanguageServerConnectionContext } from './connectionContext'
 import type {
   LanguageServerSemanticTokensFactory,
   LanguageServerSemanticTokensOptions,
@@ -35,12 +32,6 @@ export type LanguageServerFeatureRanks = Partial<Readonly<Record<LanguageServerF
 export type LanguageServerReadyNotification = {
   readonly method: string
   readonly params: unknown
-}
-
-/** The connection a host is handed the moment it exists. See LanguageServerPluginOptions. */
-export type LanguageServerConnectionContext = {
-  readonly client: LspClient
-  readonly workspace: LspWorkspace
 }
 
 export type LanguageServerDiagnosticCounts = {

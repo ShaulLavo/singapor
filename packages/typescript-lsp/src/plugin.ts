@@ -42,6 +42,7 @@ export type TypeScriptLspResolvedOptions = {
   readonly onDiagnostics: TypeScriptLspPluginOptions['onDiagnostics']
   readonly onOpenDefinition: TypeScriptLspPluginOptions['onOpenDefinition']
   readonly onOpenReferences: TypeScriptLspPluginOptions['onOpenReferences']
+  readonly onRequestError: TypeScriptLspPluginOptions['onRequestError']
   readonly onError: TypeScriptLspPluginOptions['onError']
 }
 
@@ -90,6 +91,7 @@ export function createTypeScriptLspPlugin(
     onDiagnostics: resolved.onDiagnostics,
     onOpenDefinition: resolved.onOpenDefinition,
     onOpenReferences: resolved.onOpenReferences,
+    onRequestError: (_serverId, method, error) => resolved.onRequestError?.(method, error),
     onError: resolved.onError,
   })
 
@@ -203,6 +205,7 @@ function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResol
     onDiagnostics: options.onDiagnostics,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onRequestError: options.onRequestError,
     onError: options.onError,
   }
 }

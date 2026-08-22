@@ -70,6 +70,7 @@ export type TypeScriptLspPluginOptions = {
     options?: TypeScriptLspNavigationOptions,
   ) => void | boolean
   readonly onOpenReferences?: (result: TypeScriptLspReferencesResult) => void | boolean
+  readonly onRequestError?: (method: string, error: unknown) => void
   readonly onError?: (error: unknown) => void
 }
 

@@ -72,12 +72,24 @@ export type DiffPlugin = EditorPlugin & {
   /** §C5. Hosts must not mirror this. */
   getExpandedRegions(): ReadonlySet<string>
   toggleRegion(key: string): void
-  /** Empty unless the row-index identity §C4 depends on has been broken. */
-  getDocumentModeViolations(): readonly DiffDocumentModeViolation[]
+  /** The exact counts and violations from the latest row-index identity check. */
+  getDocumentModeStatus(): DiffDocumentModeStatus
 
   /** `overlay` mode: the buffer the live editor text is diffed against. */
   setBaseFile(file: DiffTextFile | null): void
   setEnabled(enabled: boolean): void
+}
+
+export type DiffDocumentModeStatus = {
+  readonly lineCount: number
+  readonly rowCount: number
+  readonly violations: readonly DiffDocumentModeViolation[]
+}
+
+const EMPTY_DOCUMENT_MODE_STATUS: DiffDocumentModeStatus = {
+  lineCount: 0,
+  rowCount: 0,
+  violations: [],
 }
 
 const EMPTY_PROJECTION: LiveDiffProjection = {
@@ -116,7 +128,7 @@ export function createDiffPlugin(options: DiffPluginOptions): DiffPlugin {
     onDidChangeTokens: (listener) => runtime.onDidChangeTokens(listener),
     getExpandedRegions: () => runtime.getExpandedRegions(),
     toggleRegion: (key) => runtime.toggleRegion(key),
-    getDocumentModeViolations: () => runtime.getDocumentModeViolations(),
+    getDocumentModeStatus: () => runtime.getDocumentModeStatus(),
     setBaseFile: (file) => runtime.setBaseFile(file),
     setEnabled: (enabled) => runtime.setEnabled(enabled),
   }
@@ -136,7 +148,7 @@ class DiffPluginRuntime {
   private digits: DiffGutterDigits = { old: 0, new: 0 }
   private hunkRows = false
   private expandableRows = false
-  private violations: readonly DiffDocumentModeViolation[] = []
+  private documentModeStatus = EMPTY_DOCUMENT_MODE_STATUS
 
   private baseFile: DiffTextFile | null = null
   private enabled: boolean
@@ -271,8 +283,8 @@ class DiffPluginRuntime {
     this.notifyRows()
   }
 
-  getDocumentModeViolations(): readonly DiffDocumentModeViolation[] {
-    return this.violations
+  getDocumentModeStatus(): DiffDocumentModeStatus {
+    return this.documentModeStatus
   }
 
   onDidChangeRows(listener: () => void): EditorDisposable {
@@ -412,8 +424,8 @@ class DiffPluginRuntime {
       hasHunkRows: () => this.hunkRows,
       hasExpandableRows: () => this.expandableRows,
       toggleRegion: (key) => this.toggleRegion(key),
-      reportViolations: (violations) => {
-        this.violations = violations
+      reportStatus: (status) => {
+        this.documentModeStatus = status
       },
       detach: (disposed) => {
         if (this.view === disposed) this.view = null
@@ -540,7 +552,7 @@ type DiffViewOptions = {
   readonly hasHunkRows: () => boolean
   readonly hasExpandableRows: () => boolean
   readonly toggleRegion: (key: string) => void
-  readonly reportViolations: (violations: readonly DiffDocumentModeViolation[]) => void
+  readonly reportStatus: (status: DiffDocumentModeStatus) => void
   readonly detach: (contribution: DiffViewContribution) => void
 }
 
@@ -588,7 +600,12 @@ class DiffViewContribution implements EditorViewContribution {
     if (this.options.mode !== 'document') return
     if (kind === 'viewport' || kind === 'selection') return
 
-    this.options.reportViolations(documentModeViolations(snapshot, this.options.getRows()))
+    const rows = this.options.getRows()
+    this.options.reportStatus({
+      lineCount: snapshot.lineCount,
+      rowCount: rows.length,
+      violations: documentModeViolations(snapshot, rows),
+    })
     this.applyInlineHighlights()
   }
 

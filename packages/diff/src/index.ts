@@ -8,7 +8,12 @@ export { createLiveDiffProjection } from './liveProjection'
 export { createTextDiff, parseGitPatch } from './model'
 export { createSplitProjection, createStackedProjection } from './projection'
 export { diffSyntaxBackend, projectDiffSyntaxTokens } from './diffSyntax'
-export type { DiffPlugin, DiffPluginMode, DiffPluginOptions } from './editorDiffPlugin'
+export type {
+  DiffDocumentModeStatus,
+  DiffPlugin,
+  DiffPluginMode,
+  DiffPluginOptions,
+} from './editorDiffPlugin'
 export type { DiffDocumentModeViolation } from './diffRows'
 export type { DiffGutterSide } from './gutters'
 export type { DiffRegionStore } from './regions'

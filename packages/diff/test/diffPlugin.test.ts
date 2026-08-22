@@ -72,14 +72,18 @@ describe('diff plugin — rows and expansion (§C3, §C5)', () => {
     expect(host.textContent).toContain('TWO')
   })
 
-  it('renders one buffer row per projection row, keeping the §C4 identity', () => {
-    const { plugin, host } = mountDiff({ file: prefixSkippedDiff() })
+  it('renders one stacked buffer row per projection row, keeping the §C4 identity', () => {
+    const { plugin, host } = mountDiff({ file: prefixSkippedDiff(), side: 'stacked' })
 
     const indices = [...host.querySelectorAll<HTMLElement>('[data-editor-virtual-row]')].map(
       (element) => Number(element.dataset.editorVirtualRow),
     )
     expect(indices).toEqual(plugin.getRows().map((_row, index) => index))
-    expect(plugin.getDocumentModeViolations()).toEqual([])
+    expect(plugin.getDocumentModeStatus()).toMatchObject({
+      lineCount: plugin.getRows().length,
+      rowCount: plugin.getRows().length,
+      violations: [],
+    })
   })
 
   it('toggles an expandable hunk row from a gutter click, and shows a pointer over it', () => {

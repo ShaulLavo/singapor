@@ -74,8 +74,8 @@ const right = createDiffPlugin({ mode: 'document', side: 'new', regions })
 
 This is not the mirroring the design forbids — there is one store, and both sides read it, rather
 than two sets kept in step. The panes also stay aligned only while word wrap is off and no fold map
-is set; the plugin reports `getDocumentModeViolations()` if the row-index identity it depends on is
-ever broken.
+is set; the plugin reports counts and violations through `getDocumentModeStatus()` if the row-index
+identity it depends on is ever broken.
 
 Expansion is per _diff_, not per path: pushing the same path with different content resets it,
 because region keys are absolute line numbers and any edit above a region renumbers it. Pushing an

@@ -205,6 +205,48 @@ describe('LspClient', () => {
     })
   })
 
+  it('answers configured server requests and reports handler failures', async () => {
+    const request = vi.fn(() => ({ refreshed: true }))
+    const failure = vi.fn(() => {
+      throw new Error('refresh failed')
+    })
+    const { transport } = await initializedClientWithConfig({
+      serverRequestHandlers: {
+        'workspace/diagnostic/refresh': request,
+        'workspace/test/failure': failure,
+      },
+    })
+
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 'refresh',
+      method: 'workspace/diagnostic/refresh',
+      params: null,
+    })
+    await Promise.resolve()
+
+    expect(request).toHaveBeenCalledWith(
+      expect.any(LspClient),
+      null,
+      expect.objectContaining({ method: 'workspace/diagnostic/refresh' }),
+    )
+    expect(transport.lastMessage()).toMatchObject({ id: 'refresh', result: { refreshed: true } })
+
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 'failure',
+      method: 'workspace/test/failure',
+      params: null,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(transport.lastMessage()).toMatchObject({
+      id: 'failure',
+      error: { code: -32603, message: 'refresh failed' },
+    })
+  })
+
   it('queues document opens until initialization completes', async () => {
     const workspace = new LspWorkspace()
     workspace.openDocument({

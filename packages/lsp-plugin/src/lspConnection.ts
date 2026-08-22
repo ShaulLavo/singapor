@@ -12,6 +12,8 @@ import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { LanguageServerStatus } from './types'
 
+const DIAGNOSTIC_REFRESH_METHOD = 'workspace/diagnostic/refresh'
+
 export type LspConnectionTransportFactory = () => LspManagedTransport | Promise<LspManagedTransport>
 
 export type LspConnectionOptions = {
@@ -38,6 +40,7 @@ export type LspConnectionOptions = {
 
 export type LspConnectionCallbacks = {
   onConnected(): void
+  onDiagnosticRefresh?(): void
   onUnavailable(): void
   onPublishDiagnostics(params: unknown): void
   onStatusChange?: (status: LanguageServerStatus) => void
@@ -67,6 +70,7 @@ export class LspConnection {
   public readonly client: LspClient
 
   private transport: LspManagedTransport | null = null
+  private removeTransportCloseListener: (() => void) | null = null
   private disposed = false
   private status: LanguageServerStatus = 'idle'
 
@@ -86,6 +90,8 @@ export class LspConnection {
     if (this.disposed) return
 
     this.disposed = true
+    this.removeTransportCloseListener?.()
+    this.removeTransportCloseListener = null
     this.client.disconnect()
     this.transport?.close()
     this.transport = null
@@ -107,10 +113,21 @@ export class LspConnection {
       // notification too must not be able to take it away. Its handler runs after ours.
       notificationHandlers: {
         ...hostHandlers,
+        [DIAGNOSTIC_REFRESH_METHOD]: (client, params, message) => {
+          this.callbacks.onDiagnosticRefresh?.()
+          hostHandlers?.[DIAGNOSTIC_REFRESH_METHOD]?.(client, params, message)
+          return true
+        },
         'textDocument/publishDiagnostics': (client, params, message) => {
           this.callbacks.onPublishDiagnostics(params)
           hostHandlers?.['textDocument/publishDiagnostics']?.(client, params, message)
           return true
+        },
+      },
+      serverRequestHandlers: {
+        [DIAGNOSTIC_REFRESH_METHOD]: () => {
+          this.callbacks.onDiagnosticRefresh?.()
+          return null
         },
       },
     })
@@ -141,6 +158,9 @@ export class LspConnection {
     }
 
     this.transport = transport
+    this.removeTransportCloseListener = transport.onDidClose((error) =>
+      this.handleTransportClose(error),
+    )
     void this.client
       .connect(transport)
       .then(() => this.handleConnected())
@@ -162,7 +182,21 @@ export class LspConnection {
     this.handleError(error)
   }
 
+  private handleTransportClose(error?: unknown): void {
+    if (this.disposed) return
+
+    this.removeTransportCloseListener?.()
+    this.removeTransportCloseListener = null
+    this.transport = null
+    this.client.disconnect()
+    this.setStatus('error')
+    this.callbacks.onUnavailable()
+    this.handleError(error ?? new Error('LSP transport closed'))
+  }
+
   private closeFailedConnection(): void {
+    this.removeTransportCloseListener?.()
+    this.removeTransportCloseListener = null
     this.client.disconnect()
     this.transport?.close()
     this.transport = null

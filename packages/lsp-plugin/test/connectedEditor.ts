@@ -46,6 +46,10 @@ class FakeTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(): () => void {
+    return () => undefined
+  }
+
   public close(): void {
     this.handlers.clear()
   }
@@ -57,6 +61,7 @@ class FakeTransport implements LspManagedTransport {
 
 export type ConnectedEditor = {
   readonly applyEdits: ReturnType<typeof vi.fn<EditorEditContributionContext['applyEdits']>>
+  readonly focusEditor: ReturnType<typeof vi.fn>
   type(character: string): void
   backspace(): void
   moveCaret(offset: number): void
@@ -80,6 +85,7 @@ export type ConnectedEditor = {
   completionLabels(): readonly string[]
   focusedCompletionLabel(): string | null
   completionRequests(): readonly lsp.CompletionParams[]
+  hoverRequests(): readonly lsp.HoverParams[]
   codeActionRequests(): readonly lsp.CodeActionParams[]
   initializeParams(): lsp.InitializeParams
   reportedErrors(): readonly unknown[]
@@ -114,6 +120,7 @@ export async function connectedEditor(
 ): Promise<ConnectedEditor> {
   const transport = new FakeTransport()
   const applyEdits = vi.fn<EditorEditContributionContext['applyEdits']>()
+  const focusEditor = vi.fn()
   const features = new Map<unknown, unknown>()
   const element = document.createElement('div')
   let snapshot = editorSnapshot(text, caretOffset, 1)
@@ -137,6 +144,7 @@ export async function connectedEditor(
       getSnapshot: () => snapshot,
       getRangeClientRect: () => anchorRect,
       getFeature: (token) => features.get(token) ?? null,
+      focusEditor,
     }),
   )
   if (!contribution) throw new Error('missing contribution')
@@ -145,7 +153,21 @@ export async function connectedEditor(
     jsonrpc: '2.0',
     id: jsonMessage(transport.sent[0]).id,
     result: {
-      capabilities: { textDocumentSync: { openClose: true, change: 2 }, ...options.capabilities },
+      capabilities: {
+        codeActionProvider: true,
+        completionProvider: {},
+        definitionProvider: true,
+        documentFormattingProvider: true,
+        documentHighlightProvider: true,
+        hoverProvider: true,
+        implementationProvider: true,
+        referencesProvider: true,
+        renameProvider: true,
+        signatureHelpProvider: {},
+        textDocumentSync: { openClose: true, change: 2 },
+        typeDefinitionProvider: true,
+        ...options.capabilities,
+      },
     },
   })
   await flushPromises()
@@ -169,6 +191,7 @@ export async function connectedEditor(
 
   return {
     applyEdits,
+    focusEditor,
     type: (character) => {
       const at = caretOffsetOf(snapshot)
       applyChange({ from: at, to: at, text: character }, at + character.length)
@@ -242,6 +265,11 @@ export async function connectedEditor(
         .map(jsonMessage)
         .filter((sent) => sent.method === 'textDocument/completion')
         .map((sent) => sent.params as lsp.CompletionParams),
+    hoverRequests: () =>
+      transport.sent
+        .map(jsonMessage)
+        .filter((sent) => sent.method === 'textDocument/hover')
+        .map((sent) => sent.params as lsp.HoverParams),
     codeActionRequests: () =>
       transport.sent
         .map(jsonMessage)
@@ -287,6 +315,7 @@ function activateProvider(
       acceptOnCommitCharacter: options.acceptOnCommitCharacter ?? false,
     },
     onError: (error) => errors.push(error),
+    onRequestError: (_serverId, _method, error) => errors.push(error),
   }).activate({
     registerHighlighter: () => disposable,
     registerSyntaxProvider: () => disposable,
@@ -332,6 +361,7 @@ function viewContributionContext(options: {
   getSnapshot(): EditorViewSnapshot
   getRangeClientRect(): DOMRect
   getFeature(token: unknown): unknown
+  focusEditor(): void
 }): EditorViewContributionContext {
   return {
     container: options.element,
@@ -341,7 +371,7 @@ function viewContributionContext(options: {
     getSnapshot: options.getSnapshot,
     getFeature: options.getFeature as EditorViewContributionContext['getFeature'],
     revealLine: vi.fn(),
-    focusEditor: vi.fn(),
+    focusEditor: options.focusEditor,
     setSelection: vi.fn(),
     setSelections: vi.fn(),
     setScrollTop: vi.fn(),

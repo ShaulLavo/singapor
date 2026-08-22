@@ -27,13 +27,18 @@ import {
   createLanguageServerCompletionSource,
   LanguageServerCompletionSources,
 } from './completionProviders'
-import { DiagnosticsPresenter } from './diagnosticsPresenter'
-import { DocumentSync, type DocumentSyncOptions } from './documentSync'
+import { CompositeDiagnosticsPresenter, DiagnosticsPresenter } from './diagnosticsPresenter'
+import { activeDocumentForSnapshot, DocumentSync, type DocumentSyncOptions } from './documentSync'
 import { FormatOnTypeController } from './formatOnType'
 import { HoverDefinitionController } from './hoverDefinitionController'
 import { SignatureHelpController } from './signatureHelpController'
 import { DocumentHighlightController } from './documentHighlightController'
-import { SemanticTokenLayerOwner, type LanguageServerSemanticTokensOptions } from './semanticTokens'
+import {
+  SemanticTokenLayerOwner,
+  type LanguageServerSemanticTokensFactory,
+  type LanguageServerSemanticTokensOptions,
+  type LanguageServerSemanticTokensOwnerOptions,
+} from './semanticTokens'
 import { createRenameWidgetController, type RenameWidgetController } from './renameWidget'
 import {
   workspaceEditForDocument,
@@ -41,21 +46,25 @@ import {
   workspaceEditTouchesOtherDocuments,
 } from './workspaceEdit'
 import { wordRangeAtOffset } from '@singapor/core/internal'
-import { offsetToLspPosition } from '@singapor/lsp'
+import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
+import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
 import {
-  createWebSocketLspTransportFactory,
-  LspConnection,
-  type LspConnectionCallbacks,
-  type LspConnectionLease,
-  type LspConnectionOptions,
-  type LspConnectionProvider,
-  type LspConnectionTransportFactory,
-} from './lspConnection'
+  acquireResolvedLanguageServerLane,
+  resolveLanguageServerLaneOptions,
+  type LanguageServerResolvedLaneOptions,
+} from './lane'
+import {
+  allLanguageServerFeatures,
+  LanguageServerSet,
+  rankedLanguageServerLanes,
+  type LanguageServerSetLane,
+} from './serverSet'
 import type {
   ActiveDocument,
   DiagnosticMarkerDirection,
   LanguageServerNavigationCommand,
 } from './pluginTypes'
+import { PullDiagnosticsController } from './pullDiagnostics'
 import { formattingChangesText, formattingEdits, formattingOptions } from './formatting'
 import type { TextEdit } from '@singapor/core'
 import type {
@@ -64,7 +73,9 @@ import type {
   LanguageServerDiagnosticSummary,
   LanguageServerNavigationOptions,
   LanguageServerPlugin,
+  LanguageServerLaneOptions,
   LanguageServerPluginOptions,
+  LanguageServerSetPluginOptions,
   LanguageServerReferencesResult,
   LanguageServerStatus,
 } from './types'
@@ -75,7 +86,6 @@ export type { LanguageServerConnectionContext } from './types'
 
 export type { LanguageServerResolvedOptions } from './pluginTypes'
 
-const DEFAULT_TIMEOUT_MS = 15000
 const DEFAULT_PLUGIN_NAME = 'editor.lsp-plugin'
 const DEFAULT_HIGHLIGHT_PREFIX = 'editor-lsp-plugin'
 const DEFAULT_NAMESPACE = 'lsp-plugin'
@@ -86,6 +96,7 @@ const DEFAULT_COMPLETION_ACCEPT_TIMING_NAME = 'lspPlugin.completion.accept'
 export type LanguageServerCommandTarget = {
   goToDefinitionFromSelection(): boolean
   runNavigationCommand(command: LanguageServerNavigationCommand): boolean
+  showHover(): boolean
   moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean
   formatDocument(): boolean
   renameSymbol(): boolean
@@ -162,6 +173,7 @@ export type LanguageServerAdapterPluginOptions = {
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void
+  readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -173,15 +185,8 @@ export type LanguageServerAdapterPluginOptions = {
 type LanguageServerResolvedAdapterOptions = {
   readonly name: string
   readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
-  readonly rootUri: lsp.DocumentUri | null
   readonly hoverMarkdownCodeBackground: boolean
-  readonly initializationOptions: unknown
-  readonly timeoutMs: number
-  readonly capabilities?: lsp.ClientCapabilities
-  readonly clientInfo?: lsp.InitializeParams['clientInfo']
-  readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
-  createTransport(): ReturnType<LspConnectionTransportFactory>
-  readonly connectionProvider?: LspConnectionProvider
+  readonly lanes: readonly LanguageServerResolvedLaneOptions[]
   readonly defaultHighlightPrefix: string
   readonly documentSync: Omit<DocumentSyncOptions, 'onDocumentClosed'>
   readonly diagnostics: {
@@ -202,12 +207,10 @@ type LanguageServerResolvedAdapterOptions = {
     readonly navigationTimingNamePrefix: string
   }
   readonly commands: readonly LanguageServerCommandSpec[]
-  readonly semanticTokens?: LanguageServerSemanticTokensOptions
-  onConnectionCreated?(context: LanguageServerConnectionContext): EditorDisposable | void
-  onConnected?(context: LanguageServerConnectionContext): void
-  readonly onStatusChange?: (status: LanguageServerStatus) => void
+  readonly semanticTokens?: LanguageServerSemanticTokensFactory
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void
+  readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -219,37 +222,34 @@ type LanguageServerResolvedAdapterOptions = {
 export function createLanguageServerPlugin(
   options: LanguageServerPluginOptions,
 ): LanguageServerPlugin {
-  return createLanguageServerAdapterPlugin({
-    name: DEFAULT_PLUGIN_NAME,
-    rootUri: options.rootUri,
+  return createLanguageServerSetPlugin({
     hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
-    initializationOptions: options.initializationOptions,
-    timeoutMs: options.timeoutMs,
-    capabilities: options.capabilities,
-    clientInfo: options.clientInfo,
-    notificationHandlers: options.notificationHandlers,
+    lanes: [languageServerLaneFromPluginOptions(options)],
     documentSync: options.documentSync,
-    createTransport: createWebSocketLspTransportFactory(
-      options.webSocketRoute,
-      options.webSocketTransportOptions,
-    ),
-    connectionProvider: options.connectionProvider,
-    semanticTokens: options.semanticTokens,
-    onConnectionCreated: options.onConnectionCreated,
-    onConnected: options.onConnected,
-    onStatusChange: options.onStatusChange,
+    semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
-    onInteractiveReady: options.onInteractiveReady,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onRequestError: options.onRequestError,
     onError: options.onError,
   })
+}
+
+export function createLanguageServerSetPlugin(
+  options: LanguageServerSetPluginOptions,
+): LanguageServerPlugin {
+  return createResolvedLanguageServerPlugin(resolveLanguageServerSetOptions(options))
 }
 
 export function createLanguageServerAdapterPlugin(
   options: LanguageServerAdapterPluginOptions,
 ): LanguageServerPlugin {
-  const resolved = resolveAdapterOptions(options)
+  return createResolvedLanguageServerPlugin(resolveAdapterOptions(options))
+}
+
+function createResolvedLanguageServerPlugin(
+  resolved: LanguageServerResolvedAdapterOptions,
+): LanguageServerPlugin {
   const state = new LanguageServerPluginState()
 
   return {
@@ -294,6 +294,14 @@ class LanguageServerPluginState implements LanguageServerCommandTarget {
   public runNavigationCommand(command: LanguageServerNavigationCommand): boolean {
     for (const contribution of this.contributions) {
       if (contribution.runNavigationCommand(command)) return true
+    }
+
+    return false
+  }
+
+  public showHover(): boolean {
+    for (const contribution of this.contributions) {
+      if (contribution.showHover()) return true
     }
 
     return false
@@ -368,12 +376,15 @@ class LanguageServerCompletionEditContribution implements EditorEditContribution
   }
 }
 
+type ViewLanguageServerLane = LanguageServerSetLane & {
+  readonly pullDiagnostics: PullDiagnosticsController | null
+  readonly sync: DocumentSync
+}
+
 class LanguageServerContribution implements EditorViewContribution {
-  private readonly connection: LspConnection
-  /** Null when this contribution built the connection itself, and may therefore connect and dispose it. */
-  private readonly connectionLease: LspConnectionLease | null
-  private readonly diagnostics: DiagnosticsPresenter
-  private readonly documentSync: DocumentSync
+  private readonly lanes: readonly ViewLanguageServerLane[]
+  private readonly servers: LanguageServerSet
+  private readonly diagnostics: CompositeDiagnosticsPresenter
   private readonly completionSources: LanguageServerCompletionSources
   private readonly completion: CompletionController
   private readonly hoverDefinition: HoverDefinitionController
@@ -383,11 +394,13 @@ class LanguageServerContribution implements EditorViewContribution {
   /** Absent rather than idle when switched off, so nothing watches the typing at all. */
   private readonly formatOnType: FormatOnTypeController | null
   /** Absent unless the host asked for semantic colour; see LanguageServerSemanticTokensOptions. */
-  private readonly semanticTokens: SemanticTokenLayerOwner | null
+  private semanticTokens: SemanticTokenLayerOwner | null = null
+  private semanticTokensOptions: LanguageServerSemanticTokensOwnerOptions | null = null
+  private semanticTokensOwner: ViewLanguageServerLane | null = null
   private rename: RenameWidgetController | null = null
   /** The symbol an open prompt is renaming, which is what the prompt has to stay beside. */
   private renamePromptRange: OffsetRange | null = null
-  private readonly connectionRegistration: EditorDisposable | null
+  private viewDocument: ActiveDocument | null = null
   private disposed = false
 
   public constructor(
@@ -396,41 +409,26 @@ class LanguageServerContribution implements EditorViewContribution {
     private readonly options: LanguageServerResolvedAdapterOptions,
   ) {
     const prefix = context.highlightPrefix ?? options.defaultHighlightPrefix
-    this.diagnostics = new DiagnosticsPresenter(context, prefix, {
-      ...options.diagnostics,
-      onDiagnostics: options.onDiagnostics,
-    })
-    const connectionOptions: LspConnectionOptions = {
-      rootUri: options.rootUri,
-      initializationOptions: options.initializationOptions,
-      timeoutMs: options.timeoutMs,
-      capabilities: options.capabilities,
-      clientInfo: options.clientInfo,
-      notificationHandlers: options.notificationHandlers,
-      createTransport: options.createTransport,
-    }
-    const connectionCallbacks: LspConnectionCallbacks = {
-      onConnected: () => this.handleConnected(),
-      onUnavailable: () => this.clearRequestUi(),
-      onPublishDiagnostics: (params) => {
-        this.documentSync.publishDiagnostics(params)
-        this.codeActions.diagnosticsChanged()
-      },
-      onStatusChange: options.onStatusChange,
-      onError: options.onError,
-    }
-    this.connectionLease =
-      options.connectionProvider?.acquire(connectionOptions, connectionCallbacks) ?? null
-    this.connection =
-      this.connectionLease?.connection ?? new LspConnection(connectionOptions, connectionCallbacks)
-    this.connectionRegistration = options.onConnectionCreated?.(this.connectionContext()) ?? null
-    this.documentSync = new DocumentSync(this.connection.workspace, this.diagnostics, {
-      ...options.documentSync,
-      onDocumentClosed: () => this.completion.hide(),
-    })
+    const presenter = new DiagnosticsPresenter(context, prefix, options.diagnostics)
+    this.diagnostics = new CompositeDiagnosticsPresenter(
+      presenter,
+      rankedLanguageServerLanes(options.lanes, 'diagnostics').map((lane) => lane.id),
+      options.onDiagnostics,
+    )
+    this.lanes = options.lanes.map((lane) => this.createLane(lane))
+    this.servers = new LanguageServerSet(this.lanes)
     this.completionSources = new LanguageServerCompletionSources(
       context,
-      createLanguageServerCompletionSource(this.connection.client),
+      this.servers
+        .declared('completion')
+        .map((lane) =>
+          createLanguageServerCompletionSource(
+            lane.connection.client,
+            () => this.servers.ready('completion').includes(lane),
+            lane.onInteractiveReady,
+            lane.onRequestError,
+          ),
+        ),
     )
     this.completion = new CompletionController({
       context,
@@ -438,7 +436,7 @@ class LanguageServerContribution implements EditorViewContribution {
       completionEditFeature: options.completion.editFeature,
       completionWidgetClassNamespace: options.completion.widgetClassNamespace,
       completionAcceptOnCommitCharacter: options.completion.acceptOnCommitCharacter,
-      getActiveDocument: () => this.documentSync.activeDocument,
+      getActiveDocument: () => this.activeDocument(),
       ignorePointerTarget: (target) => this.hoverDefinition.containsTarget(target),
       onBeforeShow: () => this.hoverDefinition.clearPointerUi(),
       onRequestSuccess: () => options.onInteractiveReady?.(),
@@ -446,14 +444,16 @@ class LanguageServerContribution implements EditorViewContribution {
     })
     this.hoverDefinition = new HoverDefinitionController({
       context,
-      client: this.connection.client,
+      router: this.servers,
+      requestHover: (params, requestOptions, onUpdate) =>
+        this.servers.requestHover(params, requestOptions, onUpdate),
       hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
       defaultHighlightPrefix: options.defaultHighlightPrefix,
       linkHighlightNameNamespace: options.hoverDefinition.linkHighlightNameNamespace,
       tooltipClassNamespace: options.hoverDefinition.tooltipClassNamespace,
       navigationTimingNamePrefix: options.hoverDefinition.navigationTimingNamePrefix,
-      getActiveDocument: () => this.documentSync.activeDocument,
-      getDiagnostics: () => this.documentSync.diagnostics,
+      getActiveDocument: () => this.activeDocument(),
+      getDiagnostics: () => this.diagnostics.diagnostics,
       completionContainsTarget: (target) => this.completion.containsTarget(target),
       onOpenDefinition: options.onOpenDefinition,
       onOpenReferences: options.onOpenReferences,
@@ -461,37 +461,32 @@ class LanguageServerContribution implements EditorViewContribution {
       onRequestError: (error) => this.handleRequestError(error),
     })
     this.signatureHelp = new SignatureHelpController({
-      client: this.connection.client,
+      router: this.servers,
       context,
-      getActiveDocument: () => this.documentSync.activeDocument,
+      getActiveDocument: () => this.activeDocument(),
       onRequestError: (error) => this.handleRequestError(error),
       onRequestSuccess: () => options.onInteractiveReady?.(),
       tooltipClassNamespace: options.hoverDefinition.tooltipClassNamespace,
     })
     this.documentHighlights = new DocumentHighlightController({
-      client: this.connection.client,
+      router: this.servers,
       context,
-      getActiveDocument: () => this.documentSync.activeDocument,
+      getActiveDocument: () => this.activeDocument(),
       highlightName: `${context.highlightPrefix ?? options.defaultHighlightPrefix}-document-highlight`,
       onRequestError: (error) => this.handleRequestError(error),
     })
     this.codeActions = new CodeActionController({
-      client: this.connection.client,
+      router: this.servers,
       context,
       editFeature: options.completion.editFeature,
-      getActiveDocument: () => this.documentSync.activeDocument,
-      getDiagnostics: () => this.documentSync.diagnostics,
+      getActiveDocument: () => this.activeDocument(),
+      getDiagnostics: () => this.diagnostics.diagnostics,
       onRequestError: (error) => this.handleRequestError(error),
     })
     this.formatOnType = options.formatOnType
       ? new FormatOnTypeController({ context, editFeature: options.completion.editFeature })
       : null
-    this.semanticTokens = options.semanticTokens
-      ? new SemanticTokenLayerOwner(context, options.semanticTokens)
-      : null
     this.state.register(this)
-    // A leased connection may already be serving another view; connecting again would handshake twice.
-    if (!this.connectionLease) this.connection.connect()
     this.update(context.getSnapshot(), 'document', null)
   }
 
@@ -502,16 +497,22 @@ class LanguageServerContribution implements EditorViewContribution {
   ): void {
     if (this.disposed) return
 
+    this.updateViewDocument(snapshot, kind)
     this.hoverDefinition.update(snapshot, kind)
     if (anchoredSurfaceFollowsUpdate(kind)) this.reanchorRenamePrompt()
-    if (this.documentSync.shouldSync(kind, snapshot))
-      this.documentSync.sync(snapshot, change ?? null)
+    for (const lane of this.lanes) {
+      if (!lane.connection.isReady()) continue
+      if (!lane.sync.shouldSync(kind, snapshot)) continue
+
+      lane.sync.sync(snapshot, change ?? null)
+      lane.pullDiagnostics?.synchronize()
+    }
     this.completion.update(snapshot, kind, change ?? null)
     this.signatureHelp.update(snapshot, kind, change ?? null)
     this.documentHighlights.update(snapshot, kind)
     this.codeActions.update(kind)
     this.formatOnType?.update(snapshot, kind, change ?? null)
-    this.semanticTokens?.update(snapshot, kind)
+    this.syncSemanticTokens(snapshot, kind)
   }
 
   public dispose(): void {
@@ -519,10 +520,13 @@ class LanguageServerContribution implements EditorViewContribution {
 
     this.disposed = true
     this.state.unregister(this)
-    this.connectionRegistration?.dispose()
     this.hoverDefinition.dispose()
     this.completion.hide()
-    this.documentSync.close()
+    for (const lane of this.lanes) {
+      lane.pullDiagnostics?.dispose()
+      lane.sync.close()
+    }
+    this.diagnostics.clear()
     this.completionSources.dispose()
     this.completion.dispose()
     this.signatureHelp.dispose()
@@ -530,9 +534,11 @@ class LanguageServerContribution implements EditorViewContribution {
     this.codeActions.dispose()
     this.formatOnType?.dispose()
     this.semanticTokens?.dispose()
+    this.semanticTokensOptions?.dispose?.()
+    this.semanticTokensOptions = null
+    this.semanticTokensOwner = null
     this.rename?.dispose()
-    if (this.connectionLease) this.connectionLease.release()
-    else this.connection.dispose()
+    for (const lane of this.lanes) lane.connection.release()
   }
 
   public goToDefinitionFromSelection(): boolean {
@@ -546,12 +552,12 @@ class LanguageServerContribution implements EditorViewContribution {
     return this.hoverDefinition.runNavigationCommand(command)
   }
 
+  public showHover(): boolean {
+    return this.hoverDefinition.showHoverFromSelection()
+  }
+
   public moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean {
-    return this.diagnostics.moveMarker(
-      this.documentSync.activeDocument,
-      this.documentSync.diagnostics,
-      direction,
-    )
+    return this.diagnostics.moveMarker(this.activeDocument(), direction)
   }
 
   /**
@@ -561,9 +567,9 @@ class LanguageServerContribution implements EditorViewContribution {
    * returning false would let the keystroke fall through to another binding.
    */
   public formatDocument(): boolean {
-    const active = this.documentSync.activeDocument
+    const active = this.activeDocument()
     if (!active) return false
-    if (!this.connection.client.serverCapabilities?.documentFormattingProvider) return false
+    if (!this.servers.hasReady('formatting', 'textDocument/formatting')) return false
 
     void this.requestFormatting(active)
     return true
@@ -577,9 +583,9 @@ class LanguageServerContribution implements EditorViewContribution {
    * application that has one.
    */
   public renameSymbol(): boolean {
-    const active = this.documentSync.activeDocument
+    const active = this.activeDocument()
     if (!active) return false
-    if (!this.connection.client.serverCapabilities?.renameProvider) return false
+    if (!this.servers.hasReady('rename', 'textDocument/rename')) return false
 
     void this.runRename(active)
     return true
@@ -590,14 +596,141 @@ class LanguageServerContribution implements EditorViewContribution {
     return this.codeActions.applyAutoFix()
   }
 
+  private createLane(options: LanguageServerResolvedLaneOptions): ViewLanguageServerLane {
+    let lane: ViewLanguageServerLane | null = null
+    const diagnostics = this.diagnostics.forLane(options.id, options.onDiagnostics)
+    const connection = acquireResolvedLanguageServerLane(options, {
+      onDiagnosticRefresh: () => lane?.pullDiagnostics?.refresh(),
+      onPublishDiagnostics: (params) => {
+        if (options.features.diagnostics === undefined) return
+        if (!lane) return
+
+        lane.sync.publishDiagnostics(params)
+        this.codeActions.diagnosticsChanged()
+      },
+      onReady: () => {
+        if (lane) this.syncReadyLane(lane)
+      },
+      onUnavailable: () => {
+        if (!lane) return
+
+        lane.pullDiagnostics?.cancel()
+        lane.sync.clearDiagnostics()
+        this.syncSemanticTokens(this.context.getSnapshot(), 'document')
+      },
+    })
+    const sync = new DocumentSync(connection.workspace, diagnostics, {
+      ...this.options.documentSync,
+      onDocumentClosed: () => this.completion.hide(),
+    })
+    const pullDiagnostics =
+      options.features.diagnostics === undefined
+        ? null
+        : new PullDiagnosticsController({
+            client: connection.client,
+            getDocument: () => {
+              const active = sync.activeDocument
+              return active ? { uri: active.uri, version: active.lspVersion } : null
+            },
+            publish: (document, items) => {
+              sync.pullDiagnostics(document.uri, document.version, items)
+              this.codeActions.diagnosticsChanged()
+            },
+            onRequestError: (error) => {
+              if (options.onRequestError) options.onRequestError('textDocument/diagnostic', error)
+              else this.options.onRequestError?.(options.id, 'textDocument/diagnostic', error)
+            },
+          })
+    lane = {
+      connection,
+      features: options.features,
+      id: options.id,
+      pullDiagnostics,
+      onRequestError: (method, error) => {
+        if (options.onRequestError) options.onRequestError(method, error)
+        else this.options.onRequestError?.(options.id, method, error)
+      },
+      onInteractiveReady: () => {
+        if (options.onInteractiveReady) options.onInteractiveReady()
+        else this.options.onInteractiveReady?.()
+      },
+      sync,
+    }
+    void connection.ready.catch(() => undefined)
+    return lane
+  }
+
+  private syncReadyLane(lane: ViewLanguageServerLane): void {
+    if (this.disposed) return
+
+    const snapshot = this.context.getSnapshot()
+    if (!lane.sync.shouldSync('document', snapshot)) return
+    lane.sync.sync(snapshot, null)
+    lane.pullDiagnostics?.synchronize()
+    this.syncSemanticTokens(snapshot, 'document')
+  }
+
+  private syncSemanticTokens(
+    snapshot: EditorViewSnapshot,
+    kind: EditorViewContributionUpdateKind,
+  ): void {
+    const selected = this.options.semanticTokens
+      ? (this.servers.ready('semanticTokens')[0] ?? null)
+      : null
+    const owner = this.lanes.find((lane) => lane === selected) ?? null
+    if (owner !== this.semanticTokensOwner) this.replaceSemanticTokensOwner(owner)
+
+    this.semanticTokens?.update(snapshot, kind)
+  }
+
+  private replaceSemanticTokensOwner(owner: ViewLanguageServerLane | null): void {
+    this.semanticTokens?.dispose()
+    this.semanticTokens = null
+    this.semanticTokensOptions?.dispose?.()
+    this.semanticTokensOptions = null
+    this.semanticTokensOwner = owner
+    if (!owner || !this.options.semanticTokens) return
+
+    const options = this.options.semanticTokens({
+      id: owner.id,
+      connection: {
+        client: owner.connection.client,
+        workspace: owner.connection.workspace,
+      },
+    })
+    this.semanticTokensOptions = options
+    this.semanticTokens = new SemanticTokenLayerOwner(this.context, options)
+  }
+
+  private activeDocument(): ActiveDocument | null {
+    return this.viewDocument
+  }
+
+  private updateViewDocument(
+    snapshot: EditorViewSnapshot,
+    kind: EditorViewContributionUpdateKind,
+  ): void {
+    if (kind === 'clear') {
+      this.viewDocument = null
+      return
+    }
+    if (this.viewDocument?.textVersion === snapshot.textVersion && kind !== 'document') return
+
+    this.viewDocument = activeDocumentForSnapshot(snapshot, this.options.documentSync)
+  }
+
   private async runRename(active: ActiveDocument): Promise<void> {
     const selection = this.context.getSnapshot().selections[0]
     if (!selection) return
 
     const offset = selection.headOffset
-    const range = wordRangeAtOffset(active.fullText, offset)
-    const currentName = active.fullText.slice(range.start, range.end)
-    if (currentName.length === 0) return
+    const owner = this.servers.ready('rename', 'textDocument/rename')[0]
+    if (!owner) return
+
+    const prepared = await this.prepareRename(active, offset, owner)
+    if (!prepared) return
+
+    const { range, currentName } = prepared
 
     const anchor = this.context.getRangeClientRect(range.start, range.end)
     if (!anchor) return
@@ -611,22 +744,62 @@ class LanguageServerContribution implements EditorViewContribution {
         this.renamePromptRange = null
       }
       if (nextName === null || nextName === currentName) return
-      if (active !== this.documentSync.activeDocument) return
+      if (active !== this.activeDocument()) return
 
-      const edit = await this.connection.client.request<lsp.WorkspaceEdit | null>(
+      const edit = await this.servers.requestSingle(
+        owner,
         'textDocument/rename',
         {
           newName: nextName,
           position: offsetToLspPosition(active.fullText, offset),
           textDocument: { uri: active.uri },
         },
+        {},
+        null as lsp.WorkspaceEdit | null,
       )
-      if (active !== this.documentSync.activeDocument) return
+      if (active !== this.activeDocument()) return
 
       this.applyRenameEdit(active, edit)
     } catch (error) {
       this.handleRequestError(error)
     }
+  }
+
+  private async prepareRename(
+    active: ActiveDocument,
+    offset: number,
+    owner: LanguageServerSetLane,
+  ): Promise<{ readonly range: OffsetRange; readonly currentName: string } | null> {
+    const fallback = wordRangeAtOffset(active.fullText, offset)
+    const provider = owner.connection.client.serverCapabilities?.renameProvider
+    const supportsPrepare = typeof provider === 'object' && provider.prepareProvider === true
+    if (!supportsPrepare) return renameTarget(active.fullText, fallback)
+
+    const result = await this.servers.requestSingle<
+      lsp.TextDocumentPositionParams,
+      lsp.PrepareRenameResult | null
+    >(
+      owner,
+      'textDocument/prepareRename',
+      {
+        position: offsetToLspPosition(active.fullText, offset),
+        textDocument: { uri: active.uri },
+      },
+      {},
+      null,
+    )
+    if (!result) return null
+    if ('defaultBehavior' in result) return renameTarget(active.fullText, fallback)
+
+    const protocolRange = 'range' in result ? result.range : result
+    const range = {
+      start: lspPositionToOffset(active.fullText, protocolRange.start),
+      end: lspPositionToOffset(active.fullText, protocolRange.end),
+    }
+    const target = renameTarget(active.fullText, range)
+    if (!target || !('placeholder' in result)) return target
+
+    return { ...target, currentName: result.placeholder }
   }
 
   /**
@@ -691,17 +864,14 @@ class LanguageServerContribution implements EditorViewContribution {
 
   private async requestFormatting(active: ActiveDocument): Promise<void> {
     try {
-      const edits = await this.connection.client.request<lsp.TextEdit[] | null>(
-        'textDocument/formatting',
-        {
-          // The view snapshot carries the editor's own tab size, so the formatter is told the same
-          // width the document is displayed with.
-          options: formattingOptions(this.context.getSnapshot().tabSize),
-          textDocument: { uri: active.uri },
-        },
-      )
+      const edits = await this.servers.request<lsp.TextEdit[] | null>('textDocument/formatting', {
+        // The view snapshot carries the editor's own tab size, so the formatter is told the same
+        // width the document is displayed with.
+        options: formattingOptions(this.context.getSnapshot().tabSize),
+        textDocument: { uri: active.uri },
+      })
       // The document can change while the formatter runs; its edits describe the text it was given.
-      if (active !== this.documentSync.activeDocument) return
+      if (active !== this.activeDocument()) return
 
       const converted = formattingEdits(active.fullText, edits)
       if (converted.length === 0) return
@@ -729,26 +899,19 @@ class LanguageServerContribution implements EditorViewContribution {
     feature.applyCompletion({ edits, selection: { anchor: head, head } })
   }
 
-  private handleConnected(): void {
-    this.options.onConnected?.(this.connectionContext())
-  }
-
-  private connectionContext(): LanguageServerConnectionContext {
-    return {
-      client: this.connection.client,
-      workspace: this.connection.workspace,
-    }
-  }
-
-  private clearRequestUi(): void {
-    this.hoverDefinition.clearPointerUi()
-    this.completion.hide()
-  }
-
   private handleRequestError(error: unknown): void {
     if (isAbortError(error)) return
     this.options.onError?.(error)
   }
+}
+
+function renameTarget(
+  text: string,
+  range: OffsetRange,
+): { readonly range: OffsetRange; readonly currentName: string } | null {
+  const currentName = text.slice(range.start, range.end)
+  if (currentName.length === 0) return null
+  return { currentName, range }
 }
 
 function resolveAdapterOptions(
@@ -756,15 +919,8 @@ function resolveAdapterOptions(
 ): LanguageServerResolvedAdapterOptions {
   return {
     name: options.name,
-    rootUri: options.rootUri ?? 'file:///',
     hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground ?? false,
-    initializationOptions: options.initializationOptions,
-    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    capabilities: options.capabilities,
-    clientInfo: options.clientInfo,
-    notificationHandlers: options.notificationHandlers,
-    createTransport: options.createTransport,
-    connectionProvider: options.connectionProvider,
+    lanes: [resolvedLaneFromAdapterOptions(options)],
     defaultHighlightPrefix: options.defaultHighlightPrefix ?? DEFAULT_HIGHLIGHT_PREFIX,
     documentSync: options.documentSync ?? {},
     diagnostics: resolveDiagnosticsOptions(options),
@@ -772,49 +928,117 @@ function resolveAdapterOptions(
     formatOnType: options.formatOnType ?? true,
     hoverDefinition: resolveHoverDefinitionOptions(options),
     commands: options.commands ?? LANGUAGE_SERVER_COMMANDS,
+    semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
+    onDiagnostics: options.onDiagnostics,
+    onOpenDefinition: options.onOpenDefinition,
+    onOpenReferences: options.onOpenReferences,
+    onRequestError: options.onRequestError,
+    onError: options.onError,
+  }
+}
+
+function resolveLanguageServerSetOptions(
+  options: LanguageServerSetPluginOptions,
+): LanguageServerResolvedAdapterOptions {
+  return {
+    name: DEFAULT_PLUGIN_NAME,
+    hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground ?? false,
+    lanes: options.lanes.map(resolveLanguageServerLaneOptions),
+    defaultHighlightPrefix: DEFAULT_HIGHLIGHT_PREFIX,
+    documentSync: options.documentSync ?? {},
+    diagnostics: resolveDiagnosticsOptions(),
+    completion: resolveCompletionOptions(),
+    formatOnType: true,
+    hoverDefinition: resolveHoverDefinitionOptions(),
+    commands: LANGUAGE_SERVER_COMMANDS,
     semanticTokens: options.semanticTokens,
-    onConnectionCreated: options.onConnectionCreated,
-    onConnected: options.onConnected,
-    onStatusChange: options.onStatusChange,
     onDiagnostics: options.onDiagnostics,
     onInteractiveReady: options.onInteractiveReady,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onRequestError: options.onRequestError,
+    onError: options.onError,
+  }
+}
+
+function languageServerLaneFromPluginOptions(
+  options: LanguageServerPluginOptions,
+): LanguageServerLaneOptions {
+  return {
+    id: DEFAULT_PLUGIN_NAME,
+    features: allLanguageServerFeatures(),
+    rootUri: options.rootUri,
+    initializationOptions: options.initializationOptions,
+    timeoutMs: options.timeoutMs,
+    capabilities: options.capabilities,
+    clientInfo: options.clientInfo,
+    notificationHandlers: options.notificationHandlers,
+    webSocketRoute: options.webSocketRoute,
+    webSocketTransportOptions: options.webSocketTransportOptions,
+    connectionProvider: options.connectionProvider,
+    onConnectionCreated: options.onConnectionCreated,
+    onConnected: options.onConnected,
+    onStatusChange: options.onStatusChange,
+    onInteractiveReady: options.onInteractiveReady,
+    onError: options.onError,
+  }
+}
+
+function resolvedLaneFromAdapterOptions(
+  options: LanguageServerAdapterPluginOptions,
+): LanguageServerResolvedLaneOptions {
+  return {
+    id: options.name,
+    features: allLanguageServerFeatures(),
+    rootUri: options.rootUri,
+    initializationOptions: options.initializationOptions,
+    timeoutMs: options.timeoutMs,
+    capabilities: options.capabilities,
+    clientInfo: options.clientInfo,
+    notificationHandlers: options.notificationHandlers,
+    createTransport: options.createTransport,
+    connectionProvider: options.connectionProvider,
+    onConnectionCreated: options.onConnectionCreated,
+    onConnected: options.onConnected,
+    onStatusChange: options.onStatusChange,
+    onInteractiveReady: options.onInteractiveReady,
+    onRequestError: (method, error) => options.onRequestError?.(options.name, method, error),
     onError: options.onError,
   }
 }
 
 function resolveDiagnosticsOptions(
-  options: LanguageServerAdapterPluginOptions,
+  options?: LanguageServerAdapterPluginOptions,
 ): LanguageServerResolvedAdapterOptions['diagnostics'] {
   return {
-    minimapSourceId: options.diagnostics?.minimapSourceId ?? DEFAULT_DIAGNOSTICS_SOURCE_ID,
-    highlightNameNamespace: options.diagnostics?.highlightNameNamespace ?? DEFAULT_NAMESPACE,
+    minimapSourceId: options?.diagnostics?.minimapSourceId ?? DEFAULT_DIAGNOSTICS_SOURCE_ID,
+    highlightNameNamespace: options?.diagnostics?.highlightNameNamespace ?? DEFAULT_NAMESPACE,
     markerTimingNamePrefix:
-      options.diagnostics?.markerTimingNamePrefix ?? `${DEFAULT_TIMING_PREFIX}.marker`,
+      options?.diagnostics?.markerTimingNamePrefix ?? `${DEFAULT_TIMING_PREFIX}.marker`,
   }
 }
 
 function resolveCompletionOptions(
-  options: LanguageServerAdapterPluginOptions,
+  options?: LanguageServerAdapterPluginOptions,
 ): LanguageServerResolvedAdapterOptions['completion'] {
   return {
-    editFeature: options.completion?.editFeature ?? LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE,
-    acceptTimingName: options.completion?.acceptTimingName ?? DEFAULT_COMPLETION_ACCEPT_TIMING_NAME,
-    widgetClassNamespace: options.completion?.widgetClassNamespace,
-    acceptOnCommitCharacter: options.completion?.acceptOnCommitCharacter ?? false,
+    editFeature: options?.completion?.editFeature ?? LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE,
+    acceptTimingName:
+      options?.completion?.acceptTimingName ?? DEFAULT_COMPLETION_ACCEPT_TIMING_NAME,
+    widgetClassNamespace: options?.completion?.widgetClassNamespace,
+    acceptOnCommitCharacter: options?.completion?.acceptOnCommitCharacter ?? false,
   }
 }
 
 function resolveHoverDefinitionOptions(
-  options: LanguageServerAdapterPluginOptions,
+  options?: LanguageServerAdapterPluginOptions,
 ): LanguageServerResolvedAdapterOptions['hoverDefinition'] {
   return {
     linkHighlightNameNamespace:
-      options.hoverDefinition?.linkHighlightNameNamespace ?? DEFAULT_NAMESPACE,
-    tooltipClassNamespace: options.hoverDefinition?.tooltipClassNamespace ?? DEFAULT_NAMESPACE,
+      options?.hoverDefinition?.linkHighlightNameNamespace ?? DEFAULT_NAMESPACE,
+    tooltipClassNamespace: options?.hoverDefinition?.tooltipClassNamespace ?? DEFAULT_NAMESPACE,
     navigationTimingNamePrefix:
-      options.hoverDefinition?.navigationTimingNamePrefix ?? DEFAULT_TIMING_PREFIX,
+      options?.hoverDefinition?.navigationTimingNamePrefix ?? DEFAULT_TIMING_PREFIX,
   }
 }
 
@@ -850,6 +1074,10 @@ const LANGUAGE_SERVER_COMMANDS: readonly LanguageServerCommandSpec[] = [
         kind: 'typeDefinition',
         openMode: 'default',
       }),
+  },
+  {
+    id: 'editor.action.showHover',
+    run: (state) => state.showHover(),
   },
   {
     id: 'editor.action.goToReferences',

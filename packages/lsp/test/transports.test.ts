@@ -96,6 +96,11 @@ class FakeWorker implements LspWorkerLike {
     for (const listener of this.listenersFor('message')) listener(event)
   }
 
+  public fail(message: string): void {
+    const event = new ErrorEvent('error', { message })
+    for (const listener of this.listenersFor('error')) listener(event)
+  }
+
   public listenerCount(type: string): number {
     return this.listenersFor(type).size
   }
@@ -170,6 +175,37 @@ describe('WebSocket LSP transport', () => {
     expect(socket.sent).toEqual([])
     expect(socket.listenerCount('message')).toBe(0)
   })
+
+  it('signals an unexpected socket close but not an owned close', async () => {
+    FakeWebSocket.instances.length = 0
+    const firstPromise = createWebSocketLspTransport('ws://localhost:3000', {
+      WebSocketCtor: FakeWebSocket,
+    })
+    const firstSocket = FakeWebSocket.instances[0]
+    if (!firstSocket) throw new Error('missing socket')
+    firstSocket.open()
+    const first = await firstPromise
+    let unexpectedCloses = 0
+    first.onDidClose(() => {
+      unexpectedCloses += 1
+    })
+
+    firstSocket.close()
+
+    const secondPromise = createWebSocketLspTransport('ws://localhost:3000', {
+      WebSocketCtor: FakeWebSocket,
+    })
+    const secondSocket = FakeWebSocket.instances[1]
+    if (!secondSocket) throw new Error('missing socket')
+    secondSocket.open()
+    const second = await secondPromise
+    second.onDidClose(() => {
+      unexpectedCloses += 1
+    })
+    second.close()
+
+    expect(unexpectedCloses).toBe(1)
+  })
 })
 
 describe('Worker LSP transport', () => {
@@ -207,5 +243,17 @@ describe('Worker LSP transport', () => {
 
     expect(worker.listenerCount('message')).toBe(0)
     expect(worker.terminated).toBe(true)
+  })
+
+  it('signals the worker error that closed the transport', () => {
+    const worker = new FakeWorker()
+    const transport = createWorkerLspTransport(worker)
+    const errors: unknown[] = []
+    transport.onDidClose((error) => errors.push(error))
+
+    worker.fail('worker crashed')
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toEqual(new Error('worker crashed'))
   })
 })

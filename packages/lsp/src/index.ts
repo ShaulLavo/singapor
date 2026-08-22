@@ -60,6 +60,7 @@ export type {
   LspClientWorkspace,
   LspNotificationHandler,
   LspRequestHandle,
+  LspServerRequestHandler,
   LspServerMessageHandler,
   LspServerMessageNotification,
   PublishDiagnosticsNotificationParams,

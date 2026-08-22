@@ -14,6 +14,7 @@ import {
 } from './diagnostics'
 import { DIAGNOSTIC_MARKER_COLORS, DIAGNOSTIC_STYLES } from './plugin.styles'
 import type { OffsetRange } from './definitionNavigation'
+import type { LanguageServerDiagnosticSummary } from './types'
 
 const LSP_DIAGNOSTIC_ERROR = 1
 const LSP_DIAGNOSTIC_WARNING = 2
@@ -131,6 +132,145 @@ export class DiagnosticsPresenter {
 
   private minimapFeature(): EditorMinimapFeature | null {
     return this.context.getFeature?.(EDITOR_MINIMAP_FEATURE) ?? null
+  }
+}
+
+type DiagnosticBatch = {
+  readonly diagnostics: readonly lsp.Diagnostic[]
+  readonly text: string
+  readonly uri: lsp.DocumentUri | null
+  readonly version: number | null
+}
+
+export type CompositeDiagnosticsLanePresenter = {
+  clear(): void
+  render(text: string, diagnostics: readonly lsp.Diagnostic[]): void
+  publishSummary(
+    uri: lsp.DocumentUri,
+    version: number | null,
+    diagnostics: readonly lsp.Diagnostic[],
+  ): void
+}
+
+export class CompositeDiagnosticsPresenter {
+  readonly #batches = new Map<string, DiagnosticBatch>()
+  #diagnostics: readonly lsp.Diagnostic[] = []
+
+  public constructor(
+    private readonly presenter: DiagnosticsPresenter,
+    private readonly laneIds: readonly string[],
+    private readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void,
+  ) {}
+
+  public get diagnostics(): readonly lsp.Diagnostic[] {
+    return this.#diagnostics
+  }
+
+  public forLane(
+    laneId: string,
+    onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void,
+  ): CompositeDiagnosticsLanePresenter {
+    return {
+      clear: () => {
+        const current = this.#batches.get(laneId)
+        if (!current) return
+
+        this.#batches.set(laneId, { ...current, diagnostics: [] })
+        this.refreshDiagnostics()
+        this.renderCombined()
+      },
+      render: (text, diagnostics) => {
+        const current = this.#batches.get(laneId)
+        this.#batches.set(laneId, {
+          diagnostics,
+          text,
+          uri: current?.uri ?? null,
+          version: current?.version ?? null,
+        })
+        this.refreshDiagnostics()
+        this.renderCombined()
+      },
+      publishSummary: (uri, version, diagnostics) => {
+        const current = this.#batches.get(laneId)
+        if (!current && diagnostics.length === 0) {
+          onDiagnostics?.(summarizeDiagnostics(uri, version, diagnostics))
+          this.publishCombinedSummary()
+          return
+        }
+
+        this.#batches.set(laneId, {
+          diagnostics,
+          text: current?.text ?? '',
+          uri,
+          version,
+        })
+        this.refreshDiagnostics()
+        onDiagnostics?.(summarizeDiagnostics(uri, version, diagnostics))
+        this.publishCombinedSummary()
+      },
+    }
+  }
+
+  public clear(): void {
+    this.#batches.clear()
+    this.refreshDiagnostics()
+    this.presenter.clear()
+  }
+
+  public moveMarker(
+    active: DiagnosticsPresenterActiveDocument | null,
+    direction: DiagnosticsPresenterMarkerDirection,
+  ): boolean {
+    return this.presenter.moveMarker(active, this.diagnostics, direction)
+  }
+
+  private renderCombined(): void {
+    const text = this.currentText()
+    if (text === null) {
+      this.presenter.clear()
+      return
+    }
+
+    this.presenter.render(text, this.diagnostics)
+  }
+
+  private refreshDiagnostics(): void {
+    this.#diagnostics = this.laneIds.flatMap((id) => this.#batches.get(id)?.diagnostics ?? [])
+  }
+
+  private publishCombinedSummary(): void {
+    const current = this.currentBatch()
+    this.onDiagnostics?.(
+      summarizeDiagnostics(current?.uri ?? null, current?.version ?? null, this.diagnostics),
+    )
+  }
+
+  private currentText(): string | null {
+    for (const id of this.laneIds) {
+      const batch = this.#batches.get(id)
+      if (batch && batch.diagnostics.length > 0) return batch.text
+    }
+
+    for (const id of this.laneIds) {
+      const batch = this.#batches.get(id)
+      if (batch) return batch.text
+    }
+
+    return null
+  }
+
+  private currentBatch(): DiagnosticBatch | null {
+    for (const id of this.laneIds) {
+      const batch = this.#batches.get(id)
+      if (batch && batch.diagnostics.length > 0) return batch
+    }
+
+    for (const id of this.laneIds) {
+      const batch = this.#batches.get(id)
+      if (batch) return batch
+    }
+
+    return null
   }
 }
 

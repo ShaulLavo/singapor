@@ -46,9 +46,9 @@ export type AnchoredSurfaceOptions = {
    * Tallest the surface may grow on either side. A surface with nothing to scroll leaves it out: a
    * ceiling on a single-line input is a number no reader could ever act on.
    */
-  readonly maxHeightPx?: number
+  readonly maxHeightPx?: number | (() => number)
   /** The ceiling the surface landed with, for a surface whose scrolling body needs it too. */
-  onPlaced?(maxHeightPx: number): void
+  onPlaced?(maxHeightPx: number, placement: AnchoredSurfacePlacement): void
 }
 
 export type AnchoredSurface = EditorDisposable & {
@@ -107,7 +107,8 @@ export function createAnchoredSurface(options: AnchoredSurfaceOptions): Anchored
   ): void => {
     positionAnchorElement(anchor, rect)
     const viewportHeight = document.defaultView?.innerHeight ?? 0
-    const height = surfaceHeight(element, options.maxHeightPx)
+    const configuredMaxHeight = resolveMaxHeight(options.maxHeightPx)
+    const height = surfaceHeight(element, configuredMaxHeight)
     const placement = fittingPlacement(
       rect,
       height,
@@ -117,12 +118,12 @@ export function createAnchoredSurface(options: AnchoredSurfaceOptions): Anchored
       viewportMarginPx,
     )
     applyPlacement(element, placement, alignment, gapPx)
-    if (options.maxHeightPx === undefined) return
+    if (configuredMaxHeight === undefined) return
 
     const room = roomBeside(rect, placement, viewportHeight, gapPx, viewportMarginPx)
-    const maxHeightPx = surfaceCeiling(room, options.maxHeightPx)
+    const maxHeightPx = surfaceCeiling(room, configuredMaxHeight)
     element.style.maxHeight = `${maxHeightPx}px`
-    options.onPlaced?.(maxHeightPx)
+    options.onPlaced?.(maxHeightPx, placement)
   }
 
   return {
@@ -137,6 +138,11 @@ export function createAnchoredSurface(options: AnchoredSurfaceOptions): Anchored
       anchor.remove()
     },
   }
+}
+
+function resolveMaxHeight(maxHeightPx: number | (() => number) | undefined): number | undefined {
+  if (typeof maxHeightPx === 'function') return maxHeightPx()
+  return maxHeightPx
 }
 
 function createAnchorElement(

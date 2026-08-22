@@ -43,6 +43,10 @@ class FakeTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(): () => void {
+    return () => undefined
+  }
+
   public closed = false
 
   public close(): void {
@@ -282,22 +286,51 @@ describe('connectionProvider', () => {
    */
   function testProvider() {
     let connection: LspConnection | null = null
+    let connected = false
     const counts = { acquired: 0, released: 0 }
+    const leases = new Set<LspConnectionCallbacks>()
+    const fanout: LspConnectionCallbacks = {
+      onConnected: () => {
+        connected = true
+        for (const callbacks of leases) callbacks.onConnected()
+      },
+      onUnavailable: () => {
+        connected = false
+        for (const callbacks of leases) callbacks.onUnavailable()
+      },
+      onPublishDiagnostics: (params) => {
+        for (const callbacks of leases) callbacks.onPublishDiagnostics(params)
+      },
+      onStatusChange: (status) => {
+        for (const callbacks of leases) callbacks.onStatusChange?.(status)
+      },
+      onError: (error) => {
+        for (const callbacks of leases) callbacks.onError?.(error)
+      },
+    }
 
     return {
       counts,
       provider: {
         acquire: (options: LspConnectionOptions, callbacks: LspConnectionCallbacks) => {
           counts.acquired += 1
+          leases.add(callbacks)
           if (!connection) {
-            connection = new LspConnection(options, callbacks)
+            connection = new LspConnection(options, fanout)
             connection.connect()
+          } else if (connected) {
+            queueMicrotask(() => {
+              if (!leases.has(callbacks)) return
+              callbacks.onStatusChange?.('ready')
+              callbacks.onConnected()
+            })
           }
           const held = connection
           return {
             connection: held,
             release: () => {
               counts.released += 1
+              leases.delete(callbacks)
             },
           }
         },
@@ -385,15 +418,7 @@ describe('connectionProvider', () => {
       createLanguageServerAdapterPlugin({
         name: 'editor.test-lsp',
         createTransport: () => transport,
-        connectionProvider: {
-          acquire: (options, callbacks) => {
-            const lease = connectionProvider.acquire(options, callbacks)
-            // What the pool does for a late joiner, in the shape the contract
-            // requires: never synchronously, because the caller is mid-constructor.
-            queueMicrotask(() => callbacks.onConnected())
-            return lease
-          },
-        },
+        connectionProvider,
         defaultHighlightPrefix: 'editor-test',
         completion: { acceptTimingName: 'testLsp.completion.accept' },
         onConnected,

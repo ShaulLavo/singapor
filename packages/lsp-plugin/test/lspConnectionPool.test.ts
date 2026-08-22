@@ -16,6 +16,7 @@ class FakeTransport implements LspManagedTransport {
   public readonly sent: string[] = []
   public closed = false
   private readonly handlers = new Set<LspTransportHandler>()
+  private readonly closeHandlers = new Set<() => void>()
 
   public constructor() {
     FakeTransport.created.push(this)
@@ -33,6 +34,11 @@ class FakeTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(handler: () => void): () => void {
+    this.closeHandlers.add(handler)
+    return () => this.closeHandlers.delete(handler)
+  }
+
   public close(): void {
     this.closed = true
     this.handlers.clear()
@@ -40,6 +46,11 @@ class FakeTransport implements LspManagedTransport {
 
   public receive(message: unknown): void {
     for (const handler of this.handlers) handler(JSON.stringify(message))
+  }
+
+  public fail(): void {
+    for (const handler of this.closeHandlers) handler()
+    this.closeHandlers.clear()
   }
 
   public methods(): readonly unknown[] {
@@ -62,6 +73,7 @@ function connectionOptions(overrides: Partial<LspConnectionOptions> = {}): LspCo
 function callbacks() {
   return {
     onConnected: vi.fn<() => void>(),
+    onDiagnosticRefresh: vi.fn<() => void>(),
     onPublishDiagnostics: vi.fn<(params: unknown) => void>(),
     onStatusChange: vi.fn<(status: LanguageServerStatus) => void>(),
     onUnavailable: vi.fn<() => void>(),
@@ -135,6 +147,24 @@ describe('LspConnectionPool', () => {
     expect(FakeTransport.created[0]?.closed).toBe(false)
   })
 
+  it('retires a dead ready connection so a later borrower gets a live one', async () => {
+    const provider = pool.provider(KEY)
+    const firstCallbacks = callbacks()
+    provider.acquire(connectionOptions(), firstCallbacks)
+    const first = FakeTransport.created[0]
+    if (!first) throw new Error('missing transport')
+    completeHandshake(first)
+    await flush()
+
+    first.fail()
+    const replacement = provider.acquire(connectionOptions(), callbacks())
+
+    expect(firstCallbacks.onUnavailable).toHaveBeenCalledTimes(1)
+    expect(FakeTransport.created).toHaveLength(2)
+    expect(replacement.connection).not.toBeUndefined()
+    expect(events.some((event) => event.kind === 'retired')).toBe(true)
+  })
+
   it('closes a connection nothing has borrowed once the grace period passes', () => {
     vi.useFakeTimers()
     const lease = pool.provider(KEY).acquire(connectionOptions(), callbacks())
@@ -183,6 +213,52 @@ describe('LspConnectionPool', () => {
 
     expect(first.onPublishDiagnostics).toHaveBeenCalledTimes(1)
     expect(second.onPublishDiagnostics).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers diagnostic refresh requests to every borrower and acknowledges the server', async () => {
+    const provider = pool.provider(KEY)
+    const first = callbacks()
+    const second = callbacks()
+    provider.acquire(connectionOptions(), first)
+    provider.acquire(connectionOptions(), second)
+    const transport = FakeTransport.created[0]
+    if (!transport) throw new Error('missing transport')
+    completeHandshake(transport)
+    await flush()
+
+    transport.receive({
+      jsonrpc: '2.0',
+      id: 'refresh',
+      method: 'workspace/diagnostic/refresh',
+      params: null,
+    })
+    await flush()
+
+    expect(first.onDiagnosticRefresh).toHaveBeenCalledTimes(1)
+    expect(second.onDiagnosticRefresh).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(transport.sent.at(-1) ?? '{}')).toMatchObject({ id: 'refresh', result: null })
+  })
+
+  it('delivers pooled diagnostic refresh notifications to every borrower', async () => {
+    const provider = pool.provider(KEY)
+    const first = callbacks()
+    const second = callbacks()
+    provider.acquire(connectionOptions(), first)
+    provider.acquire(connectionOptions(), second)
+    const transport = FakeTransport.created[0]
+    if (!transport) throw new Error('missing transport')
+    completeHandshake(transport)
+    await flush()
+    const sentBefore = transport.sent.length
+
+    transport.receive({
+      jsonrpc: '2.0',
+      method: 'workspace/diagnostic/refresh',
+    })
+
+    expect(first.onDiagnosticRefresh).toHaveBeenCalledTimes(1)
+    expect(second.onDiagnosticRefresh).toHaveBeenCalledTimes(1)
+    expect(transport.sent).toHaveLength(sentBefore)
   })
 
   it('stops delivering to a borrower that released', async () => {

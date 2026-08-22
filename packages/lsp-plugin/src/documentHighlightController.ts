@@ -5,17 +5,17 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core'
-import type { LspClient } from '@singapor/lsp'
 import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
 
 import type { ActiveDocument } from './pluginTypes'
+import type { LanguageServerFeatureRouter } from './serverSet'
 
 /** Matches the hover debounce: both answer "what is under the caret", and should feel alike. */
 const DOCUMENT_HIGHLIGHT_DEBOUNCE_MS = 150
 
 export type DocumentHighlightControllerOptions = {
   readonly context: EditorViewContributionContext
-  readonly client: LspClient
+  readonly router: LanguageServerFeatureRouter
   readonly highlightName: string
   readonly getActiveDocument: () => ActiveDocument | null
   readonly onRequestError: (error: unknown) => void
@@ -84,7 +84,9 @@ export class DocumentHighlightController {
   private async request(offset: number): Promise<void> {
     const active = this.options.getActiveDocument()
     if (!active) return this.clear()
-    if (!this.options.client.serverCapabilities?.documentHighlightProvider) return
+    if (!this.options.router.hasReady('documentHighlights', 'textDocument/documentHighlight')) {
+      return
+    }
 
     const abort = new AbortController()
     const requestId = this.requestId + 1
@@ -92,7 +94,7 @@ export class DocumentHighlightController {
     this.abort = abort
 
     try {
-      const highlights = await this.options.client.request<lsp.DocumentHighlight[] | null>(
+      const highlights = await this.options.router.request<lsp.DocumentHighlight[] | null>(
         'textDocument/documentHighlight',
         {
           position: offsetToLspPosition(active.fullText, offset),

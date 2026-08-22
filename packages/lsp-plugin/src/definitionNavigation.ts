@@ -1,7 +1,8 @@
-import { lspPositionToOffset, offsetToLspPosition, type LspClient } from '@singapor/lsp'
+import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { documentUriToFileName } from './paths'
+import type { LanguageServerFeatureRouter } from './serverSet'
 import type { LanguageServerDefinitionTarget, LanguageServerNavigationKind } from './types'
 
 /**
@@ -70,14 +71,14 @@ const REQUEST_METHODS: Record<Exclude<LanguageServerNavigationKind, 'references'
  * from callers so higher-level orchestration can work with a single shape.
  */
 export async function requestDefinition(
-  client: LspClient,
+  client: LanguageServerFeatureRouter,
   request: DefinitionRequest,
 ): Promise<DefinitionResult> {
   return requestNavigationTargets(client, { ...request, kind: 'definition' })
 }
 
 export async function requestNavigationTargets(
-  client: LspClient,
+  client: LanguageServerFeatureRouter,
   request: NavigationRequest,
 ): Promise<DefinitionResult> {
   if (request.kind === 'references') return requestReferences(client, request)
@@ -94,7 +95,7 @@ export async function requestNavigationTargets(
 }
 
 async function requestReferences(
-  client: LspClient,
+  client: LanguageServerFeatureRouter,
   request: NavigationRequest,
 ): Promise<DefinitionResult> {
   const raw = await client.request<lsp.Location[] | null>(

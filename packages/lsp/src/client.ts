@@ -8,7 +8,9 @@ import {
 import {
   createMethodNotFoundResponse,
   createNotificationMessage,
+  createInternalErrorResponse,
   createRequestMessage,
+  createResponseMessage,
   isNotificationMessage,
   isRequestMessage,
   isResponseMessage,
@@ -26,6 +28,7 @@ import type {
   LspNotificationHandler,
   LspRequestHandle,
   LspServerMessageHandler,
+  LspServerRequestHandler,
   LspClientWorkspace,
   LspTransport,
   LspUnhandledNotificationHandler,
@@ -47,6 +50,7 @@ export type LspClientConfig = {
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   readonly unhandledNotification?: LspUnhandledNotificationHandler<LspClient>
   readonly serverMessageHandler?: LspServerMessageHandler<LspClient>
+  readonly serverRequestHandlers?: Readonly<Record<string, LspServerRequestHandler<LspClient>>>
 }
 
 type PendingRequest = {
@@ -487,10 +491,32 @@ export class LspClient {
   }
 
   private handleRequest(message: lsp.RequestMessage): void {
-    const transport = this.requireTransport()
-    const id = message.id ?? null
+    const handler = this.config.serverRequestHandlers?.[message.method]
+    if (!handler) {
+      this.sendServerResponse(createMethodNotFoundResponse(message.id, message.method))
+      return
+    }
+
+    let result: unknown
     try {
-      transport.send(JSON.stringify(createMethodNotFoundResponse(id, message.method)))
+      result = handler(this, message.params, message)
+    } catch (error) {
+      this.sendServerResponse(createInternalErrorResponse(message.id, error))
+      return
+    }
+
+    void Promise.resolve(result).then(
+      (result) => this.sendServerResponse(createResponseMessage(message.id, result)),
+      (error) => this.sendServerResponse(createInternalErrorResponse(message.id, error)),
+    )
+  }
+
+  private sendServerResponse(message: lsp.ResponseMessage): void {
+    const transport = this.transport
+    if (!transport) return
+
+    try {
+      transport.send(JSON.stringify(message))
     } catch (error) {
       this.handleTransportSendError(error)
     }

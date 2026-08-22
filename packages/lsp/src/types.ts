@@ -117,6 +117,12 @@ export type LspNotificationHandler<TClient = unknown> = (
   message: lsp.NotificationMessage,
 ) => boolean | void
 
+export type LspServerRequestHandler<TClient = unknown> = (
+  client: TClient,
+  params: unknown,
+  message: lsp.RequestMessage,
+) => unknown | Promise<unknown>
+
 export type LspUnhandledNotificationHandler<TClient = unknown> = (
   client: TClient,
   method: string,

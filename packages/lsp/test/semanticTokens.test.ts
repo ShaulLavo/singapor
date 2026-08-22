@@ -20,6 +20,16 @@ describe('defaultClientCapabilities', () => {
   it('declares no semantic-tokens block', () => {
     expect(defaultClientCapabilities().textDocument?.semanticTokens).toBeUndefined()
   })
+
+  it('declares document pull diagnostics and server refresh support', () => {
+    const capabilities = defaultClientCapabilities()
+
+    expect(capabilities.textDocument?.diagnostic).toEqual({
+      dynamicRegistration: false,
+      relatedDocumentSupport: false,
+    })
+    expect(capabilities.workspace?.diagnostics?.refreshSupport).toBe(true)
+  })
 })
 
 describe('semanticTokensClientCapability', () => {

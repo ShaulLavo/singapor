@@ -55,30 +55,51 @@ export type EditorCompletionSourceSet = {
   forLanguage(languageId: EditorViewSnapshot['languageId']): readonly EditorCompletionSource[]
 }
 
-export function createLanguageServerCompletionSource(client: LspClient): EditorCompletionSource {
+export function createLanguageServerCompletionSource(
+  client: LspClient,
+  isAvailable: () => boolean = () => true,
+  onRequestSuccess?: () => void,
+  onRequestError?: (method: string, error: unknown) => void,
+): EditorCompletionSource {
   return {
     // The server's answer is handed on as it arrives rather than repackaged, so nothing stands
     // between the reply and the list but the merge the caller does anyway.
     provideCompletionItems: (request) => {
       // Asking a connection that has not finished handshaking would spend a round-trip to be told
       // so; the other sources answer meanwhile.
-      if (!client.initialized) return null
+      if (!client.initialized || !isAvailable()) return null
 
-      return client.request<EditorCompletionAnswer>(
-        'textDocument/completion',
-        {
-          textDocument: { uri: request.uri },
-          position: offsetToLspPosition(request.text, request.offset),
-          context: request.trigger,
-        } satisfies lsp.CompletionParams,
-        { signal: request.signal },
-      )
+      return client
+        .request<EditorCompletionAnswer>(
+          'textDocument/completion',
+          {
+            textDocument: { uri: request.uri },
+            position: offsetToLspPosition(request.text, request.offset),
+            context: request.trigger,
+          } satisfies lsp.CompletionParams,
+          { signal: request.signal },
+        )
+        .then(
+          (answer) => {
+            onRequestSuccess?.()
+            return answer
+          },
+          (error: unknown) => {
+            onRequestError?.('textDocument/completion', error)
+            return null
+          },
+        )
     },
     // Most servers send an item without its import edit and expect a resolve round-trip; applying
     // the unresolved item is what silently drops auto-imports.
     resolveCompletionItem: (item) =>
       completionNeedsResolve(item, client.serverCapabilities)
-        ? client.request<lsp.CompletionItem>('completionItem/resolve', item)
+        ? client
+            .request<lsp.CompletionItem>('completionItem/resolve', item)
+            .then(undefined, (error) => {
+              onRequestError?.('completionItem/resolve', error)
+              return item
+            })
         : null,
   }
 }
@@ -97,29 +118,35 @@ export function createLanguageServerCompletionSource(client: LspClient): EditorC
 export class LanguageServerCompletionSources
   implements EditorCompletionSourceSet, EditorDisposable
 {
-  private readonly registration: EditorDisposable | null
+  private readonly registrations: readonly EditorDisposable[]
 
   public constructor(
     private readonly context: EditorViewContributionContext,
-    private readonly source: EditorCompletionSource,
+    private readonly sources: readonly EditorCompletionSource[],
   ) {
     // Every document, because which ones a server answers for is a question the plugin settles by
     // opening them, not one a language name can be matched against.
-    this.registration =
-      context.registerProvider?.(EDITOR_COMPLETION_SOURCE, { language: '*' }, source) ?? null
+    this.registrations = sources.flatMap((source) => {
+      const registration = context.registerProvider?.(
+        EDITOR_COMPLETION_SOURCE,
+        { language: '*' },
+        source,
+      )
+      return registration ? [registration] : []
+    })
   }
 
   public forLanguage(
     languageId: EditorViewSnapshot['languageId'],
   ): readonly EditorCompletionSource[] {
-    const registered = this.registration
-      ? this.context.getProviders?.(EDITOR_COMPLETION_SOURCE, languageId)
-      : null
+    const registered = this.context.getProviders?.(EDITOR_COMPLETION_SOURCE, languageId)
+    if (!registered) return this.sources
 
-    return registered ?? [this.source]
+    const missing = this.sources.filter((source) => !registered.includes(source))
+    return registered.concat(missing)
   }
 
   public dispose(): void {
-    this.registration?.dispose()
+    for (const registration of this.registrations) registration.dispose()
   }
 }

@@ -29,8 +29,11 @@ describe('the surfaces the plugin puts on screen', () => {
 
     editor.type('l')
     await vi.advanceTimersByTimeAsync(90)
+    expect(editor.completionRequests()).toHaveLength(1)
     editor.answerCompletion([{ label: 'value' }])
     await flushPromises()
+    expect(editor.reportedErrors()).toEqual([])
+    expect(editor.completionLabels()).toEqual(['value'])
 
     expectAnchoredAt(editor.completionElement(), 20)
   })

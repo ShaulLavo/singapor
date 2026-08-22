@@ -295,6 +295,72 @@ describe('host notification handlers', () => {
   })
 })
 
+describe('document pull diagnostics', () => {
+  it('pulls a pull-only lane into the composite and re-pulls after server refresh', async () => {
+    const harness = await narrowPlugin()
+
+    expect(harness.initializeParams.capabilities.textDocument?.diagnostic).toBeDefined()
+    expect(harness.initializeParams.capabilities.workspace?.diagnostics?.refreshSupport).toBe(true)
+
+    await harness.answerInitialize({
+      diagnosticProvider: {
+        identifier: 'eslint',
+        interFileDependencies: false,
+        workspaceDiagnostics: false,
+      },
+    })
+    await flushPromises()
+
+    const first = harness.socket.find('textDocument/diagnostic')
+    expect(first?.params).toEqual({
+      identifier: 'eslint',
+      textDocument: { uri: 'file:///src/index.ts' },
+    })
+
+    harness.socket.receive({
+      jsonrpc: '2.0',
+      id: first?.id,
+      result: {
+        kind: 'full',
+        resultId: 'eslint-1',
+        items: [
+          {
+            message: 'pull-only diagnostic',
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+            severity: 1,
+          },
+        ],
+      },
+    })
+    await flushPromises()
+
+    expect(harness.diagnostics.at(-1)?.diagnostics).toEqual([
+      expect.objectContaining({ message: 'pull-only diagnostic' }),
+    ])
+
+    harness.socket.receive({
+      jsonrpc: '2.0',
+      id: 'diagnostic-refresh',
+      method: 'workspace/diagnostic/refresh',
+      params: null,
+    })
+    await flushPromises()
+
+    const pulls = harness.socket
+      .messages()
+      .filter((message) => message.method === 'textDocument/diagnostic')
+    expect(pulls).toHaveLength(2)
+    expect(pulls[1]?.params).toEqual({
+      identifier: 'eslint',
+      previousResultId: 'eslint-1',
+      textDocument: { uri: 'file:///src/index.ts' },
+    })
+    expect(
+      harness.socket.messages().find((message) => message.id === 'diagnostic-refresh'),
+    ).toMatchObject({ result: null })
+  })
+})
+
 function activate(
   plugin: ReturnType<typeof createLanguageServerPlugin>,
 ): EditorViewContributionProvider {
@@ -391,7 +457,7 @@ describe('the semantic token layer the narrow factory hands over', () => {
     dispose(): void
   }
 
-  function layerHarness(withBlock: boolean): LayerHarness {
+  async function layerHarness(withBlock: boolean): Promise<LayerHarness> {
     const delivered: LayerHarness['delivered'] = []
     const requests: number[] = []
     const disposals: number[] = []
@@ -424,6 +490,20 @@ describe('the semantic token layer the narrow factory hands over', () => {
     const provider = activate(plugin)
     const contribution = provider.createContribution(layerContext(() => snapshot, painted))
     if (!contribution) throw new Error('missing contribution')
+    await flushPromises()
+    const socket = StubSocket.latest()
+    const initialize = socket?.find('initialize')
+    if (!socket || !initialize) throw new Error('missing initialize request')
+    socket.receive({
+      id: initialize.id,
+      jsonrpc: '2.0',
+      result: {
+        capabilities: {
+          semanticTokensProvider: { legend: { tokenModifiers: [], tokenTypes: [] } },
+        },
+      },
+    })
+    await flushPromises()
 
     return {
       delivered,
@@ -438,8 +518,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
     }
   }
 
-  it('delivers a layer the host can push to', () => {
-    const harness = layerHarness(true)
+  it('delivers a layer the host can push to', async () => {
+    const harness = await layerHarness(true)
 
     expect(harness.delivered).toHaveLength(1)
     expect(harness.delivered[0]?.documentId).toBe('src/index.ts')
@@ -456,8 +536,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
     harness.dispose()
   })
 
-  it('creates nothing at all when the host supplies no block', () => {
-    const harness = layerHarness(false)
+  it('creates nothing at all when the host supplies no block', async () => {
+    const harness = await layerHarness(false)
     harness.update('src/index.ts', 'typescript')
 
     expect(harness.delivered).toHaveLength(0)
@@ -471,8 +551,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
    * from the moment either changes, and the replacement arrives as a *new* layer — which is why
    * `clear()` across a document change is a call on a disposed handle rather than a reset.
    */
-  it('replaces the layer when the document changes, rather than re-pointing it', () => {
-    const harness = layerHarness(true)
+  it('replaces the layer when the document changes, rather than re-pointing it', async () => {
+    const harness = await layerHarness(true)
     harness.update('src/other.ts', 'typescript')
 
     expect(harness.delivered).toHaveLength(2)
@@ -481,8 +561,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
     harness.dispose()
   })
 
-  it('replaces it when only the language id changes', () => {
-    const harness = layerHarness(true)
+  it('replaces it when only the language id changes', async () => {
+    const harness = await layerHarness(true)
     harness.update('src/index.ts', 'javascript')
 
     expect(harness.delivered).toHaveLength(2)
@@ -490,8 +570,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
     harness.dispose()
   })
 
-  it('tears the layer down with the contribution', () => {
-    const harness = layerHarness(true)
+  it('tears the layer down with the contribution', async () => {
+    const harness = await layerHarness(true)
     harness.dispose()
 
     expect(harness.disposals).toEqual([0])

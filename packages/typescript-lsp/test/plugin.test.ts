@@ -14,6 +14,7 @@ import type {
 import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
 import type { LspClient, LspWebSocketLike, LspWorkerLike } from '@singapor/lsp'
 import { semanticTokensClientCapability } from '@singapor/lsp'
+import { HOVER_REQUEST_DEBOUNCE_MS, TOOLTIP_HIDE_DELAY_MS } from '@singapor/lsp-plugin/tooltip'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'
@@ -229,10 +230,11 @@ describe('createTypeScriptLspPlugin', () => {
     })
     expect(params.clientInfo).toEqual({ name: 'example-app' })
     expect(handed.client).not.toBeNull()
-    expect(handed.layer).not.toBeNull()
+    expect(handed.layer).toBeNull()
 
     worker.receive(initializeResponse(initialize))
     await flushPromises()
+    expect(handed.layer).not.toBeNull()
     plugin.setWorkspaceFiles([{ path: 'src/other.ts', text: 'export const other = 1' }])
 
     expect(sentMethods(worker)).toContain('editor/typescript/setWorkspaceFiles')
@@ -420,12 +422,14 @@ describe('createTypeScriptLspPlugin', () => {
   it('reports hover request timeouts through the TypeScript adapter controller', async () => {
     vi.useFakeTimers()
     const worker = new FakeWorker()
-    const errors: unknown[] = []
+    const requestErrors: Array<{ readonly method: string; readonly error: unknown }> = []
+    const lifecycleErrors: unknown[] = []
     const context = viewContributionContext(editorSnapshot())
     const plugin = createTypeScriptLspPlugin({
       timeoutMs: 20,
       workerFactory: () => worker,
-      onError: (error) => errors.push(error),
+      onRequestError: (method, error) => requestErrors.push({ method, error }),
+      onError: (error) => lifecycleErrors.push(error),
     })
     const provider = activatePlugin(plugin)
     provider.createContribution(context)
@@ -442,7 +446,10 @@ describe('createTypeScriptLspPlugin', () => {
     await vi.advanceTimersByTimeAsync(25)
     await flushPromises()
 
-    expect(errors.map(errorMessage)).toEqual(['LSP request timed out: textDocument/hover'])
+    expect(requestErrors.map(({ method, error }) => [method, errorMessage(error)])).toEqual([
+      ['textDocument/hover', 'LSP request timed out: textDocument/hover'],
+    ])
+    expect(lifecycleErrors).toHaveLength(0)
   })
 
   it('cancels stale completion requests through the TypeScript adapter controller', async () => {
@@ -604,6 +611,7 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(tooltipElement().querySelector('pre > code')?.textContent).toBe('const value: string')
   })
@@ -788,6 +796,7 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(document.body.textContent).toContain('const value: string')
     expect(document.body.textContent).toContain('bad assignment')
@@ -800,7 +809,7 @@ describe('createTypeScriptLspPlugin', () => {
     expect(tooltipElement().style.getPropertyValue('position-anchor')).toMatch(
       /^--editor-typescript-lsp-hover-/,
     )
-    expect(tooltipElement().style.getPropertyValue('position-area')).toBe('bottom center')
+    expect(tooltipElement().style.getPropertyValue('position-area')).toBe('top center')
     expect(tooltipElement().style.overflow).toBe('hidden')
     expect(tooltipElement().style.pointerEvents).toBe('auto')
     expect(tooltipElement().style.userSelect).toBe('text')
@@ -825,6 +834,9 @@ describe('createTypeScriptLspPlugin', () => {
     mockElementRect(tooltipAnchorElement(), new DOMRect(12, 78, 40, 18))
     vi.mocked(context.textOffsetFromPoint).mockReturnValue(3)
     context.scrollElement.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 18, clientY: 25, buttons: 0 }),
+    )
+    context.scrollElement.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 18, clientY: 76, buttons: 0 }),
     )
     await vi.advanceTimersByTimeAsync(260)
@@ -832,16 +844,16 @@ describe('createTypeScriptLspPlugin', () => {
 
     copyButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await flushPromises()
-    expect(writeText).toHaveBeenCalledWith('const value: string\n\nerror: bad assignment')
+    expect(writeText).toHaveBeenCalledWith('const value: string')
     expect(copyButton().getAttribute('aria-label')).toBe('Copied hover text')
 
     context.scrollElement.dispatchEvent(new PointerEvent('pointerleave'))
     tooltipElement().dispatchEvent(new PointerEvent('pointerenter'))
-    await vi.advanceTimersByTimeAsync(190)
+    await vi.advanceTimersByTimeAsync(TOOLTIP_HIDE_DELAY_MS + 10)
     expect(tooltipElement().hidden).toBe(false)
 
     tooltipElement().dispatchEvent(new PointerEvent('pointerleave'))
-    await vi.advanceTimersByTimeAsync(190)
+    await vi.advanceTimersByTimeAsync(TOOLTIP_HIDE_DELAY_MS + 10)
     expect(tooltipElement().hidden).toBe(true)
   })
 
@@ -872,6 +884,7 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(
       tooltipElement()
@@ -913,9 +926,10 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(tooltipElement().hidden).toBe(false)
-    expect(tooltipElement().style.maxHeight).toBe('420px')
+    expect(tooltipElement().style.maxHeight).toBe('250px')
     expect(tooltipElement().style.overflow).toBe('hidden')
     expect(tooltipBody()?.style.overflowY).toBe('auto')
     expect(tooltipBody()?.style.minHeight).toBe('0')
@@ -1064,6 +1078,7 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(tooltipElement().hidden).toBe(false)
     expect(tooltipElement().querySelector('pre > code')?.textContent).toBe('const value: number')
@@ -1654,6 +1669,16 @@ function initializeResponse(request: JsonMessage): JsonMessage {
           resolveProvider: false,
           triggerCharacters: ['.'],
         },
+        definitionProvider: true,
+        hoverProvider: true,
+        implementationProvider: true,
+        referencesProvider: true,
+        typeDefinitionProvider: true,
+        semanticTokensProvider: {
+          legend: { tokenTypes: [], tokenModifiers: [] },
+          full: true,
+          range: true,
+        },
       },
     },
   }
@@ -1814,4 +1839,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function flushPromises(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
+  await Promise.resolve()
+}
+
+async function finishHoverReveal(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS - 260)
 }

@@ -4,7 +4,7 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
-import { lspPositionToOffset, offsetToLspPosition, type LspClient } from '@singapor/lsp'
+import { lspPositionToOffset, offsetToLspPosition, type LspRequestOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
@@ -25,9 +25,12 @@ import { LINK_HIGHLIGHT_STYLE } from './plugin.styles'
 import type { ActiveDocument, LanguageServerNavigationCommand } from './pluginTypes'
 import {
   createTooltipController,
+  HOVER_ASYNC_DISPATCH_DELAY_MS,
+  HOVER_LOADING_DELAY_MS,
   HOVER_REQUEST_DEBOUNCE_MS,
   type TooltipController,
 } from './tooltip'
+import type { LanguageServerFeatureRouter, LanguageServerHoverUpdate } from './serverSet'
 import type {
   LanguageServerDefinitionTarget,
   LanguageServerNavigationKind,
@@ -37,7 +40,12 @@ import type {
 
 export type HoverDefinitionControllerOptions = {
   readonly context: EditorViewContributionContext
-  readonly client: LspClient
+  readonly router: LanguageServerFeatureRouter
+  requestHover(
+    params: lsp.TextDocumentPositionParams,
+    options: LspRequestOptions,
+    onUpdate: (update: LanguageServerHoverUpdate) => void,
+  ): Promise<lsp.Hover | null>
   readonly hoverMarkdownCodeBackground: boolean
   readonly defaultHighlightPrefix?: string
   readonly linkHighlightNameNamespace?: string
@@ -55,12 +63,29 @@ export type HoverDefinitionControllerOptions = {
   onRequestError(error: unknown): void
 }
 
+type HoverOperation = {
+  readonly id: number
+  readonly active: ActiveDocument
+  readonly offset: number
+  readonly targetRange: OffsetRange
+  readonly diagnostics: readonly lsp.Diagnostic[]
+  readonly focusOnShow: boolean
+  hovers: readonly lsp.Hover[]
+  pending: boolean
+  revealed: boolean
+  loading: boolean
+  shown: boolean
+  dispatchTimer: ReturnType<typeof setTimeout> | null
+  revealTimer: ReturnType<typeof setTimeout> | null
+  loadingTimer: ReturnType<typeof setTimeout> | null
+}
+
 export class HoverDefinitionController {
   private readonly context: EditorViewContributionContext
-  private readonly client: LspClient
+  private readonly router: LanguageServerFeatureRouter
   private readonly tooltip: TooltipController
   private readonly linkHighlightName: string
-  private hoverTimer: ReturnType<typeof setTimeout> | null = null
+  private hoverOperation: HoverOperation | null = null
   private hoverAbort: AbortController | null = null
   private hoverRequestId = 0
   private definitionRequestId = 0
@@ -72,7 +97,7 @@ export class HoverDefinitionController {
 
   public constructor(private readonly options: HoverDefinitionControllerOptions) {
     this.context = options.context
-    this.client = options.client
+    this.router = options.router
     this.linkHighlightName = definitionLinkHighlightName(this.context, options)
     this.tooltip = createTooltipController({
       document: this.context.container.ownerDocument,
@@ -80,6 +105,8 @@ export class HoverDefinitionController {
       reentryElement: this.context.scrollElement,
       markdownCodeBackground: options.hoverMarkdownCodeBackground,
       classNamespace: options.tooltipClassNamespace ?? 'lsp-plugin',
+      onDidHide: () => this.cancelHoverOperation(),
+      onRequestEditorFocus: () => this.context.focusEditor(),
     })
     this.installHandlers()
   }
@@ -95,6 +122,18 @@ export class HoverDefinitionController {
     const selection = this.context.getSnapshot().selections[0]
     if (!selection) return false
     return this.requestNavigationAtOffset(selection.headOffset, command)
+  }
+
+  public showHoverFromSelection(): boolean {
+    const selection = this.context.getSnapshot().selections[0]
+    if (!selection) return false
+
+    const active = this.options.getActiveDocument()
+    if (!active || !this.router.hasReady('hover', 'textDocument/hover')) return false
+
+    const range = hoverTargetRange(active.fullText, selection.headOffset)
+    this.startHover(active, selection.headOffset, range, true)
+    return true
   }
 
   public containsTarget(target: EventTarget | null): boolean {
@@ -148,7 +187,7 @@ export class HoverDefinitionController {
   private readonly handlePointerMove = (event: PointerEvent): void => {
     if (event.buttons !== 0) return this.clearPointerUi()
 
-    const inTooltipHoverZone = this.tooltip.pointInHoverZone(event.clientX, event.clientY)
+    const inTooltipHoverZone = this.tooltip.shouldKeepForPointer(event.clientX, event.clientY)
     if (inTooltipHoverZone && !isNavigationModifier(event)) {
       this.lastPointerOffset = null
       this.clearDefinitionLink()
@@ -221,67 +260,153 @@ export class HoverDefinitionController {
 
   private scheduleHover(offset: number): void {
     this.cancelHoverHide()
-    if (this.hoverTimer) clearTimeout(this.hoverTimer)
-    this.hoverTimer = setTimeout(() => {
-      this.hoverTimer = null
-      void this.requestHover(offset)
-    }, HOVER_REQUEST_DEBOUNCE_MS)
-  }
-
-  private async requestHover(offset: number): Promise<void> {
     const active = this.options.getActiveDocument()
-    if (!active) return
-    if (!this.client.initialized) return
+    if (!active || !this.router.hasReady('hover', 'textDocument/hover')) return
 
-    this.hoverAbort?.abort()
-    const requestId = this.hoverRequestId + 1
-    const abort = new AbortController()
-    this.hoverRequestId = requestId
-    this.hoverAbort = abort
+    const range = hoverTargetRange(active.fullText, offset)
+    const current = this.hoverOperation
+    if (current?.active === active && sameOffsetRange(current.targetRange, range)) return
 
-    try {
-      const hover = await this.client.request<lsp.Hover | null>(
-        'textDocument/hover',
-        {
-          textDocument: { uri: active.uri },
-          position: offsetToLspPosition(active.fullText, offset),
-        } satisfies lsp.TextDocumentPositionParams,
-        { signal: abort.signal },
-      )
-      this.options.onRequestSuccess?.()
-      this.renderHoverResult(requestId, active, offset, hover)
-    } catch (error) {
-      this.options.onRequestError(error)
-    }
+    this.startHover(active, offset, range, false)
   }
 
-  private renderHoverResult(
-    requestId: number,
+  private startHover(
     active: ActiveDocument,
     offset: number,
-    hover: lsp.Hover | null,
+    targetRange: OffsetRange,
+    focusOnShow: boolean,
   ): void {
-    if (requestId !== this.hoverRequestId) return
-    if (active !== this.options.getActiveDocument()) return
-
-    const diagnostics = diagnosticsAtOffset(active.fullText, offset, this.options.getDiagnostics())
-    if (!hover && diagnostics.length === 0) {
-      this.hideHover()
+    this.cancelHoverOperation()
+    this.tooltip.hide()
+    const id = this.hoverRequestId + 1
+    this.hoverRequestId = id
+    const operation: HoverOperation = {
+      id,
+      active,
+      offset,
+      targetRange,
+      diagnostics: diagnosticsAtOffset(active.fullText, offset, this.options.getDiagnostics()),
+      focusOnShow,
+      hovers: [],
+      pending: true,
+      revealed: focusOnShow,
+      loading: false,
+      shown: false,
+      dispatchTimer: null,
+      revealTimer: null,
+      loadingTimer: null,
+    }
+    this.hoverOperation = operation
+    /** @justification Delays the loading row until the active server set is observably slow; cancellation clears it on every target change. */
+    operation.loadingTimer = setTimeout(() => this.revealHoverLoading(id), HOVER_LOADING_DELAY_MS)
+    if (focusOnShow) {
+      void this.dispatchHover(operation)
       return
     }
 
-    const range =
-      hoverRangeOffsets(active.fullText, hover) ?? visibleRangeAtOffset(active.fullText, offset)
+    /** @justification Starts semantic work midway through pointer dwell so transient targets are skipped while network time overlaps the remaining dwell. */
+    operation.dispatchTimer = setTimeout(() => {
+      operation.dispatchTimer = null
+      void this.dispatchHover(operation)
+    }, HOVER_ASYNC_DISPATCH_DELAY_MS)
+    /** @justification Enforces the hover dwell before paint; cancellation clears it when the pointer leaves the identifier. */
+    operation.revealTimer = setTimeout(() => {
+      operation.revealTimer = null
+      this.revealHover(id)
+    }, HOVER_REQUEST_DEBOUNCE_MS)
+  }
+
+  private async dispatchHover(operation: HoverOperation): Promise<void> {
+    if (!this.isCurrentHover(operation)) return
+
+    this.hoverAbort?.abort()
+    const abort = new AbortController()
+    this.hoverAbort = abort
+    try {
+      const hover = await this.options.requestHover(
+        {
+          textDocument: { uri: operation.active.uri },
+          position: offsetToLspPosition(operation.active.fullText, operation.offset),
+        },
+        { signal: abort.signal },
+        (update) => this.updateHover(operation.id, update),
+      )
+      if (!this.isCurrentHover(operation)) return
+
+      this.options.onRequestSuccess?.()
+      this.finishHover(operation.id, hover)
+    } catch (error) {
+      if (!isAbortError(error)) this.options.onRequestError(error)
+      this.finishHover(operation.id, null)
+    }
+  }
+
+  private updateHover(requestId: number, update: LanguageServerHoverUpdate): void {
+    const operation = this.currentHover(requestId)
+    if (!operation) return
+
+    operation.hovers = update.hovers
+    operation.pending = update.pending
+    this.renderHover(operation)
+  }
+
+  private finishHover(requestId: number, hover: lsp.Hover | null): void {
+    const operation = this.currentHover(requestId)
+    if (!operation) return
+
+    if (operation.hovers.length === 0 && hover) operation.hovers = [hover]
+    operation.pending = false
+    this.hoverAbort = null
+    if (operation.loadingTimer) clearTimeout(operation.loadingTimer)
+    operation.loadingTimer = null
+    this.renderHover(operation)
+  }
+
+  private revealHover(requestId: number): void {
+    const operation = this.currentHover(requestId)
+    if (!operation) return
+
+    operation.revealed = true
+    this.renderHover(operation)
+  }
+
+  private revealHoverLoading(requestId: number): void {
+    const operation = this.currentHover(requestId)
+    if (!operation || !operation.pending) return
+
+    operation.revealed = true
+    operation.loading = true
+    operation.loadingTimer = null
+    this.renderHover(operation)
+  }
+
+  private renderHover(operation: HoverOperation): void {
+    if (!this.isCurrentHover(operation)) return
+    if (!operation.revealed) return
+
+    const hoverParts = operation.hovers.flatMap((hover) => {
+      const text = hoverText(hover)
+      return text ? [text] : []
+    })
+    const hasContent = hoverParts.length > 0 || operation.diagnostics.length > 0
+    if (!hasContent && operation.pending && !operation.loading) return
+    if (!hasContent && !operation.pending) return this.hideHover()
+
+    const range = hoverRangeForOperation(operation)
     const rect = this.context.getRangeClientRect(range.start, range.end)
     if (!rect) return this.hideHover()
 
     this.tooltip.show({
       anchor: rect,
-      hoverText: hoverText(hover),
-      diagnostics,
+      hoverText: null,
+      hoverParts,
+      diagnostics: operation.diagnostics,
       theme: this.currentTheme,
-      preferredPlacement: diagnostics.length > 0 ? 'bottom' : 'top',
+      loading: operation.loading && operation.pending,
+      focus: operation.focusOnShow && !operation.shown,
+      preferredPlacement: 'top',
     })
+    operation.shown = true
   }
 
   private goToDefinitionAtOffset(offset: number): boolean {
@@ -297,12 +422,12 @@ export class HoverDefinitionController {
   ): boolean {
     const active = this.options.getActiveDocument()
     if (!active) return false
-    if (!this.client.initialized) return false
+    if (!this.router.hasReady('navigation', navigationMethod(command.kind))) return false
 
     this.clearPointerUi()
     const requestId = this.definitionRequestId + 1
     this.definitionRequestId = requestId
-    void requestNavigationTargets(this.client, {
+    void requestNavigationTargets(this.router, {
       uri: active.uri,
       text: active.fullText,
       offset,
@@ -317,7 +442,9 @@ export class HoverDefinitionController {
   private requestDefinitionLink(offset: number): void {
     const active = this.options.getActiveDocument()
     if (!active) return this.clearDefinitionLink()
-    if (!this.client.initialized) return this.clearDefinitionLink()
+    if (!this.router.hasReady('navigation', 'textDocument/definition')) {
+      return this.clearDefinitionLink()
+    }
 
     const range = identifierRangeAtOffset(active.fullText, offset)
     if (!range) return this.clearDefinitionLink()
@@ -325,7 +452,7 @@ export class HoverDefinitionController {
 
     const requestId = this.definitionHoverRequestId + 1
     this.definitionHoverRequestId = requestId
-    void requestDefinition(this.client, {
+    void requestDefinition(this.router, {
       uri: active.uri,
       text: active.fullText,
       offset,
@@ -426,12 +553,37 @@ export class HoverDefinitionController {
   }
 
   private hideHover(): void {
-    if (this.hoverTimer) clearTimeout(this.hoverTimer)
-    this.hoverTimer = null
+    this.cancelHoverOperation()
+    this.tooltip.hide()
+  }
+
+  private cancelHoverOperation(): void {
+    const operation = this.hoverOperation
+    if (operation) this.clearHoverTimers(operation)
+    this.hoverOperation = null
     this.hoverAbort?.abort()
     this.hoverAbort = null
     this.hoverRequestId += 1
-    this.tooltip.hide()
+  }
+
+  private clearHoverTimers(operation: HoverOperation): void {
+    if (operation.dispatchTimer) clearTimeout(operation.dispatchTimer)
+    if (operation.revealTimer) clearTimeout(operation.revealTimer)
+    if (operation.loadingTimer) clearTimeout(operation.loadingTimer)
+    operation.dispatchTimer = null
+    operation.revealTimer = null
+    operation.loadingTimer = null
+  }
+
+  private currentHover(requestId: number): HoverOperation | null {
+    const operation = this.hoverOperation
+    if (!operation || operation.id !== requestId) return null
+    if (operation.active !== this.options.getActiveDocument()) return null
+    return operation
+  }
+
+  private isCurrentHover(operation: HoverOperation): boolean {
+    return this.currentHover(operation.id) === operation
   }
 
   private scheduleHoverHide(): void {
@@ -448,6 +600,13 @@ export class HoverDefinitionController {
     this.context.clearRangeHighlight?.(this.linkHighlightName)
     this.context.scrollElement.style.cursor = ''
   }
+}
+
+function navigationMethod(kind: LanguageServerNavigationKind): string {
+  if (kind === 'references') return 'textDocument/references'
+  if (kind === 'implementation') return 'textDocument/implementation'
+  if (kind === 'typeDefinition') return 'textDocument/typeDefinition'
+  return 'textDocument/definition'
 }
 
 /**
@@ -505,6 +664,18 @@ function hoverRangeOffsets(
   return null
 }
 
+function hoverRangeForOperation(operation: HoverOperation): OffsetRange {
+  for (const hover of operation.hovers) {
+    const range = hoverRangeOffsets(operation.active.fullText, hover)
+    if (range) return range
+  }
+  return operation.targetRange
+}
+
+function hoverTargetRange(text: string, offset: number): OffsetRange {
+  return identifierRangeAtOffset(text, offset) ?? visibleRangeAtOffset(text, offset)
+}
+
 function visibleRangeAtOffset(text: string, offset: number): OffsetRange {
   const start = Math.max(0, Math.min(offset, Math.max(0, text.length - 1)))
   return { start, end: Math.min(text.length, start + 1) }
@@ -519,6 +690,12 @@ function isNavigationModifier(event: {
 
 function capitalize(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`
+}
+
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true
+  if (typeof error !== 'object' || error === null) return false
+  return 'name' in error && error.name === 'LspRequestCancelledError'
 }
 
 function definitionLinkHighlightName(

@@ -127,7 +127,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1304,
+      "line": 1303,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {
@@ -165,17 +165,33 @@
     {
       "api": "setTimeout",
       "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
-      "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:9b18e15f7b",
-      "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 225,
-      "snippet": "this.hoverTimer = setTimeout(() => {"
+      "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:577752bab8",
+      "justification": "Starts semantic work midway through pointer dwell so transient targets are skipped while network time overlaps the remaining dwell.",
+      "line": 308,
+      "snippet": "operation.dispatchTimer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
+      "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:83ef4f201e",
+      "justification": "Enforces the hover dwell before paint; cancellation clears it when the pointer leaves the identifier.",
+      "line": 313,
+      "snippet": "operation.revealTimer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
+      "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:c104083303",
+      "justification": "Delays the loading row until the active server set is observably slow; cancellation clears it on every target change.",
+      "line": 301,
+      "snippet": "operation.loadingTimer = setTimeout(() => this.revealHoverLoading(id), HOVER_LOADING_DELAY_MS)"
     },
     {
       "api": "queueMicrotask",
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:queueMicrotask:1d59545f0f",
       "justification": "Replays pooled connection state after `acquire` returns so callbacks cannot run inside the contribution constructor. The closure verifies that the lease is still active, and each acquisition schedules at most one replay.",
-      "line": 198,
+      "line": 200,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -183,7 +199,7 @@
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:setTimeout:ad7334dc0b",
       "justification": "Keeps a connection reusable for the configured grace period after its final lease releases. A new acquisition cancels the timer, and `#closeIdle` rechecks both the lease count and pool identity before disposal.",
-      "line": 213,
+      "line": 215,
       "snippet": "entry.idleTimer = setTimeout(() => this.#closeIdle(entry), this.#idleGraceMs)"
     },
     {
@@ -191,7 +207,7 @@
       "file": "packages/lsp-plugin/src/tooltip.ts",
       "id": "packages/lsp-plugin/src/tooltip.ts:setTimeout:1004d55352",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 159,
+      "line": 158,
       "snippet": "hideTimer = setTimeout(() => {"
     },
     {
@@ -199,7 +215,7 @@
       "file": "packages/lsp-plugin/src/tooltip.ts",
       "id": "packages/lsp-plugin/src/tooltip.ts:setTimeout:6e6b0feb4b",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 433,
+      "line": 572,
       "snippet": "setTimeout(() => {"
     },
     {

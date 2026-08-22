@@ -69,6 +69,27 @@ export const createMethodNotFoundResponse = (
   },
 })
 
+export const createResponseMessage = (
+  id: LspRequestId | null,
+  result: unknown,
+): lsp.ResponseMessage => ({
+  jsonrpc: JSON_RPC_VERSION,
+  id,
+  result: result === undefined ? null : result,
+})
+
+export const createInternalErrorResponse = (
+  id: LspRequestId | null,
+  error: unknown,
+): lsp.ResponseMessage => ({
+  jsonrpc: JSON_RPC_VERSION,
+  id,
+  error: {
+    code: -32603,
+    message: error instanceof Error ? error.message : String(error),
+  },
+})
+
 export const isResponseMessage = (message: unknown): message is lsp.ResponseMessage => {
   if (!isObject(message)) return false
   return 'id' in message && !('method' in message)

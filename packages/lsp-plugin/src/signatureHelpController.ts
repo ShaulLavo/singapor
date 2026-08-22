@@ -7,11 +7,11 @@ import type {
   EditorViewSnapshot,
 } from '@singapor/core'
 import type { DocumentSessionChange } from '@singapor/core'
-import type { LspClient } from '@singapor/lsp'
 import { offsetToLspPosition } from '@singapor/lsp'
 
 import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
 import type { ActiveDocument } from './pluginTypes'
+import type { LanguageServerFeatureRouter } from './serverSet'
 import {
   formatSignatureHelp,
   nextSignatureIndex,
@@ -22,7 +22,7 @@ import { createTooltipController, type TooltipController } from './tooltip'
 
 export type SignatureHelpControllerOptions = {
   readonly context: EditorViewContributionContext
-  readonly client: LspClient
+  readonly router: LanguageServerFeatureRouter
   readonly getActiveDocument: () => ActiveDocument | null
   readonly tooltipClassNamespace?: string
   readonly onRequestSuccess?: () => void
@@ -130,6 +130,7 @@ export class SignatureHelpController {
       this.hide()
       return
     }
+    if (!this.options.router.hasReady('signatureHelp', 'textDocument/signatureHelp')) return
 
     this.abort?.abort()
     const abort = new AbortController()
@@ -138,7 +139,7 @@ export class SignatureHelpController {
     this.abort = abort
 
     try {
-      const help = await this.options.client.request<lsp.SignatureHelp | null>(
+      const help = await this.options.router.request<lsp.SignatureHelp | null>(
         'textDocument/signatureHelp',
         {
           context: { isRetrigger: false, triggerCharacter, triggerKind: 2 },

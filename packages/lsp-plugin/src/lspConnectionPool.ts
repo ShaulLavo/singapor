@@ -24,6 +24,7 @@ export type LspConnectionPoolEvent = {
     | 'ready'
     | 'released'
     | 'closed'
+    | 'retired'
     | 'error'
     | 'handler_ignored'
   readonly key: string
@@ -171,8 +172,12 @@ export class LspConnectionPool {
         this.#emit(entry, 'ready', { durationMs: Math.round(entry.readyAt - entry.createdAt) })
         for (const lease of leasesOf(entry)) lease.callbacks.onConnected()
       },
+      onDiagnosticRefresh: () => {
+        for (const lease of leasesOf(entry)) lease.callbacks.onDiagnosticRefresh?.()
+      },
       onUnavailable: () => {
         entry.connected = false
+        this.#retire(entry)
         for (const lease of leasesOf(entry)) lease.callbacks.onUnavailable()
       },
       onPublishDiagnostics: (params) => {
@@ -221,6 +226,17 @@ export class LspConnectionPool {
     this.#entries.delete(entry.key)
     entry.connection.dispose()
     this.#emit(entry, 'closed', {
+      durationMs: Math.round(now() - entry.createdAt),
+      reachedReady: entry.readyAt !== null,
+    })
+  }
+
+  #retire(entry: PooledConnection): void {
+    if (entry.idleTimer !== null) clearTimeout(entry.idleTimer)
+    entry.idleTimer = null
+    if (this.#entries.get(entry.key) === entry) this.#entries.delete(entry.key)
+    entry.connection.dispose()
+    this.#emit(entry, 'retired', {
       durationMs: Math.round(now() - entry.createdAt),
       reachedReady: entry.readyAt !== null,
     })

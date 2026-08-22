@@ -1267,9 +1267,14 @@ export class Editor {
     this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
     this.adoptDocumentTabSize(attachment.fullText)
+    // Asked for before the text lands so the replacement renders the restored viewport directly.
+    // Setting it afterwards drew the outgoing offset first and every row twice.
+    this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
     this.setDocument({ text: attachment.fullText, tokens: [] })
     // A host handing over its own session is replacing the document just as much as opening one is.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()
+    // Still applied: it settles the horizontal offset, and clamps the vertical one against the
+    // rows that actually rendered. A match with the request above makes it a no-op.
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
@@ -1346,6 +1351,8 @@ export class Editor {
     this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
     this.adoptDocumentTabSize(attachment.fullText)
+    // Asked for before the text lands, so the replacement renders the restored viewport directly.
+    this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
     this.setDocument({ text: attachment.fullText, tokens: [] })
     // After the text is in, so what is rebuilt here is measured against the document that arrived.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()

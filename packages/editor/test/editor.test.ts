@@ -1671,6 +1671,24 @@ describe('Editor', () => {
       expect(editor.getScrollPosition()).toEqual({ top: 120, left: 0 })
     })
 
+    it('renders the restored viewport once, without drawing the outgoing offset first', () => {
+      const events: ViewContributionEvent[] = []
+      editor.dispose()
+      editor = new Editor(container, { plugins: [createViewContributionPlugin(events)] })
+      const text = Array.from({ length: 400 }, (_value, index) => `line ${index}`).join('\n')
+
+      editor.openDocument({ documentId: 'first.txt', text, scrollPosition: { top: 900 } })
+      events.length = 0
+      editor.openDocument({ documentId: 'second.txt', text, scrollPosition: { top: 1200 } })
+
+      const reported = events
+        .map((event) => event.snapshot?.viewport.scrollTop)
+        .filter((top): top is number => top !== undefined)
+
+      expect(reported.length).toBeGreaterThan(0)
+      expect([...new Set(reported)]).toEqual([1200])
+    })
+
     it('preserves and clamps scroll when replacing text', () => {
       editor.openDocument({
         documentId: 'large.txt',

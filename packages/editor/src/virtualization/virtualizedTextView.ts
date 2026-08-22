@@ -373,6 +373,11 @@ export class VirtualizedTextView {
     view.rowPool.length = 0
   }
 
+  /** The offset the next text replacement should render at, so a restore costs one pass, not two. */
+  public requestScrollTop(value: number): void {
+    this.view.virtualizer.requestScrollTop(value)
+  }
+
   public setText(text: string, textSnapshot = createStringTextSnapshot(text)): void {
     const view = this.view
     view.sameLineTokenEdit = null

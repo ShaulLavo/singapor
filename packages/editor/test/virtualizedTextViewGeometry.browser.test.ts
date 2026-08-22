@@ -6,7 +6,10 @@ import { createPieceTableSnapshot } from '../src/public/document'
 import { VirtualizedTextView } from '../src/virtualization'
 import { clearBrowserTextMetricsCache } from '../src/virtualization/browserMetrics'
 import {
+  beginRowRectMeasurements,
   clearRowGeometryCache,
+  endRowRectMeasurements,
+  invalidateRowRectMeasurements,
   offsetToX,
   xToOffset,
 } from '../src/virtualization/virtualizedTextViewGeometry'
@@ -38,6 +41,29 @@ function countRangeReads(run: () => void): number {
   } finally {
     Range.prototype.getClientRects = rects
     Range.prototype.getBoundingClientRect = bounding
+  }
+
+  return reads
+}
+
+/** The row's other layout read: `offsetWidth`, which recovers a scaled host's transform factor. */
+function countOffsetWidthReads(run: () => void): number {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
+  if (!descriptor?.get) throw new Error('offsetWidth is not an accessor on this engine')
+
+  const read = descriptor.get
+  let reads = 0
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    ...descriptor,
+    get(this: HTMLElement) {
+      reads += 1
+      return read.call(this)
+    },
+  })
+  try {
+    run()
+  } finally {
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', descriptor)
   }
 
   return reads
@@ -98,6 +124,48 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
 
       for (const column of [1, 5, 10, ASCII_LINE.length]) {
         expect(xToOffset(internal, row, offsetToX(internal, row, column))).toBe(column)
+      }
+    })
+
+    it('recovers the transform once per measurement window, not once per rebuild', () => {
+      const internal = internals(view!)
+      const row = view!.getState().mountedRows[0]!
+
+      clearRowGeometryCache(row)
+      const alone = offsetToX(internal, row, 10)
+
+      beginRowRectMeasurements()
+      try {
+        const reads = countOffsetWidthReads(() => {
+          for (let rebuild = 0; rebuild < 4; rebuild += 1) {
+            clearRowGeometryCache(row)
+            expect(offsetToX(internal, row, 10)).toBeCloseTo(alone, 5)
+          }
+        })
+
+        expect(reads).toBe(1)
+      } finally {
+        endRowRectMeasurements()
+      }
+    })
+
+    it('reads the transform again once a moved row invalidates the window', () => {
+      const internal = internals(view!)
+      const row = view!.getState().mountedRows[0]!
+
+      beginRowRectMeasurements()
+      try {
+        const reads = countOffsetWidthReads(() => {
+          clearRowGeometryCache(row)
+          offsetToX(internal, row, 10)
+          invalidateRowRectMeasurements()
+          clearRowGeometryCache(row)
+          offsetToX(internal, row, 10)
+        })
+
+        expect(reads).toBe(2)
+      } finally {
+        endRowRectMeasurements()
       }
     })
   },

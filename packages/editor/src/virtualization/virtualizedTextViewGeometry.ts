@@ -191,6 +191,8 @@ type ControlCharacterInfo = {
 
 let rowRectMeasurementDepth = 0
 let measuredRowRects: Map<HTMLElement, DOMRect> | null = null
+/** `rowClientRectScale`, kept as long as the rect it divides: its `offsetWidth` is a layout read too. */
+let measuredRowScales: Map<HTMLElement, number> | null = null
 let measurementScratch: MeasurementScratch | null = null
 const measuredRowWidths = new WeakMap<HTMLElement, RowContentWidthCache>()
 /**
@@ -1322,6 +1324,15 @@ function rowLocalRect(
  * no transform at all.
  */
 function rowClientRectScale(row: MountedVirtualizedTextRow): number {
+  const cached = measuredRowScales?.get(row.element)
+  if (cached !== undefined) return cached
+
+  const scale = readRowClientRectScale(row)
+  measuredRowScales?.set(row.element, scale)
+  return scale
+}
+
+function readRowClientRectScale(row: MountedVirtualizedTextRow): number {
   const layoutWidth = row.element.offsetWidth
   if (layoutWidth <= 0) return 1
 
@@ -1344,10 +1355,12 @@ function rowClientRectScale(row: MountedVirtualizedTextRow): number {
 export function beginRowRectMeasurements(): void {
   rowRectMeasurementDepth += 1
   measuredRowRects ??= new Map()
+  measuredRowScales ??= new Map()
 }
 
 export function invalidateRowRectMeasurements(): void {
   measuredRowRects?.clear()
+  measuredRowScales?.clear()
 }
 
 export function endRowRectMeasurements(): void {
@@ -1355,6 +1368,7 @@ export function endRowRectMeasurements(): void {
   if (rowRectMeasurementDepth > 0) return
 
   measuredRowRects = null
+  measuredRowScales = null
 }
 
 function measuredRowRect(row: MountedVirtualizedTextRow): DOMRect {

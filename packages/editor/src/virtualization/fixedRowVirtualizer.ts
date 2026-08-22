@@ -157,6 +157,7 @@ export class FixedRowVirtualizer {
   private cachedRowGap = DEFAULT_ROW_GAP
   private stableVirtualWindow: FixedRowVisibleRange | null = null
   private logicalScrollProperties: LogicalScrollProperties | null = null
+  private requestedScrollTop: number | null = null
 
   public constructor(options: FixedRowVirtualizerOptions) {
     this.options = normalizeOptions(options)
@@ -164,12 +165,23 @@ export class FixedRowVirtualizer {
     this.cachedRowGap = this.options.rowGap
   }
 
+  /**
+   * The offset the next options update should land on, in place of the one anchored from the rows
+   * currently on screen. Lets a caller that is about to replace the text restore a position in the
+   * same pass, rather than rendering the old offset first and the new one after.
+   */
+  public requestScrollTop(value: number): void {
+    this.requestedScrollTop = Math.max(0, normalizeNumber(value))
+  }
+
   public updateOptions(options: Partial<FixedRowVirtualizerOptions>): boolean {
     const anchor = this.viewportAnchor()
     const next = normalizeOptions({ ...denormalizeOptions(this.options), ...options }, this.options)
+    const requested = this.requestedScrollTop
+    this.requestedScrollTop = null
     const nextScrollTop = nextScrollTopForOptions(
       next,
-      anchoredScrollTop(anchor, next, this.scrollTop),
+      requested ?? anchoredScrollTop(anchor, next, this.scrollTop),
       this.viewportHeight,
     )
     if (sameNormalizedOptions(this.options, next) && nextScrollTop === this.scrollTop) return false

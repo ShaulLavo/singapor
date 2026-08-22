@@ -35,6 +35,10 @@ class FakeTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(): () => void {
+    return () => undefined
+  }
+
   public close(): void {
     this.handlers.clear()
   }

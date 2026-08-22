@@ -67,6 +67,7 @@ export class LspConnection {
   public readonly client: LspClient
 
   private transport: LspManagedTransport | null = null
+  private removeTransportCloseListener: (() => void) | null = null
   private disposed = false
   private status: LanguageServerStatus = 'idle'
 
@@ -86,6 +87,8 @@ export class LspConnection {
     if (this.disposed) return
 
     this.disposed = true
+    this.removeTransportCloseListener?.()
+    this.removeTransportCloseListener = null
     this.client.disconnect()
     this.transport?.close()
     this.transport = null
@@ -141,6 +144,7 @@ export class LspConnection {
     }
 
     this.transport = transport
+    this.removeTransportCloseListener = transport.onDidClose(() => this.handleTransportClose())
     void this.client
       .connect(transport)
       .then(() => this.handleConnected())
@@ -162,7 +166,21 @@ export class LspConnection {
     this.handleError(error)
   }
 
+  private handleTransportClose(): void {
+    if (this.disposed) return
+
+    this.removeTransportCloseListener?.()
+    this.removeTransportCloseListener = null
+    this.transport = null
+    this.client.disconnect()
+    this.setStatus('error')
+    this.callbacks.onUnavailable()
+    this.handleError(new Error('LSP transport closed'))
+  }
+
   private closeFailedConnection(): void {
+    this.removeTransportCloseListener?.()
+    this.removeTransportCloseListener = null
     this.client.disconnect()
     this.transport?.close()
     this.transport = null

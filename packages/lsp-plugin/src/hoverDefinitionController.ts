@@ -4,12 +4,7 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
-import {
-  lspPositionToOffset,
-  offsetToLspPosition,
-  type LspClient,
-  type LspRequestOptions,
-} from '@singapor/lsp'
+import { lspPositionToOffset, offsetToLspPosition, type LspRequestOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
@@ -35,7 +30,7 @@ import {
   HOVER_REQUEST_DEBOUNCE_MS,
   type TooltipController,
 } from './tooltip'
-import type { LanguageServerHoverUpdate } from './serverSet'
+import type { LanguageServerFeatureRouter, LanguageServerHoverUpdate } from './serverSet'
 import type {
   LanguageServerDefinitionTarget,
   LanguageServerNavigationKind,
@@ -45,7 +40,7 @@ import type {
 
 export type HoverDefinitionControllerOptions = {
   readonly context: EditorViewContributionContext
-  readonly client: LspClient
+  readonly router: LanguageServerFeatureRouter
   requestHover(
     params: lsp.TextDocumentPositionParams,
     options: LspRequestOptions,
@@ -87,7 +82,7 @@ type HoverOperation = {
 
 export class HoverDefinitionController {
   private readonly context: EditorViewContributionContext
-  private readonly client: LspClient
+  private readonly router: LanguageServerFeatureRouter
   private readonly tooltip: TooltipController
   private readonly linkHighlightName: string
   private hoverOperation: HoverOperation | null = null
@@ -102,7 +97,7 @@ export class HoverDefinitionController {
 
   public constructor(private readonly options: HoverDefinitionControllerOptions) {
     this.context = options.context
-    this.client = options.client
+    this.router = options.router
     this.linkHighlightName = definitionLinkHighlightName(this.context, options)
     this.tooltip = createTooltipController({
       document: this.context.container.ownerDocument,
@@ -134,7 +129,7 @@ export class HoverDefinitionController {
     if (!selection) return false
 
     const active = this.options.getActiveDocument()
-    if (!active || !this.client.initialized) return false
+    if (!active || !this.router.hasReady('hover', 'textDocument/hover')) return false
 
     const range = hoverTargetRange(active.fullText, selection.headOffset)
     this.startHover(active, selection.headOffset, range, true)
@@ -266,7 +261,7 @@ export class HoverDefinitionController {
   private scheduleHover(offset: number): void {
     this.cancelHoverHide()
     const active = this.options.getActiveDocument()
-    if (!active || !this.client.initialized) return
+    if (!active || !this.router.hasReady('hover', 'textDocument/hover')) return
 
     const range = hoverTargetRange(active.fullText, offset)
     const current = this.hoverOperation
@@ -427,12 +422,12 @@ export class HoverDefinitionController {
   ): boolean {
     const active = this.options.getActiveDocument()
     if (!active) return false
-    if (!this.client.initialized) return false
+    if (!this.router.hasReady('navigation', navigationMethod(command.kind))) return false
 
     this.clearPointerUi()
     const requestId = this.definitionRequestId + 1
     this.definitionRequestId = requestId
-    void requestNavigationTargets(this.client, {
+    void requestNavigationTargets(this.router, {
       uri: active.uri,
       text: active.fullText,
       offset,
@@ -447,7 +442,9 @@ export class HoverDefinitionController {
   private requestDefinitionLink(offset: number): void {
     const active = this.options.getActiveDocument()
     if (!active) return this.clearDefinitionLink()
-    if (!this.client.initialized) return this.clearDefinitionLink()
+    if (!this.router.hasReady('navigation', 'textDocument/definition')) {
+      return this.clearDefinitionLink()
+    }
 
     const range = identifierRangeAtOffset(active.fullText, offset)
     if (!range) return this.clearDefinitionLink()
@@ -455,7 +452,7 @@ export class HoverDefinitionController {
 
     const requestId = this.definitionHoverRequestId + 1
     this.definitionHoverRequestId = requestId
-    void requestDefinition(this.client, {
+    void requestDefinition(this.router, {
       uri: active.uri,
       text: active.fullText,
       offset,
@@ -603,6 +600,13 @@ export class HoverDefinitionController {
     this.context.clearRangeHighlight?.(this.linkHighlightName)
     this.context.scrollElement.style.cursor = ''
   }
+}
+
+function navigationMethod(kind: LanguageServerNavigationKind): string {
+  if (kind === 'references') return 'textDocument/references'
+  if (kind === 'implementation') return 'textDocument/implementation'
+  if (kind === 'typeDefinition') return 'textDocument/typeDefinition'
+  return 'textDocument/definition'
 }
 
 /**

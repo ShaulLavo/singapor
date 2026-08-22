@@ -1,4 +1,4 @@
-import type { LspClient, LspRequestOptions } from '@singapor/lsp'
+import type { LspRequestOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { AcquiredLanguageServerLane } from './lane'
@@ -13,10 +13,10 @@ export type LanguageServerSetLane = {
   readonly features: LanguageServerFeatureRanks
   readonly connection: AcquiredLanguageServerLane
   readonly onInteractiveReady?: () => void
-  readonly onError?: (error: unknown) => void
+  readonly onRequestError?: (method: string, error: unknown) => void
 }
 
-type LaneResult = {
+export type LanguageServerLaneResult = {
   readonly lane: LanguageServerSetLane
   readonly result: unknown
 }
@@ -28,18 +28,22 @@ export type LanguageServerHoverUpdate = {
   readonly pending: boolean
 }
 
+export type LanguageServerFeatureRouter = {
+  canResolveCodeActions(): boolean
+  hasReady(feature: LanguageServerFeatureId, method?: string): boolean
+  request<TResult = unknown, TParams = unknown>(
+    method: string,
+    params?: TParams,
+    options?: LspRequestOptions,
+  ): Promise<TResult>
+}
+
 export class LanguageServerSet {
   readonly #lanes: readonly LanguageServerSetLane[]
   readonly #provenance = new WeakMap<object, LanguageServerSetLane>()
-  readonly #requestClient: LspClient
 
   public constructor(lanes: readonly LanguageServerSetLane[]) {
     this.#lanes = lanes
-    this.#requestClient = new RoutedLanguageServerClient(this) as unknown as LspClient
-  }
-
-  public get client(): LspClient {
-    return this.#requestClient
   }
 
   public declared(feature: LanguageServerFeatureId): readonly LanguageServerSetLane[] {
@@ -56,28 +60,18 @@ export class LanguageServerSet {
     })
   }
 
-  public designated(feature: LanguageServerFeatureId): LanguageServerSetLane | null {
-    return this.declared(feature)[0] ?? null
+  public hasReady(feature: LanguageServerFeatureId, method?: string): boolean {
+    return this.ready(feature, method).length > 0
   }
 
-  public hasReadyLane(): boolean {
-    return this.#lanes.some((lane) => lane.connection.isReady())
+  public canResolveCodeActions(): boolean {
+    return this.ready('codeActions').some((lane) => {
+      const provider = lane.connection.client.serverCapabilities?.codeActionProvider
+      return isRecord(provider) && provider.resolveProvider === true
+    })
   }
 
-  public capabilities(): lsp.ServerCapabilities | null {
-    if (!this.hasReadyLane()) return null
-
-    return {
-      codeActionProvider: codeActionCapability(this.ready('codeActions')),
-      documentFormattingProvider: this.ready('formatting').length > 0,
-      documentHighlightProvider: this.ready('documentHighlights').length > 0,
-      hoverProvider: this.ready('hover').length > 0,
-      renameProvider: this.ready('rename').length > 0,
-      signatureHelpProvider: this.ready('signatureHelp').length > 0 ? {} : undefined,
-    }
-  }
-
-  public request<TResult, TParams>(
+  public request<TResult = unknown, TParams = unknown>(
     method: string,
     params?: TParams,
     options: LspRequestOptions = {},
@@ -97,12 +91,13 @@ export class LanguageServerSet {
       return this.mergedArray('codeActions', method, params, options) as Promise<TResult>
     }
     if (method === 'textDocument/documentHighlight') {
-      const lanes = this.ready('documentHighlights', method)
-      if (lanes.length === 1) {
-        return this.requestSingle(lanes[0], method, params, options, []) as Promise<TResult>
-      }
-
-      return this.mergedArray('documentHighlights', method, params, options) as Promise<TResult>
+      return this.requestFirst(
+        'documentHighlights',
+        method,
+        params,
+        options,
+        [],
+      ) as Promise<TResult>
     }
     if (method === 'codeAction/resolve')
       return this.resolveCodeAction(params, options) as Promise<TResult>
@@ -110,8 +105,16 @@ export class LanguageServerSet {
     const feature = featureForMethod(method)
     if (!feature) return Promise.resolve(null as TResult)
 
-    const lane = this.ready(feature, method)[0]
-    return this.requestSingle(lane, method, params, options, null) as Promise<TResult>
+    if (feature === 'navigation') {
+      return this.requestAll(feature, method, params, options).then(
+        mergeNavigationResults,
+      ) as Promise<TResult>
+    }
+    if (feature === 'signatureHelp') {
+      return this.requestFirst(feature, method, params, options, null) as Promise<TResult>
+    }
+
+    return this.requestOwner(feature, method, params, options, null) as Promise<TResult>
   }
 
   public async requestHover<TParams>(
@@ -122,7 +125,7 @@ export class LanguageServerSet {
     const lanes = this.ready('hover', 'textDocument/hover')
     if (lanes.length === 0) return null
 
-    const results: Array<LaneResult | null> = lanes.map(() => null)
+    const results: Array<LanguageServerLaneResult | null> = lanes.map(() => null)
     let settled = 0
     const requests = lanes.map((lane, index) =>
       this.requestHoverLane(lane, params, options).then((result) => {
@@ -145,13 +148,13 @@ export class LanguageServerSet {
       lane.onInteractiveReady?.()
       return result
     } catch (error) {
-      if (!isAbortError(error)) lane.onError?.(error)
+      if (!isAbortError(error)) lane.onRequestError?.('textDocument/hover', error)
       return null
     }
   }
 
   async mergedArray<TParams>(
-    feature: 'codeActions' | 'documentHighlights',
+    feature: 'codeActions',
     method: string,
     params: TParams | undefined,
     options: LspRequestOptions,
@@ -160,7 +163,7 @@ export class LanguageServerSet {
     return this.mergeArrayResults(feature, results)
   }
 
-  mergeArrayResults(feature: 'codeActions' | 'documentHighlights', results: readonly LaneResult[]) {
+  mergeArrayResults(feature: 'codeActions', results: readonly LanguageServerLaneResult[]) {
     const merged: unknown[] = []
     for (const { lane, result } of results) {
       if (!Array.isArray(result)) continue
@@ -201,10 +204,36 @@ export class LanguageServerSet {
         return transform(result)
       },
       (error) => {
-        if (!isAbortError(error)) lane.onError?.(error)
+        if (!isAbortError(error)) lane.onRequestError?.(method, error)
         return fallback
       },
     )
+  }
+
+  public async requestFirst<TParams, TResult = unknown>(
+    feature: LanguageServerFeatureId,
+    method: string,
+    params: TParams | undefined,
+    options: LspRequestOptions = {},
+    fallback: TResult,
+    accepts: (result: unknown) => boolean = isNonNullResult,
+  ): Promise<TResult> {
+    for (const lane of this.ready(feature, method)) {
+      const result = await this.requestLane(lane, method, params, options)
+      if (accepts(result)) return result as TResult
+    }
+
+    return fallback
+  }
+
+  public requestOwner<TParams, TResult = unknown>(
+    feature: LanguageServerFeatureId,
+    method: string,
+    params: TParams | undefined,
+    options: LspRequestOptions = {},
+    fallback: TResult,
+  ): Promise<TResult> {
+    return this.requestSingle(this.ready(feature, method)[0], method, params, options, fallback)
   }
 
   async requestAll<TParams>(
@@ -212,19 +241,35 @@ export class LanguageServerSet {
     method: string,
     params: TParams | undefined,
     options: LspRequestOptions,
-  ): Promise<readonly LaneResult[]> {
+  ): Promise<readonly LanguageServerLaneResult[]> {
     const requests = this.ready(feature, method).map(async (lane) => {
       try {
         const result = await lane.connection.client.request(method, params, options)
         lane.onInteractiveReady?.()
         return { lane, result }
       } catch (error) {
-        if (!isAbortError(error)) lane.onError?.(error)
+        if (!isAbortError(error)) lane.onRequestError?.(method, error)
         return { lane, result: null }
       }
     })
 
     return Promise.all(requests)
+  }
+
+  private async requestLane<TParams>(
+    lane: LanguageServerSetLane,
+    method: string,
+    params: TParams | undefined,
+    options: LspRequestOptions,
+  ): Promise<unknown> {
+    try {
+      const result = await lane.connection.client.request(method, params, options)
+      lane.onInteractiveReady?.()
+      return result
+    } catch (error) {
+      if (!isAbortError(error)) lane.onRequestError?.(method, error)
+      return null
+    }
   }
 }
 
@@ -234,26 +279,6 @@ export function rankedLanguageServerLanes<
   return lanes
     .filter((lane) => lane.features[feature] !== undefined)
     .toSorted((left, right) => compareFeatureRank(left, right, feature, lanes))
-}
-
-class RoutedLanguageServerClient {
-  public constructor(private readonly servers: LanguageServerSet) {}
-
-  public get initialized(): boolean {
-    return this.servers.hasReadyLane()
-  }
-
-  public get serverCapabilities(): lsp.ServerCapabilities | null {
-    return this.servers.capabilities()
-  }
-
-  public request<TResult = unknown, TParams = unknown>(
-    method: string,
-    params?: TParams,
-    options?: LspRequestOptions,
-  ): Promise<TResult> {
-    return this.servers.request<TResult, TParams>(method, params, options)
-  }
 }
 
 export function allLanguageServerFeatures(rank = 0): LanguageServerFeatureRanks {
@@ -324,24 +349,57 @@ function usableCodeAction(item: Record<string, unknown>, lane: LanguageServerSet
   return isRecord(provider) && provider.resolveProvider === true
 }
 
-function codeActionCapability(
-  lanes: readonly LanguageServerSetLane[],
-): lsp.ServerCapabilities['codeActionProvider'] {
-  if (lanes.length === 0) return false
-  const resolves = lanes.some((lane) => {
-    const provider = lane.connection.client.serverCapabilities?.codeActionProvider
-    return isRecord(provider) && provider.resolveProvider === true
-  })
-
-  return resolves ? { resolveProvider: true } : true
-}
-
 function isHover(value: unknown): value is lsp.Hover {
   return isRecord(value) && value.contents !== undefined
 }
 
-function hoverResults(results: readonly (LaneResult | null)[]): readonly lsp.Hover[] {
-  return results.flatMap((entry) => (entry && isHover(entry.result) ? [entry.result] : []))
+function hoverResults(results: readonly (LanguageServerLaneResult | null)[]): readonly lsp.Hover[] {
+  const hovers: lsp.Hover[] = []
+  const seen = new Set<string>()
+  for (const entry of results) {
+    if (!entry || !isHover(entry.result)) continue
+
+    const text = hoverContentsText(entry.result.contents).trim()
+    if (text.length === 0 || seen.has(text)) continue
+
+    seen.add(text)
+    hovers.push(entry.result)
+  }
+
+  return hovers
+}
+
+function mergeNavigationResults(results: readonly LanguageServerLaneResult[]): readonly unknown[] {
+  const merged: unknown[] = []
+  const seen = new Set<string>()
+  for (const entry of results) {
+    const items = Array.isArray(entry.result) ? entry.result : [entry.result]
+    for (const item of items) {
+      const key = navigationResultKey(item)
+      if (!key || seen.has(key)) continue
+
+      seen.add(key)
+      merged.push(item)
+    }
+  }
+
+  return merged
+}
+
+function navigationResultKey(value: unknown): string | null {
+  if (!isRecord(value)) return null
+  if (typeof value.uri === 'string' && isRecord(value.range)) {
+    return `${value.uri}:${JSON.stringify(value.range)}`
+  }
+  if (typeof value.targetUri === 'string' && isRecord(value.targetSelectionRange)) {
+    return `${value.targetUri}:${JSON.stringify(value.targetSelectionRange)}`
+  }
+
+  return null
+}
+
+function isNonNullResult(result: unknown): boolean {
+  return result !== null && result !== undefined
 }
 
 function mergedHover(hovers: readonly lsp.Hover[]): lsp.Hover | null {

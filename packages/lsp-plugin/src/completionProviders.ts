@@ -59,6 +59,7 @@ export function createLanguageServerCompletionSource(
   client: LspClient,
   isAvailable: () => boolean = () => true,
   onRequestSuccess?: () => void,
+  onRequestError?: (method: string, error: unknown) => void,
 ): EditorCompletionSource {
   return {
     // The server's answer is handed on as it arrives rather than repackaged, so nothing stands
@@ -78,16 +79,27 @@ export function createLanguageServerCompletionSource(
           } satisfies lsp.CompletionParams,
           { signal: request.signal },
         )
-        .then((answer) => {
-          onRequestSuccess?.()
-          return answer
-        })
+        .then(
+          (answer) => {
+            onRequestSuccess?.()
+            return answer
+          },
+          (error: unknown) => {
+            onRequestError?.('textDocument/completion', error)
+            return null
+          },
+        )
     },
     // Most servers send an item without its import edit and expect a resolve round-trip; applying
     // the unresolved item is what silently drops auto-imports.
     resolveCompletionItem: (item) =>
       completionNeedsResolve(item, client.serverCapabilities)
-        ? client.request<lsp.CompletionItem>('completionItem/resolve', item)
+        ? client
+            .request<lsp.CompletionItem>('completionItem/resolve', item)
+            .then(undefined, (error) => {
+              onRequestError?.('completionItem/resolve', error)
+              return item
+            })
         : null,
   }
 }
@@ -127,12 +139,11 @@ export class LanguageServerCompletionSources
   public forLanguage(
     languageId: EditorViewSnapshot['languageId'],
   ): readonly EditorCompletionSource[] {
-    const registered =
-      this.registrations.length > 0
-        ? this.context.getProviders?.(EDITOR_COMPLETION_SOURCE, languageId)
-        : null
+    const registered = this.context.getProviders?.(EDITOR_COMPLETION_SOURCE, languageId)
+    if (!registered) return this.sources
 
-    return registered ?? this.sources
+    const missing = this.sources.filter((source) => !registered.includes(source))
+    return registered.concat(missing)
   }
 
   public dispose(): void {

@@ -1,6 +1,7 @@
 import type { LspTransport, LspTransportHandler } from './types'
 
 export type LspManagedTransport = LspTransport & {
+  onDidClose(handler: () => void): () => void
   close(): void
 }
 
@@ -78,6 +79,7 @@ export const createWorkerLspTransport = (
 
 class WebSocketLspTransport implements LspManagedTransport {
   private readonly handlers = new Set<LspTransportHandler>()
+  private readonly closeHandlers = new Set<() => void>()
   private closed = false
 
   public constructor(private readonly socket: LspWebSocketLike) {
@@ -104,6 +106,11 @@ class WebSocketLspTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(handler: () => void): () => void {
+    this.closeHandlers.add(handler)
+    return () => this.closeHandlers.delete(handler)
+  }
+
   public close(): void {
     if (this.closed) return
 
@@ -119,8 +126,12 @@ class WebSocketLspTransport implements LspManagedTransport {
   }
 
   private readonly handleClose = (): void => {
+    if (this.closed) return
+
     this.closed = true
     this.detachSocketListeners()
+    for (const handler of this.closeHandlers) handler()
+    this.closeHandlers.clear()
   }
 
   private detachSocketListeners(): void {
@@ -132,6 +143,7 @@ class WebSocketLspTransport implements LspManagedTransport {
 
 class WorkerLspTransport implements LspManagedTransport {
   private readonly handlers = new Set<LspTransportHandler>()
+  private readonly closeHandlers = new Set<() => void>()
   private readonly messageFormat: LspWorkerMessageFormat
   private readonly terminateOnClose: boolean
   private closed = false
@@ -143,6 +155,7 @@ class WorkerLspTransport implements LspManagedTransport {
     this.messageFormat = options.messageFormat ?? 'string'
     this.terminateOnClose = options.terminateOnClose ?? false
     this.worker.addEventListener('message', this.handleMessage)
+    this.worker.addEventListener('error', this.handleError)
   }
 
   public send(message: string): void {
@@ -157,12 +170,19 @@ class WorkerLspTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(handler: () => void): () => void {
+    this.closeHandlers.add(handler)
+    return () => this.closeHandlers.delete(handler)
+  }
+
   public close(): void {
     if (this.closed) return
 
     this.closed = true
     this.handlers.clear()
+    this.closeHandlers.clear()
     this.worker.removeEventListener('message', this.handleMessage)
+    this.worker.removeEventListener('error', this.handleError)
     if (this.terminateOnClose) this.worker.terminate?.()
   }
 
@@ -175,6 +195,18 @@ class WorkerLspTransport implements LspManagedTransport {
     const message = messageEventData(event)
     if (message === null) return
     for (const handler of this.handlers) handler(message)
+  }
+
+  private readonly handleError = (): void => {
+    if (this.closed) return
+
+    this.closed = true
+    this.handlers.clear()
+    this.worker.removeEventListener('message', this.handleMessage)
+    this.worker.removeEventListener('error', this.handleError)
+    if (this.terminateOnClose) this.worker.terminate?.()
+    for (const handler of this.closeHandlers) handler()
+    this.closeHandlers.clear()
   }
 }
 

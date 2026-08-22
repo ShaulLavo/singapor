@@ -11,7 +11,7 @@ import { createLanguageServerSetPlugin } from '../src/plugin'
 import { LanguageServerSet, type LanguageServerSetLane } from '../src/serverSet'
 
 describe('LanguageServerSet', () => {
-  it('merges hover and highlights in stable feature-rank order while isolating failures', async () => {
+  it('merges hover but takes the first ranked highlight answer while isolating failures', async () => {
     const primary = fakeLane('primary', { hover: 0, documentHighlights: 10 }, capabilities(), {
       'textDocument/hover': hover('primary'),
       'textDocument/documentHighlight': [highlight(1)],
@@ -32,8 +32,27 @@ describe('LanguageServerSet', () => {
     )
 
     expect((mergedHover.contents as lsp.MarkupContent).value).toBe('primary\n\n---\n\nsecondary')
-    expect(mergedHighlights).toEqual([highlight(2), highlight(1)])
-    expect(failed.onError).toHaveBeenCalledTimes(1)
+    expect(mergedHighlights).toEqual([highlight(2)])
+    expect(failed.onRequestError).toHaveBeenCalledWith('textDocument/hover', expect.any(Error))
+  })
+
+  it('drops empty and duplicate hover answers without disturbing progressive rank order', async () => {
+    const lanes = [
+      fakeLane('empty', { hover: 0 }, capabilities(), {
+        'textDocument/hover': hover('   '),
+      }),
+      fakeLane('first', { hover: 1 }, capabilities(), {
+        'textDocument/hover': hover('answer'),
+      }),
+      fakeLane('duplicate', { hover: 2 }, capabilities(), {
+        'textDocument/hover': hover('answer'),
+      }),
+    ]
+    const servers = new LanguageServerSet(lanes)
+
+    const result = await servers.request<lsp.Hover | null>('textDocument/hover', {})
+
+    expect(result).toEqual(hover('answer'))
   })
 
   it('publishes hover answers progressively without letting resolution order change rank order', async () => {
@@ -68,26 +87,51 @@ describe('LanguageServerSet', () => {
     ])
   })
 
-  it('uses one ranked owner for navigation, signature help, formatting, and rename', async () => {
-    const first = fakeLane('first', ownerFeatures(5), ownerCapabilities(), ownerResponses('first'))
-    const second = fakeLane(
-      'second',
-      ownerFeatures(0),
-      ownerCapabilities(),
-      ownerResponses('second'),
-    )
+  it('fans out and deduplicates navigation while keeping formatting and rename single-owner', async () => {
+    const shared = location('file:///shared.ts', 1)
+    const first = fakeLane('first', ownerFeatures(5), ownerCapabilities(), {
+      ...ownerResponses('first'),
+      'textDocument/definition': [shared, location('file:///first.ts', 2)],
+    })
+    const second = fakeLane('second', ownerFeatures(0), ownerCapabilities(), {
+      ...ownerResponses('second'),
+      'textDocument/definition': [shared, location('file:///second.ts', 3)],
+    })
     const servers = new LanguageServerSet([first, second])
 
-    expect(await servers.request('textDocument/definition', {})).toBe('second:definition')
+    expect(await servers.request('textDocument/definition', {})).toEqual([
+      shared,
+      location('file:///second.ts', 3),
+      location('file:///first.ts', 2),
+    ])
     expect(await servers.request('textDocument/signatureHelp', {})).toBe('second:signature')
     expect(await servers.request('textDocument/formatting', {})).toBe('second:formatting')
     expect(await servers.request('textDocument/onTypeFormatting', {})).toBe('second:on-type')
     expect(await servers.request('textDocument/rename', {})).toBe('second:rename')
-    expect(first.connection.client.request).not.toHaveBeenCalled()
+    expect(first.connection.client.request).toHaveBeenCalledTimes(1)
     expect(second.connection.client.request).toHaveBeenCalledTimes(5)
   })
 
-  it('honours runtime capability absence and keeps the designated semantic owner fixed', () => {
+  it('falls back to the next signature provider after null or failure', async () => {
+    const first = fakeLane('first', { signatureHelp: 0 }, ownerCapabilities(), {
+      'textDocument/signatureHelp': null,
+    })
+    const failed = fakeLane('failed', { signatureHelp: 1 }, ownerCapabilities(), {
+      'textDocument/signatureHelp': new Error('declined'),
+    })
+    const answer = fakeLane('answer', { signatureHelp: 2 }, ownerCapabilities(), {
+      'textDocument/signatureHelp': 'answer',
+    })
+    const servers = new LanguageServerSet([answer, failed, first])
+
+    expect(await servers.request('textDocument/signatureHelp', {})).toBe('answer')
+    expect(failed.onRequestError).toHaveBeenCalledWith(
+      'textDocument/signatureHelp',
+      expect.any(Error),
+    )
+  })
+
+  it('honours runtime capability absence and elects the ready semantic owner', () => {
     const designated = fakeLane(
       'designated',
       { completion: 0, diagnostics: 10, semanticTokens: 0 },
@@ -111,7 +155,6 @@ describe('LanguageServerSet', () => {
       'fallback',
       'designated',
     ])
-    expect(servers.designated('semanticTokens')?.id).toBe('designated')
     expect(servers.ready('semanticTokens').map((lane) => lane.id)).toEqual(['fallback'])
   })
 
@@ -223,7 +266,7 @@ function fakeLane(
     workspace: {} as LspWorkspace,
   } satisfies AcquiredLanguageServerLane
 
-  return { connection, features, id, onError: vi.fn() }
+  return { connection, features, id, onRequestError: vi.fn() }
 }
 
 function capabilities(): lsp.ServerCapabilities {
@@ -280,6 +323,10 @@ function highlight(character: number): lsp.DocumentHighlight {
       end: { line: 0, character: character + 1 },
     },
   }
+}
+
+function location(uri: string, character: number): lsp.Location {
+  return { uri, range: highlight(character).range }
 }
 
 function diagnostic(message: string): lsp.Diagnostic {

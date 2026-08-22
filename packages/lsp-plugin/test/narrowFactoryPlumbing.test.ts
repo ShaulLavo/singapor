@@ -391,7 +391,7 @@ describe('the semantic token layer the narrow factory hands over', () => {
     dispose(): void
   }
 
-  function layerHarness(withBlock: boolean): LayerHarness {
+  async function layerHarness(withBlock: boolean): Promise<LayerHarness> {
     const delivered: LayerHarness['delivered'] = []
     const requests: number[] = []
     const disposals: number[] = []
@@ -424,6 +424,20 @@ describe('the semantic token layer the narrow factory hands over', () => {
     const provider = activate(plugin)
     const contribution = provider.createContribution(layerContext(() => snapshot, painted))
     if (!contribution) throw new Error('missing contribution')
+    await flushPromises()
+    const socket = StubSocket.latest()
+    const initialize = socket?.find('initialize')
+    if (!socket || !initialize) throw new Error('missing initialize request')
+    socket.receive({
+      id: initialize.id,
+      jsonrpc: '2.0',
+      result: {
+        capabilities: {
+          semanticTokensProvider: { legend: { tokenModifiers: [], tokenTypes: [] } },
+        },
+      },
+    })
+    await flushPromises()
 
     return {
       delivered,
@@ -438,8 +452,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
     }
   }
 
-  it('delivers a layer the host can push to', () => {
-    const harness = layerHarness(true)
+  it('delivers a layer the host can push to', async () => {
+    const harness = await layerHarness(true)
 
     expect(harness.delivered).toHaveLength(1)
     expect(harness.delivered[0]?.documentId).toBe('src/index.ts')
@@ -456,8 +470,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
     harness.dispose()
   })
 
-  it('creates nothing at all when the host supplies no block', () => {
-    const harness = layerHarness(false)
+  it('creates nothing at all when the host supplies no block', async () => {
+    const harness = await layerHarness(false)
     harness.update('src/index.ts', 'typescript')
 
     expect(harness.delivered).toHaveLength(0)
@@ -471,8 +485,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
    * from the moment either changes, and the replacement arrives as a *new* layer — which is why
    * `clear()` across a document change is a call on a disposed handle rather than a reset.
    */
-  it('replaces the layer when the document changes, rather than re-pointing it', () => {
-    const harness = layerHarness(true)
+  it('replaces the layer when the document changes, rather than re-pointing it', async () => {
+    const harness = await layerHarness(true)
     harness.update('src/other.ts', 'typescript')
 
     expect(harness.delivered).toHaveLength(2)
@@ -481,8 +495,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
     harness.dispose()
   })
 
-  it('replaces it when only the language id changes', () => {
-    const harness = layerHarness(true)
+  it('replaces it when only the language id changes', async () => {
+    const harness = await layerHarness(true)
     harness.update('src/index.ts', 'javascript')
 
     expect(harness.delivered).toHaveLength(2)
@@ -490,8 +504,8 @@ describe('the semantic token layer the narrow factory hands over', () => {
     harness.dispose()
   })
 
-  it('tears the layer down with the contribution', () => {
-    const harness = layerHarness(true)
+  it('tears the layer down with the contribution', async () => {
+    const harness = await layerHarness(true)
     harness.dispose()
 
     expect(harness.disposals).toEqual([0])

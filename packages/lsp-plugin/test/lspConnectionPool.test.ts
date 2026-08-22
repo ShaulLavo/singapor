@@ -16,6 +16,7 @@ class FakeTransport implements LspManagedTransport {
   public readonly sent: string[] = []
   public closed = false
   private readonly handlers = new Set<LspTransportHandler>()
+  private readonly closeHandlers = new Set<() => void>()
 
   public constructor() {
     FakeTransport.created.push(this)
@@ -33,6 +34,11 @@ class FakeTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(handler: () => void): () => void {
+    this.closeHandlers.add(handler)
+    return () => this.closeHandlers.delete(handler)
+  }
+
   public close(): void {
     this.closed = true
     this.handlers.clear()
@@ -40,6 +46,11 @@ class FakeTransport implements LspManagedTransport {
 
   public receive(message: unknown): void {
     for (const handler of this.handlers) handler(JSON.stringify(message))
+  }
+
+  public fail(): void {
+    for (const handler of this.closeHandlers) handler()
+    this.closeHandlers.clear()
   }
 
   public methods(): readonly unknown[] {
@@ -133,6 +144,24 @@ describe('LspConnectionPool', () => {
 
     expect(FakeTransport.created).toHaveLength(1)
     expect(FakeTransport.created[0]?.closed).toBe(false)
+  })
+
+  it('retires a dead ready connection so a later borrower gets a live one', async () => {
+    const provider = pool.provider(KEY)
+    const firstCallbacks = callbacks()
+    provider.acquire(connectionOptions(), firstCallbacks)
+    const first = FakeTransport.created[0]
+    if (!first) throw new Error('missing transport')
+    completeHandshake(first)
+    await flush()
+
+    first.fail()
+    const replacement = provider.acquire(connectionOptions(), callbacks())
+
+    expect(firstCallbacks.onUnavailable).toHaveBeenCalledTimes(1)
+    expect(FakeTransport.created).toHaveLength(2)
+    expect(replacement.connection).not.toBeUndefined()
+    expect(events.some((event) => event.kind === 'retired')).toBe(true)
   })
 
   it('closes a connection nothing has borrowed once the grace period passes', () => {

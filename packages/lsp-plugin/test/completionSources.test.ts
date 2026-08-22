@@ -12,7 +12,10 @@ import type { LspManagedTransport, LspTransportHandler } from '@singapor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import type { EditorCompletionSource } from '../src/completionProviders'
+import {
+  LanguageServerCompletionSources,
+  type EditorCompletionSource,
+} from '../src/completionProviders'
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
 
 type JsonMessage = Record<string, unknown>
@@ -40,6 +43,10 @@ class FakeTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(): () => void {
+    return () => undefined
+  }
+
   public close(): void {
     this.handlers.clear()
   }
@@ -53,6 +60,18 @@ describe('a completion list built from several sources', () => {
   afterEach(() => {
     vi.useRealTimers()
     document.body.replaceChildren()
+  })
+
+  it('keeps ambient providers when the server set contributes no completion lane', () => {
+    const ambient = itemSource([{ label: 'snippet' }])
+    const getProviders = vi.fn(() => [ambient])
+    const sources = new LanguageServerCompletionSources(
+      { getProviders } as unknown as EditorViewContributionContext,
+      [],
+    )
+
+    expect(sources.forLanguage('typescript')).toEqual([ambient])
+    expect(getProviders).toHaveBeenCalledWith(COMPLETION_SOURCES, 'typescript')
   })
 
   it('shows what every source registered for the feature answered, as one list', async () => {

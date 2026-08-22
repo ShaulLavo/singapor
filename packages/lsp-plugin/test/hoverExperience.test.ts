@@ -200,7 +200,11 @@ function hoverController(
   } as unknown as LspClient
   const controller = new HoverDefinitionController({
     context,
-    client,
+    router: {
+      canResolveCodeActions: () => false,
+      hasReady: () => client.initialized,
+      request: client.request.bind(client),
+    },
     requestHover: (_params, _options, onUpdate) => requestHover(onUpdate),
     hoverMarkdownCodeBackground: false,
     getActiveDocument: () => active,

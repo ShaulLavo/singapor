@@ -9,6 +9,8 @@ import type {
 } from '@singapor/core/extensions'
 import { createSemanticTokenLayer } from '@singapor/core/extensions'
 
+import type { LanguageServerConnectionContext } from './types'
+
 /** Which document a layer was created for. A layer never spans two. */
 export type LanguageServerSemanticTokensDocument = {
   readonly documentId: string
@@ -34,6 +36,19 @@ export type LanguageServerSemanticTokensOptions = Omit<SemanticTokenLayerOptions
     document: LanguageServerSemanticTokensDocument,
   ): EditorDisposable | void
 }
+
+export type LanguageServerSemanticTokensOwner = {
+  readonly id: string
+  readonly connection: LanguageServerConnectionContext
+}
+
+export type LanguageServerSemanticTokensOwnerOptions = LanguageServerSemanticTokensOptions & {
+  dispose?(): void
+}
+
+export type LanguageServerSemanticTokensFactory = (
+  owner: LanguageServerSemanticTokensOwner,
+) => LanguageServerSemanticTokensOwnerOptions
 
 /**
  * Owns the semantic token layer's lifetime on the contribution's behalf.

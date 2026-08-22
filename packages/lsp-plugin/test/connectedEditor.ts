@@ -46,6 +46,10 @@ class FakeTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public onDidClose(): () => void {
+    return () => undefined
+  }
+
   public close(): void {
     this.handlers.clear()
   }
@@ -311,6 +315,7 @@ function activateProvider(
       acceptOnCommitCharacter: options.acceptOnCommitCharacter ?? false,
     },
     onError: (error) => errors.push(error),
+    onRequestError: (_serverId, _method, error) => errors.push(error),
   }).activate({
     registerHighlighter: () => disposable,
     registerSyntaxProvider: () => disposable,

@@ -8,7 +8,10 @@ import type {
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { LspConnectionProvider } from './lspConnection'
-import type { LanguageServerSemanticTokensOptions } from './semanticTokens'
+import type {
+  LanguageServerSemanticTokensFactory,
+  LanguageServerSemanticTokensOptions,
+} from './semanticTokens'
 
 export type LanguageServerStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -135,6 +138,7 @@ export type LanguageServerPluginOptions = {
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void
+  readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -161,6 +165,7 @@ export type LanguageServerLaneOptions = {
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void
+  readonly onRequestError?: (method: string, error: unknown) => void
   readonly onError?: (error: unknown) => void
 }
 
@@ -168,14 +173,15 @@ export type LanguageServerSetPluginOptions = Pick<
   LanguageServerPluginOptions,
   | 'hoverMarkdownCodeBackground'
   | 'documentSync'
-  | 'semanticTokens'
   | 'onDiagnostics'
   | 'onInteractiveReady'
+  | 'onRequestError'
   | 'onOpenDefinition'
   | 'onOpenReferences'
   | 'onError'
 > & {
   readonly lanes: readonly LanguageServerLaneOptions[]
+  readonly semanticTokens?: LanguageServerSemanticTokensFactory
 }
 
 export type LanguageServerPlugin = EditorPlugin

@@ -4,7 +4,6 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
 } from '@singapor/core/extensions'
-import type { LspClient } from '@singapor/lsp'
 import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
@@ -12,6 +11,7 @@ import type { LanguageServerCompletionEditFeature } from './completion'
 import type { OffsetRange } from './definitionNavigation'
 import { formattingEdits } from './formatting'
 import type { ActiveDocument } from './pluginTypes'
+import type { LanguageServerFeatureRouter } from './serverSet'
 import {
   workspaceEditForDocument,
   workspaceEditPlan,
@@ -89,7 +89,7 @@ export function codeActionAutoTriggerRange(
 }
 
 export type CodeActionControllerOptions = {
-  readonly client: LspClient
+  readonly router: LanguageServerFeatureRouter
   readonly context: EditorViewContributionContext
   readonly editFeature: EditorCapabilityToken<LanguageServerCompletionEditFeature>
   readonly getActiveDocument: () => ActiveDocument | null
@@ -192,7 +192,7 @@ export class CodeActionController {
   private async request(): Promise<void> {
     const active = this.options.getActiveDocument()
     if (!active) return
-    if (!this.options.client.serverCapabilities?.codeActionProvider) return
+    if (!this.options.router.hasReady('codeActions', 'textDocument/codeAction')) return
 
     const selection = this.options.context.getSnapshot().selections[0]
     if (!selection) return
@@ -210,7 +210,7 @@ export class CodeActionController {
     this.abort = abort
 
     try {
-      const response = await this.options.client.request<CodeActionResponse>(
+      const response = await this.options.router.request<CodeActionResponse>(
         'textDocument/codeAction',
         {
           context: {
@@ -249,7 +249,7 @@ export class CodeActionController {
       // an edit that is missing here is one that has not been asked for yet.
       const resolved = action.edit
         ? action
-        : ((await this.options.client.request<lsp.CodeAction>('codeAction/resolve', action)) ??
+        : ((await this.options.router.request<lsp.CodeAction>('codeAction/resolve', action)) ??
           action)
       if (this.disposed) return
       if (active !== this.options.getActiveDocument()) return
@@ -261,8 +261,7 @@ export class CodeActionController {
   }
 
   private resolvesActions(): boolean {
-    const provider = this.options.client.serverCapabilities?.codeActionProvider
-    return typeof provider === 'object' && provider.resolveProvider === true
+    return this.options.router.canResolveCodeActions()
   }
 
   private applyAction(active: ActiveDocument, action: lsp.CodeAction): void {

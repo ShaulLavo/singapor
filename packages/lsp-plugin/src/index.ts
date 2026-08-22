@@ -13,7 +13,15 @@ export {
   type AcquiredLanguageServerLane,
   type LanguageServerLaneCallbacks,
 } from './lane'
-export { allLanguageServerFeatures, LanguageServerSet, laneSupports } from './serverSet'
+export {
+  allLanguageServerFeatures,
+  LanguageServerSet,
+  laneSupports,
+  rankedLanguageServerLanes,
+  type LanguageServerFeatureRouter,
+  type LanguageServerLaneResult,
+  type LanguageServerSetLane,
+} from './serverSet'
 export {
   LspConnectionPool,
   type LspConnectionPoolEvent,
@@ -37,7 +45,10 @@ export {
 } from './diagnostics'
 export {
   SemanticTokenLayerOwner,
+  type LanguageServerSemanticTokensFactory,
   type LanguageServerSemanticTokensDocument,
+  type LanguageServerSemanticTokensOwner,
+  type LanguageServerSemanticTokensOwnerOptions,
   type LanguageServerSemanticTokensOptions,
 } from './semanticTokens'
 export {

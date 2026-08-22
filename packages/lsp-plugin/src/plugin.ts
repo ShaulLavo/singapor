@@ -33,7 +33,12 @@ import { FormatOnTypeController } from './formatOnType'
 import { HoverDefinitionController } from './hoverDefinitionController'
 import { SignatureHelpController } from './signatureHelpController'
 import { DocumentHighlightController } from './documentHighlightController'
-import { SemanticTokenLayerOwner, type LanguageServerSemanticTokensOptions } from './semanticTokens'
+import {
+  SemanticTokenLayerOwner,
+  type LanguageServerSemanticTokensFactory,
+  type LanguageServerSemanticTokensOptions,
+  type LanguageServerSemanticTokensOwnerOptions,
+} from './semanticTokens'
 import { createRenameWidgetController, type RenameWidgetController } from './renameWidget'
 import {
   workspaceEditForDocument,
@@ -41,7 +46,7 @@ import {
   workspaceEditTouchesOtherDocuments,
 } from './workspaceEdit'
 import { wordRangeAtOffset } from '@singapor/core/internal'
-import { offsetToLspPosition } from '@singapor/lsp'
+import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
 import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
 import {
   acquireResolvedLanguageServerLane,
@@ -167,6 +172,7 @@ export type LanguageServerAdapterPluginOptions = {
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void
+  readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -200,9 +206,10 @@ type LanguageServerResolvedAdapterOptions = {
     readonly navigationTimingNamePrefix: string
   }
   readonly commands: readonly LanguageServerCommandSpec[]
-  readonly semanticTokens?: LanguageServerSemanticTokensOptions
+  readonly semanticTokens?: LanguageServerSemanticTokensFactory
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void
+  readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -218,10 +225,11 @@ export function createLanguageServerPlugin(
     hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
     lanes: [languageServerLaneFromPluginOptions(options)],
     documentSync: options.documentSync,
-    semanticTokens: options.semanticTokens,
+    semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onRequestError: options.onRequestError,
     onError: options.onError,
   })
 }
@@ -384,7 +392,9 @@ class LanguageServerContribution implements EditorViewContribution {
   /** Absent rather than idle when switched off, so nothing watches the typing at all. */
   private readonly formatOnType: FormatOnTypeController | null
   /** Absent unless the host asked for semantic colour; see LanguageServerSemanticTokensOptions. */
-  private readonly semanticTokens: SemanticTokenLayerOwner | null
+  private semanticTokens: SemanticTokenLayerOwner | null = null
+  private semanticTokensOptions: LanguageServerSemanticTokensOwnerOptions | null = null
+  private semanticTokensOwner: ViewLanguageServerLane | null = null
   private rename: RenameWidgetController | null = null
   /** The symbol an open prompt is renaming, which is what the prompt has to stay beside. */
   private renamePromptRange: OffsetRange | null = null
@@ -414,6 +424,7 @@ class LanguageServerContribution implements EditorViewContribution {
             lane.connection.client,
             () => this.servers.ready('completion').includes(lane),
             lane.onInteractiveReady,
+            lane.onRequestError,
           ),
         ),
     )
@@ -431,7 +442,7 @@ class LanguageServerContribution implements EditorViewContribution {
     })
     this.hoverDefinition = new HoverDefinitionController({
       context,
-      client: this.servers.client,
+      router: this.servers,
       requestHover: (params, requestOptions, onUpdate) =>
         this.servers.requestHover(params, requestOptions, onUpdate),
       hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
@@ -448,7 +459,7 @@ class LanguageServerContribution implements EditorViewContribution {
       onRequestError: (error) => this.handleRequestError(error),
     })
     this.signatureHelp = new SignatureHelpController({
-      client: this.servers.client,
+      router: this.servers,
       context,
       getActiveDocument: () => this.activeDocument(),
       onRequestError: (error) => this.handleRequestError(error),
@@ -456,14 +467,14 @@ class LanguageServerContribution implements EditorViewContribution {
       tooltipClassNamespace: options.hoverDefinition.tooltipClassNamespace,
     })
     this.documentHighlights = new DocumentHighlightController({
-      client: this.servers.client,
+      router: this.servers,
       context,
       getActiveDocument: () => this.activeDocument(),
       highlightName: `${context.highlightPrefix ?? options.defaultHighlightPrefix}-document-highlight`,
       onRequestError: (error) => this.handleRequestError(error),
     })
     this.codeActions = new CodeActionController({
-      client: this.servers.client,
+      router: this.servers,
       context,
       editFeature: options.completion.editFeature,
       getActiveDocument: () => this.activeDocument(),
@@ -473,10 +484,6 @@ class LanguageServerContribution implements EditorViewContribution {
     this.formatOnType = options.formatOnType
       ? new FormatOnTypeController({ context, editFeature: options.completion.editFeature })
       : null
-    this.semanticTokens =
-      options.semanticTokens && this.servers.designated('semanticTokens')
-        ? new SemanticTokenLayerOwner(context, options.semanticTokens)
-        : null
     this.state.register(this)
     this.update(context.getSnapshot(), 'document', null)
   }
@@ -502,7 +509,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.documentHighlights.update(snapshot, kind)
     this.codeActions.update(kind)
     this.formatOnType?.update(snapshot, kind, change ?? null)
-    this.semanticTokens?.update(snapshot, kind)
+    this.syncSemanticTokens(snapshot, kind)
   }
 
   public dispose(): void {
@@ -521,6 +528,9 @@ class LanguageServerContribution implements EditorViewContribution {
     this.codeActions.dispose()
     this.formatOnType?.dispose()
     this.semanticTokens?.dispose()
+    this.semanticTokensOptions?.dispose?.()
+    this.semanticTokensOptions = null
+    this.semanticTokensOwner = null
     this.rename?.dispose()
     for (const lane of this.lanes) lane.connection.release()
   }
@@ -553,7 +563,7 @@ class LanguageServerContribution implements EditorViewContribution {
   public formatDocument(): boolean {
     const active = this.activeDocument()
     if (!active) return false
-    if (!this.servers.client.serverCapabilities?.documentFormattingProvider) return false
+    if (!this.servers.hasReady('formatting', 'textDocument/formatting')) return false
 
     void this.requestFormatting(active)
     return true
@@ -569,7 +579,7 @@ class LanguageServerContribution implements EditorViewContribution {
   public renameSymbol(): boolean {
     const active = this.activeDocument()
     if (!active) return false
-    if (!this.servers.client.serverCapabilities?.renameProvider) return false
+    if (!this.servers.hasReady('rename', 'textDocument/rename')) return false
 
     void this.runRename(active)
     return true
@@ -581,19 +591,24 @@ class LanguageServerContribution implements EditorViewContribution {
   }
 
   private createLane(options: LanguageServerResolvedLaneOptions): ViewLanguageServerLane {
-    let lane!: ViewLanguageServerLane
+    let lane: ViewLanguageServerLane | null = null
     const diagnostics = this.diagnostics.forLane(options.id, options.onDiagnostics)
     const connection = acquireResolvedLanguageServerLane(options, {
       onPublishDiagnostics: (params) => {
         if (options.features.diagnostics === undefined) return
+        if (!lane) return
 
         lane.sync.publishDiagnostics(params)
         this.codeActions.diagnosticsChanged()
       },
-      onReady: () => this.syncReadyLane(lane),
+      onReady: () => {
+        if (lane) this.syncReadyLane(lane)
+      },
       onUnavailable: () => {
+        if (!lane) return
+
         lane.sync.clearDiagnostics()
-        this.clearRequestUi()
+        this.syncSemanticTokens(this.context.getSnapshot(), 'document')
       },
     })
     const sync = new DocumentSync(connection.workspace, diagnostics, {
@@ -604,9 +619,9 @@ class LanguageServerContribution implements EditorViewContribution {
       connection,
       features: options.features,
       id: options.id,
-      onError: (error) => {
-        if (options.onError) options.onError(error)
-        else this.options.onError?.(error)
+      onRequestError: (method, error) => {
+        if (options.onRequestError) options.onRequestError(method, error)
+        else this.options.onRequestError?.(options.id, method, error)
       },
       onInteractiveReady: () => {
         if (options.onInteractiveReady) options.onInteractiveReady()
@@ -624,6 +639,39 @@ class LanguageServerContribution implements EditorViewContribution {
     const snapshot = this.context.getSnapshot()
     if (!lane.sync.shouldSync('document', snapshot)) return
     lane.sync.sync(snapshot, null)
+    this.syncSemanticTokens(snapshot, 'document')
+  }
+
+  private syncSemanticTokens(
+    snapshot: EditorViewSnapshot,
+    kind: EditorViewContributionUpdateKind,
+  ): void {
+    const selected = this.options.semanticTokens
+      ? (this.servers.ready('semanticTokens')[0] ?? null)
+      : null
+    const owner = this.lanes.find((lane) => lane === selected) ?? null
+    if (owner !== this.semanticTokensOwner) this.replaceSemanticTokensOwner(owner)
+
+    this.semanticTokens?.update(snapshot, kind)
+  }
+
+  private replaceSemanticTokensOwner(owner: ViewLanguageServerLane | null): void {
+    this.semanticTokens?.dispose()
+    this.semanticTokens = null
+    this.semanticTokensOptions?.dispose?.()
+    this.semanticTokensOptions = null
+    this.semanticTokensOwner = owner
+    if (!owner || !this.options.semanticTokens) return
+
+    const options = this.options.semanticTokens({
+      id: owner.id,
+      connection: {
+        client: owner.connection.client,
+        workspace: owner.connection.workspace,
+      },
+    })
+    this.semanticTokensOptions = options
+    this.semanticTokens = new SemanticTokenLayerOwner(this.context, options)
   }
 
   private activeDocument(): ActiveDocument | null {
@@ -648,9 +696,13 @@ class LanguageServerContribution implements EditorViewContribution {
     if (!selection) return
 
     const offset = selection.headOffset
-    const range = wordRangeAtOffset(active.fullText, offset)
-    const currentName = active.fullText.slice(range.start, range.end)
-    if (currentName.length === 0) return
+    const owner = this.servers.ready('rename', 'textDocument/rename')[0]
+    if (!owner) return
+
+    const prepared = await this.prepareRename(active, offset, owner)
+    if (!prepared) return
+
+    const { range, currentName } = prepared
 
     const anchor = this.context.getRangeClientRect(range.start, range.end)
     if (!anchor) return
@@ -666,13 +718,16 @@ class LanguageServerContribution implements EditorViewContribution {
       if (nextName === null || nextName === currentName) return
       if (active !== this.activeDocument()) return
 
-      const edit = await this.servers.client.request<lsp.WorkspaceEdit | null>(
+      const edit = await this.servers.requestSingle(
+        owner,
         'textDocument/rename',
         {
           newName: nextName,
           position: offsetToLspPosition(active.fullText, offset),
           textDocument: { uri: active.uri },
         },
+        {},
+        null as lsp.WorkspaceEdit | null,
       )
       if (active !== this.activeDocument()) return
 
@@ -680,6 +735,43 @@ class LanguageServerContribution implements EditorViewContribution {
     } catch (error) {
       this.handleRequestError(error)
     }
+  }
+
+  private async prepareRename(
+    active: ActiveDocument,
+    offset: number,
+    owner: LanguageServerSetLane,
+  ): Promise<{ readonly range: OffsetRange; readonly currentName: string } | null> {
+    const fallback = wordRangeAtOffset(active.fullText, offset)
+    const provider = owner.connection.client.serverCapabilities?.renameProvider
+    const supportsPrepare = typeof provider === 'object' && provider.prepareProvider === true
+    if (!supportsPrepare) return renameTarget(active.fullText, fallback)
+
+    const result = await this.servers.requestSingle<
+      lsp.TextDocumentPositionParams,
+      lsp.PrepareRenameResult | null
+    >(
+      owner,
+      'textDocument/prepareRename',
+      {
+        position: offsetToLspPosition(active.fullText, offset),
+        textDocument: { uri: active.uri },
+      },
+      {},
+      null,
+    )
+    if (!result) return null
+    if ('defaultBehavior' in result) return renameTarget(active.fullText, fallback)
+
+    const protocolRange = 'range' in result ? result.range : result
+    const range = {
+      start: lspPositionToOffset(active.fullText, protocolRange.start),
+      end: lspPositionToOffset(active.fullText, protocolRange.end),
+    }
+    const target = renameTarget(active.fullText, range)
+    if (!target || !('placeholder' in result)) return target
+
+    return { ...target, currentName: result.placeholder }
   }
 
   /**
@@ -744,15 +836,12 @@ class LanguageServerContribution implements EditorViewContribution {
 
   private async requestFormatting(active: ActiveDocument): Promise<void> {
     try {
-      const edits = await this.servers.client.request<lsp.TextEdit[] | null>(
-        'textDocument/formatting',
-        {
-          // The view snapshot carries the editor's own tab size, so the formatter is told the same
-          // width the document is displayed with.
-          options: formattingOptions(this.context.getSnapshot().tabSize),
-          textDocument: { uri: active.uri },
-        },
-      )
+      const edits = await this.servers.request<lsp.TextEdit[] | null>('textDocument/formatting', {
+        // The view snapshot carries the editor's own tab size, so the formatter is told the same
+        // width the document is displayed with.
+        options: formattingOptions(this.context.getSnapshot().tabSize),
+        textDocument: { uri: active.uri },
+      })
       // The document can change while the formatter runs; its edits describe the text it was given.
       if (active !== this.activeDocument()) return
 
@@ -782,15 +871,19 @@ class LanguageServerContribution implements EditorViewContribution {
     feature.applyCompletion({ edits, selection: { anchor: head, head } })
   }
 
-  private clearRequestUi(): void {
-    this.hoverDefinition.clearPointerUi()
-    this.completion.hide()
-  }
-
   private handleRequestError(error: unknown): void {
     if (isAbortError(error)) return
     this.options.onError?.(error)
   }
+}
+
+function renameTarget(
+  text: string,
+  range: OffsetRange,
+): { readonly range: OffsetRange; readonly currentName: string } | null {
+  const currentName = text.slice(range.start, range.end)
+  if (currentName.length === 0) return null
+  return { currentName, range }
 }
 
 function resolveAdapterOptions(
@@ -807,10 +900,11 @@ function resolveAdapterOptions(
     formatOnType: options.formatOnType ?? true,
     hoverDefinition: resolveHoverDefinitionOptions(options),
     commands: options.commands ?? LANGUAGE_SERVER_COMMANDS,
-    semanticTokens: options.semanticTokens,
+    semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onRequestError: options.onRequestError,
     onError: options.onError,
   }
 }
@@ -834,6 +928,7 @@ function resolveLanguageServerSetOptions(
     onInteractiveReady: options.onInteractiveReady,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onRequestError: options.onRequestError,
     onError: options.onError,
   }
 }

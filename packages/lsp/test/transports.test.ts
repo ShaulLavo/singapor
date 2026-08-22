@@ -170,6 +170,37 @@ describe('WebSocket LSP transport', () => {
     expect(socket.sent).toEqual([])
     expect(socket.listenerCount('message')).toBe(0)
   })
+
+  it('signals an unexpected socket close but not an owned close', async () => {
+    FakeWebSocket.instances.length = 0
+    const firstPromise = createWebSocketLspTransport('ws://localhost:3000', {
+      WebSocketCtor: FakeWebSocket,
+    })
+    const firstSocket = FakeWebSocket.instances[0]
+    if (!firstSocket) throw new Error('missing socket')
+    firstSocket.open()
+    const first = await firstPromise
+    let unexpectedCloses = 0
+    first.onDidClose(() => {
+      unexpectedCloses += 1
+    })
+
+    firstSocket.close()
+
+    const secondPromise = createWebSocketLspTransport('ws://localhost:3000', {
+      WebSocketCtor: FakeWebSocket,
+    })
+    const secondSocket = FakeWebSocket.instances[1]
+    if (!secondSocket) throw new Error('missing socket')
+    secondSocket.open()
+    const second = await secondPromise
+    second.onDidClose(() => {
+      unexpectedCloses += 1
+    })
+    second.close()
+
+    expect(unexpectedCloses).toBe(1)
+  })
 })
 
 describe('Worker LSP transport', () => {

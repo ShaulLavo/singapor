@@ -23,6 +23,7 @@ export type EditorCommandId =
   | 'editor.action.revealDefinitionAside'
   | 'editor.action.goToImplementation'
   | 'editor.action.goToTypeDefinition'
+  | 'editor.action.showHover'
   | 'editor.action.marker.next'
   | 'editor.action.marker.prev'
   | 'closeFind'

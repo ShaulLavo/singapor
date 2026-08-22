@@ -36,6 +36,38 @@ describe('LanguageServerSet', () => {
     expect(failed.onError).toHaveBeenCalledTimes(1)
   })
 
+  it('publishes hover answers progressively without letting resolution order change rank order', async () => {
+    const firstAnswer = deferred<lsp.Hover | null>()
+    const secondAnswer = deferred<lsp.Hover | null>()
+    const first = fakeLane('first', { hover: 0 }, capabilities(), {
+      'textDocument/hover': () => firstAnswer.promise,
+    })
+    const second = fakeLane('second', { hover: 5 }, capabilities(), {
+      'textDocument/hover': () => secondAnswer.promise,
+    })
+    const servers = new LanguageServerSet([second, first])
+    const updates: Array<{ values: readonly string[]; pending: boolean }> = []
+
+    const result = servers.requestHover({}, {}, (update) => {
+      updates.push({
+        values: update.hovers.map((item) => (item.contents as lsp.MarkupContent).value),
+        pending: update.pending,
+      })
+    })
+    secondAnswer.resolve(hover('second'))
+    await Promise.resolve()
+    firstAnswer.resolve(hover('first'))
+
+    expect((await result)?.contents).toEqual({
+      kind: 'markdown',
+      value: 'first\n\n---\n\nsecond',
+    })
+    expect(updates).toEqual([
+      { values: ['second'], pending: true },
+      { values: ['first', 'second'], pending: false },
+    ])
+  })
+
   it('uses one ranked owner for navigation, signature help, formatting, and rename', async () => {
     const first = fakeLane('first', ownerFeatures(5), ownerCapabilities(), ownerResponses('first'))
     const second = fakeLane(
@@ -165,6 +197,7 @@ function fakeLane(
   const request = vi.fn(async (method: string) => {
     const response = responses[method]
     if (response instanceof Error) throw response
+    if (typeof response === 'function') return response()
     return response ?? null
   })
   const client = {
@@ -247,4 +280,12 @@ function diagnostic(message: string): lsp.Diagnostic {
 function publish(presenter: CompositeDiagnosticsLanePresenter, item: lsp.Diagnostic): void {
   presenter.render('text', [item])
   presenter.publishSummary('file:///test.ts', 1, [item])
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
 }

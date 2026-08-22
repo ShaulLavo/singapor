@@ -89,6 +89,7 @@ const DEFAULT_COMPLETION_ACCEPT_TIMING_NAME = 'lspPlugin.completion.accept'
 export type LanguageServerCommandTarget = {
   goToDefinitionFromSelection(): boolean
   runNavigationCommand(command: LanguageServerNavigationCommand): boolean
+  showHover(): boolean
   moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean
   formatDocument(): boolean
   renameSymbol(): boolean
@@ -288,6 +289,14 @@ class LanguageServerPluginState implements LanguageServerCommandTarget {
     return false
   }
 
+  public showHover(): boolean {
+    for (const contribution of this.contributions) {
+      if (contribution.showHover()) return true
+    }
+
+    return false
+  }
+
   public moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean {
     for (const contribution of this.contributions) {
       if (contribution.moveDiagnosticMarker(direction)) return true
@@ -422,6 +431,8 @@ class LanguageServerContribution implements EditorViewContribution {
     this.hoverDefinition = new HoverDefinitionController({
       context,
       client: this.servers.client,
+      requestHover: (params, requestOptions, onUpdate) =>
+        this.servers.requestHover(params, requestOptions, onUpdate),
       hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
       defaultHighlightPrefix: options.defaultHighlightPrefix,
       linkHighlightNameNamespace: options.hoverDefinition.linkHighlightNameNamespace,
@@ -522,6 +533,10 @@ class LanguageServerContribution implements EditorViewContribution {
 
   public runNavigationCommand(command: LanguageServerNavigationCommand): boolean {
     return this.hoverDefinition.runNavigationCommand(command)
+  }
+
+  public showHover(): boolean {
+    return this.hoverDefinition.showHoverFromSelection()
   }
 
   public moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean {
@@ -934,6 +949,10 @@ const LANGUAGE_SERVER_COMMANDS: readonly LanguageServerCommandSpec[] = [
         kind: 'typeDefinition',
         openMode: 'default',
       }),
+  },
+  {
+    id: 'editor.action.showHover',
+    run: (state) => state.showHover(),
   },
   {
     id: 'editor.action.goToReferences',

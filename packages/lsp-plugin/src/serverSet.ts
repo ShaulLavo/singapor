@@ -21,6 +21,13 @@ type LaneResult = {
   readonly result: unknown
 }
 
+export type LanguageServerHoverUpdate = {
+  /** Hover answers in feature-rank order, regardless of the order in which they resolved. */
+  readonly hovers: readonly lsp.Hover[]
+  /** True until every ready hover lane has either answered or failed. */
+  readonly pending: boolean
+}
+
 export class LanguageServerSet {
   readonly #lanes: readonly LanguageServerSetLane[]
   readonly #provenance = new WeakMap<object, LanguageServerSetLane>()
@@ -78,12 +85,7 @@ export class LanguageServerSet {
     options: LspRequestOptions = {},
   ): Promise<TResult> {
     if (method === 'textDocument/hover') {
-      const lanes = this.ready('hover', method)
-      if (lanes.length === 1) {
-        return this.requestSingle(lanes[0], method, params, options, null) as Promise<TResult>
-      }
-
-      return this.mergedHover(params, options) as Promise<TResult>
+      return this.requestHover(params, options) as Promise<TResult>
     }
     if (method === 'textDocument/codeAction') {
       const lanes = this.ready('codeActions', method)
@@ -114,18 +116,40 @@ export class LanguageServerSet {
     return this.requestSingle(lane, method, params, options, null) as Promise<TResult>
   }
 
-  async mergedHover<TParams>(params: TParams | undefined, options: LspRequestOptions) {
-    const results = await this.requestAll('hover', 'textDocument/hover', params, options)
-    const hovers = results.flatMap(({ result }) => (isHover(result) ? [result] : []))
-    if (hovers.length === 0) return null
+  public async requestHover<TParams>(
+    params: TParams | undefined,
+    options: LspRequestOptions = {},
+    onUpdate?: (update: LanguageServerHoverUpdate) => void,
+  ): Promise<lsp.Hover | null> {
+    const lanes = this.ready('hover', 'textDocument/hover')
+    if (lanes.length === 0) return null
 
-    return {
-      contents: {
-        kind: 'markdown',
-        value: hovers.map((hover) => hoverContentsText(hover.contents)).join('\n\n---\n\n'),
-      },
-      range: hovers.find((hover) => hover.range)?.range,
-    } satisfies lsp.Hover
+    const results: Array<LaneResult | null> = lanes.map(() => null)
+    let settled = 0
+    const requests = lanes.map((lane, index) =>
+      this.requestHoverLane(lane, params, options).then((result) => {
+        results[index] = { lane, result }
+        settled += 1
+        onUpdate?.({ hovers: hoverResults(results), pending: settled < lanes.length })
+      }),
+    )
+    await Promise.all(requests)
+    return mergedHover(hoverResults(results))
+  }
+
+  private async requestHoverLane<TParams>(
+    lane: LanguageServerSetLane,
+    params: TParams | undefined,
+    options: LspRequestOptions,
+  ): Promise<unknown> {
+    try {
+      const result = await lane.connection.client.request('textDocument/hover', params, options)
+      lane.onInteractiveReady?.()
+      return result
+    } catch (error) {
+      if (!isAbortError(error)) lane.onError?.(error)
+      return null
+    }
   }
 
   async mergedArray<TParams>(
@@ -308,6 +332,22 @@ function codeActionCapability(
 
 function isHover(value: unknown): value is lsp.Hover {
   return isRecord(value) && value.contents !== undefined
+}
+
+function hoverResults(results: readonly (LaneResult | null)[]): readonly lsp.Hover[] {
+  return results.flatMap((entry) => (entry && isHover(entry.result) ? [entry.result] : []))
+}
+
+function mergedHover(hovers: readonly lsp.Hover[]): lsp.Hover | null {
+  if (hovers.length === 0) return null
+
+  return {
+    contents: {
+      kind: 'markdown',
+      value: hovers.map((hover) => hoverContentsText(hover.contents)).join('\n\n---\n\n'),
+    },
+    range: hovers.find((hover) => hover.range)?.range,
+  }
 }
 
 function hoverContentsText(contents: lsp.Hover['contents']): string {

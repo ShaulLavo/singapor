@@ -14,6 +14,7 @@ import type {
 import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
 import type { LspClient, LspWebSocketLike, LspWorkerLike } from '@singapor/lsp'
 import { semanticTokensClientCapability } from '@singapor/lsp'
+import { HOVER_REQUEST_DEBOUNCE_MS, TOOLTIP_HIDE_DELAY_MS } from '@singapor/lsp-plugin/tooltip'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'
@@ -604,6 +605,7 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(tooltipElement().querySelector('pre > code')?.textContent).toBe('const value: string')
   })
@@ -788,6 +790,7 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(document.body.textContent).toContain('const value: string')
     expect(document.body.textContent).toContain('bad assignment')
@@ -800,7 +803,7 @@ describe('createTypeScriptLspPlugin', () => {
     expect(tooltipElement().style.getPropertyValue('position-anchor')).toMatch(
       /^--editor-typescript-lsp-hover-/,
     )
-    expect(tooltipElement().style.getPropertyValue('position-area')).toBe('bottom center')
+    expect(tooltipElement().style.getPropertyValue('position-area')).toBe('top center')
     expect(tooltipElement().style.overflow).toBe('hidden')
     expect(tooltipElement().style.pointerEvents).toBe('auto')
     expect(tooltipElement().style.userSelect).toBe('text')
@@ -825,6 +828,9 @@ describe('createTypeScriptLspPlugin', () => {
     mockElementRect(tooltipAnchorElement(), new DOMRect(12, 78, 40, 18))
     vi.mocked(context.textOffsetFromPoint).mockReturnValue(3)
     context.scrollElement.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 18, clientY: 25, buttons: 0 }),
+    )
+    context.scrollElement.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 18, clientY: 76, buttons: 0 }),
     )
     await vi.advanceTimersByTimeAsync(260)
@@ -832,16 +838,16 @@ describe('createTypeScriptLspPlugin', () => {
 
     copyButton().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     await flushPromises()
-    expect(writeText).toHaveBeenCalledWith('const value: string\n\nerror: bad assignment')
+    expect(writeText).toHaveBeenCalledWith('const value: string')
     expect(copyButton().getAttribute('aria-label')).toBe('Copied hover text')
 
     context.scrollElement.dispatchEvent(new PointerEvent('pointerleave'))
     tooltipElement().dispatchEvent(new PointerEvent('pointerenter'))
-    await vi.advanceTimersByTimeAsync(190)
+    await vi.advanceTimersByTimeAsync(TOOLTIP_HIDE_DELAY_MS + 10)
     expect(tooltipElement().hidden).toBe(false)
 
     tooltipElement().dispatchEvent(new PointerEvent('pointerleave'))
-    await vi.advanceTimersByTimeAsync(190)
+    await vi.advanceTimersByTimeAsync(TOOLTIP_HIDE_DELAY_MS + 10)
     expect(tooltipElement().hidden).toBe(true)
   })
 
@@ -872,6 +878,7 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(
       tooltipElement()
@@ -913,9 +920,10 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(tooltipElement().hidden).toBe(false)
-    expect(tooltipElement().style.maxHeight).toBe('420px')
+    expect(tooltipElement().style.maxHeight).toBe('250px')
     expect(tooltipElement().style.overflow).toBe('hidden')
     expect(tooltipBody()?.style.overflowY).toBe('auto')
     expect(tooltipBody()?.style.minHeight).toBe('0')
@@ -1064,6 +1072,7 @@ describe('createTypeScriptLspPlugin', () => {
       },
     })
     await flushPromises()
+    await finishHoverReveal()
 
     expect(tooltipElement().hidden).toBe(false)
     expect(tooltipElement().querySelector('pre > code')?.textContent).toBe('const value: number')
@@ -1820,4 +1829,8 @@ async function flushPromises(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
+}
+
+async function finishHoverReveal(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS - 260)
 }

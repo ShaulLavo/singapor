@@ -90,6 +90,7 @@ import {
   estimatedDisplayRowWidthPx,
   rowBlockLaneInset,
 } from './virtualizedTextViewBlockLanes'
+import { memoizedContainsRTL } from './virtualizedTextViewBidi'
 
 const GUTTER_CELL_CLASS = 'editor-virtualized-gutter-cell'
 const CURSOR_LINE_ROW_CLASS = 'editor-virtualized-cursor-line-row'
@@ -98,6 +99,8 @@ const gutterCursorLineStates = new WeakMap<HTMLElement, boolean>()
 const emptyBlockLaneInset = { left: 0, right: 0, key: '' }
 const MAX_ROW_TEXT_NODE_LENGTH = 50
 const MAX_SINGLE_NODE_ROW_LENGTH = 512
+/** Above this, the row shows a fixed endpoint-only placeholder instead of laying out unbounded text. */
+export const BIDI_LINE_MEASUREMENT_CEILING = 32_000
 // Far enough out that no scroll offset brings a parked surface back into the
 // spacer's painted box. Parking moves the surface rather than hiding or
 // detaching it, because both of those blur whatever the user was typing into —
@@ -990,6 +993,11 @@ function updateRowTextForSameLineEdit(
   mapping: RowInlineMapping | null,
   snapshot: FixedRowVirtualizerSnapshot,
 ): boolean {
+  if (exceedsBidiMeasurementCeiling(view, text)) {
+    updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
+    return false
+  }
+
   if (item.index !== patch.rowIndex) {
     if (row.text !== text) updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
     if (row.text === text) syncRowChunkOffsets(row, startOffset, mapping)
@@ -1038,6 +1046,10 @@ function updateRowTextChunks(
   snapshot = view.virtualizer.getSnapshot(),
 ): void {
   const runs = inlineRowRuns(mapping, text)
+  if (exceedsBidiMeasurementCeiling(view, text)) {
+    setOversizedBidiRowText(row, text, startOffset, mapping)
+    return
+  }
   if (runs.widgets.length > 0 || runs.classes.length > 0) {
     setInlineRunRowText(view, row, text, startOffset, mapping, runs)
     return
@@ -1059,6 +1071,7 @@ function setDirectRowText(
   mapping: RowInlineMapping | null,
 ): void {
   if (reuseDirectRowText(row, text, startOffset, mapping)) return
+  row.leftSpacerElement.style.width = '0px'
 
   // Splitting costs the row the in-place `Text.data` patch it lives on while the user types, so a
   // row short enough to be scanned cheaply keeps its single node and pays nothing.
@@ -1082,9 +1095,18 @@ function setRenderedDirectRowText(
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): void {
-  const rendered = isSimpleRowText(text)
+  const simple = isSimpleRowText(text)
+  const maxTextNodeLength = simple ? Number.POSITIVE_INFINITY : bidiTextNodeLength(view, text)
+  const rendered = simple
     ? createSplitTextChunkParts(row.element.ownerDocument, text, 0)
-    : createRenderedChunkParts(row.element.ownerDocument, text, 0, characterWidth(view))
+    : createRenderedChunkParts(
+        row.element.ownerDocument,
+        text,
+        0,
+        characterWidth(view),
+        [],
+        maxTextNodeLength,
+      )
   if (!adoptRenderedSingleTextPart(row, rendered)) {
     row.element.replaceChildren(...rendered.nodes)
   }
@@ -1268,7 +1290,9 @@ function setInlineRunRowText(
   mapping: RowInlineMapping | null,
   runs: InlineRowRuns,
 ): void {
+  row.leftSpacerElement.style.width = '0px'
   const placements = runs.widgets.map((run) => inlineWidgetPlacement(view, run))
+  const maxTextNodeLength = bidiTextNodeLength(view, text)
   const chunk = row.chunks[0]
   if (chunk && reusesInlineRunRowText(row, chunk, text, placements, runs.classes)) {
     syncDirectRowChunk(row, text, startOffset, mapping, chunk.parts, chunk.textNode)
@@ -1281,6 +1305,7 @@ function setInlineRunRowText(
     characterWidth(view),
     placements,
     runs.classes,
+    maxTextNodeLength,
   )
   row.element.replaceChildren(...rendered.nodes)
   setTextRenderMode(row, 'widget')
@@ -1298,6 +1323,7 @@ function createInlineRunParts(
   cellWidth: number,
   placements: readonly InlineWidgetPlacement[],
   classes: readonly InlineClassRun[],
+  maxTextNodeLength: number,
 ): RenderedChunkParts {
   const nodes: Node[] = []
   const parts: VirtualizedTextChunkPart[] = []
@@ -1313,12 +1339,23 @@ function createInlineRunParts(
       run.localStart,
       cellWidth,
       placements,
+      maxTextNodeLength,
     )
-    appendInlineClassRun(document, nodes, parts, text, run, cellWidth)
+    appendInlineClassRun(document, nodes, parts, text, run, cellWidth, maxTextNodeLength)
     cursor = run.localEnd
   }
 
-  appendInlineRunSlice(document, nodes, parts, text, cursor, text.length, cellWidth, placements)
+  appendInlineRunSlice(
+    document,
+    nodes,
+    parts,
+    text,
+    cursor,
+    text.length,
+    cellWidth,
+    placements,
+    maxTextNodeLength,
+  )
   return { nodes, parts, textNode: firstRowTextNode(parts) ?? document.createTextNode('') }
 }
 
@@ -1331,6 +1368,7 @@ function appendInlineRunSlice(
   localEnd: number,
   cellWidth: number,
   placements: readonly InlineWidgetPlacement[],
+  maxTextNodeLength: number,
 ): void {
   if (localEnd <= localStart) return
 
@@ -1342,6 +1380,7 @@ function appendInlineRunSlice(
     placements.filter(
       (placement) => placement.localStart >= localStart && placement.localEnd <= localEnd,
     ),
+    maxTextNodeLength,
   )
   nodes.push(...rendered.nodes)
   parts.push(...rendered.parts)
@@ -1354,12 +1393,15 @@ function appendInlineClassRun(
   text: string,
   run: InlineClassRun,
   cellWidth: number,
+  maxTextNodeLength: number,
 ): void {
   const boxed = createRenderedChunkParts(
     document,
     text.slice(run.localStart, run.localEnd),
     run.localStart,
     cellWidth,
+    [],
+    maxTextNodeLength,
   )
   const element = document.createElement('span')
   element.className = run.className
@@ -1723,7 +1765,48 @@ function createSplitTextChunkParts(
 
 function shouldChunkLine(view: VirtualizedTextViewInternal, text: string): boolean {
   if (view.wrapEnabled) return false
-  return text.length > view.longLineChunkThreshold
+  if (text.length <= view.longLineChunkThreshold) return false
+  return !memoizedContainsRTL(view, text)
+}
+
+function bidiTextNodeLength(view: VirtualizedTextViewInternal, text: string): number {
+  if (memoizedContainsRTL(view, text)) return MAX_ROW_TEXT_NODE_LENGTH
+  return Number.POSITIVE_INFINITY
+}
+
+function exceedsBidiMeasurementCeiling(view: VirtualizedTextViewInternal, text: string): boolean {
+  if (text.length < BIDI_LINE_MEASUREMENT_CEILING) return false
+  return memoizedContainsRTL(view, text)
+}
+
+function setOversizedBidiRowText(
+  row: MountedVirtualizedTextRow,
+  text: string,
+  startOffset: number,
+  mapping: RowInlineMapping | null,
+): void {
+  const element = row.element.ownerDocument.createElement('span')
+  element.className = 'editor-virtualized-bidi-ceiling'
+  element.dataset.editorBidiLineLength = String(text.length)
+  element.textContent = `… BiDi line exceeds the ${BIDI_LINE_MEASUREMENT_CEILING}-unit geometry ceiling`
+  row.leftSpacerElement.style.width = '0px'
+  row.element.replaceChildren(element)
+  setTextRenderMode(row, 'widget')
+  syncDirectRowChunk(
+    row,
+    text,
+    startOffset,
+    mapping,
+    [
+      {
+        kind: 'widget',
+        localStart: 0,
+        localEnd: text.length,
+        element,
+      },
+    ],
+    row.element.ownerDocument.createTextNode(''),
+  )
 }
 
 function rowChunkKey(
@@ -2714,7 +2797,13 @@ export function viewportPointMetrics(
   view: VirtualizedTextViewInternal,
   clientX: number,
   clientY: number,
-): { readonly x: number; readonly y: number; readonly verticalDirection: number } {
+): {
+  readonly x: number
+  readonly y: number
+  readonly clientX: number
+  readonly clientY: number
+  readonly verticalDirection: number
+} {
   const rect = view.scrollElement.getBoundingClientRect()
   const padding = scrollElementPadding(view.scrollElement)
   const left = rect.left + padding.left
@@ -2725,6 +2814,8 @@ export function viewportPointMetrics(
   return {
     x: viewportTextX(view, clientX, left, right, view.virtualizer.getSnapshot().scrollLeft),
     y: clamp(clientY, top, Math.max(top, bottom - 1)) - top,
+    clientX,
+    clientY,
     verticalDirection: pointVerticalDirection(clientY, top, bottom),
   }
 }

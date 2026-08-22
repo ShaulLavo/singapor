@@ -8,11 +8,11 @@ import type {
 import type { MountedVirtualizedTextRow } from './virtualizedTextViewTypes'
 
 type SelectionSegment = {
-  readonly start: number
-  readonly end: number
   readonly left: number
   readonly width: number
 }
+
+const SELECTION_RECT_MERGE_EPSILON = 0.9
 
 export function renderSelectionLayer(view: VirtualizedTextViewInternal): void {
   for (const row of view.rowElements.values()) {
@@ -87,8 +87,6 @@ function emptyRowSelectionSegment(
   if (!selectionIncludesOffset(selection, offset)) return null
 
   return {
-    start: row.startOffset,
-    end: row.endOffset,
     left: rowTextInsetLeft(row),
     width: Math.max(1, view.metrics.characterWidth),
   }
@@ -112,7 +110,9 @@ function selectionIncludesOffset(selection: VirtualizedStoredSelection, offset: 
 function mergeSelectionSegments(
   segments: readonly SelectionSegment[],
 ): readonly SelectionSegment[] {
-  const sorted = segments.toSorted((left, right) => left.start - right.start)
+  const sorted = segments.toSorted(
+    (left, right) => left.left - right.left || left.width - right.width,
+  )
   const merged: SelectionSegment[] = []
   for (const segment of sorted) mergeSelectionSegment(merged, segment)
   return merged
@@ -120,18 +120,15 @@ function mergeSelectionSegments(
 
 function mergeSelectionSegment(segments: SelectionSegment[], segment: SelectionSegment): void {
   const previous = segments.at(-1)
-  if (!previous || previous.end < segment.start) {
+  if (!previous || segment.left > previous.left + previous.width + SELECTION_RECT_MERGE_EPSILON) {
     segments.push(segment)
     return
   }
 
+  const left = Math.min(previous.left, segment.left)
   segments[segments.length - 1] = {
-    start: previous.start,
-    end: Math.max(previous.end, segment.end),
-    left: Math.min(previous.left, segment.left),
-    width:
-      Math.max(previous.left + previous.width, segment.left + segment.width) -
-      Math.min(previous.left, segment.left),
+    left,
+    width: Math.max(previous.left + previous.width, segment.left + segment.width) - left,
   }
 }
 
@@ -140,7 +137,7 @@ function selectionSegmentKey(segments: readonly SelectionSegment[]): string {
 }
 
 function selectionSegmentKeyPart(segment: SelectionSegment): string {
-  return `${segment.start}:${segment.end}:${segment.left}:${segment.width}`
+  return `${segment.left}:${segment.width}`
 }
 
 function createSelectionElement(
@@ -149,8 +146,7 @@ function createSelectionElement(
 ): HTMLSpanElement {
   const element = row.element.ownerDocument.createElement('span')
   element.className = 'editor-virtualized-selection-range'
-  element.dataset.editorSelectionStart = String(segment.start)
-  element.dataset.editorSelectionEnd = String(segment.end)
+  element.dataset.editorSelectionRect = selectionSegmentKeyPart(segment)
   setStyleValue(element, 'left', `${segment.left}px`)
   setStyleValue(element, 'width', `${segment.width}px`)
   return element

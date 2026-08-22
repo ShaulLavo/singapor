@@ -382,20 +382,27 @@ is the wrong assertion and would fail on correct output — measured: the same s
 four text nodes yields six client rects where the unsplit node yields three, covering the identical
 span.)
 
-- [ ] **Tab is unreachable behind the one-cell control label, so it renders `␉` on any non-ASCII line**
+- [x] **Tab is unreachable behind the one-cell control label, so it renders `␉` on any non-ASCII line**
       `high` `S` — `virtualizedTextViewGeometry.ts:264-298`, `:1440`, `:1446`. Move the `code === 9`
       exemption ahead of the `oneCellControlCharacterLabel` call. Not a bidi defect; found while
       surveying for one, a blocker for the corpus, and the widest-reaching single fix here. It is
       `risk medium` and not `low`: it changes rendering and measured width for every line that mixes
       a tab with an accented letter, CJK, an emoji or RTL text, and the only existing coverage
       (`test/virtualizedTextView.test.ts:2395`, `:2423`) pins `␀` and `␡`, not tab.
-- [ ] **A collapsed-range, a merged-range and a per-glyph oracle in the browser project, all
+- [x] **A collapsed-range, a merged-range and a per-glyph oracle in the browser project, all
       addressing through `domBoundaryForOffset`**
       `high` `S` — new `test/bidiGeometry.browser.test.ts` plus a shared fixture helper.
-- [ ] **The named RTL corpus, with the per-glyph reordering-is-undisturbed assertion**
+- [x] **The named RTL corpus, with the per-glyph reordering-is-undisturbed assertion**
       `high` `S` — the seven lines, plus the two supplementary lines `controlRtl` and `widgetRtl`
       built as separate fixtures so that no "all seven lines" criterion silently acquires two more
       rows. They exist only for M2's element-boundary criterion.
+
+**Milestone 1 verification (2026-08-22).** The tab exemption and its DOM regression were already
+present in the current source; the browser-project regression now proves its native tab-stop width.
+Passing commands: `bun run test --project browser test/bidiGeometry.browser.test.ts`;
+`bun run test --project dom test/virtualizedTextView.test.ts -t "paints a tab as a tab"`;
+`bun run typecheck`; `bun run lint` (two pre-existing `unicorn(no-new-array)` warnings in
+`src/syntax/packedTokens.ts`, no errors).
 
 ---
 
@@ -510,17 +517,17 @@ pure-ASCII regression run shows no change in the number of layout reads per row.
 > `4a` instead of `1a`. Measured under the conditions above those are `67.22 w42.00` against a true
 > `100.83 w8.41`, and `33.61 w33.61` against a true `58.83 w8.41`.
 
-- [ ] **`boundaryX`/`resolvedUnitEdge` resolve from a collapsed DOM range on RTL-containing rows**
+- [x] **`boundaryX`/`resolvedUnitEdge` resolve from a collapsed DOM range on RTL-containing rows**
       `high` `M` — `virtualizedTextViewGeometry.ts:958`, `:973`, gated by the classifier. Keep the
       unit rect for `plan.widths`; take the boundary x from the engine. `UNIT_LEFT`/`UNIT_RIGHT`
       (`:69-70`) stop meaning visual sides and must be renamed to what `appendUnitPlan` (`:912`)
       actually writes — the unit's logical start and end — or the next reader repeats this bug.
-- [ ] **The node-addressing rule, written down and tested, including the element-boundary case**
+- [x] **The node-addressing rule, written down and tested, including the element-boundary case**
       `high` `M` — `:942-956`, `:845-880`, `:1563`, `:1603`. A collapsed range at an element
       boundary returns zero rects; control and widget units have `node: null`. This is the item most
       likely to be under-budgeted, and until the two supplementary corpus lines exist it is also the
       item with no test that can fail — the seven-line corpus never reaches this path.
-- [ ] **The per-row `containsRTL` classifier, composed with `isSimpleRowText`, with its memo**
+- [x] **The per-row `containsRTL` classifier, composed with `isSimpleRowText`, with its memo**
       `high` `S` — the expensive scan runs only on rows that already failed the ASCII check
       (`:202`, `:1388`). Model the character ranges on Monaco's generated regex
       (`references/vscode/src/vs/base/common/strings.ts:674`) but **add U+200E and U+202A–U+202E and
@@ -528,13 +535,20 @@ pure-ASCII regression run shows no change in the number of layout reads per row.
       `INVISIBLE_CODE_POINT_DATA` (`packages/editor/src/unicodeHighlightData.ts:33`, verified to
       contain all eleven), so name the eleven explicitly and assert in a test that they are a subset
       of it, or the two lists drift. Memo the answer against the row's geometry cache key.
-- [ ] **Whitespace markers take the unit's own rect, not two boundaries**
+- [x] **Whitespace markers take the unit's own rect, not two boundaries**
       `high` `S` — `virtualizedTextViewHiddenCharacters.ts:296-297` plus a small geometry export
       over `resolveUnit` (`:985`). Exact on the whole corpus; costs no extra read.
-- [ ] **Row content width comes from one `selectNodeContents` read**
+- [x] **Row content width comes from one `selectNodeContents` read**
       `medium` `S` — `:1059-1082`, `:365`.
-- [ ] **The `xForOffset` interior snap clamps instead of picking the nearer offset**
+- [x] **The `xForOffset` interior snap clamps instead of picking the nearer offset**
       `medium` `S` — `:1160-1169`.
+
+**Milestone 2 verification (2026-08-22).** Passing commands:
+`bun run test --project browser test/bidiGeometry.browser.test.ts` (15 tests, including the two
+known-wrong M3 range pins); `bun run test --project dom test/bidiText.test.ts
+test/virtualizedTextViewGeometry.test.ts test/hiddenCharacters.test.ts` (39 tests);
+`bun run typecheck`; `bun run lint` (the same two pre-existing `packedTokens.ts` warnings, no
+errors).
 
 > **Known gap this milestone records rather than closes.** An inline widget or a zero-rect segment
 > inside an RTL run is still placed by `resolveUnit`'s back-chain (`:985-1009`), which stacks
@@ -601,13 +615,19 @@ about, asserted on `override`. `emptyRowSelectionSegment` (`SelectionLayer.ts:80
 its tests still pass. Selection-layer keying still suppresses a rebuild when nothing moved, asserted
 by count of DOM writes.
 
-- [ ] **`rangeSegments` returns one rect per visual run, from `Range.getClientRects()`**
+- [x] **`rangeSegments` returns one rect per visual run, from `Range.getClientRects()`**
       `high` `M` — `virtualizedTextViewGeometry.ts:384`, `:1138`.
-- [ ] **`mergeSelectionSegments` merges by x adjacency, not by logical start**
+- [x] **`mergeSelectionSegments` merges by x adjacency, not by logical start**
       `high` `S` — `virtualizedTextViewSelectionLayer.ts:112-136`, plus the segment identity and
       dedupe key at `:138-144`.
-- [ ] **The suspicious-character range marker reuses the segment list**
+- [x] **The suspicious-character range marker reuses the segment list**
       `medium` `S` — `virtualizedTextViewHiddenCharacters.ts:339-352`, `:445-456`.
+
+**Milestone 3 verification (2026-08-22).** Passing commands:
+`bun run test --project browser test/bidiGeometry.browser.test.ts` (19 tests, exhaustive corpus
+ranges and painted rects); `bun run test --project dom test/virtualizedTextViewGeometry.test.ts
+test/virtualizedTextView.test.ts test/hiddenCharacters.test.ts` (169 tests); `bun run typecheck`;
+`bun run lint` (the same two pre-existing `packedTokens.ts` warnings, no errors).
 
 ---
 
@@ -789,7 +809,7 @@ without `resolveRowGeometry` being reached at all — including through the clam
 instrumentation rather than by a timing. The unmounted-row fallback (`virtualizedTextView.ts:802`,
 `column = x / characterWidth`) is unchanged for ASCII rows and its tests still pass.
 
-- [ ] **`textOffsetFromViewportPoint` carries the client point through to a DOM hit test on RTL rows**
+- [x] **`textOffsetFromViewportPoint` carries the client point through to a DOM hit test on RTL rows**
       `high` `M` — `virtualizedTextView.ts:789`, `virtualizedTextViewRows.ts:2673`,
       `virtualizedTextViewHelpers.ts:496`, `virtualizedTextViewGeometry.ts:516`. **"Both halves of
       the plumbing already exist" is one line short of true, and the missing line is in the hit
@@ -798,17 +818,26 @@ instrumentation rather than by a timing. The unmounted-row fallback (`virtualize
       `offsetFromDomBoundary(row, node, offset)` (`:516`) needs both. Export it and widen its return
       to the node *and* the offset; its one existing caller (`:468`) reads only the node and is
       unaffected.
-- [ ] **In-extent edge bands clamp to the row's extremal boundary instead of the engine's answer**
+- [x] **In-extent edge bands clamp to the row's extremal boundary instead of the engine's answer**
       `high` `M` — the trigger over the whole position set, the O(1) extremal-boundary resolution
       and its memo, all specified above. This item was `S` and keyed on the point being *outside*
       the extent, where it fired on nothing; the size went with the trigger. Without it the
       milestone regresses M2 at both ends of every RTL row whose logical-endpoint boundary is
       single-rect, and drag-select anchored at a row's visual edge jumps by the width of the line.
-- [ ] **`offsetForX` is no longer reached on rows that might contain RTL**
+- [x] **`offsetForX` is no longer reached on rows that might contain RTL**
       `high` `S` — `:1187`. This is what makes M5 affordable; assert it rather than assume it, and
       note that the clamp above is written the way it is so that it does not reach it either.
-- [ ] **Overlay layers are proven transparent to the point-to-caret APIs**
+- [x] **Overlay layers are proven transparent to the point-to-caret APIs**
       `medium` `S` — `packages/editor/src/style.css:281`, `:298`, `:381`.
+
+**Milestone 4 verification (2026-08-22).** The current bundled Chromium adds one engine-fact
+variation to the recorded trigger set: `tabRtl` also misfires at its visual right edge because its
+final collapsed boundary is single-rect on this run. The generic far-answer trigger and O(1)
+extremal fallback repair it, and the oracle test pins the current firing set without hardcoded
+pixels. Passing commands: `bun run test --project browser` (7 files, 62 tests); `bun run test
+--project dom test/virtualizedTextView.test.ts test/editorOperations.test.ts` (146 tests);
+`bun run typecheck`; `bun run lint` (the same two pre-existing `packedTokens.ts` warnings, no
+errors).
 
 ---
 
@@ -898,19 +927,43 @@ across snapshots. A pure-ASCII line past the threshold still chunks exactly as b
 against the existing chunking tests, and a 2MB minified ASCII line costs one classifier scan per
 revision.
 
-- [ ] **`shouldChunkLine` refuses a row that might contain RTL, through the memo**
+- [x] **`shouldChunkLine` refuses a row that might contain RTL, through the memo**
       `high` `S` — `virtualizedTextViewRows.ts:1684`, `:1694`. Record in the milestone note that
       this removes the only long-line *windowing* defence for those lines.
-- [ ] **Grapheme-aware bounded text nodes for RTL rows**
+- [x] **Grapheme-aware bounded text nodes for RTL rows**
       `high` `M` — `virtualizedTextViewRows.ts:1659`, `virtualizedTextViewGeometry.ts:225`, `:855`.
       Without this the milestone is a hang, not a fix; with it the 50 000-character case is 2.0µs
       per read. Record the seam decision above.
-- [ ] **A length ceiling above which an RTL line is not laid out as measurable text at all**
+- [x] **A length ceiling above which an RTL line is not laid out as measurable text at all**
       `medium` `M` — the residual. Even at 2.0µs per read, a row whose boundaries are all swept is
       linear in the line; M4 removes the sweep, and this ceiling is the backstop for whatever is
       left. Set it at the line length at which the 5× ratio above first fails on the test machine —
       a measured number, recorded with the measurement, not a guess — and state what the editor does
       above it.
+
+**Milestone 5 verification (2026-08-22).** `shouldChunkLine` now consumes the revision memo, so this
+removes the only long-line windowing defence for a BiDi row; the 2MB ASCII regression proves one
+classifier scan per revision. Bounded nodes use option (a) at seams: keep the deterministic M2 rule
+that addresses a boundary from the later character's node, because both seam positions are
+legitimate without Tier B affinity and adding one layout read per seam would tax every mount. The
+stride and later-node choice are pinned in the browser test. On the 6,000-character same-run probe,
+Latin/RTL medians were 0.6/1.4ms to mount (2.33×), 40.6/8.0ms for a stabilized batch of 100
+single-click operations (0.20×), and 18.5/45.9ms for a 200-step hit-test/selection/paint drag
+(2.48×); none reached `resolveRowGeometry`. Ceiling calibration sampled increasingly long fully
+laid-out rows: 28,000 still passed mount at 1.0/4.5ms (4.50×), while 32,000 was the first sampled
+failure at 0.9/4.7ms (5.22×). Therefore rows of 32,000 or more code units that classify as BiDi show
+a fixed endpoint-only placeholder instead of laying out measurable source text. Passing commands:
+`bun run test --project browser test/bidiGeometry.browser.test.ts
+test/bidiPerfProbe.browser.test.ts` (32 tests); `bun run test --project dom test/bidiText.test.ts
+test/virtualizedTextView.test.ts test/virtualizedTextViewGeometry.test.ts
+test/hiddenCharacters.test.ts` (173 tests); `bun run typecheck`; `bun run lint` (the same two
+pre-existing `packedTokens.ts` warnings, no errors).
+
+**Tier A final verification (2026-08-22).** Passing commands: editor package `bun run test` (128
+files, 2,047 tests); editor browser `bun run test --project browser` (8 files, 68 tests); repository
+`bun run typecheck`; repository `bun run lint` (the same two pre-existing warnings, no errors);
+repository `bun run format:check` (17 packages). The repository formatter was run with explicit user
+authorization and retained its incidental formatting of pre-existing Editor/LSP work.
 
 > **Tier A ends here.** Everything below is a different project with a different budget.
 

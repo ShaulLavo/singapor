@@ -146,7 +146,6 @@ export function createSemanticTokenLayer(
     return name
   }
 
-
   const clearPainted = (): void => {
     for (const group of painted.values()) context.clearRangeHighlight?.(group.name)
     painted = new Map()

@@ -20,6 +20,9 @@ import type {
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
 import { rowTextInsetLeft, rowTextInsetRight } from './virtualizedTextViewBlockLanes'
+import { isSimpleRowText, memoizedContainsRTL } from './virtualizedTextViewBidi'
+
+export { isSimpleRowText } from './virtualizedTextViewBidi'
 
 const CONTROL_CHARACTER_CLASS = 'editor-virtualized-control-character'
 
@@ -33,6 +36,7 @@ const CONTROL_CHARACTER_CLASS = 'editor-virtualized-control-character'
  */
 const KEY_COLUMN_DISTANCE = 300
 const COLUMN_EPSILON = 1e-9
+const RANGE_RECT_MERGE_EPSILON = 0.9
 
 /**
  * Boundaries as two parallel arrays rather than one object per boundary: a row is rebuilt on every
@@ -53,6 +57,8 @@ type RowGeometry = {
    * boundaries somebody actually asks about replace.
    */
   plan: MeasuredRowPlan | null
+  /** Retained after a whole-row resolve so one-glyph consumers can reuse the measured unit box. */
+  readonly unitPlan: MeasuredRowPlan | null
   xOrder: Uint32Array | null
   width: number
   /**
@@ -66,8 +72,8 @@ type RowGeometry = {
 /** No advance is ever NaN, so it is free to stand for a boundary that has not been read yet. */
 const UNREAD = Number.NaN
 
-const UNIT_LEFT = 0
-const UNIT_RIGHT = 1
+const LOGICAL_START = 0
+const LOGICAL_END = 1
 
 type MeasuredUnitKind = 'text' | 'control' | 'widget'
 
@@ -105,6 +111,7 @@ type MeasuredRowPlan = {
   readonly writerUnit: Int32Array
   readonly writerSide: Uint8Array
   readonly writerX: Float64Array
+  readonly mightContainRTL: boolean
   measurement: RowMeasurementContext | null
 }
 
@@ -156,11 +163,15 @@ type MutableRowGeometryCache = MountedVirtualizedTextRow & {
 type RowContentWidthCache = {
   readonly key: string
   readonly width: number
+  readonly extent: RowTextExtent
+}
+
+export type RowTextExtent = {
+  readonly left: number
+  readonly right: number
 }
 
 type GeometryRangeSegment = {
-  readonly start: number
-  readonly end: number
   readonly left: number
   readonly width: number
 }
@@ -206,14 +217,7 @@ const inlineWidgetWidths = new WeakMap<HTMLElement, number>()
  * because the key is built from the row and a row does not know which nodes it is standing on.
  */
 let inlineWidgetWidthRevision = 0
-
-export function isSimpleRowText(text: string): boolean {
-  for (let index = 0; index < text.length; index += 1) {
-    if (!isSimpleRowCodeUnit(text.charCodeAt(index))) return false
-  }
-
-  return true
-}
+let rowGeometrySweepCount = 0
 
 export function createTextChunkParts(
   node: Text,
@@ -236,6 +240,7 @@ export function createRenderedChunkParts(
   localStart: number,
   cellWidth: number,
   widgets: readonly InlineWidgetPlacement[] = [],
+  maxTextNodeLength = Number.POSITIVE_INFINITY,
 ): RenderedChunkParts {
   const parts: VirtualizedTextChunkPart[] = []
   const nodes: Node[] = []
@@ -250,6 +255,7 @@ export function createRenderedChunkParts(
       text.slice(cursor, start),
       localStart + cursor,
       cellWidth,
+      maxTextNodeLength,
     )
     nodes.push(widget.element)
     parts.push({
@@ -261,7 +267,15 @@ export function createRenderedChunkParts(
     cursor = widget.localEnd - localStart
   }
 
-  appendRenderedText(document, parts, nodes, text.slice(cursor), localStart + cursor, cellWidth)
+  appendRenderedText(
+    document,
+    parts,
+    nodes,
+    text.slice(cursor),
+    localStart + cursor,
+    cellWidth,
+    maxTextNodeLength,
+  )
   return {
     nodes,
     parts,
@@ -276,6 +290,7 @@ function appendRenderedText(
   text: string,
   localStart: number,
   cellWidth: number,
+  maxTextNodeLength: number,
 ): void {
   let run = ''
   let runStart = localStart
@@ -297,14 +312,14 @@ function appendRenderedText(
       continue
     }
 
-    appendTextPart(document, parts, nodes, runStart, run)
+    appendTextParts(document, parts, nodes, runStart, run, maxTextNodeLength)
     run = ''
     index += 1
     appendControlPart(document, parts, nodes, localStart + index - 1, control, cellWidth)
     runStart = localStart + index
   }
 
-  appendTextPart(document, parts, nodes, runStart, run)
+  appendTextParts(document, parts, nodes, runStart, run, maxTextNodeLength)
 }
 
 /**
@@ -333,9 +348,6 @@ export function offsetToX(
   row: MountedVirtualizedTextRow,
   offset: number,
 ): number {
-  // TODO: Add BiDi/RTL-aware geometry. The current mapping assumes logical offsets
-  // advance left-to-right, so Hebrew and mixed-direction runs assign the wrong
-  // visual edge to offsets and break caret positions, hit testing, and selection widths.
   const geometry = ensureRowGeometry(view, row)
   const clamped = clamp(offset, row.startOffset, row.endOffset)
   return xForOffset(geometry, clamped)
@@ -359,7 +371,8 @@ export function knownRowContentWidth(
 ): number | null {
   const key = rowGeometryCacheKey(view, row)
   const cached = row.geometryCache as RowGeometryCache | null
-  if (cached?.key === key && !cached.geometry.plan) return cached.geometry.width
+  if (cached?.key === key && !cached.geometry.plan && Number.isFinite(cached.geometry.width))
+    return cached.geometry.width
   if (rowUsesCalculatedGeometry(row)) return calculatedRowWidth(view, row)
 
   const measured = measuredRowWidths.get(row.element)
@@ -375,19 +388,113 @@ export function measureRowContentWidth(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): number {
-  const known = knownRowContentWidth(view, row)
-  if (known !== null) return known
+  return measuredRowContent(view, row).width
+}
 
-  const measurement = { row, scale: rowClientRectScale(row) }
-  let contentRight = 0
-  for (const chunk of row.chunks) {
-    const measured = measuredChunkRect(measurement, chunk)
-    if (measured) contentRight = Math.max(contentRight, measured.left + measured.width)
+export function rowTextExtent(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): RowTextExtent {
+  return measuredRowContent(view, row).extent
+}
+
+function measuredRowContent(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): RowContentWidthCache {
+  const key = rowGeometryCacheKey(view, row)
+  const cached = measuredRowWidths.get(row.element)
+  if (cached?.key === key) return cached
+
+  const known = knownRowContentWidth(view, row)
+  if (known !== null) {
+    const left = rowTextInsetLeft(row)
+    return { key, width: known, extent: { left, right: known - rowTextInsetRight(row) } }
   }
 
-  const width = Math.max(estimatedRowContentWidth(view, row), contentRight + rowTextInsetRight(row))
-  measuredRowWidths.set(row.element, { key: rowGeometryCacheKey(view, row), width })
-  return width
+  const measurement = { row, scale: rowClientRectScale(row) }
+  const measured = measuredRowContentsRect(measurement)
+  const contentRight = measured ? measured.left + measured.width : 0
+  const width = measured
+    ? contentRight + rowTextInsetRight(row)
+    : estimatedRowContentWidth(view, row)
+  const extent = measured
+    ? { left: measured.left, right: contentRight }
+    : { left: rowTextInsetLeft(row), right: width - rowTextInsetRight(row) }
+  const content = { key, width, extent }
+  measuredRowWidths.set(row.element, content)
+  return content
+}
+
+export function rowMightContainRTL(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): boolean {
+  if (isSimpleRowText(row.text)) return false
+  return memoizedContainsRTL(view, row.text)
+}
+
+export function boundaryPositionXs(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+): readonly number[] {
+  const geometry = ensureRowGeometry(view, row)
+  const clamped = clamp(offset, row.startOffset, row.endOffset)
+  const index = firstBoundaryAtOrAfterOffset(geometry.offsets, clamped)
+  if (geometry.offsets[index] !== clamped) return [xForOffset(geometry, clamped)]
+
+  const plan = geometry.unitPlan
+  const boundary = plan ? domBoundaryForOffset(row, clamped) : null
+  const xs = boundary && plan ? collapsedBoundaryXs(planMeasurement(plan), boundary) : []
+  if (xs.length > 0) return xs.toSorted((left, right) => left - right)
+  return [boundaryX(geometry, index)]
+}
+
+export function resetRowGeometrySweepCount(): void {
+  rowGeometrySweepCount = 0
+}
+
+export function getRowGeometrySweepCount(): number {
+  return rowGeometrySweepCount
+}
+
+export function unitRectForOffset(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+): { readonly left: number; readonly width: number } | null {
+  const geometry = ensureRowGeometry(view, row)
+  const plan = geometry.unitPlan
+  if (!plan) return calculatedUnitRect(view, row, offset)
+
+  const boundary = firstBoundaryAtOrAfterOffset(geometry.offsets, offset)
+  if (geometry.offsets[boundary] !== offset) return null
+
+  const unitIndex = plan.writerUnit[boundary]
+  if (unitIndex === undefined || unitIndex < 0) return null
+
+  const unit = plan.units[unitIndex]
+  if (!unit || rowOffsetForLocalIndex(row, unit.localStart) !== offset) return null
+
+  resolveUnit(plan, unitIndex)
+  return { left: plan.lefts[unitIndex]!, width: plan.widths[unitIndex]! }
+}
+
+function calculatedUnitRect(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+): { readonly left: number; readonly width: number } | null {
+  const local = rowLocalIndexForOffset(row, offset)
+  if (local < 0 || local >= row.text.length) return null
+
+  const end = rowOffsetForLocalIndex(row, local + 1)
+  if (end <= offset) return null
+
+  const left = offsetToX(view, row, offset)
+  const right = offsetToX(view, row, end)
+  return { left: Math.min(left, right), width: Math.abs(right - left) }
 }
 
 export function rangeSegments(
@@ -405,7 +512,7 @@ export function rangeSegments(
     appendRangeSegmentForChunk(segments, view, row, chunk, start, end)
   }
 
-  return segments
+  return mergeGeometryRangeSegments(segments)
 }
 
 function estimatedDisplayCells(text: string, tabSize: number): number {
@@ -798,22 +905,26 @@ function buildMeasuredRowGeometry(
   const buffer = createPlanBuffer(row)
   const units: MeasuredUnit[] = []
   for (const chunk of row.chunks) appendChunkPlan(buffer, units, view, row, chunk)
-  if (buffer.length === 0) appendPlanBoundary(buffer, row.startOffset, -1, UNIT_LEFT, 0)
+  if (buffer.length === 0) appendPlanBoundary(buffer, row.startOffset, -1, LOGICAL_START, 0)
+
+  const plan: MeasuredRowPlan = {
+    view,
+    row,
+    units,
+    lefts: new Float64Array(units.length).fill(UNREAD),
+    widths: new Float64Array(units.length).fill(UNREAD),
+    writerUnit: buffer.writerUnit.subarray(0, buffer.length),
+    writerSide: buffer.writerSide.subarray(0, buffer.length),
+    writerX: buffer.writerX.subarray(0, buffer.length),
+    mightContainRTL: rowMightContainRTL(view, row),
+    measurement: null,
+  }
 
   return {
     offsets: buffer.offsets.subarray(0, buffer.length),
     xs: new Float64Array(buffer.length).fill(UNREAD),
-    plan: {
-      view,
-      row,
-      units,
-      lefts: new Float64Array(units.length).fill(UNREAD),
-      widths: new Float64Array(units.length).fill(UNREAD),
-      writerUnit: buffer.writerUnit.subarray(0, buffer.length),
-      writerSide: buffer.writerSide.subarray(0, buffer.length),
-      writerX: buffer.writerX.subarray(0, buffer.length),
-      measurement: null,
-    },
+    plan,
+    unitPlan: plan,
     xOrder: null,
     width: UNREAD,
     anchors: null,
@@ -836,7 +947,13 @@ function appendChunkPlan(
   chunk: VirtualizedTextChunk,
 ): void {
   const chunkX = rowTextInsetLeft(row) + estimatedPrefixWidth(view, row, chunk.localStart)
-  appendPlanBoundary(buffer, rowOffsetForLocalIndex(row, chunk.localStart), -1, UNIT_LEFT, chunkX)
+  appendPlanBoundary(
+    buffer,
+    rowOffsetForLocalIndex(row, chunk.localStart),
+    -1,
+    LOGICAL_START,
+    chunkX,
+  )
 
   let previous = -1
   for (const part of chunk.parts) {
@@ -849,7 +966,7 @@ function appendChunkPlan(
     buffer,
     rowOffsetForLocalIndex(row, chunk.localEnd),
     previous,
-    UNIT_RIGHT,
+    LOGICAL_END,
     chunkX,
   )
 }
@@ -929,8 +1046,14 @@ function appendUnitPlan(
 ): number {
   const index = units.length
   units.push(unit)
-  appendPlanBoundary(buffer, rowOffsetForLocalIndex(row, unit.localStart), index, UNIT_LEFT, UNREAD)
-  appendPlanBoundary(buffer, rowOffsetForLocalIndex(row, unit.localEnd), index, UNIT_RIGHT, UNREAD)
+  appendPlanBoundary(
+    buffer,
+    rowOffsetForLocalIndex(row, unit.localStart),
+    index,
+    LOGICAL_START,
+    UNREAD,
+  )
+  appendPlanBoundary(buffer, rowOffsetForLocalIndex(row, unit.localEnd), index, LOGICAL_END, UNREAD)
   return index
 }
 
@@ -947,9 +1070,9 @@ function createPlanBuffer(row: MountedVirtualizedTextRow): PlanBuffer {
 }
 
 /**
- * Where two units meet they name the same boundary, and the later of them is the one that stands
- * there. Recording that here rather than resolving it at read time is what lets a boundary asked
- * for on its own come back as the value it would have had if the whole row had been read at once.
+ * Where two units meet, the later unit addresses the boundary from the character that starts there.
+ * This is observable at a text-node seam inside a BiDi run: the end of the earlier node and the
+ * start of the later one are the same logical offset but can be different legitimate visual edges.
  */
 function appendPlanBoundary(
   buffer: PlanBuffer,
@@ -975,17 +1098,81 @@ function boundaryX(geometry: RowGeometry, index: number): number {
   const plan = geometry.plan
   if (!plan) return 0
 
+  if (plan.mightContainRTL) {
+    const browserX = browserBoundaryX(plan, geometry.offsets[index]!, index)
+    geometry.xs[index] = browserX
+    return browserX
+  }
+
   const unit = plan.writerUnit[index]!
   const x =
-    unit < 0 ? plan.writerX[index]! : resolvedUnitEdge(plan, unit, plan.writerSide[index] === 1)
+    unit < 0
+      ? plan.writerX[index]!
+      : resolvedUnitLogicalEdge(plan, unit, plan.writerSide[index] === LOGICAL_END)
   geometry.xs[index] = x
   return x
 }
 
-function resolvedUnitEdge(plan: MeasuredRowPlan, unit: number, right: boolean): number {
+function resolvedUnitLogicalEdge(plan: MeasuredRowPlan, unit: number, logicalEnd: boolean): number {
   resolveUnit(plan, unit)
   const left = plan.lefts[unit]!
-  return right ? left + plan.widths[unit]! : left
+  return logicalEnd ? left + plan.widths[unit]! : left
+}
+
+function browserBoundaryX(plan: MeasuredRowPlan, offset: number, index: number): number {
+  const boundary = domBoundaryForOffset(plan.row, offset)
+  const xs = boundary ? collapsedBoundaryXs(planMeasurement(plan), boundary) : []
+  if (xs.length > 0) return Math.min(...xs)
+  return zeroRectBoundaryX(plan, index, offset)
+}
+
+function collapsedBoundaryXs(
+  measurement: RowMeasurementContext,
+  boundary: DomBoundary,
+): readonly number[] {
+  const scratch = measurementScratchFor(
+    boundary.node.ownerDocument ?? measurement.row.element.ownerDocument,
+  )
+  scratch.range.setStart(boundary.node, boundary.offset)
+  scratch.range.collapse(true)
+  const xs = Array.from(
+    scratch.range.getClientRects(),
+    (rect) => rowLocalRect(measurement, rect).left,
+  )
+  scratch.range.selectNodeContents(scratch.parking)
+  return xs
+}
+
+function zeroRectBoundaryX(plan: MeasuredRowPlan, index: number, offset: number): number {
+  const local = rowLocalIndexForOffset(plan.row, offset)
+  const preceding = adjacentTextBoundary(plan, local, 'preceding')
+  if (preceding !== null) return preceding
+
+  const following = adjacentTextBoundary(plan, local, 'following')
+  if (following !== null) return following
+
+  const unitIndex = plan.writerUnit[index]!
+  const unit = unitIndex >= 0 ? plan.units[unitIndex] : null
+  const measured = unit?.element ? measuredElementRect(planMeasurement(plan), unit.element) : null
+  if (measured)
+    return plan.writerSide[index] === LOGICAL_END ? measured.left + measured.width : measured.left
+  return plan.writerX[index] ?? 0
+}
+
+function adjacentTextBoundary(
+  plan: MeasuredRowPlan,
+  local: number,
+  side: 'preceding' | 'following',
+): number | null {
+  const unit = plan.units.find((candidate) => {
+    if (candidate.kind !== 'text') return false
+    return side === 'preceding' ? candidate.localEnd === local : candidate.localStart === local
+  })
+  if (!unit?.node) return null
+
+  const offset = side === 'preceding' ? unit.nodeOffset + unit.nodeLength : unit.nodeOffset
+  const xs = collapsedBoundaryXs(planMeasurement(plan), { node: unit.node, offset })
+  return xs.length > 0 ? Math.min(...xs) : null
 }
 
 /**
@@ -1072,21 +1259,18 @@ function resolveRowGeometry(geometry: RowGeometry): RowGeometry {
   const plan = geometry.plan
   if (!plan) return geometry
 
+  rowGeometrySweepCount += 1
+
   const { offsets, xs } = geometry
-  let contentRight = 0
   let ascending = true
   for (let index = 0; index < xs.length; index += 1) {
     const x = boundaryX(geometry, index)
-    if (x > contentRight) contentRight = x
     if (index > 0 && x < xs[index - 1]!) ascending = false
   }
 
   geometry.plan = null
   geometry.xOrder = ascending ? null : boundaryOrderByX(offsets, xs)
-  geometry.width = Math.max(
-    estimatedRowContentWidth(plan.view, plan.row),
-    contentRight + rowTextInsetRight(plan.row),
-  )
+  geometry.width = measureRowContentWidth(plan.view, plan.row)
   return geometry
 }
 
@@ -1135,6 +1319,7 @@ function geometryFromBoundaries(
     offsets,
     xs,
     plan: null,
+    unitPlan: null,
     xOrder: ascending ? null : boundaryOrderByX(offsets, xs),
     width: Math.max(fallbackWidth, contentRight + rowTextInsetRight(row)),
     anchors: anchors && anchors.length > 0 ? Float64Array.from(anchors) : null,
@@ -1157,27 +1342,73 @@ function appendRangeSegmentForChunk(
 ): void {
   if (end <= chunk.startOffset || start >= chunk.endOffset) return
 
+  const range = createDomRangeForChunkRange(row.element.ownerDocument, row, chunk, start, end)
+  if (!range) return
+
+  const measurement = { row, scale: rowClientRectScale(row) }
+  const rects = range.getClientRects()
+  for (let index = 0; index < rects.length; index += 1) {
+    const rect = rects.item(index)
+    if (!rect) continue
+    segments.push(rowLocalRect(measurement, rect))
+  }
+  if (rects.length === 0) appendUnmeasuredRangeSegment(segments, view, row, chunk, start, end)
+}
+
+/**
+ * A mounted browser row answers non-empty ranges, including an invisible bidi control, with at
+ * least one client rect. DOM-only test environments answer with an empty list for every range;
+ * retaining the old boundary box there keeps non-geometry tests meaningful without hiding any
+ * real-browser result behind arithmetic.
+ */
+function appendUnmeasuredRangeSegment(
+  segments: GeometryRangeSegment[],
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  chunk: VirtualizedTextChunk,
+  start: number,
+  end: number,
+): void {
   const segmentStart = Math.max(start, chunk.startOffset)
   const segmentEnd = Math.min(end, chunk.endOffset)
   const startX = offsetToX(view, row, segmentStart)
   const endX = offsetToX(view, row, segmentEnd)
   segments.push({
-    start: segmentStart,
-    end: segmentEnd,
     left: Math.min(startX, endX),
     width: Math.abs(endX - startX),
   })
+}
+
+function mergeGeometryRangeSegments(
+  segments: readonly GeometryRangeSegment[],
+): readonly GeometryRangeSegment[] {
+  const sorted = segments.toSorted(
+    (left, right) => left.left - right.left || left.width - right.width,
+  )
+  const merged: GeometryRangeSegment[] = []
+  for (const segment of sorted) appendMergedGeometrySegment(merged, segment)
+  return merged
+}
+
+function appendMergedGeometrySegment(
+  merged: GeometryRangeSegment[],
+  segment: GeometryRangeSegment,
+): void {
+  const previous = merged.at(-1)
+  if (!previous || segment.left > previous.left + previous.width + RANGE_RECT_MERGE_EPSILON) {
+    merged.push(segment)
+    return
+  }
+
+  const right = Math.max(previous.left + previous.width, segment.left + segment.width)
+  merged[merged.length - 1] = { left: previous.left, width: right - previous.left }
 }
 
 function xForOffset(geometry: RowGeometry, offset: number): number {
   const { offsets } = geometry
   const index = firstBoundaryAtOrAfterOffset(offsets, offset)
   if (offsets[index] === offset) return boundaryX(geometry, index)
-  if (index === 0) return boundaryX(geometry, 0)
-  if (index === offsets.length) return boundaryX(geometry, index - 1)
-  if (offset - offsets[index - 1]! <= offsets[index]! - offset)
-    return boundaryX(geometry, index - 1)
-  return boundaryX(geometry, index)
+  return boundaryX(geometry, clamp(index, 0, offsets.length - 1))
 }
 
 function firstBoundaryAtOrAfterOffset(offsets: Float64Array, offset: number): number {
@@ -1251,19 +1482,11 @@ function measuredTextSegmentRect(
  * grapheme. The union rect is the one wanted here — a chunk spans several text nodes and its client
  * rects come back one per node.
  */
-function measuredChunkRect(
+function measuredRowContentsRect(
   measurement: RowMeasurementContext,
-  chunk: VirtualizedTextChunk,
 ): { readonly left: number; readonly width: number } | null {
-  const first = chunk.parts[0]
-  const last = chunk.parts.at(-1)
-  const start = first ? boundaryBeforePart(first) : null
-  const end = last ? boundaryAfterPart(last) : null
-  if (!start || !end) return null
-
-  const scratch = measurementScratchFor(chunk.textNode.ownerDocument)
-  scratch.range.setStart(start.node, start.offset)
-  scratch.range.setEnd(end.node, end.offset)
+  const scratch = measurementScratchFor(measurement.row.element.ownerDocument)
+  scratch.range.selectNodeContents(measurement.row.element)
   const rect = scratch.range.getBoundingClientRect()
   scratch.range.selectNodeContents(scratch.parking)
   if (rect.width <= 0) return null
@@ -1433,6 +1656,36 @@ function appendTextPart(
   })
 }
 
+function appendTextParts(
+  document: Document,
+  parts: VirtualizedTextChunkPart[],
+  nodes: Node[],
+  localStart: number,
+  text: string,
+  maxTextNodeLength: number,
+): void {
+  if (text.length === 0) return
+  if (text.length <= maxTextNodeLength) {
+    appendTextPart(document, parts, nodes, localStart, text)
+    return
+  }
+
+  let sliceStart = 0
+  for (const segment of segmentGraphemes(text)) {
+    const segmentEnd = segment.index + segment.segment.length
+    if (segmentEnd - sliceStart <= maxTextNodeLength) continue
+    appendTextPart(
+      document,
+      parts,
+      nodes,
+      localStart + sliceStart,
+      text.slice(sliceStart, segment.index),
+    )
+    sliceStart = segment.index
+  }
+  appendTextPart(document, parts, nodes, localStart + sliceStart, text.slice(sliceStart))
+}
+
 function appendControlPart(
   document: Document,
   parts: VirtualizedTextChunkPart[],
@@ -1593,6 +1846,12 @@ function domBoundaryForChunkLocalOffset(
   local: number,
 ): DomBoundary | null {
   for (const part of chunk.parts) {
+    if (part.localStart !== local) continue
+    return boundaryBeforePart(part)
+  }
+
+  for (const part of chunk.parts) {
+    if (local <= part.localStart) continue
     const boundary = domBoundaryForPartLocalOffset(part, local)
     if (boundary) return boundary
   }

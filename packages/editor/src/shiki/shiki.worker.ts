@@ -248,9 +248,8 @@ const postResponse = (response: ShikiWorkerResponse): void => {
  * Themes only. Languages are loaded into whichever highlighter a theme set already has, so keying on
  * them too would build a second highlighter — and reload every grammar — for each new language.
  */
-const highlighterKey = (
-  themes: readonly (string | ShikiWorkerThemeRegistration)[],
-): string => JSON.stringify(themes.map(highlighterThemeKey).toSorted())
+const highlighterKey = (themes: readonly (string | ShikiWorkerThemeRegistration)[]): string =>
+  JSON.stringify(themes.map(highlighterThemeKey).toSorted())
 
 const highlighterThemeKey = (theme: string | ShikiWorkerThemeRegistration): string =>
   typeof theme === 'string' ? theme : theme.name

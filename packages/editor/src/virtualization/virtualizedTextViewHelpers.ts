@@ -465,9 +465,9 @@ export function countValidHitTestChecks(
   const probe = hitTestProbePoint(rows)
   if (!probe) return 0
 
-  const node = hitTestNodeFromPoint(documentWithCaret, probe.x, probe.y)
-  if (!node) return 0
-  if (!rows.some((row) => row.element.contains(node))) {
+  const hit = hitTestBoundaryFromPoint(documentWithCaret, probe.x, probe.y)
+  if (!hit) return 0
+  if (!rows.some((row) => row.element.contains(hit.node))) {
     failures.push('hit test missed mounted rows')
   }
   return 1
@@ -493,16 +493,17 @@ function rangeRectForChunk(chunk: VirtualizedTextChunk): DOMRect | null {
   return firstRangeRect(range)
 }
 
-function hitTestNodeFromPoint(
+export function hitTestBoundaryFromPoint(
   documentWithCaret: DocumentWithCaretHitTesting,
   x: number,
   y: number,
-): Node | null {
+): { readonly node: Node; readonly offset: number } | null {
   const position = documentWithCaret.caretPositionFromPoint?.(x, y)
-  if (position) return position.offsetNode
+  if (position) return { node: position.offsetNode, offset: position.offset }
 
   const range = documentWithCaret.caretRangeFromPoint?.(x, y)
-  return range?.startContainer ?? null
+  if (!range) return null
+  return { node: range.startContainer, offset: range.startOffset }
 }
 
 export function updateMutableRow(

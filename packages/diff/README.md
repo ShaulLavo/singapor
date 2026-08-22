@@ -52,13 +52,13 @@ plugin.setFile(parseGitPatch(patchText)[0])
 
 Four of those options are load-bearing rather than taste:
 
-- **`languageId: null`** — the editor's document is the *interleaved* buffer. Give it a real language
+- **`languageId: null`** — the editor's document is the _interleaved_ buffer. Give it a real language
   and tree-sitter parses that interleaving and feeds the result into folds, brackets and injections.
   The language belongs to the plugin's own per-side syntax documents, which is where it lives.
 - **`tabSize`** — omit it and `adoptDocumentTabSize` guesses from the buffer on every `setText`, so
-  tab width flips per file *and* per expansion toggle.
+  tab width flips per file _and_ per expansion toggle.
 - **`cursorLineHighlight`** with explicit `false`s — the default is `rowBackground: true`, which
-  paints a cursor line on top of the diff row tint. `undefined` means *default*, not off.
+  paints a cursor line on top of the diff row tint. `undefined` means _default_, not off.
 - **`keymap: { defaultBindings: false, layers: [] }`** — a real editor otherwise brings find and the
   edit commands into a read-only diff.
 
@@ -77,7 +77,7 @@ than two sets kept in step. The panes also stay aligned only while word wrap is 
 is set; the plugin reports `getDocumentModeViolations()` if the row-index identity it depends on is
 ever broken.
 
-Expansion is per *diff*, not per path: pushing the same path with different content resets it,
+Expansion is per _diff_, not per path: pushing the same path with different content resets it,
 because region keys are absolute line numbers and any edit above a region renumbers it. Pushing an
 identical file again keeps it.
 

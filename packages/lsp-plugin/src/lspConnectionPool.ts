@@ -18,7 +18,14 @@ const DEFAULT_IDLE_GRACE_MS = 30_000
 
 /** What a pooled connection just did, for a host that wants to log it. */
 export type LspConnectionPoolEvent = {
-  readonly kind: 'created' | 'reused' | 'ready' | 'released' | 'closed' | 'error' | 'handler_ignored'
+  readonly kind:
+    | 'created'
+    | 'reused'
+    | 'ready'
+    | 'released'
+    | 'closed'
+    | 'error'
+    | 'handler_ignored'
   readonly key: string
   readonly leaseCount: number
   readonly status: LanguageServerStatus

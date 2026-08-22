@@ -47,9 +47,7 @@ class FakeTransport implements LspManagedTransport {
   }
 }
 
-function connectionOptions(
-  overrides: Partial<LspConnectionOptions> = {},
-): LspConnectionOptions {
+function connectionOptions(overrides: Partial<LspConnectionOptions> = {}): LspConnectionOptions {
   return {
     capabilities: {},
     createTransport: () => new FakeTransport(),
@@ -244,12 +242,7 @@ describe('LspConnectionPool', () => {
     first.release()
     vi.advanceTimersByTime(60_000)
 
-    expect(events.map((event) => event.kind)).toEqual([
-      'created',
-      'reused',
-      'ready',
-      'released',
-    ])
+    expect(events.map((event) => event.kind)).toEqual(['created', 'reused', 'ready', 'released'])
     // `closed` is absent on purpose: one borrower is still holding it.
     expect(events.at(-1)?.leaseCount).toBe(1)
     expect(events.find((event) => event.kind === 'ready')?.durationMs).toBeGreaterThanOrEqual(0)

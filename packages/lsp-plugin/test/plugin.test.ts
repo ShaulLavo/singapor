@@ -319,7 +319,9 @@ describe('connectionProvider', () => {
     const transport = new FakeTransport()
     const { provider: connectionProvider, counts } = testProvider()
     const first = activatePlugin(pluginWith(connectionProvider, transport), { applyEdits: vi.fn() })
-    const second = activatePlugin(pluginWith(connectionProvider, transport), { applyEdits: vi.fn() })
+    const second = activatePlugin(pluginWith(connectionProvider, transport), {
+      applyEdits: vi.fn(),
+    })
 
     first.provider.createContribution(
       viewContributionContext(editorSnapshot('# One', 'one.md'), { features: first.features }),
@@ -340,9 +342,7 @@ describe('connectionProvider', () => {
       'textDocument/didOpen',
       'textDocument/didOpen',
     ])
-    expect(
-      transport.sent.filter(hasMethod('textDocument/didOpen')).map(textDocumentFor),
-    ).toEqual([
+    expect(transport.sent.filter(hasMethod('textDocument/didOpen')).map(textDocumentFor)).toEqual([
       expect.objectContaining({ uri: 'file:///one.md' }),
       expect.objectContaining({ uri: 'file:///two.md' }),
     ])
@@ -351,7 +351,9 @@ describe('connectionProvider', () => {
   it('leaves the connection open when a contribution goes away', async () => {
     const transport = new FakeTransport()
     const { provider: connectionProvider, counts } = testProvider()
-    const { features, provider } = activatePlugin(pluginWith(connectionProvider, transport), { applyEdits: vi.fn() })
+    const { features, provider } = activatePlugin(pluginWith(connectionProvider, transport), {
+      applyEdits: vi.fn(),
+    })
     const contribution = provider.createContribution(
       viewContributionContext(editorSnapshot('# One', 'one.md'), { features }),
     )

@@ -497,12 +497,21 @@ describe('diff plugin — host-owned document (§C3, §C6)', () => {
     expect(view.style.getPropertyValue('--editor-syntax-keyword')).toBe('#123456')
   })
 
-  it('renders no changes for an identical file', () => {
+  it('renders the text of an identical file rather than a message', () => {
     const { plugin, host } = mountDiff({
       file: createTextDiff({
-        oldFile: { path: 'note.txt', text: 'same\n' },
-        newFile: { path: 'note.txt', text: 'same\n' },
+        oldFile: { path: 'note.txt', text: 'same\nlines\n' },
+        newFile: { path: 'note.txt', text: 'same\nlines\n' },
       }),
+    })
+
+    expect(plugin.getRows().map((row) => row.type)).toEqual(['context', 'context'])
+    expect(host.textContent).toContain('same')
+  })
+
+  it('still says no changes when a patch-only file has no text to show', () => {
+    const { plugin, host } = mountDiff({
+      file: { ...createTextDiff({ oldFile: null, newFile: null }), isPartial: true },
     })
 
     expect(plugin.getRows().map((row) => row.type)).toEqual(['empty'])

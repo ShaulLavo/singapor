@@ -7,7 +7,7 @@ let container: HTMLElement | null = null
 let editor: Editor | null = null
 
 /**
- * §C2 of docs/plan-diff-as-editor.md, held down so it cannot rot into folklore.
+ * The documented overlay-mode limit, held down here so it cannot rot into folklore.
  *
  * `injectedTextDisplayRow` gives an injected row `startOffset === endOffset`
  * (displayTransforms.ts:887-888). Downstream, `rangeSegments` returns `[]` for

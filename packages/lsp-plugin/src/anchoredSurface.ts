@@ -82,7 +82,12 @@ export function createAnchoredSurface(options: AnchoredSurfaceOptions): Anchored
   nextAnchorId += 1
   const anchorName = `--${options.anchorClassName}-${nextAnchorId}`
   const anchor = createAnchorElement(document, options.anchorClassName, anchorName)
-  document.body.append(anchor)
+  // Anchor positioning only accepts an anchor that precedes the positioned element in tree order.
+  // Every owner mounts its surface before asking for one, so appending here would put the anchor
+  // after it and leave the surface with no anchor at all — silently placed at its static position,
+  // in the bottom corner of the page, with the right content and the wrong coordinates.
+  if (element.parentNode) element.before(anchor)
+  else document.body.prepend(anchor)
 
   element.style.position = 'fixed'
   element.style.setProperty('position-anchor', anchorName)

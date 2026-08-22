@@ -56,7 +56,7 @@ export function createSplitProjection(
       pushSplitExpandedRows(file, leftRows, rightRows, trailing, undefined)
   }
 
-  if (leftRows.length === 0) pushNoChangesRows(leftRows, rightRows)
+  if (leftRows.length === 0) pushUnchangedFileSplitRows(file, leftRows, rightRows)
   return { leftRows, rightRows, hunkRows }
 }
 
@@ -87,7 +87,7 @@ export function createStackedProjection(
     if (trailingSeparator.expanded) pushStackedExpandedRows(file, rows, trailing, undefined)
   }
 
-  if (rows.length === 0) rows.push(emptyRow('No changes'))
+  if (rows.length === 0) pushUnchangedFileStackedRows(file, rows)
   return { rows, hunkRows }
 }
 
@@ -386,6 +386,47 @@ function emptyRow(text: string): DiffRenderRow {
 function pushNoChangesRows(leftRows: DiffRenderRow[], rightRows: DiffRenderRow[]): void {
   leftRows.push(emptyRow('No changes'))
   rightRows.push(emptyRow('No changes'))
+}
+
+/**
+ * A whole-file diff with nothing changed still has a file in it — a pure rename, a mode change, two
+ * sides that happen to match. Showing the text is the only useful thing a viewer can do with that,
+ * and it is what every other diff viewer does; the alternative is a pane holding the word "No
+ * changes", which tells the reader less than the file would.
+ *
+ * Rendered as plain context rows rather than as one collapsed region: there is no change for a
+ * collapsed region to sit next to, so the reader would be one click away from every diff they
+ * opened. A patch-only file (`isPartial`) has no text to fall back to and keeps the message.
+ */
+function pushUnchangedFileSplitRows(
+  file: DiffFile,
+  leftRows: DiffRenderRow[],
+  rightRows: DiffRenderRow[],
+): void {
+  const range = unchangedFileRange(file)
+  if (range.count <= 0) {
+    pushNoChangesRows(leftRows, rightRows)
+    return
+  }
+
+  pushSplitExpandedRows(file, leftRows, rightRows, range, undefined)
+}
+
+function pushUnchangedFileStackedRows(file: DiffFile, rows: DiffRenderRow[]): void {
+  const range = unchangedFileRange(file)
+  if (range.count <= 0) {
+    rows.push(emptyRow('No changes'))
+    return
+  }
+
+  pushStackedExpandedRows(file, rows, range, undefined)
+}
+
+function unchangedFileRange(file: DiffFile): SkippedRange {
+  if (file.isPartial) return { count: 0, newStart: 1, oldStart: 1 }
+
+  const count = Math.max(contentLineCount(file.oldLines), contentLineCount(file.newLines))
+  return { count, newStart: 1, oldStart: 1 }
 }
 
 function firstContextIndex(lines: readonly DiffHunkLine[], start: number): number {

@@ -168,6 +168,31 @@ describe('diff projections', () => {
     expect(projection.leftRows.some((row) => (row.inlineRanges?.length ?? 0) > 0)).toBe(true)
   })
 
+  it('shows the whole file when a whole-file diff has no changes at all', () => {
+    const text = 'one\ntwo\nthree\n'
+    const file = createTextDiff({
+      oldFile: { path: 'old-name.txt', text },
+      newFile: { path: 'note.txt', text },
+    })
+
+    const split = createSplitProjection(file)
+    const stacked = createStackedProjection(file)
+
+    // A pure rename is the common case: the reader opened a file, so give them the file.
+    expect(split.leftRows.map((row) => row.text)).toEqual(['one', 'two', 'three'])
+    expect(split.rightRows.map((row) => row.text)).toEqual(['one', 'two', 'three'])
+    expect(split.leftRows.at(-1)?.oldLineNumber).toBe(3)
+    expect(split.rightRows.at(-1)?.newLineNumber).toBe(3)
+    expect(stacked.rows.map((row) => row.type)).toEqual(['context', 'context', 'context'])
+  })
+
+  it('keeps the no-changes message when there is no text to show', () => {
+    const file = { ...createTextDiff({ oldFile: null, newFile: null }), isPartial: true }
+
+    expect(createSplitProjection(file).leftRows.map((row) => row.type)).toEqual(['empty'])
+    expect(createStackedProjection(file).rows.map((row) => row.type)).toEqual(['empty'])
+  })
+
   it('creates stacked rows in display order', () => {
     const file = createTextDiff({
       oldFile: { path: 'note.txt', text: 'old\n' },

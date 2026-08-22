@@ -11,7 +11,7 @@ all. **The most valuable output of this document is the sizing and the sequencin
 Read "What happens today" and "The two ceilings" before anything else; they contain the decision.
 
 - Reference checkouts (read-only, gitignored): `references/codemirror5`, `references/vscode`
-- House style and protocol: `docs/parity-plan.md` (its Working protocol and Rules apply here verbatim)
+- Execution protocol: the self-contained Working protocol and Rules below
 - **This plan has been through an adversarial review and then an independent verification pass, both
   with real measurements.** Read the **Review** section at the end before executing anything.
   Several exit criteria in the first draft were unreachable; they were replaced and the milestones
@@ -19,14 +19,33 @@ Read "What happens today" and "The two ceilings" before anything else; they cont
   not fire on the case it was written for. That is fixed. The Review section says what is settled,
   what changed twice, and where the remaining sharp edges are.
 
-> **Provenance correction.** `docs/parity-plan.md`'s milestone-2 `[~]` note cites the bidi TODO at
-> `virtualizedTextViewGeometry.ts:161`. The lazy-plan work in milestone 4 moved it; it is now at
+> **Provenance correction.** The completed parity programme's milestone-2 `[~]` note cited the bidi
+> TODO at `virtualizedTextViewGeometry.ts:161`. The lazy-plan work in milestone 4 moved it; it is now at
 > `:327-329`, attached to `offsetToX` at `:322`.
 
 > **Renumbering, since the review reordered execution.** The milestone that refuses to window a bidi
 > line was M2 in the first draft and is now M5 — the measurements below show it cannot ship until
 > the row is clickable without a whole-row boundary sweep. Everything between shifted down one: old
 > M3 → **M2**, old M4 → **M3**, old M5 → **M4**. M1, M6 and M7 keep their numbers.
+
+## Working protocol
+
+1. Work the topmost incomplete milestone and, within it, the topmost unchecked item.
+2. Before implementation, confirm against current source that the gap and cited seam still exist.
+3. Adapt reference ideas to this editor's CSS Highlight API and fixed-row virtualization; do not
+   copy another editor's DOM strategy.
+4. Every implemented item gets a regression test in the package's existing Vitest setup.
+5. Update this plan's checkbox immediately after each item lands; do not batch status updates.
+6. A milestone is complete only after its scoped tests, typecheck, and lint pass.
+7. Do not mark work complete without recording the passing commands.
+
+## Rules
+
+- Stay on the current task branch and never modify `references/`.
+- Do not revert, reformat, or clean up unrelated work; format only changed files.
+- Mark a false or architectural mismatch `[~]` with a one-line reason instead of forcing it in.
+- Mark a blocker `[!]` inline and continue only with independent work.
+- If a dependency is wrong, record the evidence and reorder instead of forcing the sequence.
 
 ## Status key
 
@@ -1152,8 +1171,8 @@ What could make the estimate wrong, most load-bearing first.
   `hitTestNodeFromPoint` (`virtualizedTextViewHelpers.ts:496`) prefers the first with the second as
   a fallback. A criterion phrased against one API is not reproducible through the helper on a
   browser that only has the other.
-- **The parity programme's own record predicts bugs in this work.** Every milestone note in
-  `docs/parity-plan.md` records real defects the review caught in that milestone's own changes —
+- **The completed parity programme's record predicts bugs in this work.** Its milestone notes
+  recorded real defects the review caught in each milestone's own changes —
   several of them invisible to the test suite at the time. This plan's own first draft is another
   data point: three of five Tier A milestones had exit criteria that were unreachable, blind to a
   regression they caused, or tautological. Budget a review pass per milestone, and assume the first

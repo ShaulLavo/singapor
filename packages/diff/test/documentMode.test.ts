@@ -8,9 +8,9 @@ import { createStackedProjection } from '../src/projection'
 import type { DiffRenderRow } from '../src/types'
 import { highlightRangesWithin, installHighlightPolyfill } from './support/highlightPolyfill'
 
-// M0 of docs/plan-diff-as-editor.md. The gate the whole migration is approved on: a real `Editor`
-// holding the synthetic interleaved buffer must highlight, select and copy a *deletion* row — the
-// thing `overlay` mode can never do (§C2), and therefore the only reason `document` mode exists.
+// The gate for document-mode diffing: a real `Editor` holding the synthetic interleaved buffer
+// must highlight, select and copy a *deletion* row — the thing `overlay` mode can never do, and
+// therefore the reason `document` mode exists.
 //
 // The inverse of test/overlayModeLimits.test.ts, which asserts the same things about an injected
 // row and gets: tokens borrowed from the anchor line's buffer offsets, and no text offset at all

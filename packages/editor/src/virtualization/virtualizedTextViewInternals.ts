@@ -110,8 +110,8 @@ export interface VirtualizedTextViewInternal {
   // cannot change the rule set. Counting the changes that *can* — a group added, removed, or
   // restyled — is what keeps `rebuildStyleRules` off the O(groups^2) path a per-keystroke repaint
   // of many groups would otherwise put it on. Worth about 1% of a keystroke at the live group
-  // count, which is smaller than it sounds and was once recorded as far larger; see the correction
-  // in docs/plan-semantic-tokens.md under Milestone 5.
+  // count, which is smaller than it sounds and was once recorded as far larger. The benchmark and
+  // correction live with the regression in test/semanticTokenRepaintCost.test.ts.
   rangeHighlightRuleVersion: number
   renderedRangeHighlightRuleVersion: number
   selectionHighlightRegistered: boolean

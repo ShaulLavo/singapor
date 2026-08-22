@@ -86,6 +86,13 @@ const PLAIN_TEXT = PLAIN_LINES.join('\n')
 const BRACE_LINES = ['function only() {', '  body()', '}', 'after()']
 const BRACE_TEXT = BRACE_LINES.join('\n')
 
+/**
+ * Indentation reads rows 1–3 as one region under row 0, while the parse ends the block opened on
+ * row 2 at the dedented `}` on row 4 — two descriptions of the document that cross each other.
+ */
+const CROSSING_LINES = ['head:', '  one', '  two {', '  three', '}']
+const CROSSING_TEXT = CROSSING_LINES.join('\n')
+
 const FOLD_COMMAND_IDS = [
   'editor.fold',
   'editor.unfold',
@@ -455,6 +462,20 @@ describe('fold commands', () => {
     clickFoldToggle()
     expect(visibleText()).toContain('after()')
     expect(visibleText()).not.toContain('body()')
+    expect(visibleText()).not.toContain('}')
+  })
+
+  it('lets a parse whose folds cross the indentation fallback displace it', async () => {
+    // The fallback stands in the registry from the moment the document opens; the parse landing
+    // must displace it before its own folds are validated against the set, or the crossing pair
+    // throws instead of resolving in the grammar's favor.
+    await open(CROSSING_TEXT, [blockFold(CROSSING_TEXT, 2, 4)])
+
+    expect(visibleFoldToggles()).toHaveLength(1)
+    editor.setSelection(rowEnd(CROSSING_TEXT, 2))
+    expect(editor.dispatchCommand('editor.fold')).toBe(true)
+    expect(visibleText()).toContain('  two {')
+    expect(visibleText()).not.toContain('  three')
     expect(visibleText()).not.toContain('}')
   })
 

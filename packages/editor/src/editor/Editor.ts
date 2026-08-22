@@ -797,8 +797,12 @@ export class Editor {
   setSyntaxFolds(folds: readonly FoldRange[]): void {
     this.runInOperation(() => {
       if (folds.length > 0) this.grammarDescribedFolds = true
+      // The fallback leaves the registry before the grammar's answer enters it: the registry
+      // validates every fold projection against the whole set, and the two describe the same
+      // blocks with geometry that may cross.
+      this.syncFallbackFoldProjection()
       this.setSyntaxFoldProjection(folds)
-      this.syncFoldStateFromProjections()
+      this.foldState.setFoldProjections(this.foldProjections())
     })
   }
 

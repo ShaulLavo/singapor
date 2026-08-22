@@ -7,6 +7,7 @@ import type {
 } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
+import type { DocumentSyncOptions } from './documentSync'
 import type { LspConnectionProvider } from './lspConnection'
 import type { LanguageServerSemanticTokensOptions } from './semanticTokens'
 
@@ -75,6 +76,8 @@ export type LanguageServerPluginOptions = {
    * after the plugin's and cannot displace it, because the diagnostics feature hangs off it.
    */
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
+  /** Which documents reach the server, and under what `languageId`. See DocumentSyncOptions. */
+  readonly documentSync?: Omit<DocumentSyncOptions, 'onDocumentClosed'>
   readonly webSocketRoute: string | URL
   readonly webSocketTransportOptions?: LspWebSocketTransportOptions
   /**

@@ -228,6 +228,7 @@ export function createLanguageServerPlugin(
     capabilities: options.capabilities,
     clientInfo: options.clientInfo,
     notificationHandlers: options.notificationHandlers,
+    documentSync: options.documentSync,
     createTransport: createWebSocketLspTransportFactory(
       options.webSocketRoute,
       options.webSocketTransportOptions,

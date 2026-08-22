@@ -5,6 +5,9 @@ const TEXT_DOCUMENT_SYNC_NONE = 0
 const TEXT_DOCUMENT_SYNC_FULL = 1
 const TEXT_DOCUMENT_SYNC_INCREMENTAL = 2
 
+const DIAGNOSTIC_TAG_UNNECESSARY = 1
+const DIAGNOSTIC_TAG_DEPRECATED = 2
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -44,6 +47,13 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
       didSave: false,
       willSave: false,
       willSaveWaitUntil: false,
+    },
+    // Required, not decorative: typescript-language-server sets
+    // `features.diagnosticsSupport = Boolean(publishDiagnostics)` and returns early from every
+    // publish without it, so an undeclaring client gets a server that never diagnoses anything.
+    publishDiagnostics: {
+      tagSupport: { valueSet: [DIAGNOSTIC_TAG_UNNECESSARY, DIAGNOSTIC_TAG_DEPRECATED] },
+      versionSupport: true,
     },
     completion: {
       contextSupport: true,

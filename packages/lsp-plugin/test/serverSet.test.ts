@@ -88,10 +88,15 @@ describe('LanguageServerSet', () => {
   })
 
   it('honours runtime capability absence and keeps the designated semantic owner fixed', () => {
-    const designated = fakeLane('designated', { completion: 0, semanticTokens: 0 }, {}, {})
+    const designated = fakeLane(
+      'designated',
+      { completion: 0, diagnostics: 10, semanticTokens: 0 },
+      {},
+      {},
+    )
     const fallback = fakeLane(
       'fallback',
-      { completion: 5, semanticTokens: 5 },
+      { completion: 5, diagnostics: 0, semanticTokens: 5 },
       { completionProvider: {}, semanticTokensProvider: semanticTokensProvider() },
       {},
     )
@@ -102,6 +107,10 @@ describe('LanguageServerSet', () => {
       'fallback',
     ])
     expect(servers.ready('completion').map((lane) => lane.id)).toEqual(['fallback'])
+    expect(servers.declared('diagnostics').map((lane) => lane.id)).toEqual([
+      'fallback',
+      'designated',
+    ])
     expect(servers.designated('semanticTokens')?.id).toBe('designated')
     expect(servers.ready('semanticTokens').map((lane) => lane.id)).toEqual(['fallback'])
   })

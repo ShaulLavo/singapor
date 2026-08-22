@@ -43,9 +43,7 @@ export class LanguageServerSet {
   }
 
   public declared(feature: LanguageServerFeatureId): readonly LanguageServerSetLane[] {
-    return this.#lanes
-      .filter((lane) => lane.features[feature] !== undefined)
-      .toSorted((left, right) => compareFeatureRank(left, right, feature, this.#lanes))
+    return rankedLanguageServerLanes(this.#lanes, feature)
   }
 
   public ready(
@@ -230,6 +228,14 @@ export class LanguageServerSet {
   }
 }
 
+export function rankedLanguageServerLanes<
+  TLane extends { readonly features: LanguageServerFeatureRanks },
+>(lanes: readonly TLane[], feature: LanguageServerFeatureId): readonly TLane[] {
+  return lanes
+    .filter((lane) => lane.features[feature] !== undefined)
+    .toSorted((left, right) => compareFeatureRank(left, right, feature, lanes))
+}
+
 class RoutedLanguageServerClient {
   public constructor(private readonly servers: LanguageServerSet) {}
 
@@ -299,10 +305,10 @@ function featureForMethod(method: string): LanguageServerFeatureId | null {
 }
 
 function compareFeatureRank(
-  left: LanguageServerSetLane,
-  right: LanguageServerSetLane,
+  left: { readonly features: LanguageServerFeatureRanks },
+  right: { readonly features: LanguageServerFeatureRanks },
   feature: LanguageServerFeatureId,
-  lanes: readonly LanguageServerSetLane[],
+  lanes: readonly { readonly features: LanguageServerFeatureRanks }[],
 ): number {
   const rank = (left.features[feature] ?? 0) - (right.features[feature] ?? 0)
   if (rank !== 0) return rank

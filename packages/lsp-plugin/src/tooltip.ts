@@ -324,7 +324,7 @@ function createTooltipElement(document: Document, classNamespace: string): HTMLD
     overflow: 'hidden',
     padding: '0',
     border: `1px solid ${HOVER_COLORS.border}`,
-    borderRadius: '8px',
+    borderRadius: '4px',
     boxSizing: 'border-box',
     background: HOVER_COLORS.background,
     color: HOVER_COLORS.foreground,

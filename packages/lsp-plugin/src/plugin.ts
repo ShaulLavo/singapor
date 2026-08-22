@@ -51,6 +51,7 @@ import {
 import {
   allLanguageServerFeatures,
   LanguageServerSet,
+  rankedLanguageServerLanes,
   type LanguageServerSetLane,
 } from './serverSet'
 import type {
@@ -399,7 +400,7 @@ class LanguageServerContribution implements EditorViewContribution {
     const presenter = new DiagnosticsPresenter(context, prefix, options.diagnostics)
     this.diagnostics = new CompositeDiagnosticsPresenter(
       presenter,
-      options.lanes.map((lane) => lane.id),
+      rankedLanguageServerLanes(options.lanes, 'diagnostics').map((lane) => lane.id),
       options.onDiagnostics,
     )
     this.lanes = options.lanes.map((lane) => this.createLane(lane))

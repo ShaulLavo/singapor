@@ -18,7 +18,6 @@ import {
   selectTreeSitterToken,
   shrinkTreeSitterSelection,
   TreeSitterWorkerClient,
-  type TreeSitterInjectionInfo,
   type TreeSitterLanguageId,
 } from '../src'
 import { createTreeSitterEditPayload } from '../src/session.ts'
@@ -131,6 +130,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
       snapshot,
     })
 
+    const topTarget = text.indexOf('value10')
     const topResult = await workerClient.queryRange({
       documentId,
       snapshotVersion: 1,
@@ -149,10 +149,8 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
       range: { startIndex: target - 100, endIndex: target + 1_000 },
     })
 
-    expect(topResult?.tokens?.length ?? 0).toBeGreaterThan(0)
-    expect(
-      result?.tokens?.some((token) => token.start <= target && token.end >= target + 10) ?? false,
-    ).toBe(true)
+    expect(packedTokensCoverRange(topResult?.tokensPacked, topTarget, topTarget + 7)).toBe(true)
+    expect(packedTokensCoverRange(result?.tokensPacked, target, target + 10)).toBe(true)
   })
 
   it('returns an unavailable edit result when the incremental base was evicted', async () => {
@@ -337,6 +335,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
       snapshotVersion: 1,
       languageId: 'html',
       includeHighlights: false,
+      includeCaptures: false,
       snapshot,
     })
 
@@ -535,9 +534,6 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
       expect(result.incremental.injections.map((injection) => injection.languageId)).toEqual([
         'html',
       ])
-      expect(injectionSignature(result.incremental.injections)).toEqual(
-        injectionSignature(result.full.injections),
-      )
     }
   })
 
@@ -588,9 +584,6 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
 
       expect(languages).toEqual(
         new Set(['css', 'html', 'javascript', 'markdown_inline'] satisfies TreeSitterLanguageId[]),
-      )
-      expect(injectionSignature(result.incremental.injections)).toEqual(
-        injectionSignature(result.full.injections),
       )
     }
   })
@@ -650,9 +643,6 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     )
 
     expect(languages).toEqual(new Set(['html', 'javascript', 'markdown_inline']))
-    expect(injectionSignature(result.incremental.injections)).toEqual(
-      injectionSignature(result.full.injections),
-    )
   })
 
   it('expands and shrinks structural selections through the cached syntax tree', async () => {
@@ -751,6 +741,17 @@ function captureSignature(captures: readonly CaptureSignatureInput[]): string[] 
     .sort()
 }
 
+function packedTokensCoverRange(
+  tokens: { readonly starts: Uint32Array; readonly ends: Uint32Array } | undefined,
+  startIndex: number,
+  endIndex: number,
+): boolean {
+  if (!tokens) return false
+  return tokens.starts.some(
+    (start, index) => start <= startIndex && tokens.ends[index]! >= endIndex,
+  )
+}
+
 type IncrementalInjectionScenario = {
   readonly documentId: string
   readonly languageId: TreeSitterLanguageId
@@ -794,18 +795,8 @@ async function compareIncrementalInjectionsWithFullParse(
   })
   if (!full) throw new Error(`Full parse failed for ${scenario.documentId}`)
 
-  expect(captureSignature(incremental.captures)).toEqual(captureSignature(full.captures))
-  expect(injectionSignature(incremental.injections)).toEqual(injectionSignature(full.injections))
+  expect(incremental.captures).toEqual(full.captures)
+  expect(incremental.tokensPacked).toEqual(full.tokensPacked)
+  expect(incremental.injections).toEqual(full.injections)
   return { initial, incremental, full }
-}
-
-function injectionSignature(injections: readonly TreeSitterInjectionInfo[]): string[] {
-  return injections.map((injection) => {
-    return [
-      injection.parentLanguageId,
-      injection.languageId,
-      injection.startIndex,
-      injection.endIndex,
-    ].join(':')
-  })
 }

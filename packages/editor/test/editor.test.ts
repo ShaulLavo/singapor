@@ -6907,7 +6907,8 @@ describe('Editor', () => {
       expect(highlightsMap.size).toBe(0)
     })
 
-    it('marks syntax errors without blocking editing', async () => {
+    it('logs one wide structural syntax failure and keeps editing available', async () => {
+      const events: EditorLogEvent[] = []
       setEditorSyntaxSessionFactory(() =>
         createMockSyntaxSession({
           refresh: async () => {
@@ -6915,6 +6916,10 @@ describe('Editor', () => {
           },
         }),
       )
+      editor.dispose()
+      editor = new Editor(container, {
+        plugins: [createEditorLoggingPlugin((event) => events.push(event))],
+      })
 
       editor.openDocument({
         documentId: 'main.ts',
@@ -6923,6 +6928,23 @@ describe('Editor', () => {
       })
       await flushMicrotasks()
       expect(editor.getState().syntaxStatus).toBe('error')
+      expect(
+        events.filter(
+          (event) =>
+            event.action === 'editor.syntax.structural_request_failed' ||
+            event.action === 'editor.syntax.structural_error',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          action: 'editor.syntax.structural_request_failed',
+          error: expect.objectContaining({ message: 'parse failed' }),
+          level: 'error',
+          syntax: expect.objectContaining({
+            changeKind: 'refresh',
+            syntaxStatus: 'error',
+          }),
+        }),
+      ])
       editorRoot().dispatchEvent(createInsertEvent('!'))
 
       expect(editor.materializeFullText()).toBe('const a = 1;!')

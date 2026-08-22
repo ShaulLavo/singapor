@@ -844,7 +844,6 @@ export class EditorSyntaxController {
     if (documentVersion !== this.options.getDocumentVersion()) return
 
     this.syntaxStatus = 'error'
-    this.logSyntaxStatus('editor.syntax.structural_error', 'error')
     warnEditorSyntax('mark structural syntax error', this.debugContext(documentVersion))
     this.options.notifyChange(null)
   }
@@ -856,33 +855,33 @@ export class EditorSyntaxController {
     startedAt: number,
   ): void {
     if (documentVersion !== this.options.getDocumentVersion()) return
+    const changeKind = change?.kind ?? 'refresh'
+
+    if (!change) this.applySyntaxError(documentVersion)
+    if (change) {
+      warnEditorSyntax('reload structural syntax after edit failure', {
+        ...this.debugContext(documentVersion),
+        changeKind,
+      })
+      this.reloadSyntaxSession()
+    }
+
     this.options.log?.({
       action: 'editor.syntax.structural_request_failed',
       level: 'error',
       error: syntaxLogError(error),
       syntax: {
         ...this.debugContext(documentVersion),
-        changeKind: change?.kind ?? 'refresh',
+        changeKind,
         startedAt,
       },
     })
     warnEditorSyntax(`structural syntax request failed: ${syntaxErrorMessage(error)}`, {
       ...this.debugContext(documentVersion),
-      changeKind: change?.kind ?? 'refresh',
+      changeKind,
       error: syntaxDebugError(error),
       startedAt,
     })
-
-    if (!change) {
-      this.applySyntaxError(documentVersion)
-      return
-    }
-
-    warnEditorSyntax('reload structural syntax after edit failure', {
-      ...this.debugContext(documentVersion),
-      changeKind: change.kind,
-    })
-    this.reloadSyntaxSession()
   }
 
   private applyHighlightError(documentVersion: number, _startedAt: number): void {

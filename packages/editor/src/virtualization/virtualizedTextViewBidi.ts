@@ -1,5 +1,3 @@
-import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
-
 export const BIDI_CONTROL_CODE_POINTS = [
   0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
 ] as const
@@ -13,7 +11,11 @@ type BidiClassifierMemo = {
   scans: number
 }
 
-const classifierMemos = new WeakMap<VirtualizedTextViewInternal, BidiClassifierMemo>()
+type BidiClassifierHost = {
+  readonly textRevision: number
+}
+
+const classifierMemos = new WeakMap<BidiClassifierHost, BidiClassifierMemo>()
 
 export function containsRTL(text: string): boolean {
   if (RTL_CHARACTER.test(text)) return true
@@ -31,7 +33,7 @@ export function isSimpleRowText(text: string): boolean {
   return true
 }
 
-export function memoizedContainsRTL(view: VirtualizedTextViewInternal, text: string): boolean {
+export function memoizedContainsRTL(view: BidiClassifierHost, text: string): boolean {
   const memo = classifierMemo(view)
   const cached = memo.results.get(text)
   if (cached !== undefined) return cached
@@ -42,11 +44,11 @@ export function memoizedContainsRTL(view: VirtualizedTextViewInternal, text: str
   return result
 }
 
-export function rtlClassifierScanCount(view: VirtualizedTextViewInternal): number {
+export function rtlClassifierScanCount(view: BidiClassifierHost): number {
   return classifierMemos.get(view)?.scans ?? 0
 }
 
-function classifierMemo(view: VirtualizedTextViewInternal): BidiClassifierMemo {
+function classifierMemo(view: BidiClassifierHost): BidiClassifierMemo {
   const current = classifierMemos.get(view)
   if (current?.revision === view.textRevision) return current
 

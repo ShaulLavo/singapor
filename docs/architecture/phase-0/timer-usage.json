@@ -71,15 +71,23 @@
       "file": "packages/editor/src/semanticTokenLayer.ts",
       "id": "packages/editor/src/semanticTokenLayer.ts:setTimeout:7075ce6e49",
       "justification": "Coalesces the demand signal against the viewport rather than against rendering. `'viewport'` is fired once per scroll event and is not throttled at source, so a flung scroll is one update per frame; `cancel()` on every input is what turns that into one question per pause. The delay itself is the host's number — this editor names none.",
-      "line": 170,
+      "line": 175,
       "snippet": "demandTimer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/editor/src/shiki/shiki.worker.ts",
+      "id": "packages/editor/src/shiki/shiki.worker.ts:setTimeout:cc9ba8ae30",
+      "justification": "Runs once per highlighter after a one-second delay so background grammar preload stays behind latency-sensitive tokenization and its first paint. `backgroundLoaded` prevents duplicate schedules; worker teardown safely discards pending work.",
+      "line": 184,
+      "snippet": "setTimeout(() => void ensureLanguages(highlighter, langs).catch(() => undefined), 1_000)"
     },
     {
       "api": "requestAnimationFrame",
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:requestAnimationFrame:f20775aa16",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 1205,
+      "line": 1217,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -87,7 +95,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:setTimeout:2ac189eec3",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 1206,
+      "line": 1218,
       "snippet": "return setTimeout(() => callback(nowMs()), 0) as unknown as number"
     },
     {
@@ -95,7 +103,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:setTimeout:7aa8053100",
       "justification": "The tail of a scroll, which has to be measured against the raw scroll events it follows rather than against editor work — pacing it with other tasks would make the settle time depend on what else was queued. Cancelled by `cancelTrailingScrollEmit` on every further scroll, so at most one is ever pending.",
-      "line": 309,
+      "line": 321,
       "snippet": "this.trailingScrollEmitTimer = setTimeout(() => {"
     },
     {
@@ -111,7 +119,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 906,
+      "line": 930,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -119,7 +127,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 915,
+      "line": 939,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -159,7 +167,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1544,
+      "line": 1590,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {
@@ -201,6 +209,22 @@
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
       "line": 225,
       "snippet": "this.hoverTimer = setTimeout(() => {"
+    },
+    {
+      "api": "queueMicrotask",
+      "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
+      "id": "packages/lsp-plugin/src/lspConnectionPool.ts:queueMicrotask:1d59545f0f",
+      "justification": "Replays pooled connection state after `acquire` returns so callbacks cannot run inside the contribution constructor. The closure verifies that the lease is still active, and each acquisition schedules at most one replay.",
+      "line": 198,
+      "snippet": "queueMicrotask(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
+      "id": "packages/lsp-plugin/src/lspConnectionPool.ts:setTimeout:ad7334dc0b",
+      "justification": "Keeps a connection reusable for the configured grace period after its final lease releases. A new acquisition cancels the timer, and `#closeIdle` rechecks both the lease count and pool identity before disposal.",
+      "line": 213,
+      "snippet": "entry.idleTimer = setTimeout(() => this.#closeIdle(entry), this.#idleGraceMs)"
     },
     {
       "api": "setTimeout",

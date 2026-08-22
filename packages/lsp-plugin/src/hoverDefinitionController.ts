@@ -302,16 +302,19 @@ export class HoverDefinitionController {
       loadingTimer: null,
     }
     this.hoverOperation = operation
+    /** @justification Delays the loading row until the active server set is observably slow; cancellation clears it on every target change. */
     operation.loadingTimer = setTimeout(() => this.revealHoverLoading(id), HOVER_LOADING_DELAY_MS)
     if (focusOnShow) {
       void this.dispatchHover(operation)
       return
     }
 
+    /** @justification Starts semantic work midway through pointer dwell so transient targets are skipped while network time overlaps the remaining dwell. */
     operation.dispatchTimer = setTimeout(() => {
       operation.dispatchTimer = null
       void this.dispatchHover(operation)
     }, HOVER_ASYNC_DISPATCH_DELAY_MS)
+    /** @justification Enforces the hover dwell before paint; cancellation clears it when the pointer leaves the identifier. */
     operation.revealTimer = setTimeout(() => {
       operation.revealTimer = null
       this.revealHover(id)

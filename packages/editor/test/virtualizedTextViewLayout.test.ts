@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { BlockRow, DisplayRow, DisplayTextRow } from '../src/displayTransforms'
+import type { DisplayRow, DisplayTextRow } from '../src/displayTransforms'
 import { createStringTextSnapshot } from '../src/documentTextSnapshot'
 import {
   FixedRowVirtualizer,
@@ -15,12 +15,9 @@ import type { VirtualizedTextViewInternal } from '../src/virtualization/virtuali
 import {
   applySameLineTextLayout,
   bufferLineStartOffset,
-  hasVariableRows,
+  getRowHeight,
   materializeLineStarts,
-  rowHeight,
   rowForOffset,
-  rowForViewportY,
-  rowSizes,
   rowTop,
   scrollableHeight,
   virtualRowForBufferRow,
@@ -36,7 +33,6 @@ describe('virtualized text view layout', () => {
       lineStarts,
       displayRows,
       foldMap: null,
-      blockRows: [],
       wrapEnabled: false,
     })
 
@@ -58,7 +54,6 @@ describe('virtualized text view layout', () => {
         textRow(1, 0, 5, 10, 'fghij', sourceText, 1),
       ],
       foldMap: null,
-      blockRows: [],
       wrapEnabled: true,
     })
 
@@ -66,100 +61,18 @@ describe('virtualized text view layout', () => {
     expect(rowForOffset(view, 6)).toBe(1)
   })
 
-  it('skips block rows when mapping an offset to text', () => {
-    const blockRows: BlockRow[] = [
-      { id: 'before-first', anchorBufferRow: 0, placement: 'before', heightRows: 1 },
-    ]
-    const view = layoutView({
-      text: 'abc',
-      lineStarts: [0],
-      displayRows: [blockRow(0, 0, 'before'), textRow(1, 0, 0, 3, 'abc')],
-      foldMap: null,
-      blockRows,
-      wrapEnabled: false,
-    })
-
-    expect(rowForOffset(view, 0)).toBe(1)
-    expect(virtualRowForBufferRow(view, 0)).toBe(1)
-  })
-
-  it('detects fixed row heights without scanning display rows', () => {
-    const displayRows = throwingDisplayRows([textRow(0, 0, 0, 1)])
-    const view = layoutView({
-      text: 'x',
-      lineStarts: [0],
-      displayRows,
-      foldMap: null,
-      blockRows: [],
-      wrapEnabled: false,
-    })
-
-    expect(hasVariableRows(view)).toBe(false)
-    expect(rowSizes(view)).toBeUndefined()
-  })
-
-  it('positions fixed rows with row gaps without treating them as variable rows', () => {
+  it('positions fixed rows with row gaps', () => {
     const view = layoutView({
       text: 'a\nb\nc',
       lineStarts: [0, 2, 4],
       displayRows: [textRow(0, 0, 0, 1), textRow(1, 1, 2, 3), textRow(2, 2, 4, 5)],
       foldMap: null,
-      blockRows: [],
       wrapEnabled: false,
     })
     view.rowGap = 4
 
-    expect(hasVariableRows(view)).toBe(false)
-    expect(rowSizes(view)).toBeUndefined()
-    expect(rowHeight(view, 0)).toBe(20)
+    expect(getRowHeight(view)).toBe(20)
     expect(rowTop(view, 2)).toBe(48)
-  })
-
-  it('detects variable block heights from block row config', () => {
-    const blockRows: BlockRow[] = [
-      { id: 'panel', anchorBufferRow: 0, placement: 'after', heightRows: 2 },
-    ]
-    const view = layoutView({
-      text: 'x',
-      lineStarts: [0],
-      displayRows: [textRow(0, 0, 0, 1), blockRow(1, 0, 'after', 2)],
-      foldMap: null,
-      blockRows,
-      wrapEnabled: false,
-    })
-
-    expect(hasVariableRows(view)).toBe(true)
-    expect(rowSizes(view)).toEqual([20, 40])
-    view.rowGap = 4
-    expect(rowTop(view, 1)).toBe(24)
-  })
-
-  it('caches variable row sizes for repeated geometry lookups', () => {
-    const blockRows: BlockRow[] = [
-      { id: 'panel', anchorBufferRow: 0, placement: 'after', heightRows: 2 },
-    ]
-    const displayRows = [textRow(0, 0, 0, 1), blockRow(1, 0, 'after', 2), textRow(2, 1, 2, 3)]
-    const view = layoutView({
-      text: 'x\ny',
-      lineStarts: [0, 2],
-      displayRows,
-      foldMap: null,
-      blockRows,
-      wrapEnabled: false,
-    })
-    view.rowGap = 4
-
-    const sizes = rowSizes(view)
-    expect(sizes).toEqual([20, 40, 20])
-
-    guardArrayIndexRead(displayRows, 0, 'unexpected row size rebuild')
-    guardArrayIndexRead(displayRows, 1, 'unexpected row size rebuild')
-    guardArrayIndexRead(displayRows, 2, 'unexpected row size rebuild')
-
-    expect(rowSizes(view)).toBe(sizes)
-    expect(rowTop(view, 2)).toBe(68)
-    expect(rowHeight(view, 1)).toBe(40)
-    expect(rowForViewportY(view, 22)).toBe(1)
   })
 
   it('uses measured row metrics without re-entering the virtualizer', () => {
@@ -168,11 +81,10 @@ describe('virtualized text view layout', () => {
       lineStarts: [0],
       displayRows: [textRow(0, 0, 0, 1)],
       foldMap: null,
-      blockRows: [],
       wrapEnabled: false,
     })
 
-    expect(rowHeight(view, 0)).toBe(20)
+    expect(getRowHeight(view)).toBe(20)
     expect(scrollableHeight(view, fixedSnapshot({ totalSize: 20, viewportHeight: 60 }))).toBe(60)
   })
 
@@ -189,7 +101,6 @@ describe('virtualized text view layout', () => {
       lineStarts,
       displayRows,
       foldMap: null,
-      blockRows: [],
       wrapEnabled: false,
     })
 
@@ -210,7 +121,6 @@ describe('virtualized text view layout', () => {
       lineStarts: [0, 2, 4],
       displayRows: [textRow(0, 0, 0, 1, 'a'), textRow(1, 1, 2, 3, 'b'), textRow(2, 2, 4, 5, 'c')],
       foldMap: null,
-      blockRows: [],
       wrapEnabled: false,
     })
 
@@ -237,7 +147,6 @@ describe('virtualized text view layout', () => {
       lineStarts: [0, 2, 4],
       displayRows: [textRow(0, 0, 0, 1, 'a'), textRow(1, 1, 2, 3, 'b'), textRow(2, 2, 4, 5, 'c')],
       foldMap: null,
-      blockRows: [],
       wrapEnabled: false,
     })
 
@@ -256,7 +165,7 @@ describe('virtualized text view layout', () => {
 })
 
 describe('row height index', () => {
-  it('re-sums only the rows after a settled block height', () => {
+  it('re-sums only the rows after a settled row height', () => {
     const rowSizes = Array.from({ length: 500 }, () => 20)
     const index = createRowHeightIndex(rowSizes, 0)
     const resummed = countArrayIndexWrites(index.rowStarts)
@@ -344,7 +253,6 @@ describe('line start offset index', () => {
 type LayoutFields = Pick<VirtualizedTextViewInternal, 'text' | 'lineStarts' | 'wrapEnabled'> & {
   readonly displayRows: DisplayRow[]
   readonly foldMap: VirtualizedTextViewInternal['model']['foldMap']
-  readonly blockRows: VirtualizedTextViewInternal['model']['blockRows']
 }
 
 function layoutView(fields: LayoutFields): VirtualizedTextViewInternal {
@@ -361,7 +269,6 @@ function layoutView(fields: LayoutFields): VirtualizedTextViewInternal {
       visibleLineCount: Math.max(1, fields.displayRows.length),
       foldMap: fields.foldMap,
       wrapColumn: null,
-      blockRows: fields.blockRows,
       injectedTextRows,
       tabSize: 4,
       rows: fields.displayRows,
@@ -430,33 +337,6 @@ function textRow(
   }
 }
 
-function blockRow(
-  index: number,
-  anchorBufferRow: number,
-  placement: 'before' | 'after',
-  heightRows = 1,
-): DisplayRow {
-  return {
-    kind: 'block',
-    id: `block-${index}`,
-    index,
-    anchorBufferRow,
-    placement,
-    unitIndex: 0,
-    heightRows,
-    startOffset: 0,
-    endOffset: 0,
-    text: '',
-  }
-}
-
-function throwingDisplayRows(rows: DisplayRow[]): DisplayRow[] {
-  return Object.assign(rows, {
-    map: throwingDisplayRowScan,
-    some: throwingDisplayRowScan,
-  })
-}
-
 function guardedSuffixLineStarts(lineStarts: number[]): number[] {
   for (let index = 1; index < lineStarts.length; index += 1) {
     guardArrayIndexWrite(lineStarts, index, 'unexpected suffix line start rewrite')
@@ -512,10 +392,6 @@ function guardArrayIndexRead<T>(items: T[], index: number, message: string): voi
       throw new Error(`${message}: ${String(next)}`)
     },
   })
-}
-
-function throwingDisplayRowScan(): never {
-  throw new Error('unexpected display row scan')
 }
 
 function withThrowingArrayFind<T>(run: () => T): T {

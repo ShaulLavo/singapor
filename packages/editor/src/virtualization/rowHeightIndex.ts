@@ -1,3 +1,5 @@
+// Retained for variable-height rows; nothing in production feeds non-uniform sizes today.
+
 export type RowHeightIndex = {
   readonly rowSizes: readonly number[]
   readonly rowStarts: readonly number[]
@@ -11,7 +13,7 @@ export function createRowHeightIndex(rowSizes: readonly number[], rowGap: number
 }
 
 /**
- * A block settling on its measured height rewrites one entry of an otherwise identical size array,
+ * A row resolving to a new measured height rewrites one entry of an otherwise identical size array,
  * and every offset before that row keeps its value, so only the tail is summed again. Finding that
  * row still compares every row ahead of it: what a late change saves is the offset writes and a
  * second array, not the traversal. Sparing the traversal too would need the caller to say which row

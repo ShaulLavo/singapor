@@ -1414,7 +1414,6 @@ function activatePlugin(
     registerEditContribution: () => ({ dispose: () => undefined }),
     registerDecorationContribution: () => ({ dispose: () => undefined }),
     registerGutterContribution: () => ({ dispose: () => undefined }),
-    registerBlockProvider: () => ({ dispose: () => undefined }),
     registerInjectedTextRowProvider: () => ({ dispose: () => undefined }),
   } satisfies EditorPluginContext)
 
@@ -1459,7 +1458,6 @@ function activatePluginWithCommands(
       return { dispose: () => undefined }
     },
     registerGutterContribution: () => ({ dispose: () => undefined }),
-    registerBlockProvider: () => ({ dispose: () => undefined }),
     registerInjectedTextRowProvider: () => ({ dispose: () => undefined }),
   } satisfies EditorPluginContext)
 

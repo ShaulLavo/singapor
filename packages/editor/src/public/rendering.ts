@@ -38,22 +38,6 @@ export type {
   InlineRow,
   InlineRowSegment,
 } from '../displayTransforms'
-export type {
-  BoundedSize,
-  EditorBlock,
-  EditorBlockAnchor,
-  EditorBlockHorizontalSurface,
-  EditorBlockMount,
-  EditorBlockMountContext,
-  EditorBlockProvider,
-  EditorBlockProviderContext,
-  EditorBlockSize,
-  EditorBlockSurfaceSlot,
-  EditorBlockVerticalSurface,
-  FixedSize,
-  MaxSize,
-  MinSize,
-} from '../editorBlocks'
 export type { EditorSyntaxTheme, EditorSyntaxThemeColor, EditorTheme } from '../theme'
 export type {
   EditorCursorLineHighlightOptions,

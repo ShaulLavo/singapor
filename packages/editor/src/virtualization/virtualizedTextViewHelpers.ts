@@ -518,17 +518,13 @@ export function updateMutableRow(
     readonly endOffset: number
     readonly text: string
     readonly inlineMapping: RowInlineMapping | null
-    readonly kind: 'text' | 'block'
+    readonly kind: 'text'
     readonly top: number
     readonly height: number
-    readonly leftBlockLaneWidth: number
-    readonly rightBlockLaneWidth: number
-    readonly blockLaneKey: string
     readonly textRevision: number
     readonly chunkKey: string
     readonly foldMarkerKey: string
     readonly foldCollapsed: boolean
-    readonly displayKind: 'text' | 'block'
   },
 ): void {
   const mutable = row as {
@@ -541,17 +537,13 @@ export function updateMutableRow(
     endOffset: number
     text: string
     inlineMapping: RowInlineMapping | null
-    kind: 'text' | 'block'
+    kind: 'text'
     top: number
     height: number
-    leftBlockLaneWidth: number
-    rightBlockLaneWidth: number
-    blockLaneKey: string
     textRevision: number
     chunkKey: string
     foldMarkerKey: string
     foldCollapsed: boolean
-    displayKind: 'text' | 'block'
   }
   mutable.index = values.index
   mutable.bufferRow = values.bufferRow
@@ -565,14 +557,10 @@ export function updateMutableRow(
   mutable.kind = values.kind
   mutable.top = values.top
   mutable.height = values.height
-  mutable.leftBlockLaneWidth = values.leftBlockLaneWidth
-  mutable.rightBlockLaneWidth = values.rightBlockLaneWidth
-  mutable.blockLaneKey = values.blockLaneKey
   mutable.textRevision = values.textRevision
   mutable.chunkKey = values.chunkKey
   mutable.foldMarkerKey = values.foldMarkerKey
   mutable.foldCollapsed = values.foldCollapsed
-  mutable.displayKind = values.displayKind
   clearRowGeometryCache(row)
 }
 
@@ -713,4 +701,20 @@ export function rangesIntersectInclusive(
   endB: number,
 ): boolean {
   return endA >= startB && startA <= endB
+}
+
+export function createRowResizeObserver(callback: ResizeObserverCallback): ResizeObserver | null {
+  if (typeof ResizeObserver === 'undefined') return null
+
+  return new ResizeObserver(callback)
+}
+
+// getBoundingClientRect is the laid-out box; scroll size is the fallback for a node the
+// browser has not given a rect yet.
+export function elementMeasuredSize(container: HTMLElement, dimension: 'height' | 'width'): number {
+  const rect = container.getBoundingClientRect()
+  const rectSize = dimension === 'height' ? rect.height : rect.width
+  if (rectSize > 0) return rectSize
+
+  return dimension === 'height' ? container.scrollHeight : container.scrollWidth
 }

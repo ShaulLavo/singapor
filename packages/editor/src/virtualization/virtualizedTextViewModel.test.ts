@@ -15,15 +15,6 @@ describe('virtualized text view model', () => {
       lineStarts: computeLineStarts(text),
       foldMap: null,
       inlineMap: null,
-      blockRows: [
-        {
-          id: 'details',
-          anchorBufferRow: 1,
-          placement: 'after',
-          heightRows: 2,
-          text: 'block',
-        },
-      ],
       injectedTextRows: [
         {
           id: 'hint',
@@ -46,7 +37,6 @@ describe('virtualized text view model', () => {
       'text:document:a:0:1',
       'text:document:brav:1:0',
       'text:document:o:1:1',
-      'block:details:1:2',
       'text:document:char:2:0',
       'text:document:lie:2:1',
     ])
@@ -65,7 +55,6 @@ describe('virtualized text view model', () => {
       lineStarts,
       foldMap,
       inlineMap: null,
-      blockRows: [],
       injectedTextRows: [],
       wrapColumn: null,
       tabSize: 4,
@@ -144,9 +133,5 @@ function rowSummaries(rows: readonly DisplayRow[]): readonly string[] {
 }
 
 function rowSummary(row: DisplayRow): string {
-  if (row.kind === 'block') {
-    return `block:${row.id}:${row.anchorBufferRow}:${row.heightRows}`
-  }
-
   return `text:${row.source}:${row.text}:${row.bufferRow}:${row.wrapSegment}`
 }

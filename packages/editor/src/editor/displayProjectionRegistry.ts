@@ -1,4 +1,4 @@
-import type { BlockLane, BlockRow, InjectedTextRow } from '../displayTransforms'
+import type { InjectedTextRow } from '../displayTransforms'
 import type { EditorGutterContribution, EditorDisposable } from '../plugins'
 import type { FoldRange } from '../syntax/session'
 import type { VirtualizedTextRowDecoration } from '../virtualization/virtualizedTextViewTypes'
@@ -9,8 +9,6 @@ export type EditorDisplayProjectionKind =
   | 'folds'
   | 'rowDecorations'
   | 'rangeDecorations'
-  | 'blockRows'
-  | 'blockLanes'
   | 'injectedRows'
   | 'gutters'
 
@@ -18,8 +16,6 @@ export type EditorDisplayProjectionPayload = {
   readonly folds: readonly FoldRange[]
   readonly rowDecorations: ReadonlyMap<number, VirtualizedTextRowDecoration>
   readonly rangeDecorations: readonly EditorRangeDecoration[]
-  readonly blockRows: readonly BlockRow[]
-  readonly blockLanes: readonly BlockLane[]
   readonly injectedRows: readonly InjectedTextRow[]
   readonly gutters: readonly EditorGutterContribution[]
 }

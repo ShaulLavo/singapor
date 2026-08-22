@@ -1146,8 +1146,8 @@ Carried here so an executing agent does not re-expand scope. Each is a decision,
 - **The minimap stays LTR.** `packages/minimap/src/renderer.ts` steps `dx` left-to-right per code unit
   into a canvas from a pre-rendered character sheet; RTL text draws mirror-image of the editor. At
   minimap scale this is cosmetic. Won't-fix.
-- **Indent guides, block lanes and gutters stay `column × characterWidth`** —
-  `packages/scope-lines/src/index.ts:251`, `virtualizedTextViewBlockLanes.ts:380`. Indentation is
+- **Indent guides and gutters stay `column × characterWidth`** —
+  `packages/scope-lines/src/index.ts:251`. Indentation is
   ASCII whitespace by definition, so the *column* is right even on an RTL line; only the side may
   not be. Low value, no dependency on anything here.
 - **Wrap points stay direction-blind.** `createWrapMap` breaks at cell counts. Each wrapped row is its

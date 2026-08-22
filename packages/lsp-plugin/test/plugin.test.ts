@@ -438,7 +438,6 @@ function activatePlugin(
     },
     registerDecorationContribution: () => ({ dispose: () => undefined }),
     registerGutterContribution: () => ({ dispose: () => undefined }),
-    registerBlockProvider: () => ({ dispose: () => undefined }),
     registerInjectedTextRowProvider: () => ({ dispose: () => undefined }),
   } satisfies EditorPluginContext)
 

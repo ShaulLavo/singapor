@@ -97,22 +97,6 @@ export type {
   EditorMergeConflictPluginOptions,
 } from './mergeConflictPlugin'
 export type {
-  BoundedSize,
-  EditorBlock,
-  EditorBlockAnchor,
-  EditorBlockHorizontalSurface,
-  EditorBlockMount,
-  EditorBlockMountContext,
-  EditorBlockProvider,
-  EditorBlockProviderContext,
-  EditorBlockSize,
-  EditorBlockSurfaceSlot,
-  EditorBlockVerticalSurface,
-  FixedSize,
-  MaxSize,
-  MinSize,
-} from './editorBlocks'
-export type {
   CreateMergeConflictDocumentTextOptions,
   MergeConflictRegion,
   MergeConflictResolution,

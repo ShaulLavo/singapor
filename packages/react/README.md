@@ -32,4 +32,3 @@ export function EditorPanel() {
 - `useEditor` creates and synchronizes an editor controller with React state.
 - `EditorHost` mounts the editor into the DOM.
 - `useEditorSelector` subscribes to selected editor store values.
-- `createReactEditorBlocksPlugin` renders editor block surfaces through React portals.

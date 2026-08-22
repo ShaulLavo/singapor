@@ -409,18 +409,14 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     }
   })
 
-  it('measures text extent independently of overlays inside a block-lane inset', () => {
+  it('measures text extent independently of selection and hidden-character overlays', () => {
     const mounted = mountStandaloneView(BIDI_CORPUS.nested)
     try {
-      mounted.view.setBlockLanes([
-        { id: 'left-rail', startBufferRow: 0, endBufferRow: 0, placement: 'left', widthPx: 24 },
-      ])
       mounted.view.setHiddenCharacters('show')
       mounted.view.setSelection(2, 9)
 
       const oracle = rowOracleExtent(mounted.row)
       const painted = rowTextExtent(mounted.internal, mounted.row)
-      expect(oracle.left).toBeGreaterThanOrEqual(24)
       expect(painted.left).toBeCloseTo(oracle.left, 0)
       expect(painted.right).toBeCloseTo(oracle.right, 0)
 

@@ -53,7 +53,7 @@ Typed ranges: `InvalidatedRange<T>` with `start`, `end`, `lineCountDelta`.
 
 FoldMap implements this protocol with `InvalidatedRange<FoldPoint>` records. Shared transform
 primitives now live in `packages/editor/src/displayTransforms.ts`, including typed invalidations,
-the common layer shape, tab column conversion, wrap rows, and block-row primitives.
+the common layer shape, tab column conversion, and wrap rows.
 
 ---
 

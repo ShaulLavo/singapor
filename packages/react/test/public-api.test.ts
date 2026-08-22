@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   EditorHost,
-  createReactEditorBlocksPlugin,
   useEditor,
   useEditorSelector,
   type ReactEditorController,
@@ -12,7 +11,6 @@ describe('public API facade', () => {
     const controller = null as ReactEditorController | null
 
     expect(EditorHost).toBeTypeOf('function')
-    expect(createReactEditorBlocksPlugin).toBeTypeOf('function')
     expect(useEditor).toBeTypeOf('function')
     expect(useEditorSelector).toBeTypeOf('function')
     expect(controller).toBeNull()

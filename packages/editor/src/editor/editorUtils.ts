@@ -39,11 +39,6 @@ export function removeArrayItem<T>(items: T[], item: T): void {
   items.splice(index, 1)
 }
 
-export function eventTargetInsideBlockSurface(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false
-  return target.closest('[data-editor-block-surface]') !== null
-}
-
 export function capitalize(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`
 }

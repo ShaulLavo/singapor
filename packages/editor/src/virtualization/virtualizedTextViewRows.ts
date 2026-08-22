@@ -3,17 +3,13 @@ import {
   isInjectedTextDisplayRow,
   bufferColumnToVisualColumn,
   visualColumnToBufferColumn,
-  type DisplayBlockRow,
+  visualColumnLength,
   type DisplayInjectedTextRow,
   type DisplayRow,
   type InlineReplacementRender,
   type InlineRow,
 } from '../displayTransforms'
 import { clamp } from '../style-utils'
-import {
-  createEditorBlockResizeObserver,
-  elementMeasuredEditorBlockSize,
-} from '../editor/editorBlockSurfaces'
 import type { InlineMap } from '../inlineMap'
 import type {
   EditorGutterContribution,
@@ -25,6 +21,8 @@ import type { FixedRowVirtualItem, FixedRowVirtualizerSnapshot } from './fixedRo
 import {
   alignChunkEnd,
   alignChunkStart,
+  createRowResizeObserver,
+  elementMeasuredSize,
   hideFoldPlaceholder,
   rangesIntersectInclusive,
   restoreRowElements,
@@ -40,13 +38,11 @@ import {
 import {
   bufferRowForOffset,
   bufferRowForVirtualRow,
-  displayRowKind,
   getRowHeight,
   lineEndOffset,
   lineStartOffset,
   lineText,
   rowForOffset,
-  rowHeight,
   rowTop,
   scrollableHeight,
   updateVirtualizerRows,
@@ -86,30 +82,18 @@ import {
   clearHiddenCharactersForRow,
   renderHiddenCharacters,
 } from './virtualizedTextViewHiddenCharacters'
-import {
-  applyRowBlockLaneInset,
-  estimatedDisplayRowWidthPx,
-  rowBlockLaneInset,
-} from './virtualizedTextViewBlockLanes'
 import { memoizedContainsRTL } from './virtualizedTextViewBidi'
 
 const GUTTER_CELL_CLASS = 'editor-virtualized-gutter-cell'
 const CURSOR_LINE_ROW_CLASS = 'editor-virtualized-cursor-line-row'
 const CURSOR_LINE_GUTTER_CLASS = 'editor-virtualized-cursor-line-gutter'
 const gutterCursorLineStates = new WeakMap<HTMLElement, boolean>()
-const emptyBlockLaneInset = { left: 0, right: 0, key: '' }
 const MAX_ROW_TEXT_NODE_LENGTH = 50
 const MAX_SINGLE_NODE_ROW_LENGTH = 512
 /** Above this, the row shows a fixed endpoint-only placeholder instead of laying out unbounded text. */
 export const BIDI_LINE_MEASUREMENT_CEILING = 32_000
 
 type BidiMeasurementRefusal = 'line-length' | 'grapheme-length'
-// Far enough out that no scroll offset brings a parked surface back into the
-// spacer's painted box. Parking moves the surface rather than hiding or
-// detaching it, because both of those blur whatever the user was typing into —
-// which is the state hoisting exists to protect.
-const PARKED_HOISTED_BLOCK_TOP_PX = -1_000_000
-const hoistedBlockSurfacesByView = new WeakMap<VirtualizedTextViewInternal, HoistedBlockSurfaces>()
 const INLINE_WIDGET_CLASS = 'editor-inline-widget'
 const inlineWidgetsByView = new WeakMap<VirtualizedTextViewInternal, InlineWidgets>()
 const pendingInlineWidgetRepaints = new WeakMap<VirtualizedTextViewInternal, () => void>()
@@ -124,26 +108,8 @@ type RowUpdatePass = {
 }
 
 type RowUpdateState = EditorGutterRowContext & {
-  readonly blockRow: DisplayBlockRow | null
   readonly cursorVirtualLine: boolean
   readonly inlineMapping: RowInlineMapping | null
-}
-
-type HoistedBlockSurfaces = {
-  readonly layerElement: HTMLDivElement
-  readonly hosts: Map<string, HoistedBlockSurface>
-}
-
-type HoistedBlockSurface = {
-  readonly element: HTMLDivElement
-  readonly mountDisposable: { dispose(): void } | null
-  layoutKey: string
-}
-
-type HoistedBlockRowItem = {
-  readonly item: FixedRowVirtualItem
-  readonly blockRow: DisplayBlockRow
-  readonly hoistKey: string
 }
 
 /** Fills the span an inline replacement renders into; the return value tears that content down. */
@@ -200,7 +166,6 @@ export function renderRows(
   updateContentWidth(view, snapshot.virtualItems)
   retireInlineWidgets(view)
   reconcileRows(view, snapshot.virtualItems, snapshot, updatePass, onRemoveSlot)
-  renderHoistedBlockSurfaces(view, snapshot)
   renderHiddenCharacters(view)
 }
 
@@ -247,7 +212,6 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
   const selectionLayerElement = document.createElement('div')
   const foldPlaceholderElement = document.createElement('span')
   const hiddenCharactersLayerElement = document.createElement('div')
-  const blockContainerElement = document.createElement('div')
   const textNode = document.createTextNode('')
   const gutterCells = createGutterCells(view, document)
 
@@ -259,7 +223,6 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
   foldPlaceholderElement.className = 'editor-virtualized-fold-placeholder'
   hiddenCharactersLayerElement.className = 'editor-virtualized-hidden-character-layer'
   hiddenCharactersLayerElement.setAttribute('aria-hidden', 'true')
-  blockContainerElement.className = 'editor-virtualized-block-surface'
   foldPlaceholderElement.textContent = '...'
   foldPlaceholderElement.hidden = true
   for (const cell of gutterCells.values()) gutterElement.appendChild(cell)
@@ -283,7 +246,6 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
     chunkKey: '',
     foldMarkerKey: '',
     foldCollapsed: false,
-    displayKind: 'text',
     element,
     gutterElement,
     gutterCells,
@@ -292,12 +254,6 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
     selectionLayerElement,
     foldPlaceholderElement,
     hiddenCharactersLayerElement,
-    blockContainerElement,
-    blockMountDisposable: null,
-    blockMountKey: '',
-    leftBlockLaneWidth: 0,
-    rightBlockLaneWidth: 0,
-    blockLaneKey: '',
     textNode,
     selectionLayerKey: '',
     hiddenCharactersKey: '',
@@ -339,11 +295,6 @@ function createGutterCell(
 export function disposeGutterCells(view: VirtualizedTextViewInternal): void {
   const rows = Array.from(view.rowElements.values()).concat(view.rowPool)
   for (const row of rows) disposeRowGutterCells(view, row)
-}
-
-export function disposeBlockRowMounts(view: VirtualizedTextViewInternal): void {
-  for (const row of allRows(view)) disposeBlockRowMount(row)
-  disposeHoistedBlockSurfaces(view)
 }
 
 export function updateGutterContributions(
@@ -495,7 +446,6 @@ function rowUpdateState(
   const primaryText = isDocumentTextDisplayRow(displayRow) && displayRow.sourceStartColumn === 0
 
   return {
-    blockRow: displayRow?.kind === 'block' ? displayRow : null,
     index,
     bufferRow,
     source: displayRowSource(displayRow),
@@ -526,7 +476,6 @@ function mountedRowUpdateState(
 ): RowUpdateState {
   const primaryText = isPrimaryTextRow(view, row.index)
   return {
-    blockRow: blockDisplayRowForIndex(view, row.index),
     index: row.index,
     bufferRow: row.bufferRow,
     source: row.source,
@@ -553,7 +502,6 @@ function mountedRowUpdateState(
 function bufferRowForDisplayRow(view: VirtualizedTextViewInternal, index: number): number {
   const displayRow = view.model.rows[index]
   if (displayRow?.kind === 'text') return displayRow.bufferRow
-  if (displayRow?.kind === 'block') return displayRow.anchorBufferRow
   return bufferRowForVirtualRow(view, index)
 }
 
@@ -563,7 +511,6 @@ function inlineRowForDisplayRow(row: DisplayRow | undefined): InlineRow | undefi
 
 function displayRowSource(row: DisplayRow | undefined): EditorGutterRowContext['source'] {
   if (!row) return 'document'
-  if (row.kind === 'block') return 'block'
   return row.source
 }
 
@@ -581,20 +528,13 @@ function updateRowFrame(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   item: FixedRowVirtualItem,
-  kind: 'text' | 'block',
 ): void {
   if (row.index !== item.index) row.element.dataset.editorVirtualRow = String(item.index)
-  if (row.element.dataset.editorVirtualRowKind !== kind)
-    row.element.dataset.editorVirtualRowKind = kind
   if (row.top !== item.start) positionRowElement(view, row.element, item.start)
 
   const height = `${item.size}px`
   if (row.element.style.height !== height) row.element.style.height = height
   if (row.gutterElement.style.height !== height) row.gutterElement.style.height = height
-  applyRowBlockLaneInset(
-    row,
-    kind === 'text' ? rowBlockLaneInset(view, item.index) : emptyBlockLaneInset,
-  )
 }
 
 function updateRow(
@@ -622,9 +562,6 @@ function updateRow(
     foldMarkerKey: state.foldMarker?.key ?? '',
     height: item.size,
     index: item.index,
-    leftBlockLaneWidth: row.leftBlockLaneWidth,
-    rightBlockLaneWidth: row.rightBlockLaneWidth,
-    blockLaneKey: row.blockLaneKey,
     source: state.source,
     startOffset: state.startOffset,
     text: state.text,
@@ -632,7 +569,6 @@ function updateRow(
     textRevision: view.textRevision,
     top: item.start,
     chunkKey: rowChunkKey(view, state.text, snapshot),
-    displayKind: state.kind,
   })
 }
 
@@ -643,18 +579,11 @@ function updateRowElement(
   state: RowUpdateState,
   snapshot: FixedRowVirtualizerSnapshot,
 ): void {
-  updateRowFrame(view, row, item, state.kind)
+  updateRowFrame(view, row, item)
   applyRowDecoration(view, row, item.index)
   updateCursorLineContentClass(view, row, state.cursorVirtualLine)
   updateRowInlineKindClasses(row, state.kind === 'text' ? state.inlineMapping : null)
   updateGutterRowElement(view, row, item, state)
-  if (state.kind === 'block') {
-    setBlockRowContent(view, row, item, state)
-    updateRowFoldPresentation(row, state.foldMarker)
-    return
-  }
-
-  disposeBlockRowMount(row)
   updateRowTextChunks(view, row, state.text, state.startOffset, state.inlineMapping, snapshot)
   updateRowFoldPresentation(row, state.foldMarker)
 }
@@ -706,9 +635,6 @@ function updateRowAfterSameLineEdit(
     foldMarkerKey: state.foldMarker?.key ?? '',
     height: item.size,
     index: item.index,
-    leftBlockLaneWidth: row.leftBlockLaneWidth,
-    rightBlockLaneWidth: row.rightBlockLaneWidth,
-    blockLaneKey: row.blockLaneKey,
     source: state.source,
     startOffset: state.startOffset,
     text: state.text,
@@ -716,7 +642,6 @@ function updateRowAfterSameLineEdit(
     textRevision: view.textRevision,
     top: item.start,
     chunkKey: rowChunkKey(view, state.text, snapshot),
-    displayKind: state.kind,
   })
   return editedRowPatchedInPlace
 }
@@ -729,16 +654,9 @@ function updateRowElementForSameLineEdit(
   patch: SameLineEditPatch,
   snapshot: FixedRowVirtualizerSnapshot,
 ): boolean {
-  updateRowFrame(view, row, item, state.kind)
+  updateRowFrame(view, row, item)
   applyRowDecoration(view, row, item.index)
   updateGutterRowElement(view, row, item, state)
-  if (state.kind === 'block') {
-    setBlockRowContent(view, row, item, state)
-    updateRowFoldPresentation(row, state.foldMarker)
-    return false
-  }
-
-  disposeBlockRowMount(row)
   const editedRowPatchedInPlace = updateRowTextForSameLineEdit(
     view,
     row,
@@ -751,239 +669,6 @@ function updateRowElementForSameLineEdit(
   )
   updateRowFoldPresentation(row, state.foldMarker)
   return editedRowPatchedInPlace
-}
-
-function setBlockRowContent(
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-  item: FixedRowVirtualItem,
-  state: RowUpdateState,
-): void {
-  const blockRow = state.blockRow
-  if (!blockRow || !view.blockRowMount) {
-    setBlockRowText(row, state.text, state.startOffset)
-    return
-  }
-
-  if (row.element.firstChild !== row.blockContainerElement || row.element.childNodes.length !== 1)
-    row.element.replaceChildren(row.blockContainerElement)
-
-  // A hoisted surface is laid over this row from its own layer, so the row only
-  // reserves the space; its height is fixed here even when the surface is
-  // measured, because the surface is no longer what fills this container.
-  if (blockRow.hoistKey) {
-    if (row.blockMountKey !== '') disposeBlockRowMount(row)
-    syncBlockContainerHeight(row.blockContainerElement, item.size, false)
-    updateMutableRowChunks(row, [])
-    return
-  }
-
-  syncBlockContainerHeight(row.blockContainerElement, item.size, blockRow.heightMeasured === true)
-
-  syncBlockRowMount(view, row, blockRow)
-  updateMutableRowChunks(row, [])
-}
-
-function renderHoistedBlockSurfaces(
-  view: VirtualizedTextViewInternal,
-  snapshot: FixedRowVirtualizerSnapshot,
-): void {
-  if (!view.blockRowMount) return
-
-  const items = hoistedBlockRowItems(view, snapshot)
-  const existing = hoistedBlockSurfacesByView.get(view)
-  if (items.length === 0 && !existing) return
-
-  const surfaces = existing ?? createHoistedBlockSurfaces(view)
-  const laidOut = new Set<string>()
-  for (const entry of items) {
-    layoutHoistedBlockSurface(view, surfaces, entry)
-    laidOut.add(entry.hoistKey)
-  }
-
-  if (surfaces.hosts.size > laidOut.size) retireHoistedBlockSurfaces(view, surfaces, laidOut)
-}
-
-function hoistedBlockRowItems(
-  view: VirtualizedTextViewInternal,
-  snapshot: FixedRowVirtualizerSnapshot,
-): readonly HoistedBlockRowItem[] {
-  const items: HoistedBlockRowItem[] = []
-  for (const item of snapshot.virtualItems) {
-    const blockRow = blockDisplayRowForIndex(view, item.index)
-    const hoistKey = blockRow?.hoistKey
-    if (!blockRow || !hoistKey) continue
-
-    items.push({ item, blockRow, hoistKey })
-  }
-
-  return items
-}
-
-function createHoistedBlockSurfaces(view: VirtualizedTextViewInternal): HoistedBlockSurfaces {
-  const layerElement = view.scrollElement.ownerDocument.createElement('div')
-  layerElement.className = 'editor-virtualized-hoisted-block-layer'
-  // Geometry inline, as everywhere else in the spacer, and spanning the same
-  // box a row does so a hoisted surface lines up with the row it replaces.
-  layerElement.style.position = 'absolute'
-  layerElement.style.top = '0'
-  layerElement.style.left = 'var(--editor-gutter-width)'
-  layerElement.style.right = '0'
-  layerElement.style.height = '0'
-  layerElement.style.pointerEvents = 'none'
-  layerElement.style.zIndex = 'var(--editor-z-inline-surface)'
-  view.spacer.appendChild(layerElement)
-
-  const surfaces = { layerElement, hosts: new Map<string, HoistedBlockSurface>() }
-  hoistedBlockSurfacesByView.set(view, surfaces)
-  return surfaces
-}
-
-function layoutHoistedBlockSurface(
-  view: VirtualizedTextViewInternal,
-  surfaces: HoistedBlockSurfaces,
-  entry: HoistedBlockRowItem,
-): void {
-  const host = surfaces.hosts.get(entry.hoistKey) ?? mountHoistedBlockSurface(view, surfaces, entry)
-  syncBlockContainerHeight(host.element, entry.item.size, entry.blockRow.heightMeasured === true)
-
-  const layoutKey = `translateY(${entry.item.start}px)`
-  if (host.layoutKey === layoutKey) return
-
-  host.layoutKey = layoutKey
-  setStyleValue(host.element, 'transform', layoutKey)
-}
-
-function mountHoistedBlockSurface(
-  view: VirtualizedTextViewInternal,
-  surfaces: HoistedBlockSurfaces,
-  entry: HoistedBlockRowItem,
-): HoistedBlockSurface {
-  const element = view.scrollElement.ownerDocument.createElement('div')
-  element.className = 'editor-virtualized-block-surface'
-  element.style.position = 'absolute'
-  element.style.top = '0'
-  element.style.left = '0'
-  element.style.pointerEvents = 'auto'
-  // Attached before mounting so a surface that measures itself on mount is
-  // asked about a laid-out element rather than an orphan.
-  surfaces.layerElement.appendChild(element)
-
-  const disposable = view.blockRowMount?.(element, {
-    id: entry.blockRow.id,
-    anchorBufferRow: entry.blockRow.anchorBufferRow,
-    placement: entry.blockRow.placement,
-    startOffset: entry.blockRow.startOffset,
-    endOffset: entry.blockRow.endOffset,
-  })
-  const host = { element, mountDisposable: disposable ?? null, layoutKey: '' }
-  surfaces.hosts.set(entry.hoistKey, host)
-  return host
-}
-
-function retireHoistedBlockSurfaces(
-  view: VirtualizedTextViewInternal,
-  surfaces: HoistedBlockSurfaces,
-  laidOut: ReadonlySet<string>,
-): void {
-  const projected = projectedHoistKeys(view)
-  for (const [hoistKey, host] of surfaces.hosts) {
-    if (laidOut.has(hoistKey)) continue
-    if (projected.has(hoistKey)) {
-      parkHoistedBlockSurface(host)
-      continue
-    }
-
-    disposeHoistedBlockSurface(host)
-    surfaces.hosts.delete(hoistKey)
-  }
-}
-
-function projectedHoistKeys(view: VirtualizedTextViewInternal): ReadonlySet<string> {
-  const keys = new Set<string>()
-  for (const blockRow of view.model.blockRows) {
-    if (blockRow.hoistKey) keys.add(blockRow.hoistKey)
-  }
-
-  return keys
-}
-
-function parkHoistedBlockSurface(host: HoistedBlockSurface): void {
-  const layoutKey = `translateY(${PARKED_HOISTED_BLOCK_TOP_PX}px)`
-  if (host.layoutKey === layoutKey) return
-
-  host.layoutKey = layoutKey
-  setStyleValue(host.element, 'transform', layoutKey)
-}
-
-function disposeHoistedBlockSurface(host: HoistedBlockSurface): void {
-  host.mountDisposable?.dispose()
-  host.element.remove()
-}
-
-function disposeHoistedBlockSurfaces(view: VirtualizedTextViewInternal): void {
-  const surfaces = hoistedBlockSurfacesByView.get(view)
-  if (!surfaces) return
-
-  for (const host of surfaces.hosts.values()) disposeHoistedBlockSurface(host)
-  surfaces.hosts.clear()
-  surfaces.layerElement.remove()
-  hoistedBlockSurfacesByView.delete(view)
-}
-
-function syncBlockContainerHeight(element: HTMLDivElement, size: number, measured: boolean): void {
-  if (measured) {
-    if (element.style.height !== '') element.style.height = ''
-    return
-  }
-
-  const height = `${size}px`
-  if (element.style.height !== height) element.style.height = height
-}
-
-function syncBlockRowMount(
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-  blockRow: DisplayBlockRow,
-): void {
-  if (row.blockMountKey === blockRow.id) return
-
-  disposeBlockRowMount(row)
-  const disposable = view.blockRowMount?.(row.blockContainerElement, {
-    id: blockRow.id,
-    anchorBufferRow: blockRow.anchorBufferRow,
-    placement: blockRow.placement,
-    startOffset: blockRow.startOffset,
-    endOffset: blockRow.endOffset,
-  })
-  setBlockRowMount(row, blockRow.id, disposable ?? null)
-}
-
-function disposeBlockRowMount(row: MountedVirtualizedTextRow): void {
-  row.blockMountDisposable?.dispose()
-  resetBlockContainerElement(row.blockContainerElement)
-  setBlockRowMount(row, '', null)
-}
-
-function resetBlockContainerElement(element: HTMLDivElement): void {
-  const height = element.style.height
-  element.replaceChildren()
-  while (element.attributes.length > 0) element.removeAttribute(element.attributes[0]!.name)
-  element.className = 'editor-virtualized-block-surface'
-  if (height) element.style.height = height
-}
-
-function setBlockRowMount(
-  row: MountedVirtualizedTextRow,
-  key: string,
-  disposable: MountedVirtualizedTextRow['blockMountDisposable'],
-): void {
-  const mutable = row as {
-    blockMountDisposable: MountedVirtualizedTextRow['blockMountDisposable']
-    blockMountKey: string
-  }
-  mutable.blockMountDisposable = disposable
-  mutable.blockMountKey = key
 }
 
 function updateRowTextForSameLineEdit(
@@ -1256,7 +941,6 @@ function isReusableRenderedDirectChunk(
 }
 
 function rowHasInlineAttachments(row: MountedVirtualizedTextRow): boolean {
-  if (row.element.firstChild === row.blockContainerElement) return true
   if (row.foldCollapsed) return true
   return row.hiddenCharactersKey.length > 0
 }
@@ -1564,7 +1248,7 @@ function mountInlineWidget(
   // The callback is only the signal that something moved: re-reading the element keeps a resize and
   // the measurement below on the same box, rather than the content box without its border. It is
   // also the first real width, since nothing has laid this node out until a row paints it in.
-  const observer = createEditorBlockResizeObserver(() => measureInlineWidget(view, element))
+  const observer = createRowResizeObserver(() => measureInlineWidget(view, element))
   observer?.observe(element)
 
   const host = { element, mountDisposable, observer }
@@ -1574,7 +1258,7 @@ function mountInlineWidget(
 }
 
 function measureInlineWidget(view: VirtualizedTextViewInternal, element: HTMLSpanElement): void {
-  applyInlineWidgetWidth(view, element, elementMeasuredEditorBlockSize(element, 'width'))
+  applyInlineWidgetWidth(view, element, elementMeasuredSize(element, 'width'))
 }
 
 function applyInlineWidgetWidth(
@@ -1665,22 +1349,6 @@ function disposeInlineWidget(host: InlineWidgetHost): void {
   host.observer?.disconnect()
   host.mountDisposable?.dispose()
   host.element.remove()
-}
-
-function setBlockRowText(row: MountedVirtualizedTextRow, text: string, startOffset: number): void {
-  disposeBlockRowMount(row)
-  if (shouldReplaceBlockTextChildren(row)) {
-    row.element.replaceChildren(row.textNode)
-    setTextRenderMode(row, 'simple')
-  }
-  if (row.textNode.data !== text) row.textNode.data = text
-  syncSimpleDirectRowChunk(row, text, startOffset, null)
-}
-
-function shouldReplaceBlockTextChildren(row: MountedVirtualizedTextRow): boolean {
-  if (row.textRenderMode !== 'simple') return true
-  if (rowHasInlineAttachments(row)) return true
-  return row.element.firstChild !== row.textNode || row.element.childNodes.length !== 1
 }
 
 function setChunkedRowText(
@@ -2181,14 +1849,10 @@ function isRowCurrent(
   const bufferRow = bufferRowForVirtualRow(view, item.index)
   if (row.bufferRow !== bufferRow) return false
 
-  const rowKind = displayRowKind(view, item.index)
-  if (row.displayKind !== rowKind) return false
   const displayRow = view.model.rows[item.index]
   if (row.source !== displayRowSource(displayRow)) return false
   if (row.injectedTextRowId !== injectedTextRowId(displayRow)) return false
   if (row.metadata !== displayRowMetadata(displayRow)) return false
-  if (row.blockMountKey !== blockMountKeyForIndex(view, item.index)) return false
-  if (row.blockLaneKey !== rowBlockLaneInset(view, item.index).key) return false
 
   const text = lineText(view, item.index)
   if (row.text !== text) return false
@@ -2217,25 +1881,6 @@ function applyRowDecoration(
   setRowDecorationClass(row, decoration.className ?? '')
   setRowDecorationGutterClass(row, decoration.gutterClassName ?? '')
   setRowDecorationKey(row, rowDecorationKeyForDecoration(decoration))
-}
-
-function blockDisplayRowForIndex(
-  view: VirtualizedTextViewInternal,
-  index: number,
-): DisplayBlockRow | null {
-  const displayRow = view.model.rows[index]
-  if (displayRow?.kind !== 'block') return null
-  return displayRow
-}
-
-function blockMountKeyForIndex(view: VirtualizedTextViewInternal, index: number): string {
-  if (!view.blockRowMount) return ''
-
-  const blockRow = blockDisplayRowForIndex(view, index)
-  // A hoisted surface never mounts into the row, so the row's key stays empty;
-  // claiming the block id here would report every such row as stale each frame.
-  if (!blockRow || blockRow.hoistKey) return ''
-  return blockRow.id
 }
 
 function rowDecorationKey(view: VirtualizedTextViewInternal, virtualRow: number): string {
@@ -2420,7 +2065,6 @@ function removeReusableRows(
   for (const row of rows) {
     onRemoveSlot(row.tokenHighlightSlotId)
     view.rowTokenSignatures.delete(row.tokenHighlightSlotId)
-    disposeBlockRowMount(row)
     clearHiddenCharactersForRow(row)
   }
 
@@ -2435,24 +2079,23 @@ export function resetContentWidthScan(view: VirtualizedTextViewInternal): void {
   view.lastWidthScanEnd = -1
 }
 
-export function updateGutterWidthIfNeeded(view: VirtualizedTextViewInternal): boolean {
-  if (!view.gutterWidthDirty) return false
+export function updateGutterWidthIfNeeded(view: VirtualizedTextViewInternal): void {
+  if (!view.gutterWidthDirty) return
 
   view.gutterWidthDirty = false
-  return applyGutterWidth(view)
+  applyGutterWidth(view)
 }
 
-function applyGutterWidth(view: VirtualizedTextViewInternal): boolean {
+function applyGutterWidth(view: VirtualizedTextViewInternal): void {
   const widths = gutterContributionWidthMap(view)
   updateGutterContributionWidths(view, widths)
 
   const nextWidth = fixedGutterWidth(view) + totalGutterContributionWidth(widths)
   setStyleValue(view.scrollElement, '--editor-gutter-width', `${nextWidth}px`)
-  if (nextWidth === view.currentGutterWidth) return false
+  if (nextWidth === view.currentGutterWidth) return
 
   view.currentGutterWidth = nextWidth
   applySpacerWidth(view)
-  return true
 }
 
 function fixedGutterWidth(view: VirtualizedTextViewInternal): number {
@@ -2576,9 +2219,17 @@ function scanVisualColumns(
   for (let row = startIndex; row <= endIndex; row += 1) {
     view.maxVisualColumnsSeen = Math.max(
       view.maxVisualColumnsSeen,
-      estimatedDisplayRowWidthPx(view, row) / characterWidth(view),
+      estimatedDisplayRowColumns(view, row),
     )
   }
+}
+
+// Only document text contributes to the horizontal extent; injected rows are measured for real
+// once they mount.
+function estimatedDisplayRowColumns(view: VirtualizedTextViewInternal, rowIndex: number): number {
+  const displayRow = view.model.rows[rowIndex]
+  if (!isDocumentTextDisplayRow(displayRow)) return 0
+  return visualColumnLength(displayRow.text, view.tabSize)
 }
 
 function applyContentWidth(view: VirtualizedTextViewInternal, visualColumns: number): void {
@@ -2774,7 +2425,7 @@ export function scrollOffsetIntoView(view: VirtualizedTextViewInternal, offset: 
   const snapshot = view.virtualizer.getSnapshot()
   const row = rowForOffset(view, offset)
   const top = rowTop(view, row)
-  const bottom = top + rowHeight(view, row)
+  const bottom = top + getRowHeight(view)
   const scrollTop = scrollTopForVisibleRow(view, top, bottom, snapshot)
   const scrollLeft = scrollLeftForVisibleOffset(view, row, offset, snapshot)
   if (scrollTop === snapshot.scrollTop && scrollLeft === snapshot.scrollLeft) return
@@ -2787,7 +2438,7 @@ export function scrollOffsetIntoView(view: VirtualizedTextViewInternal, offset: 
 export function scrollOffsetToViewportEnd(view: VirtualizedTextViewInternal, offset: number): void {
   const snapshot = view.virtualizer.getSnapshot()
   const row = rowForOffset(view, offset)
-  const bottom = rowTop(view, row) + rowHeight(view, row)
+  const bottom = rowTop(view, row) + getRowHeight(view)
   const scrollTop = scrollTopForRowBottom(bottom, snapshot)
   const scrollLeft = scrollLeftForVisibleOffset(view, row, offset, snapshot)
   if (scrollTop === snapshot.scrollTop && scrollLeft === snapshot.scrollLeft) return
@@ -2844,7 +2495,7 @@ function rowTextLeftForOffset(
   const column = isSimpleRowText(text)
     ? bufferColumnToVisualColumn(text, localOffset, view.tabSize)
     : estimatedDisplayCellForColumn(text, localOffset, view.tabSize)
-  return rowBlockLaneInset(view, rowIndex).left + column * characterWidth(view)
+  return column * characterWidth(view)
 }
 
 export function resolveMountedOffset(

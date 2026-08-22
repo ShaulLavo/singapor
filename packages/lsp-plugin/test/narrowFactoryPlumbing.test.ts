@@ -313,7 +313,6 @@ function activate(
     registerEditContribution: () => disposable,
     registerDecorationContribution: () => disposable,
     registerGutterContribution: () => disposable,
-    registerBlockProvider: () => disposable,
     registerInjectedTextRowProvider: () => disposable,
   } satisfies EditorPluginContext)
 

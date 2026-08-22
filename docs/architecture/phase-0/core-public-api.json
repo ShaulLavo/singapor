@@ -16,12 +16,6 @@
         },
         {
           "kind": "type",
-          "name": "BoundedSize",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
           "name": "BracketInfo",
           "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
@@ -106,68 +100,8 @@
         },
         {
           "kind": "type",
-          "name": "EditorBlock",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockAnchor",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
           "name": "EditorBlockCommentTokens",
           "source": "packages/editor/src/public/extensions.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockHorizontalSurface",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockMount",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockMountContext",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockProvider",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockProviderContext",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockSize",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockSurfaceSlot",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockVerticalSurface",
-          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1000,12 +934,6 @@
         },
         {
           "kind": "type",
-          "name": "FixedSize",
-          "source": "packages/editor/src/public/rendering.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
           "name": "FoldRange",
           "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
@@ -1020,12 +948,6 @@
           "kind": "type",
           "name": "HighlightRegistry",
           "source": "packages/editor/src/editor.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "MaxSize",
-          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1050,12 +972,6 @@
           "kind": "type",
           "name": "MergeConflictSide",
           "source": "packages/editor/src/editor.ts",
-          "via": "packages/editor/src/index.ts"
-        },
-        {
-          "kind": "type",
-          "name": "MinSize",
-          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -2266,12 +2182,6 @@
       "exports": [
         {
           "kind": "type",
-          "name": "BoundedSize",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
           "name": "BracketLevel",
           "source": "packages/editor/src/editor/bracketMatching.ts",
           "via": "packages/editor/src/editor.ts"
@@ -2292,66 +2202,6 @@
           "kind": "type",
           "name": "CreateMergeConflictDocumentTextOptions",
           "source": "packages/editor/src/mergeConflicts.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlock",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockAnchor",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockHorizontalSurface",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockMount",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockMountContext",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockProvider",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockProviderContext",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockSize",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockSurfaceSlot",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockVerticalSurface",
-          "source": "packages/editor/src/editorBlocks.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -2836,12 +2686,6 @@
         },
         {
           "kind": "type",
-          "name": "FixedSize",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
           "name": "HiddenCharactersMode",
           "source": "packages/editor/src/virtualization/virtualizedTextViewTypes.ts",
           "via": "packages/editor/src/editor.ts"
@@ -2850,12 +2694,6 @@
           "kind": "type",
           "name": "HighlightRegistry",
           "source": "packages/editor/src/editor/types.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "MaxSize",
-          "source": "packages/editor/src/editorBlocks.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -2880,12 +2718,6 @@
           "kind": "type",
           "name": "MergeConflictSide",
           "source": "packages/editor/src/mergeConflicts.ts",
-          "via": "packages/editor/src/editor.ts"
-        },
-        {
-          "kind": "type",
-          "name": "MinSize",
-          "source": "packages/editor/src/editorBlocks.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -4096,72 +3928,6 @@
       "exports": [
         {
           "kind": "type",
-          "name": "BoundedSize",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlock",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockAnchor",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockHorizontalSurface",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockMount",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockMountContext",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockProvider",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockProviderContext",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockSize",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockSurfaceSlot",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "EditorBlockVerticalSurface",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
           "name": "EditorColorDefaults",
           "source": "packages/editor/src/theme.ts",
           "via": "packages/editor/src/public/rendering.ts"
@@ -4212,12 +3978,6 @@
           "kind": "type",
           "name": "EditorThemeType",
           "source": "packages/editor/src/theme.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "FixedSize",
-          "source": "packages/editor/src/editorBlocks.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
         {
@@ -4284,18 +4044,6 @@
           "kind": "type",
           "name": "InlineRowSegment",
           "source": "packages/editor/src/displayTransforms.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "MaxSize",
-          "source": "packages/editor/src/editorBlocks.ts",
-          "via": "packages/editor/src/public/rendering.ts"
-        },
-        {
-          "kind": "type",
-          "name": "MinSize",
-          "source": "packages/editor/src/editorBlocks.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
         {

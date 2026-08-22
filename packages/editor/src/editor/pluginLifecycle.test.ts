@@ -1,6 +1,5 @@
 import { Window } from 'happy-dom'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import type { EditorBlockProvider } from '../editorBlocks'
 import { createEditorLoggingPlugin } from '../logging'
 import type {
   EditorCapabilityToken,
@@ -328,33 +327,6 @@ describe('editor plugin lifecycle', () => {
     expect(events.some((event) => event.action === 'editor.plugin.activation_failed')).toBe(true)
 
     editor.dispose()
-  })
-
-  test('rejects duplicate block provider registration without removing the owner', () => {
-    const host = new EditorPluginHost()
-    const failures: string[] = []
-    const provider: EditorBlockProvider = { getBlocks: () => [] }
-    const owner: EditorPlugin = {
-      name: 'block-owner',
-      activate: (context) => context.registerBlockProvider(provider),
-    }
-    const conflicting: EditorPlugin = {
-      name: 'block-conflict',
-      activate: (context) => context.registerBlockProvider(provider),
-    }
-    host.setEvents({
-      onPluginActivationFailed: (name) => failures.push(name),
-    })
-
-    const ownerLease = host.addPlugin(owner)
-    const conflictingLease = host.addPlugin(conflicting)
-
-    expect(host.getBlockProviders()).toEqual([provider])
-    expect(failures).toEqual(['block-conflict'])
-
-    conflictingLease.dispose()
-    ownerLease.dispose()
-    host.dispose()
   })
 
   test('rejects duplicate decoration source ownership without removing the owner', () => {

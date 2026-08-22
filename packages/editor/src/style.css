@@ -209,37 +209,6 @@
   will-change: transform;
 }
 
-.editor-virtualized-horizontal-block-layer {
-  height: 0;
-  left: 0;
-  pointer-events: none;
-  position: absolute;
-  top: 0;
-  z-index: var(--editor-z-inline-surface);
-}
-
-.editor-virtualized-horizontal-block-surface {
-  box-sizing: border-box;
-  min-width: 0;
-  overflow: hidden;
-  pointer-events: auto;
-  position: absolute;
-  top: 0;
-}
-
-.editor-virtualized-row[data-editor-virtual-row-kind='block'] {
-  line-height: normal;
-  white-space: normal;
-}
-
-.editor-virtualized-block-surface {
-  box-sizing: border-box;
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  width: 100%;
-}
-
 .editor-virtualized-row-chunk {
   white-space: pre;
 }

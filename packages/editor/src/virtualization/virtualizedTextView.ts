@@ -5,8 +5,6 @@ import { type InlineMap, revealInlineMap } from '../inlineMap'
 import {
   normalizeTabSize,
   isDocumentTextDisplayRow,
-  type BlockLane,
-  type BlockRow,
   type InjectedTextRow,
 } from '../displayTransforms'
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
@@ -76,7 +74,6 @@ import {
   rowForOffset,
   rowForViewportY,
   sameLineEditPatch,
-  setBlockRowsLayout,
   setFoldStateLayout,
   setInjectedTextRowsLayout,
   materializeLineStarts,
@@ -101,13 +98,7 @@ import {
   xToOffset,
 } from './virtualizedTextViewGeometry'
 import {
-  disposeAllMountedBlockLanes,
-  renderBlockLanes,
-  setBlockLanesLayout,
-} from './virtualizedTextViewBlockLanes'
-import {
   applyRowHeight,
-  disposeBlockRowMounts,
   disposeGutterCells,
   disposeInlineWidgets,
   ensureOffsetMounted,
@@ -244,7 +235,6 @@ export class VirtualizedTextView {
     const inputElement = createInputElement(container)
     const spacer = container.ownerDocument.createElement('div')
     const gutterElement = container.ownerDocument.createElement('div')
-    const blockLaneLayerElement = container.ownerDocument.createElement('div')
     const caretLayerElement = container.ownerDocument.createElement('div')
     const caretElement = container.ownerDocument.createElement('div')
     const longLineChunkSize = normalizeChunkSize(options.longLineChunkSize)
@@ -257,14 +247,12 @@ export class VirtualizedTextView {
       createVirtualizerOptions(rowHeight, overscan, rowGap, scrollMode),
     )
     const initialTextSnapshot = createStringTextSnapshot('')
-    const initialBlockRows = options.blockRows ?? []
     const initialInjectedTextRows = options.injectedTextRows ?? []
     const initialModel = createVirtualizedTextViewModel({
       textSnapshot: initialTextSnapshot,
       lineStarts: [0],
       foldMap: null,
       inlineMap: null,
-      blockRows: initialBlockRows,
       injectedTextRows: initialInjectedTextRows,
       wrapColumn: null,
       tabSize,
@@ -294,9 +282,6 @@ export class VirtualizedTextView {
       horizontalOverscanColumns: normalizeHorizontalOverscan(options.horizontalOverscanColumns),
       onFoldToggle: options.onFoldToggle ?? null,
       onViewportChange: options.onViewportChange ?? null,
-      blockRowMount: options.blockRowMount ?? null,
-      blockLaneMount: options.blockLaneMount ?? null,
-      blockLaneLayerElement,
       cursorLineHighlight: normalizeCursorLineHighlight(options.cursorLineHighlight),
       rowElements: new Map(),
       rowPool: [],
@@ -319,13 +304,6 @@ export class VirtualizedTextView {
       rowDecorations: new Map(),
       foldMarkerByStartRow: new Map(),
       foldMarkerByKey: new Map(),
-      rowHeightIndex: null,
-      rowHeightIndexDisplayRows: null,
-      rowHeightIndexRowHeight: rowHeight,
-      rowHeightIndexRowGap: rowGap,
-      rowHeightIndexVariable: null,
-      blockLanes: [],
-      blockLaneElements: new Map(),
       wrapEnabled: options.wrap ?? false,
       tabSize,
       tokenGroups: new Map(),
@@ -363,17 +341,14 @@ export class VirtualizedTextView {
     scrollElement.style.setProperty('--editor-tab-size', String(tabSize))
     setScrollModeAttribute(scrollElement, scrollMode)
     scrollElement.dataset.editorRowPositioning = rowPositioning
-    setBlockLanesLayout(this.view, options.blockLanes ?? [])
     applyRowHeight(this.view, rowHeight)
     spacer.className = 'editor-virtualized-spacer'
     gutterElement.className = 'editor-virtualized-gutter'
-    blockLaneLayerElement.className = 'editor-virtualized-horizontal-block-layer'
     caretLayerElement.className = 'editor-virtualized-caret-layer'
     caretElement.className = 'editor-virtualized-caret'
     caretElement.hidden = true
     caretLayerElement.appendChild(caretElement)
     if (gutterContributions.length > 0 || gutterWidthProvider) spacer.appendChild(gutterElement)
-    spacer.appendChild(blockLaneLayerElement)
     spacer.appendChild(caretLayerElement)
     scrollElement.appendChild(spacer)
     scrollElement.appendChild(inputElement)
@@ -398,9 +373,7 @@ export class VirtualizedTextView {
     for (const name of view.rangeHighlightGroups.keys()) clearRangeHighlight(view, name)
     clearTokenHighlights(view)
     view.virtualizer.dispose()
-    disposeBlockRowMounts(view)
     disposeInlineWidgets(view)
-    disposeAllMountedBlockLanes(view)
     disposeGutterCells(view)
     this.scrollElement.remove()
     view.styleEl.remove()
@@ -637,15 +610,6 @@ export class VirtualizedTextView {
     renderHiddenCharacters(view)
   }
 
-  public setBlockRows(blockRows: readonly BlockRow[]): void {
-    const view = this.view
-    setBlockRowsLayout(view, blockRows, horizontalViewportColumns(view))
-    resetContentWidthScan(view)
-    clearRowGeometryCaches(view)
-    view.lastRenderedRowsKey = ''
-    updateVirtualizerRows(view)
-  }
-
   public setInjectedTextRows(injectedTextRows: readonly InjectedTextRow[]): void {
     const view = this.view
     setInjectedTextRowsLayout(view, injectedTextRows, horizontalViewportColumns(view))
@@ -654,15 +618,6 @@ export class VirtualizedTextView {
     view.lastRenderedRowsKey = ''
     view.gutterWidthDirty = true
     updateVirtualizerRows(view)
-  }
-
-  public setBlockLanes(blockLanes: readonly BlockLane[]): void {
-    const view = this.view
-    setBlockLanesLayout(view, blockLanes)
-    resetContentWidthScan(view)
-    clearRowGeometryCaches(view)
-    view.lastRenderedRowsKey = ''
-    this.renderSnapshot(view.virtualizer.getSnapshot())
   }
 
   public setRowDecorations(decorations: ReadonlyMap<number, VirtualizedTextRowDecoration>): void {
@@ -802,8 +757,6 @@ export class VirtualizedTextView {
       mountedRows: getMountedRows(view),
       foldMarkers: view.foldMarkers,
       wrapActive: view.wrapEnabled,
-      blockRowCount: view.model.blockRows.length,
-      blockLaneCount: view.blockLanes.length,
       tabSize: view.tabSize,
     }
   }
@@ -882,12 +835,11 @@ export class VirtualizedTextView {
 
   private renderSnapshot(snapshot: FixedRowVirtualizerSnapshot): void {
     const view = this.view
-    const gutterWidthChanged = updateGutterWidthIfNeeded(view)
+    updateGutterWidthIfNeeded(view)
     updateSpacerHeight(view, snapshot)
     updateSpacerWidth(view, snapshot.viewportWidth)
     const key = rowsKey(view, snapshot)
     if (key === view.lastRenderedRowsKey) {
-      if (gutterWidthChanged) renderBlockLanes(view, snapshot)
       view.onViewportChange?.()
       return
     }
@@ -895,7 +847,6 @@ export class VirtualizedTextView {
     view.lastRenderedRowsKey = key
     renderRows(view, snapshot, (rowSlotId) => deleteTokenRangesForRow(view, rowSlotId))
     this.applyKnownContentWidths(snapshot)
-    renderBlockLanes(view, snapshot)
     renderTokenHighlights(view)
     for (const name of view.rangeHighlightGroups.keys()) renderRangeHighlight(view, name)
     renderSelectionHighlight(view)

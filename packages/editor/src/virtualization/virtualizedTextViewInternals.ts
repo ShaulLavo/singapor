@@ -1,11 +1,9 @@
 import type { InlineMap } from '../inlineMap'
-import type { BlockLane, DisplayRow } from '../displayTransforms'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 import type { BrowserTextMetrics } from './browserMetrics'
 import type { FixedRowVirtualizer } from './fixedRowVirtualizer'
 import type { LineStartOffsetIndex } from './lineStartIndex'
-import type { RowHeightIndex } from './rowHeightIndex'
 import type { SuspiciousCharacterSettings } from './virtualizedTextViewHiddenCharacters'
 import type { VirtualizedTextViewModelState } from './virtualizedTextViewModel'
 import type {
@@ -14,8 +12,6 @@ import type {
   HighlightRegistry,
   MountedVirtualizedTextRow,
   TokenGroup,
-  VirtualizedBlockLaneMount,
-  VirtualizedBlockRowMount,
   VirtualizedFoldMarker,
   VirtualizedTextViewRowPositioning,
   VirtualizedTextViewScrollMode,
@@ -96,9 +92,6 @@ export interface VirtualizedTextViewInternal {
   readonly horizontalOverscanColumns: number
   readonly onFoldToggle: ((marker: VirtualizedFoldMarker) => void) | null
   readonly onViewportChange: (() => void) | null
-  readonly blockRowMount: VirtualizedBlockRowMount | null
-  readonly blockLaneMount: VirtualizedBlockLaneMount | null
-  readonly blockLaneLayerElement: HTMLDivElement
   readonly cursorLineHighlight: Required<EditorCursorLineHighlightOptions>
   readonly rowElements: Map<number, MountedVirtualizedTextRow>
   readonly rowPool: MountedVirtualizedTextRow[]
@@ -129,13 +122,6 @@ export interface VirtualizedTextViewInternal {
   rowDecorations: ReadonlyMap<number, VirtualizedTextRowDecoration>
   foldMarkerByStartRow: ReadonlyMap<number, VirtualizedFoldMarker>
   foldMarkerByKey: ReadonlyMap<string, VirtualizedFoldMarker>
-  rowHeightIndex: RowHeightIndex | null
-  rowHeightIndexDisplayRows: readonly DisplayRow[] | null
-  rowHeightIndexRowHeight: number
-  rowHeightIndexRowGap: number
-  rowHeightIndexVariable: boolean | null
-  blockLanes: readonly BlockLane[]
-  blockLaneElements: Map<string, MountedVirtualizedBlockLane>
   wrapEnabled: boolean
   tabSize: number
   tokenGroups: Map<string, TokenGroup>
@@ -168,11 +154,4 @@ export interface VirtualizedTextViewInternal {
   textMetrics: BrowserTextMetrics | null
   hiddenCharacters: HiddenCharactersMode
   suspiciousCharacters: SuspiciousCharacterSettings
-}
-
-export type MountedVirtualizedBlockLane = {
-  readonly id: string
-  readonly element: HTMLDivElement
-  readonly mountDisposable: { dispose(): void } | null
-  readonly layoutKey: string
 }

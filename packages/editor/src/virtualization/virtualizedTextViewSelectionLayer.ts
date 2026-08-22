@@ -1,6 +1,5 @@
 import { setStyleValue } from './virtualizedTextViewHelpers'
 import { rangeSegments } from './virtualizedTextViewGeometry'
-import { rowTextInsetLeft } from './virtualizedTextViewBlockLanes'
 import type {
   VirtualizedStoredSelection,
   VirtualizedTextViewInternal,
@@ -87,7 +86,7 @@ function emptyRowSelectionSegment(
   if (!selectionIncludesOffset(selection, offset)) return null
 
   return {
-    left: rowTextInsetLeft(row),
+    left: 0,
     width: Math.max(1, view.metrics.characterWidth),
   }
 }

@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  blockPointToBufferPoint,
-  type BlockRow,
   bufferColumnToVisualColumn,
   bufferPointToTabPoint,
   createDisplayRows,
@@ -73,28 +71,17 @@ describe('display transform core', () => {
     })
   })
 
-  it('creates display rows for wrapped text and block rows', () => {
+  it('creates display rows for wrapped text', () => {
     const text = 'abcdefghij\nxy'
-    const blocks: BlockRow[] = [
-      { id: 'before', anchorBufferRow: 0, placement: 'before', heightRows: 1, text: 'B' },
-      { id: 'after', anchorBufferRow: 0, placement: 'after', heightRows: 2, text: 'A' },
-    ]
     const rows = createDisplayRows({
       text,
       lineStarts: computeLineStarts(text),
       visibleLineCount: 2,
       bufferRowForVisibleRow: (row) => row,
       wrapColumn: 4,
-      blocks,
     })
 
-    expect(rows.map((row) => row.kind)).toEqual(['block', 'text', 'text', 'text', 'block', 'text'])
-    expect(rows.filter((row) => row.kind === 'text').map((row) => row.text)).toEqual([
-      'abcd',
-      'efgh',
-      'ij',
-      'xy',
-    ])
+    expect(rows.map((row) => row.text)).toEqual(['abcd', 'efgh', 'ij', 'xy'])
   })
 
   it('interleaves injected text rows before and after anchored document rows', () => {
@@ -117,7 +104,7 @@ describe('display transform core', () => {
     expect(
       rows.map((row) => ({
         id: row.kind === 'text' && row.source === 'injected' ? row.id : undefined,
-        source: row.kind === 'text' ? row.source : 'block',
+        source: row.source,
         text: row.text,
       })),
     ).toEqual([
@@ -132,65 +119,6 @@ describe('display transform core', () => {
       { bufferRow: 0, startOffset: 0, endOffset: 5 },
       { bufferRow: 1, startOffset: 6, endOffset: 10 },
     ])
-  })
-
-  it('sorts block rows by anchor, placement, and id', () => {
-    const text = 'a\nb'
-    const rows = createDisplayRows({
-      text,
-      lineStarts: computeLineStarts(text),
-      visibleLineCount: 2,
-      bufferRowForVisibleRow: (row) => row,
-      blocks: [
-        { id: 'row-1', anchorBufferRow: 1, placement: 'before', heightRows: 1 },
-        { id: 'row-0-z', anchorBufferRow: 0, placement: 'after', heightRows: 1 },
-        { id: 'row-0-a', anchorBufferRow: 0, placement: 'before', heightRows: 1 },
-      ],
-    })
-
-    expect(rows.map((row) => (row.kind === 'block' ? row.id : row.text))).toEqual([
-      'row-0-a',
-      'a',
-      'row-0-z',
-      'row-1',
-      'b',
-    ])
-  })
-
-  it('breaks block row ties on ordinal before falling back to id', () => {
-    const text = 'a'
-    const rows = createDisplayRows({
-      text,
-      lineStarts: computeLineStarts(text),
-      visibleLineCount: 1,
-      bufferRowForVisibleRow: (row) => row,
-      blocks: [
-        { id: 'row-a', anchorBufferRow: 0, placement: 'before', heightRows: 1, ordinal: 20 },
-        { id: 'row-b', anchorBufferRow: 0, placement: 'before', heightRows: 1, ordinal: 10 },
-      ],
-    })
-
-    expect(rows.map((row) => (row.kind === 'block' ? row.id : row.text))).toEqual([
-      'row-b',
-      'row-a',
-      'a',
-    ])
-  })
-
-  it('maps block rows back to nearby buffer rows', () => {
-    const text = 'abc\ndef'
-    const rows = createDisplayRows({
-      text,
-      lineStarts: computeLineStarts(text),
-      visibleLineCount: 2,
-      bufferRowForVisibleRow: (row) => row,
-      blocks: [{ id: 'block', anchorBufferRow: 0, placement: 'after', heightRows: 1 }],
-    })
-
-    expect(blockPointToBufferPoint(rows, { row: 1, column: 0 } as never)).toEqual({
-      row: 0,
-      column: 0,
-    })
   })
 })
 

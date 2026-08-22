@@ -267,17 +267,6 @@ export type {
 } from './public/extensions'
 export type { BrowserTextMetrics } from './virtualization'
 export type {
-  BoundedSize,
-  EditorBlock,
-  EditorBlockAnchor,
-  EditorBlockHorizontalSurface,
-  EditorBlockMount,
-  EditorBlockMountContext,
-  EditorBlockProvider,
-  EditorBlockProviderContext,
-  EditorBlockSize,
-  EditorBlockSurfaceSlot,
-  EditorBlockVerticalSurface,
   EditorColorDefaults,
   EditorColorId,
   EditorColorTransform,
@@ -287,10 +276,7 @@ export type {
   EditorSyntaxThemeColor,
   EditorTheme,
   EditorThemeType,
-  FixedSize,
   HiddenCharactersMode,
-  MaxSize,
-  MinSize,
   VirtualizedFoldMarker,
   VirtualizedTextHighlightRange,
   VirtualizedTextHighlightStyle,

@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks'
 
 import { createPieceTableSnapshot } from '../src/public/document'
-import { type BlockRow, createDisplayRows } from '../src/displayTransforms'
+import { createDisplayRows } from '../src/displayTransforms'
 import { createFoldMap, foldPointToBufferPoint } from '../src/foldMap'
 import { computeLineStarts } from '../src/virtualization/virtualizedTextViewHelpers'
 
@@ -35,15 +35,6 @@ const buildFoldMap = (text: string, lineStarts: readonly number[]) => {
   }
 
   return createFoldMap(snapshot, folds)
-}
-
-const buildBlocks = (lines: number): BlockRow[] => {
-  const blocks: BlockRow[] = []
-  for (let row = 25; row < lines; row += 500) {
-    blocks.push({ id: `block-${row}`, anchorBufferRow: row, placement: 'after', heightRows: 2 })
-  }
-
-  return blocks
 }
 
 const measure = (
@@ -97,14 +88,13 @@ for (const lines of LINE_COUNTS) {
     ),
   )
   printSample(
-    measure('folds + wraps + blocks', lines, () =>
+    measure('folds + wraps', lines, () =>
       createDisplayRows({
         text,
         lineStarts,
         visibleLineCount,
         bufferRowForVisibleRow,
         wrapColumn: 80,
-        blocks: buildBlocks(lines),
       }),
     ),
   )

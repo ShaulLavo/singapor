@@ -874,21 +874,6 @@ describe('VirtualizedTextView', () => {
     expect(view.textOffsetFromViewportPoint(64, 25)).toBe(9)
   })
 
-  it('mounts internal block rows with row-unit height', () => {
-    view.setText('abc\ndef')
-    view.setBlockRows([
-      { id: 'after-first', anchorBufferRow: 0, placement: 'after', heightRows: 2, text: 'panel' },
-    ])
-    view.setScrollMetrics(0, 80)
-
-    const rows = view.getState().mountedRows
-    expect(view.getState().blockRowCount).toBe(1)
-    expect(view.getState().totalHeight).toBe(80)
-    expect(rows.map((row) => row.kind)).toEqual(['text', 'block', 'text'])
-    expect(rows[1]).toMatchObject({ text: 'panel', height: 40, startOffset: 3, endOffset: 3 })
-    expect(view.textOffsetFromViewportPoint(100, 25)).toBe(3)
-  })
-
   it('renders injected text rows without changing document offsets', () => {
     view.setText('abc\ndef')
     view.setInjectedTextRows([
@@ -979,111 +964,6 @@ describe('VirtualizedTextView', () => {
     expect(rows.get(2)).toMatchObject({ source: 'document', primaryText: true })
   })
 
-  it('uses fixed pixel block row heights for visible range calculations', () => {
-    view.dispose()
-    view = new VirtualizedTextView(container, {
-      rowHeight: 20,
-      overscan: 0,
-      highlightRegistry: mockRegistry,
-      selectionHighlightName: 'test-selection',
-    })
-    view.setText('abc\ndef\nghi')
-    view.setBlockRows([
-      { id: 'before-second', anchorBufferRow: 1, placement: 'before', heightRows: 1, heightPx: 32 },
-    ])
-    view.setScrollMetrics(21, 10)
-
-    const rows = view.getState().mountedRows
-    const element = container.querySelector<HTMLElement>('[data-editor-virtual-row="1"]')
-    expect(view.getState().totalHeight).toBe(92)
-    expect(view.getState().visibleRange).toEqual({ start: 1, end: 2 })
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ kind: 'block', top: 20, height: 32 })
-    expect(element?.style.height).toBe('32px')
-  })
-
-  it('reserves fixed horizontal block lanes beside anchored text rows', () => {
-    view.dispose()
-    view = new VirtualizedTextView(container, {
-      rowHeight: 20,
-      overscan: 0,
-      highlightRegistry: mockRegistry,
-      selectionHighlightName: 'test-selection',
-      textMetrics: { characterWidth: 8, rowHeight: 20 },
-    })
-    view.setText('abc\ndef\nghi')
-    view.setBlockLanes([
-      { id: 'left-rail', startBufferRow: 0, endBufferRow: 1, placement: 'left', widthPx: 24 },
-      { id: 'right-rail', startBufferRow: 0, endBufferRow: 1, placement: 'right', widthPx: 16 },
-    ])
-    view.setScrollMetrics(0, 60, 160)
-    mockViewport(view.scrollElement, 160, 60)
-
-    const rows = view.getState().mountedRows
-    const firstRow = container.querySelector<HTMLElement>('[data-editor-virtual-row="0"]')
-    const thirdRow = container.querySelector<HTMLElement>('[data-editor-virtual-row="2"]')
-    expect(view.getState().blockLaneCount).toBe(2)
-    expect(view.getState().contentWidth).toBe(64)
-    expect(rows[0]).toMatchObject({ leftBlockLaneWidth: 24, rightBlockLaneWidth: 16 })
-    expect(rows[1]).toMatchObject({ leftBlockLaneWidth: 24, rightBlockLaneWidth: 16 })
-    expect(rows[2]).toMatchObject({ leftBlockLaneWidth: 0, rightBlockLaneWidth: 0 })
-    expect(firstRow?.style.paddingLeft).toBe('24px')
-    expect(firstRow?.style.paddingRight).toBe('16px')
-    expect(thirdRow?.style.paddingLeft).toBe('')
-    expect(view.textOffsetFromViewportPoint(4, 10)).toBe(0)
-    expect(view.textOffsetFromViewportPoint(41, 10)).toBe(2)
-    expect(view.textOffsetFromViewportPoint(80, 10)).toBe(3)
-
-    view.setSelection(2, 2)
-    expect(container.querySelector<HTMLElement>('.editor-virtualized-caret')?.style.transform).toBe(
-      'translate(40px, 0px)',
-    )
-
-    view.setSelection(1, 2)
-
-    const selection = selectionRanges(container)[0]
-    expect(selection?.style.left).toBe('32px')
-    expect(selection?.style.width).toBe('8px')
-  })
-
-  it('mounts horizontal block lane surfaces only when the range is visible', async () => {
-    const mounted: string[] = []
-    const disposed: string[] = []
-    view.dispose()
-    view = new VirtualizedTextView(container, {
-      rowHeight: 20,
-      overscan: 0,
-      highlightRegistry: mockRegistry,
-      selectionHighlightName: 'test-selection',
-      textMetrics: { characterWidth: 8, rowHeight: 20 },
-      blockLaneMount: (container, context) => {
-        mounted.push(`${context.placement}:${context.startBufferRow}-${context.endBufferRow}`)
-        container.dataset.testBlockSurface = context.placement
-        container.textContent = context.id
-        return { dispose: () => disposed.push(context.id) }
-      },
-    })
-    view.setText(createLines(10))
-    view.setBlockLanes([
-      { id: 'run-rail', startBufferRow: 2, endBufferRow: 3, placement: 'left', widthPx: 20 },
-    ])
-    view.setScrollMetrics(0, 40, 160)
-
-    expect(blockSurfaces(container)).toEqual([])
-
-    view.setScrollMetrics(40, 40, 160)
-
-    expect(mounted).toEqual(['left:2-3'])
-    expect(blockSurfaces(container)).toEqual(['run-rail'])
-    expect(blockSurfaces(container)[0]).toBe('run-rail')
-
-    view.setScrollMetrics(120, 40, 160)
-    await Promise.resolve()
-
-    expect(disposed).toEqual(['run-rail'])
-    expect(blockSurfaces(container)).toEqual([])
-  })
-
   it('maps chunked DOM boundaries back to document offsets', () => {
     view.dispose()
     view = new VirtualizedTextView(container, {
@@ -1171,20 +1051,14 @@ describe('VirtualizedTextView', () => {
 
   it('rebuilds projected rows on fallback edits without materializing the full next snapshot', () => {
     view.setText('abc\ndef')
-    view.setBlockRows([
-      {
-        id: 'inline-detail',
-        anchorBufferRow: 0,
-        placement: 'after',
-        heightRows: 1,
-        text: 'detail',
-      },
+    view.setInjectedTextRows([
+      { id: 'inline-detail', anchorBufferRow: 0, placement: 'after', text: 'detail' },
     ])
     view.setScrollMetrics(0, 80)
 
     view.applyEdit({ from: 1, to: 1, text: 'X' }, throwingFullTextSnapshot('aXbc\ndef'))
 
-    expect(view.getState()).toMatchObject({ lineCount: 2, blockRowCount: 1 })
+    expect(view.getState()).toMatchObject({ lineCount: 2 })
     expect(view.getState().mountedRows.map((row) => row.text)).toEqual(['aXbc', 'detail', 'def'])
   })
 
@@ -2998,12 +2872,6 @@ function hiddenCharacterMarkers(container: HTMLElement): HTMLElement[] {
 
 function selectionRanges(container: HTMLElement): HTMLElement[] {
   return [...container.querySelectorAll<HTMLElement>('.editor-virtualized-selection-range')]
-}
-
-function blockSurfaces(container: HTMLElement): string[] {
-  return [...container.querySelectorAll<HTMLElement>('[data-test-block-surface]')].map(
-    (surface) => surface.textContent ?? '',
-  )
 }
 
 // The whitespace glyphs live in the marker overlay, so the rendered document text is what is left

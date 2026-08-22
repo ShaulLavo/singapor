@@ -46,12 +46,7 @@ import {
   type EditorDocumentLine,
   type EditorEditActionCommandId,
 } from './editActions'
-import {
-  capitalize,
-  eventTargetInsideBlockSurface,
-  indentTimingName,
-  type SessionChangeOptions,
-} from './editorUtils'
+import { capitalize, indentTimingName, type SessionChangeOptions } from './editorUtils'
 import {
   EMPTY_HIDDEN_INPUT_STATE,
   deduceHiddenInputEdit,
@@ -1631,7 +1626,6 @@ export class InputSelectionController {
   private handleMouseDown = (event: MouseEvent): void => {
     if (!this.session) return
     if (event.defaultPrevented) return
-    if (eventTargetInsideBlockSurface(event.target)) return
 
     this.options.view.focusInput()
     if (event.detail >= 4) {

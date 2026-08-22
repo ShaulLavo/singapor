@@ -743,8 +743,8 @@ function layoutRowSize(layout: AnchorLayout, row: number): number {
  * An unchanged row count makes the index itself the anchor row's identity. When
  * rows were added or dropped the anchor survives only if every row from the
  * first height change onwards reappears displaced by the whole count
- * difference — one contiguous run inserted or taken away, which is what a fold
- * or a new block surface produces. Anything else is a different set of rows,
+ * difference — one contiguous run inserted or taken away, which is what
+ * collapsing or expanding a fold produces. Anything else is a different set of rows,
  * where carrying the offset over would preserve a position that means nothing.
  *
  * Heights are the only evidence there is, so a run of rows identical in height

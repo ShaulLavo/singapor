@@ -3,7 +3,6 @@ import {
   bufferColumnToVisualColumn,
   isDocumentTextDisplayRow,
   visualColumnToBufferColumn,
-  type BlockRow,
   type DisplayRow,
   type DisplayTextRow,
   type InjectedTextRow,
@@ -12,12 +11,6 @@ import type { TextSnapshot } from '../documentTextSnapshot'
 import type { TextEdit } from '../tokens'
 import { clamp } from '../style-utils'
 import { createLineStartOffsetIndex } from './lineStartIndex'
-import {
-  createRowHeightIndex,
-  rowHeightIndexRowAtOffset,
-  rowHeightIndexStart,
-  type RowHeightIndex,
-} from './rowHeightIndex'
 import {
   asFoldPoint,
   computeLineStarts,
@@ -162,7 +155,6 @@ export function rebuildDisplayRows(
     lineStarts: view.lineStarts,
     foldMap: view.model.foldMap,
     inlineMap: view.model.inlineMap,
-    blockRows: view.model.blockRows,
     injectedTextRows: view.model.injectedTextRows,
     wrapColumn: view.wrapEnabled ? viewportColumns : null,
     tabSize: view.tabSize,
@@ -194,15 +186,6 @@ export function setWrapEnabledLayout(
   return true
 }
 
-export function setBlockRowsLayout(
-  view: VirtualizedTextViewInternal,
-  blockRows: readonly BlockRow[],
-  viewportColumns: number | null,
-): void {
-  view.model.blockRows = blockRows
-  rebuildDisplayRows(view, viewportColumns)
-}
-
 export function setInjectedTextRowsLayout(
   view: VirtualizedTextViewInternal,
   injectedTextRows: readonly InjectedTextRow[],
@@ -217,33 +200,12 @@ export function updateVirtualizerRows(view: VirtualizedTextViewInternal): void {
     count: visibleLineCount(view),
     rowGap: view.rowGap,
     rowHeight: getRowHeight(view),
-    rowSizes: rowSizes(view),
   })
   if (!changed && view.lastRenderedRowsKey === '') view.virtualizer.refresh()
 }
 
-export function rowSizes(view: VirtualizedTextViewInternal): readonly number[] | undefined {
-  return variableRowHeightIndex(view)?.rowSizes
-}
-
-export function hasVariableRows(view: VirtualizedTextViewInternal): boolean {
-  for (const row of view.model.blockRows) {
-    if (row.heightPx !== undefined && row.heightPx !== view.metrics.rowHeight) return true
-    if (normalizeBlockHeightRows(row.heightRows) !== 1) return true
-  }
-
-  return false
-}
-
 export function rowTop(view: VirtualizedTextViewInternal, row: number): number {
-  const index = variableRowHeightIndex(view)
-  if (!index) return row * rowStride(view)
-
-  return rowHeightIndexStart(index, row)
-}
-
-export function rowHeight(view: VirtualizedTextViewInternal, row: number): number {
-  return variableRowHeightIndex(view)?.rowSizes[row] ?? getRowHeight(view)
+  return row * rowStride(view)
 }
 
 export function scrollableHeight(
@@ -251,10 +213,6 @@ export function scrollableHeight(
   snapshot: FixedRowVirtualizerSnapshot,
 ): number {
   return snapshot.scrollHeight
-}
-
-export function displayRowKind(view: VirtualizedTextViewInternal, row: number): 'text' | 'block' {
-  return view.model.rows[row]?.kind ?? 'text'
 }
 
 export function visualColumnForOffset(view: VirtualizedTextViewInternal, offset: number): number {
@@ -563,11 +521,7 @@ export function bufferRowForOffset(view: VirtualizedTextViewInternal, offset: nu
 }
 
 export function rowForViewportY(view: VirtualizedTextViewInternal, y: number): number {
-  const offset = view.scrollElement.scrollTop + y
-  const index = variableRowHeightIndex(view)
-  if (!index) return fixedRowForOffset(view, offset)
-
-  return rowHeightIndexRowAtOffset(index, offset)
+  return fixedRowForOffset(view, view.scrollElement.scrollTop + y)
 }
 
 export function visibleLineCount(view: VirtualizedTextViewInternal): number {
@@ -577,7 +531,6 @@ export function visibleLineCount(view: VirtualizedTextViewInternal): number {
 export function bufferRowForVirtualRow(view: VirtualizedTextViewInternal, row: number): number {
   const displayRow = view.model.rows[row]
   if (displayRow?.kind === 'text') return displayRow.bufferRow
-  if (displayRow?.kind === 'block') return displayRow.anchorBufferRow
   return foldBufferRowForVisibleRow(view, row)
 }
 
@@ -647,46 +600,6 @@ function displayRowEndOffset(view: VirtualizedTextViewInternal, row: number): nu
     return bufferLineEndOffset(view, displayRow.bufferRow)
 
   return displayRow.endOffset
-}
-
-function normalizeBlockHeightRows(heightRows: number): number {
-  if (!Number.isFinite(heightRows) || heightRows <= 0) return 1
-  return Math.max(1, Math.floor(heightRows))
-}
-
-function blockRowHeightPx(row: DisplayRow, rowHeight: number): number {
-  if (row.kind !== 'block') return rowHeight
-  return row.heightPx ?? row.heightRows * rowHeight
-}
-
-function variableRowHeightIndex(view: VirtualizedTextViewInternal): RowHeightIndex | null {
-  const rowHeight = getRowHeight(view)
-  if (cachedRowHeightIndexValid(view, rowHeight)) return view.rowHeightIndex
-
-  view.rowHeightIndexDisplayRows = view.model.rows
-  view.rowHeightIndexRowHeight = rowHeight
-  view.rowHeightIndexRowGap = view.rowGap
-  view.rowHeightIndexVariable = hasVariableRows(view)
-  view.rowHeightIndex = view.rowHeightIndexVariable
-    ? createRowHeightIndex(createRowSizes(view.model.rows, rowHeight), view.rowGap)
-    : null
-  return view.rowHeightIndex
-}
-
-function cachedRowHeightIndexValid(view: VirtualizedTextViewInternal, rowHeight: number): boolean {
-  if (view.rowHeightIndexVariable === null) return false
-  if (view.rowHeightIndexDisplayRows !== view.model.rows) return false
-  if (view.rowHeightIndexRowHeight !== rowHeight) return false
-  return view.rowHeightIndexRowGap === view.rowGap
-}
-
-function createRowSizes(rows: readonly DisplayRow[], rowHeight: number): readonly number[] {
-  const sizes = Array.from({ length: rows.length }, () => rowHeight)
-  for (let index = 0; index < rows.length; index += 1) {
-    sizes[index] = blockRowHeightPx(rows[index]!, rowHeight)
-  }
-
-  return sizes
 }
 
 function textDisplayRowForOffset(
@@ -765,8 +678,7 @@ function firstDisplayRowAtOrAfterBufferRow(rows: readonly DisplayRow[], bufferRo
 }
 
 function displayRowBufferOrder(row: DisplayRow): number {
-  if (row.kind === 'text') return row.bufferRow
-  return row.anchorBufferRow
+  return row.bufferRow
 }
 
 function transformedRowForProjectedBufferRow(
@@ -787,7 +699,6 @@ function syncViewModelCounts(view: VirtualizedTextViewInternal): void {
 }
 
 function hasModelRowProjections(view: VirtualizedTextViewInternal): boolean {
-  if (view.model.blockRows.length > 0) return true
   // An inline map makes row text diverge from buffer text, so the same-line and plain-row fast paths
   // — which patch row text using buffer-space offsets — must fall back to a full rebuild.
   if (view.model.inlineMap) return true

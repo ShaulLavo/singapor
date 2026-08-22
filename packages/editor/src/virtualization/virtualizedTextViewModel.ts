@@ -1,6 +1,5 @@
 import {
   createDisplayRowsFromLines,
-  type BlockRow,
   type DisplayRow,
   type InjectedTextRow,
 } from '../displayTransforms'
@@ -13,7 +12,6 @@ export type VirtualizedTextProjectionInput = {
   readonly lineStarts: readonly number[]
   readonly foldMap: FoldMap | null
   readonly inlineMap: InlineMap | null
-  readonly blockRows: readonly BlockRow[]
   readonly injectedTextRows: readonly InjectedTextRow[]
   readonly wrapColumn: number | null
   readonly tabSize: number
@@ -27,7 +25,6 @@ export type VirtualizedTextViewModelState = {
   foldMap: FoldMap | null
   inlineMap: InlineMap | null
   wrapColumn: number | null
-  blockRows: readonly BlockRow[]
   injectedTextRows: readonly InjectedTextRow[]
   tabSize: number
   rows: DisplayRow[]
@@ -48,7 +45,6 @@ export function createVirtualizedTextViewModel(
     lineStartOffset: (row) => lineStartOffset(input.lineStarts, textLength, row),
     lineEndOffset: (row) => lineEndOffset(input.lineStarts, textLength, row),
     wrapColumn: input.wrapColumn,
-    blocks: input.blockRows,
     injectedTextRows: input.injectedTextRows,
     ...(inlineMap
       ? { inlineReplacements: (row: number) => inlineReplacementsForBufferRow(inlineMap, row) }
@@ -64,7 +60,6 @@ export function createVirtualizedTextViewModel(
     foldMap,
     inlineMap,
     wrapColumn: input.wrapColumn,
-    blockRows: input.blockRows,
     injectedTextRows: input.injectedTextRows,
     tabSize: input.tabSize,
     rows,

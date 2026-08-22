@@ -320,7 +320,6 @@ function activateProvider(
     },
     registerDecorationContribution: () => disposable,
     registerGutterContribution: () => disposable,
-    registerBlockProvider: () => disposable,
     registerInjectedTextRowProvider: () => disposable,
   } satisfies EditorPluginContext)
 

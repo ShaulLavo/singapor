@@ -2,7 +2,6 @@ import type { Point } from './pieceTable/pieceTableTypes'
 
 declare const tabPointBrand: unique symbol
 declare const wrapPointBrand: unique symbol
-declare const blockPointBrand: unique symbol
 
 export type TransformBias = 'before' | 'after' | 'nearest'
 
@@ -18,10 +17,6 @@ export type TabPoint = Point & {
 
 export type WrapPoint = Point & {
   readonly [wrapPointBrand]: true
-}
-
-export type BlockPoint = Point & {
-  readonly [blockPointBrand]: true
 }
 
 export type DisplayTextRowSource = 'document' | 'injected'
@@ -73,25 +68,7 @@ export type DisplayInjectedTextRow = {
 
 export type DisplayTextRow = DisplayDocumentTextRow | DisplayInjectedTextRow
 
-export type DisplayBlockRow = {
-  readonly kind: 'block'
-  readonly id: string
-  readonly index: number
-  readonly anchorBufferRow: number
-  readonly placement: BlockRowPlacement
-  readonly unitIndex: number
-  readonly heightRows: number
-  readonly heightPx?: number
-  readonly heightMeasured?: boolean
-  readonly hoistKey?: string
-  readonly startOffset: number
-  readonly endOffset: number
-  readonly text: string
-}
-
-export type DisplayRow = DisplayTextRow | DisplayBlockRow
-
-export type BlockRowPlacement = 'before' | 'after'
+export type DisplayRow = DisplayTextRow
 
 type InjectedTextRowPlacement = 'before' | 'after'
 
@@ -105,51 +82,6 @@ export type InjectedTextRow = {
   readonly gutterClassName?: string
   readonly metadata?: unknown
 }
-
-export type BlockLanePlacement = 'left' | 'right'
-
-export type BlockRow = {
-  readonly id: string
-  readonly anchorBufferRow: number
-  readonly placement: BlockRowPlacement
-  readonly heightRows: number
-  readonly heightPx?: number
-  readonly heightMeasured?: boolean
-  readonly text?: string
-  /**
-   * Breaks ties between blocks sharing an anchor row and placement. Without one
-   * the order falls back to `id`, which encodes who registered first rather
-   * than a decision either side made.
-   */
-  readonly ordinal?: number
-  /**
-   * Identity of the surface's DOM host, stable across re-resolutions. Set only
-   * for surfaces that must survive row recycling, where the host has to outlive
-   * both the mounted row and `id`, which is reissued on every resolve.
-   */
-  readonly hoistKey?: string
-}
-
-export type BlockLane = {
-  readonly id: string
-  readonly startBufferRow: number
-  readonly endBufferRow: number
-  readonly placement: BlockLanePlacement
-  readonly widthPx: number
-  readonly widthMeasured?: boolean
-}
-
-type BlockRowsAtBufferRow = {
-  readonly before: readonly BlockRow[]
-  readonly after: readonly BlockRow[]
-}
-
-type MutableBlockRowsAtBufferRow = {
-  readonly before: BlockRow[]
-  readonly after: BlockRow[]
-}
-
-type BlockRowIndex = ReadonlyMap<number, BlockRowsAtBufferRow>
 
 type InjectedTextRowsAtBufferRow = {
   readonly before: readonly InjectedTextRow[]
@@ -454,17 +386,6 @@ export function sourceRangeToInlineRanges(
   return ranges
 }
 
-export function blockPointToBufferPoint(
-  rows: readonly DisplayRow[],
-  point: BlockPoint,
-  bias: TransformBias = 'nearest',
-): Point {
-  const row = rows[clampColumn(point.row, Math.max(0, rows.length - 1))]
-  if (!row) return { row: 0, column: 0 }
-  if (row.kind === 'text') return { row: row.bufferRow, column: point.column }
-  return blockRowFallbackPoint(row, bias)
-}
-
 export function isDocumentTextDisplayRow(
   row: DisplayRow | undefined,
 ): row is DisplayDocumentTextRow {
@@ -484,7 +405,6 @@ export type DisplayRowLineInput = {
   readonly lineStartOffset: (bufferRow: number) => number
   readonly lineEndOffset: (bufferRow: number) => number
   readonly wrapColumn?: number | null
-  readonly blocks?: readonly BlockRow[]
   readonly injectedTextRows?: readonly InjectedTextRow[]
   readonly inlineReplacements?: (bufferRow: number) => readonly InlineReplacement[]
   readonly tabSize?: number
@@ -496,7 +416,6 @@ export function createDisplayRows(options: {
   readonly bufferRowForVisibleRow: (row: number) => number
   readonly visibleLineCount: number
   readonly wrapColumn?: number | null
-  readonly blocks?: readonly BlockRow[]
   readonly injectedTextRows?: readonly InjectedTextRow[]
   readonly inlineReplacements?: (bufferRow: number) => readonly InlineReplacement[]
   readonly tabSize?: number
@@ -511,12 +430,11 @@ export function createDisplayRows(options: {
 
 export function createDisplayRowsFromLines(options: DisplayRowLineInput): DisplayRow[] {
   const rows: DisplayRow[] = []
-  const blocks = blockRowIndex(options.blocks ?? [])
   const injectedTextRows = injectedTextRowIndex(options.injectedTextRows ?? [])
   const tabSize = options.tabSize ?? DEFAULT_TAB_SIZE
 
   for (let visibleRow = 0; visibleRow < options.visibleLineCount; visibleRow += 1) {
-    appendDisplayRowsForVisibleRow(rows, visibleRow, blocks, injectedTextRows, options, tabSize)
+    appendDisplayRowsForVisibleRow(rows, visibleRow, injectedTextRows, options, tabSize)
   }
 
   return rows
@@ -743,32 +661,9 @@ const appendInlineColumnRange = (ranges: InlineColumnRange[], range: InlineColum
   }
 }
 
-export function normalizeBlockLanes(lanes: readonly BlockLane[]): readonly BlockLane[] {
-  return lanes
-    .filter((lane) => lane.id.length > 0)
-    .filter((lane) => lane.startBufferRow >= 0)
-    .filter((lane) => lane.endBufferRow >= lane.startBufferRow)
-    .map((lane) => ({ ...lane, widthPx: normalizeLaneWidthPx(lane.widthPx) }))
-    .filter((lane) => lane.widthPx > 0)
-    .toSorted((left, right) => {
-      return (
-        left.startBufferRow - right.startBufferRow ||
-        left.endBufferRow - right.endBufferRow ||
-        lanePlacementOrder(left.placement) - lanePlacementOrder(right.placement) ||
-        left.id.localeCompare(right.id)
-      )
-    })
-}
-
-export function blockLaneCoversBufferRow(lane: BlockLane, bufferRow: number): boolean {
-  if (bufferRow < lane.startBufferRow) return false
-  return bufferRow <= lane.endBufferRow
-}
-
 const appendDisplayRowsForVisibleRow = (
   rows: DisplayRow[],
   visibleRow: number,
-  blocks: BlockRowIndex,
   injectedTextRows: InjectedTextRowIndex,
   options: DisplayRowLineInput,
   tabSize: number,
@@ -785,7 +680,6 @@ const appendDisplayRowsForVisibleRow = (
     options.wrapColumn,
     tabSize,
   )
-  appendBlockRows(rows, blocks, bufferRow, 'before', startOffset)
   appendDocumentTextDisplayRows(
     rows,
     bufferRow,
@@ -794,7 +688,6 @@ const appendDisplayRowsForVisibleRow = (
     options.wrapColumn,
     tabSize,
   )
-  appendBlockRows(rows, blocks, bufferRow, 'after', options.lineEndOffset(bufferRow))
   appendInjectedTextRows(
     rows,
     injectedTextRows,
@@ -897,41 +790,6 @@ const injectedTextDisplayRow = (
   ...(injected.gutterClassName === undefined ? {} : { gutterClassName: injected.gutterClassName }),
   ...(injected.metadata === undefined ? {} : { metadata: injected.metadata }),
 })
-
-const appendBlockRows = (
-  rows: DisplayRow[],
-  blocks: BlockRowIndex,
-  bufferRow: number,
-  placement: BlockRowPlacement,
-  offset: number,
-): void => {
-  const rowBlocks = blocks.get(bufferRow)?.[placement]
-  if (!rowBlocks) return
-
-  for (const block of rowBlocks) {
-    appendBlockRowUnits(rows, block, offset)
-  }
-}
-
-const appendBlockRowUnits = (rows: DisplayRow[], block: BlockRow, offset: number): void => {
-  const heightRows = normalizeHeightRows(block.heightRows)
-  const heightPx = normalizeHeightPx(block.heightPx)
-  rows.push({
-    kind: 'block',
-    id: block.id,
-    index: rows.length,
-    anchorBufferRow: block.anchorBufferRow,
-    placement: block.placement,
-    unitIndex: 0,
-    heightRows,
-    ...(heightPx === undefined ? {} : { heightPx }),
-    ...(block.heightMeasured === true ? { heightMeasured: true } : {}),
-    ...(block.hoistKey === undefined ? {} : { hoistKey: block.hoistKey }),
-    startOffset: offset,
-    endOffset: offset,
-    text: block.text ?? '',
-  })
-}
 
 const textSegments = (
   text: string,
@@ -1048,25 +906,8 @@ const visualWidthForChar = (char: string, column: number, tabSize: number): numb
   return tabSize - (column % tabSize)
 }
 
-const blockRowFallbackPoint = (row: DisplayBlockRow, bias: TransformBias): Point => {
-  const nextRow = row.placement === 'before' && bias === 'after'
-  return { row: row.anchorBufferRow + (nextRow ? 1 : 0), column: 0 }
-}
-
-const normalizeBlockRows = (blocks: readonly BlockRow[]): readonly BlockRow[] =>
-  blocks
-    .filter((block) => block.id.length > 0)
-    .filter((block) => block.anchorBufferRow >= 0)
-    .toSorted((left, right) => {
-      return (
-        left.anchorBufferRow - right.anchorBufferRow ||
-        placementOrder(left.placement) - placementOrder(right.placement) ||
-        (left.ordinal ?? 0) - (right.ordinal ?? 0) ||
-        left.id.localeCompare(right.id)
-      )
-    })
-
-const placementOrder = (placement: BlockRowPlacement): number => (placement === 'before' ? 0 : 1)
+const placementOrder = (placement: InjectedTextRowPlacement): number =>
+  placement === 'before' ? 0 : 1
 
 const normalizeInjectedTextRows = (rows: readonly InjectedTextRow[]): readonly InjectedTextRow[] =>
   rows
@@ -1081,18 +922,6 @@ const normalizeInjectedTextRows = (rows: readonly InjectedTextRow[]): readonly I
       )
     })
 
-const lanePlacementOrder = (placement: BlockLanePlacement): number => (placement === 'left' ? 0 : 1)
-
-const blockRowIndex = (blocks: readonly BlockRow[]): BlockRowIndex => {
-  const index = new Map<number, MutableBlockRowsAtBufferRow>()
-
-  for (const block of normalizeBlockRows(blocks)) {
-    blockRowsAtBufferRow(index, block.anchorBufferRow)[block.placement].push(block)
-  }
-
-  return index
-}
-
 const injectedTextRowIndex = (rows: readonly InjectedTextRow[]): InjectedTextRowIndex => {
   const index = new Map<number, MutableInjectedTextRowsAtBufferRow>()
 
@@ -1101,18 +930,6 @@ const injectedTextRowIndex = (rows: readonly InjectedTextRow[]): InjectedTextRow
   }
 
   return index
-}
-
-const blockRowsAtBufferRow = (
-  index: Map<number, MutableBlockRowsAtBufferRow>,
-  bufferRow: number,
-): MutableBlockRowsAtBufferRow => {
-  const existing = index.get(bufferRow)
-  if (existing) return existing
-
-  const blocks = { before: [], after: [] }
-  index.set(bufferRow, blocks)
-  return blocks
 }
 
 const injectedTextRowsAtBufferRow = (
@@ -1152,22 +969,6 @@ const lineEndOffsetFromLineStarts = (
 const normalizeWrapColumn = (wrapColumn: number): number => {
   if (!Number.isFinite(wrapColumn) || wrapColumn <= 0) return 0
   return Math.max(1, Math.floor(wrapColumn))
-}
-
-const normalizeHeightRows = (heightRows: number): number => {
-  if (!Number.isFinite(heightRows) || heightRows <= 0) return 1
-  return Math.max(1, Math.floor(heightRows))
-}
-
-const normalizeHeightPx = (heightPx: number | undefined): number | undefined => {
-  if (heightPx === undefined) return undefined
-  if (!Number.isFinite(heightPx) || heightPx <= 0) return undefined
-  return heightPx
-}
-
-const normalizeLaneWidthPx = (widthPx: number): number => {
-  if (!Number.isFinite(widthPx) || widthPx <= 0) return 0
-  return widthPx
 }
 
 const clampColumn = (value: number, max: number): number => {

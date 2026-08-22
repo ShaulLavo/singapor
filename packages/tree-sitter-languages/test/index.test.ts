@@ -114,7 +114,6 @@ function pluginContext(): EditorPluginContext {
     registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
-    registerBlockProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
   }
 }

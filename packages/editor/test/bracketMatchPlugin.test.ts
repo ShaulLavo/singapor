@@ -163,7 +163,6 @@ function activate(snapshotOptions: SnapshotOptions = {}) {
   let contribution: EditorViewContribution | null = null
 
   const context = {
-    registerBlockProvider: vi.fn(() => ({ dispose: vi.fn() })),
     registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
     registerCommandContribution: vi.fn((provider: EditorCommandContributionProvider) => {
       const created: EditorCommandContribution | null = provider.createContribution({

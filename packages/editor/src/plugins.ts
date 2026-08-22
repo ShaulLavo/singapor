@@ -7,7 +7,6 @@ import type { PieceTableSnapshot } from './pieceTable/pieceTableTypes'
 import type { SnippetMirrorRange, SnippetSessionStop } from './editor/snippetSession'
 import type { EditorTheme } from './theme'
 import type { EditorToken, TextEdit } from './tokens'
-import type { EditorBlockProvider } from './editorBlocks'
 import type { DisplayTextRowSource, InjectedTextRow } from './displayTransforms'
 import {
   type BracketInfo,
@@ -189,13 +188,13 @@ export type EditorViewportSnapshot = {
 export type EditorVisibleRowSnapshot = {
   readonly index: number
   readonly bufferRow: number
-  readonly source: DisplayTextRowSource | 'block'
+  readonly source: DisplayTextRowSource
   readonly injectedTextRowId?: string
   readonly metadata?: unknown
   readonly startOffset: number
   readonly endOffset: number
   readonly text: string
-  readonly kind: 'text' | 'block'
+  readonly kind: 'text'
   readonly primaryText: boolean
   readonly top: number
   readonly height: number
@@ -563,11 +562,11 @@ export type EditorGutterWidthContext = {
 export type EditorGutterRowContext = {
   readonly index: number
   readonly bufferRow: number
-  readonly source: DisplayTextRowSource | 'block'
+  readonly source: DisplayTextRowSource
   readonly startOffset: number
   readonly endOffset: number
   readonly text: string
-  readonly kind: 'text' | 'block'
+  readonly kind: 'text'
   readonly injectedTextRowId?: string
   readonly metadata?: unknown
   readonly primaryText: boolean
@@ -653,7 +652,6 @@ export type EditorPluginContext = {
   registerEditContribution(provider: EditorEditContributionProvider): EditorDisposable
   registerDecorationContribution(provider: EditorDecorationContributionProvider): EditorDisposable
   registerGutterContribution(contribution: EditorGutterContribution): EditorDisposable
-  registerBlockProvider(provider: EditorBlockProvider): EditorDisposable
   registerInjectedTextRowProvider(provider: EditorInjectedTextRowProvider): EditorDisposable
   /**
    * Optional so that adding these did not break every hand-written `EditorPluginContext` (test
@@ -711,7 +709,6 @@ export type EditorPluginHostEvents = {
   onEditorFeatureContributionProviderAdded?(provider: EditorFeatureContributionProvider): void
   onEditorFeatureContributionProviderRemoved?(provider: EditorFeatureContributionProvider): void
   onGutterContributionsChanged?(): void
-  onBlockProvidersChanged?(): void
   onInjectedTextRowProvidersChanged?(): void
 }
 
@@ -851,14 +848,9 @@ export class EditorPluginHost implements EditorDisposable {
   private readonly decorationContributions: EditorDecorationContributionProvider[] = []
   private readonly editorFeatureContributions: EditorFeatureContributionProvider[] = []
   private readonly gutterContributions: EditorGutterContribution[] = []
-  private readonly blockProviders: EditorBlockProvider[] = []
   private readonly injectedTextRowProviders: EditorInjectedTextRowProvider[] = []
   private readonly inlineReplacementProviders: EditorInlineReplacementProvider[] = []
   private readonly selectionRangeProviders: EditorSelectionRangeProvider[] = []
-  private readonly blockProviderInvalidationDisposables = new Map<
-    EditorBlockProvider,
-    MutableEditorDisposable
-  >()
   private readonly injectedTextRowProviderInvalidationDisposables = new Map<
     EditorInjectedTextRowProvider,
     MutableEditorDisposable
@@ -1028,10 +1020,6 @@ export class EditorPluginHost implements EditorDisposable {
     return [...this.gutterContributions]
   }
 
-  public getBlockProviders(): readonly EditorBlockProvider[] {
-    return this.blockProviders
-  }
-
   public getInlineReplacementProviders(): readonly EditorInlineReplacementProvider[] {
     return this.inlineReplacementProviders
   }
@@ -1110,11 +1098,6 @@ export class EditorPluginHost implements EditorDisposable {
     this.decorationContributions.length = 0
     this.editorFeatureContributions.length = 0
     this.gutterContributions.length = 0
-    for (const disposable of this.blockProviderInvalidationDisposables.values()) {
-      disposable.dispose()
-    }
-    this.blockProviderInvalidationDisposables.clear()
-    this.blockProviders.length = 0
     for (const disposable of this.injectedTextRowProviderInvalidationDisposables.values()) {
       disposable.dispose()
     }
@@ -1302,8 +1285,6 @@ export class EditorPluginHost implements EditorDisposable {
         this.ownRegistration(() => this.registerEditorFeatureContribution(provider)),
       registerGutterContribution: (contribution) =>
         this.ownRegistration(() => this.registerGutterContribution(contribution)),
-      registerBlockProvider: (provider) =>
-        this.ownRegistration(() => this.registerBlockProvider(provider)),
       registerInjectedTextRowProvider: (provider) =>
         this.ownRegistration(() => this.registerInjectedTextRowProvider(provider)),
       registerInlineReplacementProvider: (provider) =>
@@ -1520,34 +1501,6 @@ export class EditorPluginHost implements EditorDisposable {
 
     this.gutterContributions.splice(index, 1)
     this.events.onGutterContributionsChanged?.()
-  }
-
-  private registerBlockProvider(provider: EditorBlockProvider): EditorDisposable {
-    if (this.blockProviders.includes(provider)) {
-      throw new Error('Editor block provider already registered')
-    }
-
-    this.blockProviders.push(provider)
-    const invalidation = new MutableEditorDisposable()
-    this.blockProviderInvalidationDisposables.set(provider, invalidation)
-    invalidation.value =
-      provider.onDidChangeBlocks?.(() => {
-        this.events.onBlockProvidersChanged?.()
-      }) ?? null
-    const disposable = disposableOnce(() => this.unregisterBlockProvider(provider))
-    notifyRegistrationAdded(disposable, () => this.events.onBlockProvidersChanged?.())
-
-    return disposable
-  }
-
-  private unregisterBlockProvider(provider: EditorBlockProvider): void {
-    const index = this.blockProviders.indexOf(provider)
-    if (index === -1) return
-
-    this.blockProviders.splice(index, 1)
-    this.blockProviderInvalidationDisposables.get(provider)?.dispose()
-    this.blockProviderInvalidationDisposables.delete(provider)
-    this.events.onBlockProvidersChanged?.()
   }
 
   private registerInlineReplacementProvider(

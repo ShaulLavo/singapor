@@ -135,7 +135,6 @@ describe('markdown preview plugin on an unsupported host', () => {
       registerEditContribution: () => ({ dispose: () => undefined }),
       registerDecorationContribution: () => ({ dispose: () => undefined }),
       registerGutterContribution: () => ({ dispose: () => undefined }),
-      registerBlockProvider: () => ({ dispose: () => undefined }),
       registerInjectedTextRowProvider: () => ({ dispose: () => undefined }),
     }) satisfies EditorPluginContext
 

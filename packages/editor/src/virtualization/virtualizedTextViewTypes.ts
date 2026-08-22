@@ -1,13 +1,6 @@
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
 import type { EditorTokenStyle } from '../tokens'
-import type {
-  BlockLane,
-  BlockLanePlacement,
-  BlockRow,
-  BlockRowPlacement,
-  DisplayTextRowSource,
-  InjectedTextRow,
-} from '../displayTransforms'
+import type { DisplayTextRowSource, InjectedTextRow } from '../displayTransforms'
 import type { BrowserTextMetrics } from './browserMetrics'
 import type { RowInlineMapping } from './virtualizedTextViewInlineMapping'
 import type { FixedRowVisibleRange } from './fixedRowVirtualizer'
@@ -39,11 +32,7 @@ export type VirtualizedTextViewOptions = {
   readonly onFoldToggle?: (marker: VirtualizedFoldMarker) => void
   readonly onViewportChange?: () => void
   readonly wrap?: boolean
-  readonly blockRows?: readonly BlockRow[]
   readonly injectedTextRows?: readonly InjectedTextRow[]
-  readonly blockRowMount?: VirtualizedBlockRowMount
-  readonly blockLanes?: readonly BlockLane[]
-  readonly blockLaneMount?: VirtualizedBlockLaneMount
   readonly gutterContributions?: readonly EditorGutterContribution[]
   readonly cursorLineHighlight?: EditorCursorLineHighlightOptions
   readonly hiddenCharacters?: HiddenCharactersMode
@@ -54,35 +43,6 @@ export type VirtualizedTextViewOptions = {
 export type VirtualizedTextViewScrollMode = 'virtualized' | 'static'
 
 export type VirtualizedTextViewRowPositioning = 'transform' | 'top'
-
-export type VirtualizedBlockRowMount = (
-  container: HTMLElement,
-  context: VirtualizedBlockRowMountContext,
-) => void | VirtualizedBlockRowDisposable
-
-type VirtualizedBlockRowDisposable = {
-  dispose(): void
-}
-
-type VirtualizedBlockRowMountContext = {
-  readonly id: string
-  readonly anchorBufferRow: number
-  readonly placement: BlockRowPlacement
-  readonly startOffset: number
-  readonly endOffset: number
-}
-
-export type VirtualizedBlockLaneMount = (
-  container: HTMLElement,
-  context: VirtualizedBlockLaneMountContext,
-) => void | VirtualizedBlockRowDisposable
-
-type VirtualizedBlockLaneMountContext = {
-  readonly id: string
-  readonly startBufferRow: number
-  readonly endBufferRow: number
-  readonly placement: BlockLanePlacement
-}
 
 export type HiddenCharactersMode =
   | 'hidden'
@@ -176,13 +136,13 @@ export type VirtualizedFoldMarker = {
 export type VirtualizedTextRow = {
   readonly index: number
   readonly bufferRow: number
-  readonly source: DisplayTextRowSource | 'block'
+  readonly source: DisplayTextRowSource
   readonly injectedTextRowId?: string
   readonly metadata?: unknown
   readonly startOffset: number
   readonly endOffset: number
   readonly text: string
-  readonly kind: 'text' | 'block'
+  readonly kind: 'text'
   readonly chunks: readonly VirtualizedTextChunk[]
   readonly element: HTMLDivElement
   readonly textNode: Text
@@ -208,8 +168,6 @@ export type VirtualizedTextViewState = {
   readonly mountedRows: readonly MountedVirtualizedTextRow[]
   readonly foldMarkers: readonly VirtualizedFoldMarker[]
   readonly wrapActive: boolean
-  readonly blockRowCount: number
-  readonly blockLaneCount: number
   readonly tabSize: number
 }
 
@@ -251,12 +209,6 @@ export type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly selectionLayerElement: HTMLDivElement
   readonly foldPlaceholderElement: HTMLSpanElement
   readonly hiddenCharactersLayerElement: HTMLDivElement
-  readonly blockContainerElement: HTMLDivElement
-  readonly blockMountDisposable: VirtualizedBlockRowDisposable | null
-  readonly blockMountKey: string
-  readonly leftBlockLaneWidth: number
-  readonly rightBlockLaneWidth: number
-  readonly blockLaneKey: string
   readonly top: number
   readonly height: number
   readonly textRevision: number
@@ -266,7 +218,6 @@ export type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly hiddenCharactersKey: string
   readonly foldMarkerKey: string
   readonly foldCollapsed: boolean
-  readonly displayKind: 'text' | 'block'
   readonly textRenderMode: VirtualizedTextRenderMode
   readonly rowDecorationClassName: string
   readonly rowDecorationGutterClassName: string

@@ -56,11 +56,7 @@ import {
   projectDecorationRangeThroughEdits,
   reindentEditsForRanges,
 } from '@singapor/core/extensions'
-import {
-  applyEditorTheme,
-  type EditorBlockHorizontalSurface,
-  type EditorTheme,
-} from '@singapor/core/rendering'
+import { applyEditorTheme, type EditorTheme } from '@singapor/core/rendering'
 import {
   EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
@@ -330,14 +326,6 @@ describe('public API facade', () => {
     ]
 
     expect(commands).toHaveLength(23)
-  })
-
-  it('exports the hosting modes a block surface can declare', () => {
-    // Which one a surface picks decides whether its DOM survives scrolling, so
-    // a host chooses it and a mode dropped back out breaks the host's build.
-    const hosting: EditorBlockHorizontalSurface['hosting'][] = ['inline', 'hoisted']
-
-    expect(hosting).toHaveLength(2)
   })
 
   it('exports the overlay reservation a view contribution reads its inset from', () => {

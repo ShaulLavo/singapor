@@ -164,7 +164,6 @@ function recordingPluginContext(): {
       registerEditContribution: ignored,
       registerDecorationContribution: ignored,
       registerGutterContribution: ignored,
-      registerBlockProvider: ignored,
       registerInjectedTextRowProvider: ignored,
       registerSelectionRangeProvider: (provider) => {
         selectionRangeProviders.push(provider)

@@ -19,7 +19,6 @@ import type {
   VirtualizedTextChunkTextPart,
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
-import { rowTextInsetLeft, rowTextInsetRight } from './virtualizedTextViewBlockLanes'
 import { isSimpleRowText, memoizedContainsRTL } from './virtualizedTextViewBidi'
 
 export { isSimpleRowText } from './virtualizedTextViewBidi'
@@ -437,19 +436,14 @@ function measuredRowContent(
 
   const known = knownRowContentWidth(view, row)
   if (known !== null) {
-    const left = rowTextInsetLeft(row)
-    return { key, width: known, extent: { left, right: known - rowTextInsetRight(row) } }
+    return { key, width: known, extent: { left: 0, right: known } }
   }
 
   const measurement = { row, scale: rowClientRectScale(row) }
   const measured = measuredRowContentsRect(measurement)
   const contentRight = measured ? measured.left + measured.width : 0
-  const width = measured
-    ? contentRight + rowTextInsetRight(row)
-    : estimatedRowContentWidth(view, row)
-  const extent = measured
-    ? { left: measured.left, right: contentRight }
-    : { left: rowTextInsetLeft(row), right: width - rowTextInsetRight(row) }
+  const width = measured ? contentRight : estimatedRowContentWidth(view, row)
+  const extent = measured ? { left: measured.left, right: contentRight } : { left: 0, right: width }
   const content = { key, width, extent }
   measuredRowWidths.set(row.element, content)
   return content
@@ -731,7 +725,6 @@ function rowGeometryCacheKey(
     // scrolls into their place, and every other part of this key survives that move intact.
     row.startOffset,
     row.text.length,
-    row.displayKind,
     row.foldMarkerKey,
     row.rowDecorationKey,
     // Inline-kind classes restyle the row's font, so measured boundaries die with them.
@@ -739,8 +732,6 @@ function rowGeometryCacheKey(
     // A replacement that settles on its real size moves every column after it, and the row's own
     // text is unchanged when it does — nothing else in this key notices.
     inlineWidgetWidthRevision,
-    row.leftBlockLaneWidth,
-    row.rightBlockLaneWidth,
     view.tabSize,
     view.metrics.characterWidth,
   ].join(':')
@@ -787,7 +778,7 @@ function calculatedRowWidth(
   row: MountedVirtualizedTextRow,
 ): number {
   const columns = bufferColumnToVisualColumn(row.text, row.text.length, view.tabSize)
-  return rowTextInsetLeft(row) + columns * view.metrics.characterWidth + rowTextInsetRight(row)
+  return columns * view.metrics.characterWidth
 }
 
 function calculatedXToOffset(
@@ -822,7 +813,7 @@ function calculatedRowAnchorForX(
   x: number,
 ): CalculatedRowAnchor {
   const lastColumn = bufferColumnToVisualColumn(row.text, row.text.length, view.tabSize)
-  const base = { x: rowTextInsetLeft(row), column: 0, lastColumn }
+  const base = { x: 0, column: 0, lastColumn }
   if (row.text.length <= KEY_COLUMN_DISTANCE) return base
 
   const anchors = ensureRowGeometry(view, row).anchors
@@ -876,10 +867,10 @@ function appendCalculatedChunkBoundaries(
   measurement: RowMeasurementContext | null,
   anchors: number[],
 ): void {
-  // Column zero at the row's inset is the anchor an unanchored row extrapolates from, so a row that
-  // measures nothing keeps the plain multiplication it had.
+  // Column zero is the anchor an unanchored row extrapolates from, so a row that measures nothing
+  // keeps the plain multiplication it had.
   let anchorColumn = 0
-  let anchorX = rowTextInsetLeft(row)
+  let anchorX = 0
   let nextAnchorLocal = chunk.localStart
 
   for (let local = chunk.localStart; local <= chunk.localEnd; local += 1) {
@@ -964,8 +955,7 @@ function estimatedRowContentWidth(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): number {
-  const textWidth = estimatedRowWidth(row.text, view.tabSize, view.metrics.characterWidth)
-  return rowTextInsetLeft(row) + textWidth + rowTextInsetRight(row)
+  return estimatedRowWidth(row.text, view.tabSize, view.metrics.characterWidth)
 }
 
 function appendChunkPlan(
@@ -975,7 +965,7 @@ function appendChunkPlan(
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
 ): void {
-  const chunkX = rowTextInsetLeft(row) + estimatedPrefixWidth(view, row, chunk.localStart)
+  const chunkX = estimatedPrefixWidth(view, row, chunk.localStart)
   appendPlanBoundary(
     buffer,
     rowOffsetForLocalIndex(row, chunk.localStart),
@@ -1350,7 +1340,7 @@ function geometryFromBoundaries(
     plan: null,
     unitPlan: null,
     xOrder: ascending ? null : boundaryOrderByX(offsets, xs),
-    width: Math.max(fallbackWidth, contentRight + rowTextInsetRight(row)),
+    width: Math.max(fallbackWidth, contentRight),
     anchors: anchors && anchors.length > 0 ? Float64Array.from(anchors) : null,
   }
 }

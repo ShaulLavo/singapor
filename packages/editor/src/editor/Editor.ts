@@ -13,7 +13,6 @@ import { fallbackFoldRanges } from './foldRanges'
 import { EditorFoldState } from './foldState'
 import { guessedTabSize } from './indentationGuess'
 import { EditorKeymapController } from './keymap'
-import { EditorBlockSurfaceController } from './blockSurfaceController'
 import { InputSelectionController } from './inputSelectionController'
 import { EditorSyntaxController } from './syntaxController'
 import { DocumentEditChain } from './editChain'
@@ -91,7 +90,7 @@ import { createInlineMap, type InlineMap, type InlineReplacementSpec } from '../
 import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
 import type { EditorInlineReplacementProvider } from '../plugins'
 import { normalizeTabSize } from '../displayTransforms'
-import type { BlockLane, BlockRow, InjectedTextRow } from '../displayTransforms'
+import type { InjectedTextRow } from '../displayTransforms'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import { anchorAt, resolveAnchor } from '../pieceTable/anchors'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
@@ -192,8 +191,6 @@ const MANUAL_FOLD_PROJECTION_OWNER = 'editor.folds.manual'
 const DIRECT_RANGE_DECORATION_OWNER = 'editor.rangeDecorations.direct'
 const DIRECT_ROW_DECORATION_OWNER = 'editor.rowDecorations.direct'
 const FEATURE_ROW_DECORATION_OWNER_PREFIX = 'editor.rowDecorations.feature:'
-const PLUGIN_BLOCK_ROWS_PROJECTION_OWNER = 'editor.blockRows.plugins'
-const PLUGIN_BLOCK_LANES_PROJECTION_OWNER = 'editor.blockLanes.plugins'
 const PLUGIN_GUTTER_PROJECTION_OWNER = 'editor.gutters.plugins'
 const PLUGIN_INJECTED_ROWS_PROJECTION_OWNER = 'editor.injectedRows.plugins'
 
@@ -316,7 +313,6 @@ export class Editor {
    * ranges a provider has not produced yet.
    */
   private manualFolds: readonly FoldRange[] = []
-  private blockSurfaces!: EditorBlockSurfaceController
   private readonly syntax: EditorSyntaxController
   private readonly inputSelection: InputSelectionController
   private readonly selectionRanges: SelectionRangeStore
@@ -437,8 +433,6 @@ export class Editor {
       tabSize: this.tabSize,
       textMetrics: options.textMetrics,
       wrap: options.wordWrap ?? false,
-      blockRowMount: (container, row) => this.blockSurfaces.mountRow(container, row),
-      blockLaneMount: (container, lane) => this.blockSurfaces.mountLane(container, lane),
       onFoldToggle: this.handleFoldToggle,
       onViewportChange: this.handleViewportChange,
       selectionHighlightName: `${this.highlightPrefix}-selection`,
@@ -455,17 +449,6 @@ export class Editor {
     this.environmentRegistrations.add(
       observeBrowserTextMetricsInvalidation(this.el, () => this.remeasureTextMetrics()),
     )
-    this.blockSurfaces = new EditorBlockSurfaceController({
-      getDocumentId: () => this.documentId,
-      getLineCount: () => this.view.getLineCount(),
-      materializeFullText: () => this.text,
-      applyBlockRows: (rows) => this.applyBlockRowsProjection(rows),
-      applyBlockLanes: (lanes) => this.applyBlockLanesProjection(lanes),
-      focusEditor: () => this.focus(),
-      setSelection: (anchor, head) =>
-        this.applyRequestedSelection(anchor, head, 'editor.block.setSelection', head),
-      notifyLayout: () => this.notifyViewContributions('layout', null),
-    })
     this.syntax = new EditorSyntaxController({
       pluginHost: this.pluginHost,
       getDocumentVersion: () => this.documentVersion,
@@ -626,7 +609,6 @@ export class Editor {
       onEditorFeatureContributionProviderRemoved: (provider) =>
         this.removeEditorFeatureContributionProvider(provider),
       onGutterContributionsChanged: () => this.syncGutterContributions(),
-      onBlockProvidersChanged: () => this.handleBlockProvidersChanged(),
       onInjectedTextRowProvidersChanged: () => this.handleInjectedTextRowProvidersChanged(),
       onInlineReplacementProvidersChanged: () => this.handleInlineReplacementProvidersChanged(),
     })
@@ -643,7 +625,6 @@ export class Editor {
     this.text = text
     this.view.setText(text)
     this.retagDisplayProjectionSources()
-    this.syncEditorBlocks()
     this.syncInjectedTextRows()
     this.setTokens([])
     this.dropManualFolds()
@@ -667,7 +648,6 @@ export class Editor {
     measureEditorPerformance('editor.view.applyEdit', () =>
       this.view.applyEdit(edit, nextTextSnapshot),
     )
-    this.syncEditorBlocks()
     this.syncInjectedTextRows()
     measureEditorPerformance(
       'editor.tokens.adoptProjected',
@@ -1314,7 +1294,6 @@ export class Editor {
     this.environmentRegistrations.dispose()
     this.secondaryWork.dispose()
     this.displayProjections.clear()
-    this.blockSurfaces.dispose()
     this.inputSelection.dispose()
     this.viewContributions.dispose()
     this.disposeEditorFeatureContributions()
@@ -1947,86 +1926,6 @@ export class Editor {
     return contributions
   }
 
-  private handleBlockProvidersChanged(): void {
-    this.syncEditorBlocks()
-    this.notifyViewContributions('layout', null)
-    this.log({
-      action: 'editor.plugins.blocks.changed',
-      level: 'info',
-      plugins: {
-        blockProviderCount: this.pluginHost.getBlockProviders().length,
-      },
-    })
-  }
-
-  private syncEditorBlocks(): void {
-    this.blockSurfaces.sync(this.pluginHost.getBlockProviders())
-  }
-
-  private applyBlockRowsProjection(rows: readonly BlockRow[]): void {
-    this.setBlockRowsProjection(rows)
-    this.view.setBlockRows(this.composedBlockRows())
-  }
-
-  private setBlockRowsProjection(rows: readonly BlockRow[]): void {
-    if (rows.length === 0) {
-      this.displayProjections.delete('blockRows', PLUGIN_BLOCK_ROWS_PROJECTION_OWNER)
-      return
-    }
-
-    this.displayProjections.set({
-      kind: 'blockRows',
-      owner: PLUGIN_BLOCK_ROWS_PROJECTION_OWNER,
-      source: this.currentDisplayProjectionSource(),
-      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
-      layer: 0,
-      priority: 0,
-      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
-      value: [...rows],
-    })
-  }
-
-  private composedBlockRows(): readonly BlockRow[] {
-    const rows: BlockRow[] = []
-    for (const projection of this.displayProjections.values('blockRows')) {
-      rows.push(...projection.value)
-    }
-
-    return rows
-  }
-
-  private applyBlockLanesProjection(lanes: readonly BlockLane[]): void {
-    this.setBlockLanesProjection(lanes)
-    this.view.setBlockLanes(this.composedBlockLanes())
-  }
-
-  private setBlockLanesProjection(lanes: readonly BlockLane[]): void {
-    if (lanes.length === 0) {
-      this.displayProjections.delete('blockLanes', PLUGIN_BLOCK_LANES_PROJECTION_OWNER)
-      return
-    }
-
-    this.displayProjections.set({
-      kind: 'blockLanes',
-      owner: PLUGIN_BLOCK_LANES_PROJECTION_OWNER,
-      source: this.currentDisplayProjectionSource(),
-      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
-      layer: 0,
-      priority: 0,
-      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
-      value: [...lanes],
-    })
-  }
-
-  private composedBlockLanes(): readonly BlockLane[] {
-    const lanes: BlockLane[] = []
-    for (const projection of this.displayProjections.values('blockLanes')) {
-      lanes.push(...projection.value)
-    }
-
-    return lanes
-  }
-
   private setSyntaxFoldProjection(folds: readonly FoldRange[]): boolean {
     const result = rejectCrossingFoldRanges(folds)
     if (result.rejected.length > 0) this.logRejectedSyntaxFoldProjection(result.rejected)
@@ -2552,8 +2451,6 @@ export class Editor {
     this.displayProjections.retagKind('folds', source)
     this.displayProjections.retagKind('rangeDecorations', source)
     this.displayProjections.retagKind('rowDecorations', source)
-    this.displayProjections.retagKind('blockRows', source)
-    this.displayProjections.retagKind('blockLanes', source)
     this.displayProjections.retagKind('injectedRows', source)
     this.displayProjections.retagKind('gutters', source)
   }
@@ -2624,7 +2521,7 @@ export class Editor {
         endOffset: row.endOffset,
         text: row.text,
         kind: row.kind,
-        primaryText: row.source === 'document' && row.displayKind === 'text',
+        primaryText: row.source === 'document',
         top: row.top,
         height: row.height,
       })),

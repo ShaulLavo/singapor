@@ -960,7 +960,7 @@ test/hiddenCharacters.test.ts` (173 tests); `bun run typecheck`; `bun run lint` 
 pre-existing `packedTokens.ts` warnings, no errors).
 
 **Tier A final verification (2026-08-22).** Passing commands: editor package `bun run test` (128
-files, 2,050 tests); editor browser `bun run test --project browser` (8 files, 71 tests); repository
+files, 2,051 tests); editor browser `bun run test --project browser` (8 files, 72 tests); repository
 `bun run typecheck`; repository `bun run lint` (the same two pre-existing warnings, no errors);
 repository `bun run format:check` (17 packages). The repository formatter was run with explicit user
 authorization and retained its incidental formatting of pre-existing Editor/LSP work.
@@ -969,7 +969,10 @@ authorization and retained its incidental formatting of pre-existing Editor/LSP 
 client points are converted through the row's transform scale before comparison with row-local
 geometry; a grapheme longer than the 50-unit node bound takes the measurement-refusal path; and
 both the start and end of a refused row have explicit hit zones. Each finding has a real-browser
-regression in `test/bidiGeometry.browser.test.ts`; the full verification commands above were rerun.
+regression in `test/bidiGeometry.browser.test.ts`. Oversized-grapheme detection now shares the
+renderer segmentation pass for direct rows, while styled inline rows retain a whole-row preflight;
+the stabilized 6,000-character probe passed its 5× ceiling in five consecutive browser runs. The
+full verification commands above were rerun.
 
 > **Tier A ends here.** Everything below is a different project with a different budget.
 

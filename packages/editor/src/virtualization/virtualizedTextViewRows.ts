@@ -1007,6 +1007,11 @@ function updateRowTextForSameLineEdit(
     return false
   }
 
+  if (!isSimpleRowText(text)) {
+    updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
+    return false
+  }
+
   if (row.textNode.data !== row.text) {
     updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
     return false
@@ -1111,6 +1116,11 @@ function setRenderedDirectRowText(
         [],
         maxTextNodeLength,
       )
+  if (rendered.oversizedGrapheme) {
+    setUnmeasurableBidiRowText(row, text, startOffset, mapping, 'grapheme-length')
+    return
+  }
+
   if (!adoptRenderedSingleTextPart(row, rendered)) {
     row.element.replaceChildren(...rendered.nodes)
   }
@@ -1311,6 +1321,11 @@ function setInlineRunRowText(
     runs.classes,
     maxTextNodeLength,
   )
+  if (rendered.oversizedGrapheme) {
+    setUnmeasurableBidiRowText(row, text, startOffset, mapping, 'grapheme-length')
+    return
+  }
+
   row.element.replaceChildren(...rendered.nodes)
   setTextRenderMode(row, 'widget')
   syncDirectRowChunk(row, text, startOffset, mapping, rendered.parts, rendered.textNode)
@@ -1329,6 +1344,15 @@ function createInlineRunParts(
   classes: readonly InlineClassRun[],
   maxTextNodeLength: number,
 ): RenderedChunkParts {
+  if (hasOversizedGrapheme(text, maxTextNodeLength)) {
+    return {
+      nodes: [],
+      parts: [],
+      textNode: document.createTextNode(''),
+      oversizedGrapheme: true,
+    }
+  }
+
   const nodes: Node[] = []
   const parts: VirtualizedTextChunkPart[] = []
   let cursor = 0
@@ -1360,7 +1384,12 @@ function createInlineRunParts(
     placements,
     maxTextNodeLength,
   )
-  return { nodes, parts, textNode: firstRowTextNode(parts) ?? document.createTextNode('') }
+  return {
+    nodes,
+    parts,
+    textNode: firstRowTextNode(parts) ?? document.createTextNode(''),
+    oversizedGrapheme: false,
+  }
 }
 
 function appendInlineRunSlice(
@@ -1764,7 +1793,7 @@ function createSplitTextChunkParts(
     })
   }
 
-  return { nodes, parts, textNode: nodes[0]! }
+  return { nodes, parts, textNode: nodes[0]!, oversizedGrapheme: false }
 }
 
 function shouldChunkLine(view: VirtualizedTextViewInternal, text: string): boolean {
@@ -1785,13 +1814,14 @@ function bidiMeasurementRefusal(
   if (text.length <= MAX_ROW_TEXT_NODE_LENGTH) return null
   if (!memoizedContainsRTL(view, text)) return null
   if (text.length >= BIDI_LINE_MEASUREMENT_CEILING) return 'line-length'
-  if (hasOversizedGrapheme(text)) return 'grapheme-length'
   return null
 }
 
-function hasOversizedGrapheme(text: string): boolean {
+function hasOversizedGrapheme(text: string, maxLength: number): boolean {
+  if (!Number.isFinite(maxLength)) return false
+
   for (const segment of segmentGraphemes(text)) {
-    if (segment.segment.length > MAX_ROW_TEXT_NODE_LENGTH) return true
+    if (segment.segment.length > maxLength) return true
   }
   return false
 }

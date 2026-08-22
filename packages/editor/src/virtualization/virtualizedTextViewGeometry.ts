@@ -25,6 +25,9 @@ import { isSimpleRowText, memoizedContainsRTL } from './virtualizedTextViewBidi'
 export { isSimpleRowText } from './virtualizedTextViewBidi'
 
 const CONTROL_CHARACTER_CLASS = 'editor-virtualized-control-character'
+// These are exactly the code units the renderer replaces with visible labels or fixed-width boxes.
+// oxlint-disable-next-line eslint/no-control-regex
+const RENDERED_CONTROL_CHARACTER = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/
 
 /**
  * How many columns of pure arithmetic are allowed between two measured anchors on a calculated row.
@@ -185,6 +188,7 @@ export type RenderedChunkParts = {
   readonly nodes: readonly Node[]
   readonly parts: readonly VirtualizedTextChunkPart[]
   readonly textNode: Text
+  readonly oversizedGrapheme: boolean
 }
 
 /** Where a mounted inline replacement sits in a row's rendered text, in row-local indices. */
@@ -248,7 +252,7 @@ export function createRenderedChunkParts(
 
   for (const widget of widgets) {
     const start = widget.localStart - localStart
-    appendRenderedText(
+    const fitsTextNodeBound = appendRenderedText(
       document,
       parts,
       nodes,
@@ -257,6 +261,8 @@ export function createRenderedChunkParts(
       cellWidth,
       maxTextNodeLength,
     )
+    if (!fitsTextNodeBound) return oversizedRenderedChunkParts(document)
+
     nodes.push(widget.element)
     parts.push({
       kind: 'widget',
@@ -267,7 +273,7 @@ export function createRenderedChunkParts(
     cursor = widget.localEnd - localStart
   }
 
-  appendRenderedText(
+  const fitsTextNodeBound = appendRenderedText(
     document,
     parts,
     nodes,
@@ -276,10 +282,13 @@ export function createRenderedChunkParts(
     cellWidth,
     maxTextNodeLength,
   )
+  if (!fitsTextNodeBound) return oversizedRenderedChunkParts(document)
+
   return {
     nodes,
     parts,
     textNode: firstTextNode(parts) ?? document.createTextNode(''),
+    oversizedGrapheme: false,
   }
 }
 
@@ -291,7 +300,11 @@ function appendRenderedText(
   localStart: number,
   cellWidth: number,
   maxTextNodeLength: number,
-): void {
+): boolean {
+  if (!RENDERED_CONTROL_CHARACTER.test(text)) {
+    return appendTextParts(document, parts, nodes, localStart, text, maxTextNodeLength)
+  }
+
   let run = ''
   let runStart = localStart
   let index = 0
@@ -312,14 +325,24 @@ function appendRenderedText(
       continue
     }
 
-    appendTextParts(document, parts, nodes, runStart, run, maxTextNodeLength)
+    if (!appendTextParts(document, parts, nodes, runStart, run, maxTextNodeLength)) return false
+
     run = ''
     index += 1
     appendControlPart(document, parts, nodes, localStart + index - 1, control, cellWidth)
     runStart = localStart + index
   }
 
-  appendTextParts(document, parts, nodes, runStart, run, maxTextNodeLength)
+  return appendTextParts(document, parts, nodes, runStart, run, maxTextNodeLength)
+}
+
+function oversizedRenderedChunkParts(document: Document): RenderedChunkParts {
+  return {
+    nodes: [],
+    parts: [],
+    textNode: document.createTextNode(''),
+    oversizedGrapheme: true,
+  }
 }
 
 /**
@@ -1673,15 +1696,21 @@ function appendTextParts(
   localStart: number,
   text: string,
   maxTextNodeLength: number,
-): void {
-  if (text.length === 0) return
+): boolean {
+  if (text.length === 0) return true
   if (text.length <= maxTextNodeLength) {
     appendTextPart(document, parts, nodes, localStart, text)
-    return
+    return true
+  }
+  if (hasOnlyStandaloneGraphemes(text)) {
+    appendFixedLengthTextParts(document, parts, nodes, localStart, text, maxTextNodeLength)
+    return true
   }
 
   let sliceStart = 0
   for (const segment of segmentGraphemes(text)) {
+    if (segment.segment.length > maxTextNodeLength) return false
+
     const segmentEnd = segment.index + segment.segment.length
     if (segmentEnd - sliceStart <= maxTextNodeLength) continue
     appendTextPart(
@@ -1694,6 +1723,44 @@ function appendTextParts(
     sliceStart = segment.index
   }
   appendTextPart(document, parts, nodes, localStart + sliceStart, text.slice(sliceStart))
+  return true
+}
+
+function hasOnlyStandaloneGraphemes(text: string): boolean {
+  for (let index = 0; index < text.length; index += 1) {
+    if (!isStandaloneGraphemeCodeUnit(text.charCodeAt(index))) return false
+  }
+  return true
+}
+
+/**
+ * This intentionally narrow whitelist covers the editor's common Latin/Hebrew BiDi rows. Every
+ * accepted UTF-16 unit is independently a grapheme; marks, joiners, surrogates, Jamo, and other
+ * scripts stay on the complete Unicode segmenter path below.
+ */
+function isStandaloneGraphemeCodeUnit(code: number): boolean {
+  if (code === 9 || (code >= 32 && code <= 126)) return true
+  if (code === 0x05be || code === 0x05c0 || code === 0x05c3 || code === 0x05c6) return true
+  return code >= 0x05d0 && code <= 0x05f4
+}
+
+function appendFixedLengthTextParts(
+  document: Document,
+  parts: VirtualizedTextChunkPart[],
+  nodes: Node[],
+  localStart: number,
+  text: string,
+  maxTextNodeLength: number,
+): void {
+  for (let start = 0; start < text.length; start += maxTextNodeLength) {
+    appendTextPart(
+      document,
+      parts,
+      nodes,
+      localStart + start,
+      text.slice(start, start + maxTextNodeLength),
+    )
+  }
 }
 
 function appendControlPart(

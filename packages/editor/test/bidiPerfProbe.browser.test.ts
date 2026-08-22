@@ -17,9 +17,10 @@ type Mounted = {
 it('keeps 6,000-character BiDi operations within 5x an equal-length Latin control', () => {
   resetRowGeometrySweepCount()
   const result = measureLength(6_000)
-  expect(result.mountRatio).toBeLessThan(5)
-  expect(result.clickRatio).toBeLessThan(5)
-  expect(result.dragRatio).toBeLessThan(5)
+  const measurements = JSON.stringify(result)
+  expect(result.mountRatio, measurements).toBeLessThan(5)
+  expect(result.clickRatio, measurements).toBeLessThan(5)
+  expect(result.dragRatio, measurements).toBeLessThan(5)
   expect(getRowGeometrySweepCount()).toBe(0)
 })
 
@@ -45,12 +46,16 @@ function measureLength(length: number): OperationRatios {
   const latinMounts: number[] = []
   const rtlMounts: number[] = []
   for (let sample = 0; sample < 7; sample += 1) {
-    const latinSample = mountMeasured(latinText)
-    const rtlSample = mountMeasured(rtlText)
-    latinMounts.push(latinSample.mountMs)
-    rtlMounts.push(rtlSample.mountMs)
-    latinSample.dispose()
-    rtlSample.dispose()
+    // Average repeated full mount operations within each sample. A single mount is sub-millisecond
+    // on fast runners, where scheduler jitter can otherwise dominate the same-run control ratio.
+    if (sample % 2 === 0) {
+      latinMounts.push(timeMounts(latinText, 5))
+      rtlMounts.push(timeMounts(rtlText, 5))
+      continue
+    }
+
+    rtlMounts.push(timeMounts(rtlText, 5))
+    latinMounts.push(timeMounts(latinText, 5))
   }
 
   const latin = mountMeasured(latinText)
@@ -78,6 +83,16 @@ function measureLength(length: number): OperationRatios {
   latin.dispose()
   rtl.dispose()
   return result
+}
+
+function timeMounts(text: string, count: number): number {
+  let elapsed = 0
+  for (let index = 0; index < count; index += 1) {
+    const mounted = mountMeasured(text)
+    elapsed += mounted.mountMs
+    mounted.dispose()
+  }
+  return elapsed / count
 }
 
 function mountMeasured(text: string): Mounted {

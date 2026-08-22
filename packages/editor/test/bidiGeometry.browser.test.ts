@@ -485,6 +485,18 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       mounted.dispose()
     }
   })
+
+  it('uses the endpoint fallback when a same-line edit creates an oversized grapheme', () => {
+    const mounted = mountStandaloneView('אa')
+    const inserted = '\u0301'.repeat(6_000)
+    const text = `אa${inserted}`
+    try {
+      mounted.view.applyEdit({ from: 2, to: 2, text: inserted }, text)
+      assertEndpointPlaceholder(mounted, text, 'grapheme-length')
+    } finally {
+      mounted.dispose()
+    }
+  })
 })
 
 function assertRectsClose(actual: readonly OracleRect[], expected: readonly OracleRect[]): void {

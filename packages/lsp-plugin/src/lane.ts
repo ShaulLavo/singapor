@@ -117,8 +117,8 @@ export function acquireResolvedLanguageServerLane(
 
       usable = true
       options.onStatusChange?.('ready')
-      options.onConnected?.(context)
       callbacks.onReady?.()
+      options.onConnected?.(context)
       ready.resolve(context)
     } catch (error) {
       if (released) return

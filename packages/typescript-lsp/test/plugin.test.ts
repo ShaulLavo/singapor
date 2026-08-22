@@ -1654,6 +1654,11 @@ function initializeResponse(request: JsonMessage): JsonMessage {
           resolveProvider: false,
           triggerCharacters: ['.'],
         },
+        definitionProvider: true,
+        hoverProvider: true,
+        implementationProvider: true,
+        referencesProvider: true,
+        typeDefinitionProvider: true,
       },
     },
   }
@@ -1812,6 +1817,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function flushPromises(): Promise<void> {
+  await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
 }

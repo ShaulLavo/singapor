@@ -62,6 +62,24 @@ describe('language-server lane acquisition', () => {
     ])
     second.release()
   })
+
+  it('finishes lane-owned readiness work before reporting the connection externally', async () => {
+    const harness = providerHarness()
+    const events: string[] = []
+    const lane = acquireLanguageServerLane(
+      {
+        ...laneOptions('ordered', harness.provider),
+        onConnected: () => events.push('connected'),
+      },
+      { onReady: () => events.push('ready') },
+    )
+
+    harness.connect()
+    await lane.ready
+
+    expect(events).toEqual(['ready', 'connected'])
+    lane.release()
+  })
 })
 
 function laneOptions(id: string, connectionProvider: LspConnectionProvider) {

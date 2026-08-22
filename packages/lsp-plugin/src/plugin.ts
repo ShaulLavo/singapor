@@ -501,6 +501,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.hoverDefinition.dispose()
     this.completion.hide()
     for (const lane of this.lanes) lane.sync.close()
+    this.diagnostics.clear()
     this.completionSources.dispose()
     this.completion.dispose()
     this.signatureHelp.dispose()

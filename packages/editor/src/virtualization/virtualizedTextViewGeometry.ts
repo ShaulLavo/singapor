@@ -398,6 +398,12 @@ export function rowTextExtent(
   return measuredRowContent(view, row).extent
 }
 
+export function rowLocalXFromClientPoint(row: MountedVirtualizedTextRow, clientX: number): number {
+  const rect = row.element.getBoundingClientRect()
+  const scale = normalizedRowClientRectScale(rect.width, row.element.offsetWidth)
+  return (clientX - rect.left) / scale
+}
+
 function measuredRowContent(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
@@ -1557,9 +1563,13 @@ function rowClientRectScale(row: MountedVirtualizedTextRow): number {
 
 function readRowClientRectScale(row: MountedVirtualizedTextRow): number {
   const layoutWidth = row.element.offsetWidth
+  return normalizedRowClientRectScale(measuredRowRect(row).width, layoutWidth)
+}
+
+function normalizedRowClientRectScale(clientWidth: number, layoutWidth: number): number {
   if (layoutWidth <= 0) return 1
 
-  const scale = measuredRowRect(row).width / layoutWidth
+  const scale = clientWidth / layoutWidth
   if (!Number.isFinite(scale) || scale <= 0) return 1
   if (Math.abs(scale - 1) * layoutWidth <= 1) return 1
   return scale

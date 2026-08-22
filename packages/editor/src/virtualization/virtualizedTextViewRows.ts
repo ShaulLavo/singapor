@@ -20,6 +20,7 @@ import type {
   EditorGutterRowContext,
   EditorGutterWidthContext,
 } from '../plugins'
+import { segmentGraphemes } from '../graphemes'
 import type { FixedRowVirtualItem, FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
 import {
   alignChunkEnd,
@@ -101,6 +102,8 @@ const MAX_ROW_TEXT_NODE_LENGTH = 50
 const MAX_SINGLE_NODE_ROW_LENGTH = 512
 /** Above this, the row shows a fixed endpoint-only placeholder instead of laying out unbounded text. */
 export const BIDI_LINE_MEASUREMENT_CEILING = 32_000
+
+type BidiMeasurementRefusal = 'line-length' | 'grapheme-length'
 // Far enough out that no scroll offset brings a parked surface back into the
 // spacer's painted box. Parking moves the surface rather than hiding or
 // detaching it, because both of those blur whatever the user was typing into —
@@ -993,7 +996,7 @@ function updateRowTextForSameLineEdit(
   mapping: RowInlineMapping | null,
   snapshot: FixedRowVirtualizerSnapshot,
 ): boolean {
-  if (exceedsBidiMeasurementCeiling(view, text)) {
+  if (bidiMeasurementRefusal(view, text)) {
     updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
     return false
   }
@@ -1046,8 +1049,9 @@ function updateRowTextChunks(
   snapshot = view.virtualizer.getSnapshot(),
 ): void {
   const runs = inlineRowRuns(mapping, text)
-  if (exceedsBidiMeasurementCeiling(view, text)) {
-    setOversizedBidiRowText(row, text, startOffset, mapping)
+  const refusal = bidiMeasurementRefusal(view, text)
+  if (refusal) {
+    setUnmeasurableBidiRowText(row, text, startOffset, mapping, refusal)
     return
   }
   if (runs.widgets.length > 0 || runs.classes.length > 0) {
@@ -1774,21 +1778,43 @@ function bidiTextNodeLength(view: VirtualizedTextViewInternal, text: string): nu
   return Number.POSITIVE_INFINITY
 }
 
-function exceedsBidiMeasurementCeiling(view: VirtualizedTextViewInternal, text: string): boolean {
-  if (text.length < BIDI_LINE_MEASUREMENT_CEILING) return false
-  return memoizedContainsRTL(view, text)
+function bidiMeasurementRefusal(
+  view: VirtualizedTextViewInternal,
+  text: string,
+): BidiMeasurementRefusal | null {
+  if (text.length <= MAX_ROW_TEXT_NODE_LENGTH) return null
+  if (!memoizedContainsRTL(view, text)) return null
+  if (text.length >= BIDI_LINE_MEASUREMENT_CEILING) return 'line-length'
+  if (hasOversizedGrapheme(text)) return 'grapheme-length'
+  return null
 }
 
-function setOversizedBidiRowText(
+function hasOversizedGrapheme(text: string): boolean {
+  for (const segment of segmentGraphemes(text)) {
+    if (segment.segment.length > MAX_ROW_TEXT_NODE_LENGTH) return true
+  }
+  return false
+}
+
+function setUnmeasurableBidiRowText(
   row: MountedVirtualizedTextRow,
   text: string,
   startOffset: number,
   mapping: RowInlineMapping | null,
+  refusal: BidiMeasurementRefusal,
 ): void {
-  const element = row.element.ownerDocument.createElement('span')
+  const document = row.element.ownerDocument
+  const element = document.createElement('span')
+  const startEndpoint = document.createElement('span')
+  const endEndpoint = document.createElement('span')
   element.className = 'editor-virtualized-bidi-ceiling'
   element.dataset.editorBidiLineLength = String(text.length)
-  element.textContent = `… BiDi line exceeds the ${BIDI_LINE_MEASUREMENT_CEILING}-unit geometry ceiling`
+  element.dataset.editorBidiMeasurementRefusal = refusal
+  startEndpoint.dataset.editorBidiEndpoint = 'start'
+  startEndpoint.textContent = '…'
+  endEndpoint.dataset.editorBidiEndpoint = 'end'
+  endEndpoint.textContent = bidiMeasurementRefusalLabel(refusal)
+  element.append(startEndpoint, endEndpoint)
   row.leftSpacerElement.style.width = '0px'
   row.element.replaceChildren(element)
   setTextRenderMode(row, 'widget')
@@ -1801,12 +1827,25 @@ function setOversizedBidiRowText(
       {
         kind: 'widget',
         localStart: 0,
+        localEnd: 0,
+        element: startEndpoint,
+      },
+      {
+        kind: 'widget',
+        localStart: text.length,
         localEnd: text.length,
-        element,
+        element: endEndpoint,
       },
     ],
-    row.element.ownerDocument.createTextNode(''),
+    document.createTextNode(''),
   )
+}
+
+function bidiMeasurementRefusalLabel(refusal: BidiMeasurementRefusal): string {
+  if (refusal === 'grapheme-length') {
+    return ` BiDi grapheme exceeds the ${MAX_ROW_TEXT_NODE_LENGTH}-unit geometry ceiling`
+  }
+  return ` BiDi line exceeds the ${BIDI_LINE_MEASUREMENT_CEILING}-unit geometry ceiling`
 }
 
 function rowChunkKey(

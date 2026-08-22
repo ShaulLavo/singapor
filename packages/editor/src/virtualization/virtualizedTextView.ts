@@ -94,9 +94,9 @@ import {
   knownRowContentWidth,
   measureRowContentWidth,
   offsetFromDomBoundary,
+  rowLocalXFromClientPoint,
   rowMightContainRTL,
   rowTextExtent,
-  unitRectForOffset,
   xToOffset,
 } from './virtualizedTextViewGeometry'
 import {
@@ -1050,41 +1050,25 @@ function bidiOffsetFromViewportPoint(
 ): number | null {
   const offset = hitTestRowOffset(row, point.clientX, point.clientY)
   const advance = rowCharacterAdvance(view, row)
-  if (offset === null) return edgeOffsetWithoutHit(view, row, point.x, advance)
-
-  const positions = boundaryPositionXs(view, row, offset)
-  const tolerance = boundaryHitTolerance(view, row, offset, advance)
-  if (positions.some((x) => Math.abs(x - point.x) <= tolerance)) return offset
-
-  const extent = rowTextExtent(view, row)
-  const extremal = bidiExtremalBoundaries(view, row, advance)
-  if (point.x <= extent.left + advance / 2) return extremal.left
-  if (point.x >= extent.right - advance / 2) return extremal.right
+  const localX = rowLocalXFromClientPoint(row, point.clientX)
+  const edgeOffset = bidiEdgeOffset(view, row, localX, advance)
+  if (edgeOffset !== null) return edgeOffset
   return offset
 }
 
-function boundaryHitTolerance(
-  view: VirtualizedTextViewInternal,
-  row: MountedVirtualizedTextRow,
-  offset: number,
-  advance: number,
-): number {
-  const following = unitRectForOffset(view, row, offset)?.width ?? 0
-  const preceding = unitRectForOffset(view, row, offset - 1)?.width ?? 0
-  return Math.max(advance, following, preceding)
-}
-
-function edgeOffsetWithoutHit(
+function bidiEdgeOffset(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   x: number,
   advance: number,
 ): number | null {
   const extent = rowTextExtent(view, row)
+  const halfAdvance = advance / 2
+  if (x > extent.left + halfAdvance && x < extent.right - halfAdvance) return null
+
   const extremal = bidiExtremalBoundaries(view, row, advance)
-  if (x <= extent.left + advance / 2) return extremal.left
-  if (x >= extent.right - advance / 2) return extremal.right
-  return null
+  if (x <= extent.left + halfAdvance) return extremal.left
+  return extremal.right
 }
 
 function bidiExtremalBoundaries(

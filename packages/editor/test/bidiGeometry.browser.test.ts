@@ -11,6 +11,7 @@ import { VirtualizedTextView } from '../src/virtualization'
 import { BIDI_LINE_MEASUREMENT_CEILING } from '../src/virtualization/virtualizedTextViewRows'
 import {
   boundaryPositionXs,
+  domBoundaryForOffset,
   getRowGeometrySweepCount,
   measureRowContentWidth,
   offsetToX,
@@ -305,6 +306,38 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     assertOracleEdgeClicks(fixture!, 'tabRtl')
   })
 
+  it('clamps an edge band before accepting the opposite edge-glyph boundary', () => {
+    const row = fixture!.rows.nested
+    const extent = rowOracleExtent(row)
+    const advance = fixture!.view.getState().metrics.characterWidth
+    const opposite = domBoundaryForOffset(row, row.endOffset - 1)
+    expect(opposite).not.toBeNull()
+
+    withCaretPositionFromPointResult(opposite!, () => {
+      expect(clickRow(fixture!, row, extent.left + advance * 0.25)).toBe(row.endOffset)
+    })
+  })
+
+  it('compares transformed hit points in row-local geometry space', () => {
+    const mounted = mountStandaloneView(BIDI_CORPUS.nested, 4_096, 2)
+    try {
+      const part = mounted.row.chunks[0]!.parts.find((candidate) => candidate.kind === 'text')
+      if (!part || part.kind !== 'text') throw new Error('scaled fixture did not mount text')
+      const range = document.createRange()
+      range.setStart(part.node, 8)
+      range.setEnd(part.node, 9)
+      const rect = range.getBoundingClientRect()
+      const clientX = rect.left + rect.width * 0.75
+      const clientY = rect.top + rect.height / 2
+      const engine = document.caretPositionFromPoint(clientX, clientY)
+      expect(engine).not.toBeNull()
+      const expected = mounted.view.textOffsetFromDomBoundary(engine!.offsetNode, engine!.offset)
+      expect(mounted.view.textOffsetFromPoint(clientX, clientY)).toBe(expected)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
   it('pins the engine trigger to the outer edge bands of the three measured rows', () => {
     for (const name of BIDI_CORPUS_NAMES) assertEngineTriggerBand(fixture!, name)
   })
@@ -435,15 +468,19 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     const text = 'א'.repeat(BIDI_LINE_MEASUREMENT_CEILING + 1)
     const mounted = mountStandaloneView(text)
     try {
-      const placeholder = mounted.row.element.querySelector<HTMLElement>(
-        '[data-editor-bidi-line-length]',
-      )
-      expect(mounted.row.textRenderMode).toBe('widget')
-      expect(mounted.row.chunks).toHaveLength(1)
-      expect(mounted.row.chunks[0]!.parts).toHaveLength(1)
-      expect(mounted.row.chunks[0]!.parts[0]?.kind).toBe('widget')
-      expect(placeholder?.dataset.editorBidiLineLength).toBe(String(text.length))
+      assertEndpointPlaceholder(mounted, text, 'line-length')
       expect(mounted.row.element.textContent).not.toContain(text.slice(0, 100))
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('uses the endpoint fallback when one grapheme exceeds the text-node bound', () => {
+    const text = `אa${'\u0301'.repeat(6_000)}`
+    const mounted = mountStandaloneView(text)
+    try {
+      assertEndpointPlaceholder(mounted, text, 'grapheme-length')
+      expect(mounted.row.element.textContent).not.toContain('\u0301'.repeat(100))
     } finally {
       mounted.dispose()
     }
@@ -852,6 +889,23 @@ function withCaretPositionFromPointDisabled(run: () => void): void {
   }
 }
 
+function withCaretPositionFromPointResult(
+  result: { readonly node: Node; readonly offset: number },
+  run: () => void,
+): void {
+  const own = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint')
+  Object.defineProperty(document, 'caretPositionFromPoint', {
+    configurable: true,
+    value: () => ({ offsetNode: result.node, offset: result.offset }),
+  })
+  try {
+    run()
+  } finally {
+    if (own) Object.defineProperty(document, 'caretPositionFromPoint', own)
+    else delete (document as { caretPositionFromPoint?: unknown }).caretPositionFromPoint
+  }
+}
+
 function mountLongRtlView(): {
   readonly container: HTMLElement
   readonly view: VirtualizedTextView
@@ -880,11 +934,15 @@ type StandaloneView = {
   dispose(): void
 }
 
-function mountStandaloneView(text: string, threshold = 4_096): StandaloneView {
+function mountStandaloneView(text: string, threshold = 4_096, scale = 1): StandaloneView {
   const container = document.createElement('div')
   container.style.font = '14px monospace'
   container.style.height = '20px'
   container.style.width = '600px'
+  if (scale !== 1) {
+    container.style.transformOrigin = '0 0'
+    container.style.transform = `scale(${scale})`
+  }
   document.body.append(container)
   const view = new VirtualizedTextView(container, {
     rowHeight: 20,
@@ -903,6 +961,28 @@ function mountStandaloneView(text: string, threshold = 4_096): StandaloneView {
       container.remove()
     },
   }
+}
+
+function assertEndpointPlaceholder(
+  mounted: StandaloneView,
+  text: string,
+  refusal: 'line-length' | 'grapheme-length',
+): void {
+  const placeholder = mounted.row.element.querySelector<HTMLElement>(
+    '[data-editor-bidi-line-length]',
+  )
+  expect(mounted.row.textRenderMode).toBe('widget')
+  expect(mounted.row.chunks).toHaveLength(1)
+  expect(mounted.row.chunks[0]!.parts).toHaveLength(2)
+  expect(mounted.row.chunks[0]!.parts.every((part) => part.kind === 'widget')).toBe(true)
+  expect(placeholder?.dataset.editorBidiLineLength).toBe(String(text.length))
+  expect(placeholder?.dataset.editorBidiMeasurementRefusal).toBe(refusal)
+  expect(placeholder?.querySelectorAll('[data-editor-bidi-endpoint]')).toHaveLength(2)
+
+  const rect = placeholder!.getBoundingClientRect()
+  const y = rect.top + rect.height / 2
+  expect(mounted.view.textOffsetFromPoint(rect.left + 1, y)).toBe(0)
+  expect(mounted.view.textOffsetFromPoint(rect.right - 1, y)).toBe(text.length)
 }
 
 function assertBoundedTextParts(

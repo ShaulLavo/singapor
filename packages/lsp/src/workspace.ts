@@ -24,6 +24,17 @@ type MutableLspDocument = {
 export class LspWorkspace {
   private readonly documentsByUri = new Map<lsp.DocumentUri, MutableLspDocument>()
   private readonly versionsByUri = new Map<lsp.DocumentUri, number>()
+  /**
+   * How many holders have this uri open.
+   *
+   * One workspace can be shared by several views — a split, a peek pane, two
+   * tabs on one file — and `didOpen`/`didClose` are statements about the server's
+   * copy of a document, not about any one view's interest in it. Counting is what
+   * keeps the second view opening a file from being an error, and the first view
+   * closing it from telling the server a document is gone while another view is
+   * still editing it.
+   */
+  private readonly openCountsByUri = new Map<lsp.DocumentUri, number>()
   private client: LspWorkspaceSyncTarget | null = null
 
   public get documents(): readonly LspDocument[] {
@@ -35,10 +46,10 @@ export class LspWorkspace {
   }
 
   public openDocument(options: LspDocumentOpenOptions): LspDocument {
-    if (this.documentsByUri.has(options.uri)) {
-      throw new Error(`LSP document already open: ${options.uri}`)
-    }
+    const open = this.documentsByUri.get(options.uri)
+    if (open) return this.reopenDocument(open, options)
 
+    this.openCountsByUri.set(options.uri, 1)
     const document = {
       uri: options.uri,
       languageId: options.languageId,
@@ -99,8 +110,38 @@ export class LspWorkspace {
     const document = this.documentsByUri.get(uri)
     if (!document) return
 
+    const remaining = (this.openCountsByUri.get(uri) ?? 1) - 1
+    if (remaining > 0) {
+      this.openCountsByUri.set(uri, remaining)
+      return
+    }
+
+    this.openCountsByUri.delete(uri)
     this.documentsByUri.delete(uri)
     this.client?.didCloseDocument(cloneDocument(document))
+  }
+
+  /**
+   * A second holder opening a document the server already has.
+   *
+   * No `didOpen`: the server's copy exists and re-announcing it is a protocol
+   * error. The text is still reconciled, because the newest opener is the one
+   * that just read the file and a stale server copy is worse than a redundant
+   * `didChange` — `updateDocument` sends nothing when the text already matches,
+   * which is the ordinary case of two views on one buffer.
+   */
+  private reopenDocument(
+    open: MutableLspDocument,
+    options: LspDocumentOpenOptions,
+  ): LspDocument {
+    this.openCountsByUri.set(options.uri, (this.openCountsByUri.get(options.uri) ?? 1) + 1)
+    if (open.languageId !== options.languageId) {
+      throw new Error(
+        `LSP document open as ${open.languageId}, reopened as ${options.languageId}: ${options.uri}`,
+      )
+    }
+
+    return this.updateDocument(options.uri, options.text)
   }
 
   public saveDocument(uri: lsp.DocumentUri): void {

@@ -44,6 +44,24 @@ export type LspConnectionCallbacks = {
   onError?: (error: unknown) => void
 }
 
+/** A connection a view borrows. `release` ends its interest; closing is the provider's call. */
+export type LspConnectionLease = {
+  readonly connection: LspConnection
+  release(): void
+}
+
+/**
+ * Supplies connections that outlive one view, so a file switch does not pay a handshake and an
+ * `initialize` round trip. `options` is the connection the plugin would have built: build from it on
+ * a new key, ignore it on a known one.
+ *
+ * **`callbacks.onConnected` must never fire synchronously from `acquire`** — the caller is
+ * mid-construction. Replay it on a microtask.
+ */
+export type LspConnectionProvider = {
+  acquire(options: LspConnectionOptions, callbacks: LspConnectionCallbacks): LspConnectionLease
+}
+
 export class LspConnection {
   public readonly workspace = new LspWorkspace()
   public readonly client: LspClient

@@ -146,6 +146,7 @@ export function createSemanticTokenLayer(
     return name
   }
 
+
   const clearPainted = (): void => {
     for (const group of painted.values()) context.clearRangeHighlight?.(group.name)
     painted = new Map()
@@ -176,6 +177,23 @@ export function createSemanticTokenLayer(
       demandTimer = null
       options.onRangeNeeded?.(request)
     }, options.viewportDelayMs)
+  }
+
+  const paintPayload = (
+    payload: SemanticTokenPayload,
+    snapshot: EditorViewSnapshot,
+  ): SemanticTokenPushResult => {
+    if (payload.textVersion > snapshot.textVersion) return dropped('version-ahead', options)
+    if (payload.textVersion === snapshot.textVersion) return paint(payload.spans, snapshot, 0)
+
+    // The text moved between the request and the answer, which is the ordinary case rather than the
+    // exception. The edit chain keeps a bounded number of transitions and returns null for one it
+    // can no longer reach — a slow cold server plus fast typing gets there — so the resync branch is
+    // not hypothetical and a host has to implement it.
+    const edits = snapshot.editsSinceTextVersion?.(payload.textVersion)
+    if (!edits) return dropped('version-too-old', options)
+
+    return paint(projectSpans(payload.spans, edits), snapshot, edits.length)
   }
 
   return {
@@ -228,18 +246,7 @@ export function createSemanticTokenLayer(
         return dropped('document-changed', options)
       }
       if (payload.textVersion > snapshot.textVersion) return dropped('version-ahead', options)
-      if (payload.textVersion === snapshot.textVersion) {
-        return paint(payload.spans, snapshot, 0)
-      }
-
-      // The text moved between the request and the answer, which is the ordinary case rather than
-      // the exception. The edit chain keeps a bounded number of transitions and returns null for one
-      // it can no longer reach — a slow cold server plus fast typing gets there — so the resync
-      // branch is not hypothetical and a host has to implement it.
-      const edits = snapshot.editsSinceTextVersion?.(payload.textVersion)
-      if (!edits) return dropped('version-too-old', options)
-
-      return paint(projectSpans(payload.spans, edits), snapshot, edits.length)
+      return paintPayload(payload, snapshot)
     },
 
     clear() {

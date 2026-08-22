@@ -45,6 +45,10 @@ import { offsetToLspPosition } from '@singapor/lsp'
 import {
   createWebSocketLspTransportFactory,
   LspConnection,
+  type LspConnectionCallbacks,
+  type LspConnectionLease,
+  type LspConnectionOptions,
+  type LspConnectionProvider,
   type LspConnectionTransportFactory,
 } from './lspConnection'
 import type {
@@ -116,6 +120,8 @@ export type LanguageServerAdapterPluginOptions = {
   /** See LanguageServerPluginOptions.notificationHandlers. Merged, never replacing. */
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   createTransport(): ReturnType<LspConnectionTransportFactory>
+  /** Borrows the connection instead of constructing one per view. See LspConnectionProvider. */
+  readonly connectionProvider?: LspConnectionProvider
   readonly defaultHighlightPrefix?: string
   readonly documentSync?: Omit<DocumentSyncOptions, 'onDocumentClosed'>
   readonly diagnostics?: {
@@ -175,6 +181,7 @@ type LanguageServerResolvedAdapterOptions = {
   readonly clientInfo?: lsp.InitializeParams['clientInfo']
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   createTransport(): ReturnType<LspConnectionTransportFactory>
+  readonly connectionProvider?: LspConnectionProvider
   readonly defaultHighlightPrefix: string
   readonly documentSync: Omit<DocumentSyncOptions, 'onDocumentClosed'>
   readonly diagnostics: {
@@ -225,6 +232,7 @@ export function createLanguageServerPlugin(
       options.webSocketRoute,
       options.webSocketTransportOptions,
     ),
+    connectionProvider: options.connectionProvider,
     semanticTokens: options.semanticTokens,
     onConnectionCreated: options.onConnectionCreated,
     onConnected: options.onConnected,
@@ -361,6 +369,8 @@ class LanguageServerCompletionEditContribution implements EditorEditContribution
 
 class LanguageServerContribution implements EditorViewContribution {
   private readonly connection: LspConnection
+  /** Null when this contribution built the connection itself, and may therefore connect and dispose it. */
+  private readonly connectionLease: LspConnectionLease | null
   private readonly diagnostics: DiagnosticsPresenter
   private readonly documentSync: DocumentSync
   private readonly completionSources: LanguageServerCompletionSources
@@ -389,27 +399,29 @@ class LanguageServerContribution implements EditorViewContribution {
       ...options.diagnostics,
       onDiagnostics: options.onDiagnostics,
     })
-    this.connection = new LspConnection(
-      {
-        rootUri: options.rootUri,
-        initializationOptions: options.initializationOptions,
-        timeoutMs: options.timeoutMs,
-        capabilities: options.capabilities,
-        clientInfo: options.clientInfo,
-        notificationHandlers: options.notificationHandlers,
-        createTransport: options.createTransport,
+    const connectionOptions: LspConnectionOptions = {
+      rootUri: options.rootUri,
+      initializationOptions: options.initializationOptions,
+      timeoutMs: options.timeoutMs,
+      capabilities: options.capabilities,
+      clientInfo: options.clientInfo,
+      notificationHandlers: options.notificationHandlers,
+      createTransport: options.createTransport,
+    }
+    const connectionCallbacks: LspConnectionCallbacks = {
+      onConnected: () => this.handleConnected(),
+      onUnavailable: () => this.clearRequestUi(),
+      onPublishDiagnostics: (params) => {
+        this.documentSync.publishDiagnostics(params)
+        this.codeActions.diagnosticsChanged()
       },
-      {
-        onConnected: () => this.handleConnected(),
-        onUnavailable: () => this.clearRequestUi(),
-        onPublishDiagnostics: (params) => {
-          this.documentSync.publishDiagnostics(params)
-          this.codeActions.diagnosticsChanged()
-        },
-        onStatusChange: options.onStatusChange,
-        onError: options.onError,
-      },
-    )
+      onStatusChange: options.onStatusChange,
+      onError: options.onError,
+    }
+    this.connectionLease =
+      options.connectionProvider?.acquire(connectionOptions, connectionCallbacks) ?? null
+    this.connection =
+      this.connectionLease?.connection ?? new LspConnection(connectionOptions, connectionCallbacks)
     this.connectionRegistration = options.onConnectionCreated?.(this.connectionContext()) ?? null
     this.documentSync = new DocumentSync(this.connection.workspace, this.diagnostics, {
       ...options.documentSync,
@@ -477,7 +489,8 @@ class LanguageServerContribution implements EditorViewContribution {
       ? new SemanticTokenLayerOwner(context, options.semanticTokens)
       : null
     this.state.register(this)
-    this.connection.connect()
+    // A leased connection may already be serving another view; connecting again would handshake twice.
+    if (!this.connectionLease) this.connection.connect()
     this.update(context.getSnapshot(), 'document', null)
   }
 
@@ -517,7 +530,8 @@ class LanguageServerContribution implements EditorViewContribution {
     this.formatOnType?.dispose()
     this.semanticTokens?.dispose()
     this.rename?.dispose()
-    this.connection.dispose()
+    if (this.connectionLease) this.connectionLease.release()
+    else this.connection.dispose()
   }
 
   public goToDefinitionFromSelection(): boolean {
@@ -749,6 +763,7 @@ function resolveAdapterOptions(
     clientInfo: options.clientInfo,
     notificationHandlers: options.notificationHandlers,
     createTransport: options.createTransport,
+    connectionProvider: options.connectionProvider,
     defaultHighlightPrefix: options.defaultHighlightPrefix ?? DEFAULT_HIGHLIGHT_PREFIX,
     documentSync: options.documentSync ?? {},
     diagnostics: resolveDiagnosticsOptions(options),

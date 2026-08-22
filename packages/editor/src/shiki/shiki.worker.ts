@@ -26,6 +26,7 @@ type DocumentState = {
 const documents = new Map<string, DocumentState>()
 const documentTasks = new Map<string, Promise<ShikiWorkerResult | undefined>>()
 const highlighterPromises = new Map<string, Promise<HighlighterGeneric<string, string>>>()
+const backgroundLoaded = new WeakSet<HighlighterGeneric<string, string>>()
 
 self.onmessage = (event: MessageEvent<ShikiWorkerRequest>): void => {
   void handleRequest(event.data)
@@ -98,7 +99,10 @@ const openDocument = async (payload: ShikiWorkerOpenRequest): Promise<ShikiWorke
     tokenizer,
   }
   documents.set(payload.documentId, state)
-  return resultFromState(state)
+  const result = resultFromState(state)
+  scheduleBackgroundLanguages(highlighter, payload.langs)
+
+  return result
 }
 
 const editDocument = async (payload: ShikiWorkerEditRequest): Promise<ShikiWorkerResult> => {
@@ -133,19 +137,58 @@ const openRequestFromEdit = (payload: ShikiWorkerEditRequest, text: string) => (
   type: 'open' as const,
 })
 
-const ensureHighlighter = (
+/**
+ * The highlighter for a document, with that document's grammar loaded and nothing else waited on.
+ *
+ * Loading the host's whole preload set up front measured 1 280–1 780 ms for 53 grammars, all of it
+ * ahead of the first paint of a single TypeScript file. The set is still loaded — a language switch
+ * should not stall either — but behind the answer rather than in front of it.
+ */
+const ensureHighlighter = async (
   options: ShikiWorkerDocumentOptions,
 ): Promise<HighlighterGeneric<string, string>> => {
-  const langs = unique([options.lang, ...options.langs])
   const themes = highlighterThemes([options.theme, ...options.themes], options.themeRegistration)
-  return ensureHighlighterFor(langs, themes)
+  const highlighter = await ensureHighlighterFor([options.lang], themes)
+  await ensureLanguages(highlighter, [options.lang])
+
+  return highlighter
+}
+
+const ensureLanguages = async (
+  highlighter: HighlighterGeneric<string, string>,
+  langs: readonly string[],
+): Promise<void> => {
+  const loaded = new Set(highlighter.getLoadedLanguages())
+  const missing = unique(langs).filter((lang) => lang.length > 0 && !loaded.has(lang))
+  if (missing.length === 0) return
+
+  await highlighter.loadLanguage(...(missing as Parameters<typeof highlighter.loadLanguage>))
+}
+
+/**
+ * Once per highlighter, on a timer rather than a microtask.
+ *
+ * A microtask here runs *between* the tokenizer's awaits and competes with it for the one worker
+ * thread — measured at 526 ms of tokenization becoming 1 187 ms. The delay puts the whole preload
+ * set behind the paint that matters instead of inside it. A failure costs a stall on some later
+ * language switch, never a paint.
+ */
+const scheduleBackgroundLanguages = (
+  highlighter: HighlighterGeneric<string, string>,
+  langs: readonly string[],
+): void => {
+  if (langs.length === 0) return
+  if (backgroundLoaded.has(highlighter)) return
+
+  backgroundLoaded.add(highlighter)
+  setTimeout(() => void ensureLanguages(highlighter, langs).catch(() => undefined), 1_000)
 }
 
 const ensureHighlighterFor = (
   langs: readonly string[],
   themes: readonly (string | ShikiWorkerThemeRegistration)[],
 ): Promise<HighlighterGeneric<string, string>> => {
-  const key = highlighterKey(langs, themes)
+  const key = highlighterKey(themes)
   const existing = highlighterPromises.get(key)
   if (existing) return existing
 
@@ -201,14 +244,13 @@ const postResponse = (response: ShikiWorkerResponse): void => {
   self.postMessage(response)
 }
 
+/**
+ * Themes only. Languages are loaded into whichever highlighter a theme set already has, so keying on
+ * them too would build a second highlighter — and reload every grammar — for each new language.
+ */
 const highlighterKey = (
-  langs: readonly string[],
   themes: readonly (string | ShikiWorkerThemeRegistration)[],
-): string => {
-  const normalizedLangs = langs.toSorted()
-  const normalizedThemes = themes.map(highlighterThemeKey).toSorted()
-  return JSON.stringify({ langs: normalizedLangs, themes: normalizedThemes })
-}
+): string => JSON.stringify(themes.map(highlighterThemeKey).toSorted())
 
 const highlighterThemeKey = (theme: string | ShikiWorkerThemeRegistration): string =>
   typeof theme === 'string' ? theme : theme.name

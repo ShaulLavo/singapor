@@ -85,6 +85,12 @@ export const EDITOR_SHIKI_SYNTAX_SCOPE_MAPPINGS = [
     scopes: ['constant.numeric'],
   },
   {
+    // The scope VS Code maps the `parameter` semantic type onto. Without a rule of its own a
+    // parameter falls through to the theme's variable colour, which is what it looks like anyway.
+    key: 'parameter',
+    scopes: ['variable.parameter', 'meta.parameter', 'meta.function.parameters'],
+  },
+  {
     key: 'property',
     scopes: [
       'meta.property-name',

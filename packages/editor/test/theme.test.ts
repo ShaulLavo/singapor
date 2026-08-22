@@ -466,6 +466,25 @@ describe('scope rules that extend a styled scope', () => {
 })
 
 describe('themes extracted from a shiki theme', () => {
+  /**
+   * A semantic `parameter` used to inherit the import-keyword colour, because no theme could set
+   * `syntax.parameter` — it had no id — and the registered default pointed at `keywordImport`. Every
+   * function parameter in a TypeScript file rendered as though it were `import`.
+   */
+  it('takes the parameter colour from the theme rule that describes parameters', () => {
+    const theme = editorThemeFromShikiTheme({
+      bg: '#000000',
+      fg: '#ffffff',
+      tokenColors: [
+        { scope: 'variable.parameter', settings: { foreground: '#aabbcc' } },
+        { scope: 'keyword.control.import', settings: { foreground: '#ff0000' } },
+      ],
+    })
+
+    expect(theme.syntax?.parameter).toBe('#aabbcc')
+    expect(theme.syntax?.parameter).not.toBe(theme.syntax?.keywordImport)
+  })
+
   it('carries the canvas the source theme declares', () => {
     expect(editorThemeFromShikiTheme({ bg: '#ffffff', fg: '#000000', type: 'light' }).type).toBe(
       'light',

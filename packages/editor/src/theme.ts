@@ -12,6 +12,7 @@ export type EditorSyntaxThemeColor =
   | 'keywordImport'
   | 'namespace'
   | 'number'
+  | 'parameter'
   | 'property'
   | 'string'
   | 'type'

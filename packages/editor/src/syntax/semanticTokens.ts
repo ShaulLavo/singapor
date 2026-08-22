@@ -99,7 +99,7 @@ const SEMANTIC_COLOR = {
   namespace: editorColorValue('syntax.namespace'),
   number: editorColorValue('syntax.number'),
   operator: registerEditorColor('syntax.operator', editorColorReference('syntax.bracket')),
-  parameter: registerEditorColor('syntax.parameter', editorColorReference('syntax.keywordImport')),
+  parameter: registerEditorColor('syntax.parameter', editorColorReference('syntax.variable')),
   property: editorColorValue('syntax.property'),
   regexp: registerEditorColor('syntax.regexp', editorColorReference('syntax.string')),
   string: editorColorValue('syntax.string'),

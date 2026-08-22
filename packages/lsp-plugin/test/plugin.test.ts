@@ -15,6 +15,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { type LanguageServerCompletionEditFeature } from '../src/completion'
+import {
+  LspConnection,
+  type LspConnectionCallbacks,
+  type LspConnectionOptions,
+  type LspConnectionProvider,
+} from '../src/lspConnection'
 import { createLanguageServerAdapterPlugin, createLanguageServerPlugin } from '../src/plugin'
 import type { LanguageServerPlugin } from '../src/types'
 
@@ -37,7 +43,10 @@ class FakeTransport implements LspManagedTransport {
     this.handlers.delete(handler)
   }
 
+  public closed = false
+
   public close(): void {
+    this.closed = true
     this.handlers.clear()
   }
 
@@ -263,6 +272,141 @@ type ActivationOptions = {
   readonly applyEdits: EditorEditContributionContext['applyEdits']
 }
 
+describe('connectionProvider', () => {
+  /**
+   * A host that owns the connection, counting what the contributions ask of it.
+   *
+   * The real one keys by workspace root and server id; this one has a single key,
+   * because what is under test is that two contributions get the *same*
+   * connection and that neither of them closes it.
+   */
+  function testProvider() {
+    let connection: LspConnection | null = null
+    const counts = { acquired: 0, released: 0 }
+
+    return {
+      counts,
+      provider: {
+        acquire: (options: LspConnectionOptions, callbacks: LspConnectionCallbacks) => {
+          counts.acquired += 1
+          if (!connection) {
+            connection = new LspConnection(options, callbacks)
+            connection.connect()
+          }
+          const held = connection
+          return {
+            connection: held,
+            release: () => {
+              counts.released += 1
+            },
+          }
+        },
+      } satisfies LspConnectionProvider,
+    }
+  }
+
+  function pluginWith(provider: LspConnectionProvider, transport: FakeTransport) {
+    return createLanguageServerAdapterPlugin({
+      name: 'editor.test-lsp',
+      createTransport: () => transport,
+      connectionProvider: provider,
+      defaultHighlightPrefix: 'editor-test',
+      completion: { acceptTimingName: 'testLsp.completion.accept' },
+    })
+  }
+
+  it('runs one initialize for two contributions on one connection', async () => {
+    const transport = new FakeTransport()
+    const { provider: connectionProvider, counts } = testProvider()
+    const first = activatePlugin(pluginWith(connectionProvider, transport), { applyEdits: vi.fn() })
+    const second = activatePlugin(pluginWith(connectionProvider, transport), { applyEdits: vi.fn() })
+
+    first.provider.createContribution(
+      viewContributionContext(editorSnapshot('# One', 'one.md'), { features: first.features }),
+    )
+    transport.receive(initializeResponse(jsonMessage(transport.sent[0])))
+    await flushPromises()
+    second.provider.createContribution(
+      viewContributionContext(editorSnapshot('# Two', 'two.md'), { features: second.features }),
+    )
+    await flushPromises()
+
+    expect(counts.acquired).toBe(2)
+    // One handshake, two documents. Before the seam existed this was two of
+    // everything, because the connection died with the view that built it.
+    expect(transport.sent.map((sent) => jsonMessage(sent).method)).toEqual([
+      'initialize',
+      'initialized',
+      'textDocument/didOpen',
+      'textDocument/didOpen',
+    ])
+    expect(
+      transport.sent.filter(hasMethod('textDocument/didOpen')).map(textDocumentFor),
+    ).toEqual([
+      expect.objectContaining({ uri: 'file:///one.md' }),
+      expect.objectContaining({ uri: 'file:///two.md' }),
+    ])
+  })
+
+  it('leaves the connection open when a contribution goes away', async () => {
+    const transport = new FakeTransport()
+    const { provider: connectionProvider, counts } = testProvider()
+    const { features, provider } = activatePlugin(pluginWith(connectionProvider, transport), { applyEdits: vi.fn() })
+    const contribution = provider.createContribution(
+      viewContributionContext(editorSnapshot('# One', 'one.md'), { features }),
+    )
+    if (!contribution) throw new Error('missing contribution')
+    transport.receive(initializeResponse(jsonMessage(transport.sent[0])))
+    await flushPromises()
+
+    contribution.dispose()
+
+    // Told the server this view's document is gone, and nothing more: closing the
+    // socket is the provider's call, and it was not asked to.
+    expect(transport.sent.filter(hasMethod('textDocument/didClose'))).toHaveLength(1)
+    expect(counts.released).toBe(1)
+    expect(transport.closed).toBe(false)
+  })
+
+  it('tells a contribution that joined a live connection that it is connected', async () => {
+    const transport = new FakeTransport()
+    const { provider: connectionProvider } = testProvider()
+    const first = activatePlugin(pluginWith(connectionProvider, transport), { applyEdits: vi.fn() })
+    first.provider.createContribution(
+      viewContributionContext(editorSnapshot('# One', 'one.md'), { features: first.features }),
+    )
+    transport.receive(initializeResponse(jsonMessage(transport.sent[0])))
+    await flushPromises()
+
+    const onConnected = vi.fn()
+    const late = activatePlugin(
+      createLanguageServerAdapterPlugin({
+        name: 'editor.test-lsp',
+        createTransport: () => transport,
+        connectionProvider: {
+          acquire: (options, callbacks) => {
+            const lease = connectionProvider.acquire(options, callbacks)
+            // What the pool does for a late joiner, in the shape the contract
+            // requires: never synchronously, because the caller is mid-constructor.
+            queueMicrotask(() => callbacks.onConnected())
+            return lease
+          },
+        },
+        defaultHighlightPrefix: 'editor-test',
+        completion: { acceptTimingName: 'testLsp.completion.accept' },
+        onConnected,
+      }),
+      { applyEdits: vi.fn() },
+    )
+    late.provider.createContribution(
+      viewContributionContext(editorSnapshot('# Two', 'two.md'), { features: late.features }),
+    )
+    await flushPromises()
+
+    expect(onConnected).toHaveBeenCalledTimes(1)
+  })
+})
+
 function activatePlugin(
   plugin: LanguageServerPlugin,
   options: ActivationOptions,
@@ -366,13 +510,13 @@ function viewContributionContext(
   }
 }
 
-function editorSnapshot(fullText = '# Notes'): EditorViewSnapshot {
+function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorViewSnapshot {
   const lineStarts = [0]
   for (let index = 0; index < fullText.length; index += 1) {
     if (fullText.charCodeAt(index) === 10) lineStarts.push(index + 1)
   }
   return {
-    documentId: 'README.md',
+    documentId,
     languageId: 'markdown',
     fullText,
     textVersion: 1,

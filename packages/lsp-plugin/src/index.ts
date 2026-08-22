@@ -8,8 +8,18 @@ export {
   type LanguageServerResolvedOptions,
 } from './plugin'
 export {
+  LspConnectionPool,
+  type LspConnectionPoolEvent,
+  type LspConnectionPoolOptions,
+} from './lspConnectionPool'
+export {
   createWebSocketLspTransportFactory,
   createWorkerLspTransportFactory,
+  LspConnection,
+  type LspConnectionCallbacks,
+  type LspConnectionLease,
+  type LspConnectionOptions,
+  type LspConnectionProvider,
   type LspConnectionTransportFactory,
 } from './lspConnection'
 export {

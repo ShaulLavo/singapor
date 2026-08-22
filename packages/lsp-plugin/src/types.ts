@@ -7,6 +7,7 @@ import type {
 } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
+import type { LspConnectionProvider } from './lspConnection'
 import type { LanguageServerSemanticTokensOptions } from './semanticTokens'
 
 export type LanguageServerStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -76,6 +77,13 @@ export type LanguageServerPluginOptions = {
   readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
   readonly webSocketRoute: string | URL
   readonly webSocketTransportOptions?: LspWebSocketTransportOptions
+  /**
+   * Borrows the connection rather than owning one per view, so a file switch that rebuilds the view
+   * does not also rebuild the websocket and re-run `initialize`. The route and options above still
+   * describe the connection — the provider is handed them and builds from them the first time it
+   * sees a key. See `LspConnectionProvider`.
+   */
+  readonly connectionProvider?: LspConnectionProvider
   /**
    * Turns on the semantic token layer, and is how the host gets hold of one: a layer needs a
    * viewport, a snapshot and a lifecycle, so the contribution creates it and hands it over through

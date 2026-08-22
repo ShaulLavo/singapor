@@ -2,6 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ShikiWorkerRequest, ShikiWorkerResponse } from '../../src/shiki/workerTypes'
 
 const createHighlighter = vi.hoisted(() => vi.fn())
+
+/** What a real shiki highlighter exposes for loading grammars after construction. */
+function languageApi() {
+  const loaded: string[] = []
+  return {
+    getLoadedLanguages: () => [...loaded],
+    loadLanguage: vi.fn(async (...langs: string[]) => {
+      loaded.push(...langs)
+    }),
+  }
+}
 const createIncrementalTokenizer = vi.hoisted(() => vi.fn())
 
 vi.mock('shiki', () => ({ createHighlighter }))
@@ -49,7 +60,7 @@ describe('shiki worker', () => {
     const dispose = vi.fn()
     const postMessage = vi.fn()
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ dispose })
+    createHighlighter.mockResolvedValue({ dispose, ...languageApi() })
     createIncrementalTokenizer.mockResolvedValue({
       tokenizer: { getSnapshot: () => ({ lines: [] }) },
     })
@@ -89,7 +100,7 @@ describe('shiki worker', () => {
       },
     }))
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme })
+    createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
     createIncrementalTokenizer.mockResolvedValue({
       tokenizer: { getSnapshot: () => ({ lines: [] }) },
     })
@@ -139,7 +150,7 @@ describe('shiki worker', () => {
       fg: '#24292e',
     }))
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme })
+    createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
@@ -189,7 +200,7 @@ describe('shiki worker', () => {
       ],
     }))
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme })
+    createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
@@ -247,7 +258,7 @@ describe('shiki worker', () => {
       ],
     }))
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme })
+    createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
@@ -309,3 +320,43 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   }
   throw new Error('Timed out waiting for worker response')
 }
+
+/**
+ * Loading the host's whole preload set before the first paint measured 1 280–1 780 ms for 53
+ * grammars, against 49–104 ms for the one grammar the document actually needs.
+ */
+describe('shiki worker grammar loading', () => {
+  it('builds the highlighter with only the document language, and loads the rest behind the paint', async () => {
+    const postMessage = vi.fn()
+    const getTheme = vi.fn(() => ({ bg: '#ffffff', fg: '#24292e', colors: {} }))
+    const api = languageApi()
+    ;(globalThis as { self?: unknown }).self = { postMessage }
+    createHighlighter.mockResolvedValue({ getTheme, ...api })
+    createIncrementalTokenizer.mockResolvedValue({
+      tokenizer: { getSnapshot: () => ({ lines: [] }) },
+    })
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
+      .onmessage
+    onmessage(
+      new MessageEvent('message', {
+        data: request('open', {
+          documentId: 'doc',
+          text: '',
+          lang: 'typescript',
+          theme: 'github-light',
+          langs: ['python', 'rust', 'go'],
+          themes: [],
+        }),
+      }),
+    )
+    await waitFor(() => postMessage.mock.calls.length > 0)
+
+    expect(createHighlighter).toHaveBeenCalledWith(
+      expect.objectContaining({ langs: ['typescript'] }),
+    )
+    // The preload set is scheduled, not awaited: the answer goes out first.
+    expect(api.loadLanguage).not.toHaveBeenCalledWith('python', 'rust', 'go')
+  })
+})

@@ -1,4 +1,5 @@
 import type { FoldMap } from '../foldMap'
+import { nextGraphemeBoundary, previousGraphemeBoundary } from '../graphemes'
 import type { ResolvedSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
 import {
@@ -162,6 +163,18 @@ type BidiExtremalBoundaryCache = {
 }
 
 const bidiExtremalBoundaryCaches = new WeakMap<HTMLElement, BidiExtremalBoundaryCache>()
+const AUXILIARY_CARET_HIT_SELECTOR = [
+  '.editor-virtualized-caret',
+  '.editor-virtualized-caret-layer',
+  '.editor-virtualized-selection-layer',
+  '.editor-virtualized-hidden-character-layer',
+  '.editor-virtualized-fold-placeholder',
+].join(',')
+
+type HiddenCaretHitElement = {
+  readonly element: HTMLElement
+  readonly visibility: string
+}
 
 export type {
   HiddenCharactersMode,
@@ -1053,7 +1066,10 @@ function bidiOffsetFromViewportPoint(
   const localX = rowLocalXFromClientPoint(row, point.clientX)
   const edgeOffset = bidiEdgeOffset(view, row, localX, advance)
   if (edgeOffset !== null) return edgeOffset
-  return offset
+  if (offset !== null) return offset
+
+  const interpolated = interpolatedBidiOffset(view, row, localX, advance)
+  return interpolated ?? xToOffset(view, row, localX)
 }
 
 function bidiEdgeOffset(
@@ -1077,14 +1093,14 @@ function bidiExtremalBoundaries(
   advance: number,
 ): { readonly left: number; readonly right: number } {
   const cached = bidiExtremalBoundaryCaches.get(row.element)
-  if (cached && cached.geometry === row.geometryCache) return cached
+  if (cached && row.geometryCache !== null && cached.geometry === row.geometryCache) return cached
 
   const extent = rowTextExtent(view, row)
   const left = resolveExtremalBoundary(view, row, extent.left, extent.left + advance * 0.75)
   const right = resolveExtremalBoundary(view, row, extent.right, extent.right - advance * 0.75)
-  const resolved = { geometry: row.geometryCache, left, right }
-  bidiExtremalBoundaryCaches.set(row.element, resolved)
-  return resolved
+  const geometry = row.geometryCache
+  if (geometry !== null) bidiExtremalBoundaryCaches.set(row.element, { geometry, left, right })
+  return { left, right }
 }
 
 function resolveExtremalBoundary(
@@ -1094,7 +1110,7 @@ function resolveExtremalBoundary(
   sampleX: number,
 ): number {
   const offset = hitTestRowOffsetAtLocalX(row, sampleX)
-  if (offset === null) return row.startOffset
+  if (offset === null) return closestRowEndpointToX(view, row, edge)
 
   const candidates = [offset, offset - 1, offset + 1]
   for (const candidate of candidates) {
@@ -1103,6 +1119,26 @@ function resolveExtremalBoundary(
     if (positions.some((x) => Math.abs(x - edge) <= 1)) return candidate
   }
   return offset
+}
+
+function closestRowEndpointToX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  x: number,
+): number {
+  const startDistance = closestBoundaryDistance(view, row, row.startOffset, x)
+  const endDistance = closestBoundaryDistance(view, row, row.endOffset, x)
+  return startDistance <= endDistance ? row.startOffset : row.endOffset
+}
+
+function closestBoundaryDistance(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  x: number,
+): number {
+  const positions = boundaryPositionXs(view, row, offset)
+  return Math.min(...positions.map((position) => Math.abs(position - x)))
 }
 
 function hitTestRowOffsetAtLocalX(row: MountedVirtualizedTextRow, localX: number): number | null {
@@ -1118,8 +1154,111 @@ function hitTestRowOffset(
 ): number | null {
   const documentWithCaret = row.element.ownerDocument as DocumentWithCaretHitTesting
   const hit = hitTestBoundaryFromPoint(documentWithCaret, clientX, clientY)
-  if (!hit || !row.element.contains(hit.node)) return null
+  if (!hit) return null
+
+  const offset = rowOffsetFromCaretHit(row, hit)
+  if (offset !== null) return offset
+  return hitTestBelowAuxiliaryElement(row, hit.node, clientX, clientY)
+}
+
+function hitTestBelowAuxiliaryElement(
+  row: MountedVirtualizedTextRow,
+  node: Node,
+  clientX: number,
+  clientY: number,
+): number | null {
+  const first = auxiliaryCaretHitElement(node)
+  if (!first) return null
+
+  const hidden = [hideCaretHitElement(first)]
+  try {
+    return hitTestWithAuxiliaryElementsHidden(row, clientX, clientY, hidden)
+  } finally {
+    for (const entry of hidden) restoreCaretHitElement(entry)
+  }
+}
+
+function hitTestWithAuxiliaryElementsHidden(
+  row: MountedVirtualizedTextRow,
+  clientX: number,
+  clientY: number,
+  hidden: HiddenCaretHitElement[],
+): number | null {
+  const documentWithCaret = row.element.ownerDocument as DocumentWithCaretHitTesting
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const hit = hitTestBoundaryFromPoint(documentWithCaret, clientX, clientY)
+    if (!hit) return null
+
+    const offset = rowOffsetFromCaretHit(row, hit)
+    if (offset !== null) return offset
+
+    const auxiliary = auxiliaryCaretHitElement(hit.node)
+    if (!auxiliary || hidden.some((entry) => entry.element === auxiliary)) return null
+    hidden.push(hideCaretHitElement(auxiliary))
+  }
+  return null
+}
+
+function interpolatedBidiOffset(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  x: number,
+  advance: number,
+): number | null {
+  const extent = rowTextExtent(view, row)
+  const width = extent.right - extent.left
+  if (width <= 0 || row.text.length === 0) return null
+
+  const startOnLeft =
+    closestBoundaryDistance(view, row, row.startOffset, extent.left) <=
+    closestBoundaryDistance(view, row, row.endOffset, extent.left)
+  const visualFraction = Math.max(0, Math.min(1, (x - extent.left) / width))
+  const logicalFraction = startOnLeft ? visualFraction : 1 - visualFraction
+  const localGuess = Math.round(logicalFraction * row.text.length)
+  let closest: number | null = null
+  let closestDistance = Number.POSITIVE_INFINITY
+  for (const local of nearbyGraphemeOffsets(row.text, localGuess)) {
+    const candidate = row.startOffset + local
+    const distance = closestBoundaryDistance(view, row, candidate, x)
+    if (distance >= closestDistance) continue
+
+    closest = candidate
+    closestDistance = distance
+  }
+  return closestDistance <= advance ? closest : null
+}
+
+function nearbyGraphemeOffsets(text: string, localGuess: number): ReadonlySet<number> {
+  const offsets = new Set<number>()
+  for (const delta of [-1, 0, 1]) {
+    const local = Math.max(0, Math.min(text.length, localGuess + delta))
+    offsets.add(previousGraphemeBoundary(text, local))
+    offsets.add(nextGraphemeBoundary(text, local))
+  }
+  return offsets
+}
+
+function rowOffsetFromCaretHit(
+  row: MountedVirtualizedTextRow,
+  hit: { readonly node: Node; readonly offset: number },
+): number | null {
+  if (!row.element.contains(hit.node)) return null
   return offsetFromDomBoundary(row, hit.node, hit.offset)
+}
+
+function auxiliaryCaretHitElement(node: Node): HTMLElement | null {
+  const element = node instanceof Element ? node : node.parentElement
+  return element?.closest<HTMLElement>(AUXILIARY_CARET_HIT_SELECTOR) ?? null
+}
+
+function hideCaretHitElement(element: HTMLElement): HiddenCaretHitElement {
+  const visibility = element.style.visibility
+  element.style.visibility = 'hidden'
+  return { element, visibility }
+}
+
+function restoreCaretHitElement(entry: HiddenCaretHitElement): void {
+  entry.element.style.visibility = entry.visibility
 }
 
 function rowCharacterAdvance(

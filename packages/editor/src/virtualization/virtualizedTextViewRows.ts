@@ -1007,7 +1007,7 @@ function updateRowTextForSameLineEdit(
     return false
   }
 
-  if (!isSimpleRowText(text)) {
+  if (memoizedContainsRTL(view, text)) {
     updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
     return false
   }

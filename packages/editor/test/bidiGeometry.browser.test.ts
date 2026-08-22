@@ -16,6 +16,7 @@ import {
   measureRowContentWidth,
   offsetToX,
   resetRowGeometrySweepCount,
+  rowTextExtent,
   unitRectForOffset,
   xToOffset,
 } from '../src/virtualization/virtualizedTextViewGeometry'
@@ -377,6 +378,58 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     fixture!.view.setHiddenCharacters('show')
     fixture!.view.setSelection(row.startOffset + 2, row.startOffset + 9)
     expect(clickRow(fixture!, row, x)).toBe(before)
+  })
+
+  it('falls back to measured geometry when a caret API reports an overlay descendant', () => {
+    const row = fixture!.rows.nested
+    fixture!.view.setHiddenCharacters('show')
+    const marker = row.element.querySelector<HTMLElement>(
+      `[data-editor-hidden-character-offset="${row.startOffset + 3}"]`,
+    )
+    const markerText = marker?.firstChild
+    if (!marker || !markerText) throw new Error('nested whitespace marker was not mounted')
+
+    const localX = Number.parseFloat(marker.style.left) + Number.parseFloat(marker.style.width) / 2
+    const expected = clickRow(fixture!, row, localX)
+    withFirstCaretPositionFromPointResult({ node: markerText, offset: 0 }, () => {
+      expect(clickRow(fixture!, row, localX)).toBe(expected)
+    })
+  })
+
+  it('uses measured geometry for both visual edges when caret APIs are unavailable', () => {
+    withCaretHitTestingDisabled(() => assertRtlEdgeClicks(fixture!, 'pureHebrew'))
+  })
+
+  it('does not reuse extremal offsets when a row element is recycled', () => {
+    const mounted = mountRecyclingRtlView()
+    try {
+      withCaretHitTestingDisabled(() => assertRecycledExtremalOffset(mounted))
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('measures text extent independently of overlays inside a block-lane inset', () => {
+    const mounted = mountStandaloneView(BIDI_CORPUS.nested)
+    try {
+      mounted.view.setBlockLanes([
+        { id: 'left-rail', startBufferRow: 0, endBufferRow: 0, placement: 'left', widthPx: 24 },
+      ])
+      mounted.view.setHiddenCharacters('show')
+      mounted.view.setSelection(2, 9)
+
+      const oracle = rowOracleExtent(mounted.row)
+      const painted = rowTextExtent(mounted.internal, mounted.row)
+      expect(oracle.left).toBeGreaterThanOrEqual(24)
+      expect(painted.left).toBeCloseTo(oracle.left, 0)
+      expect(painted.right).toBeCloseTo(oracle.right, 0)
+
+      mounted.view.clearSelection()
+      mounted.view.setHiddenCharacters('hidden')
+      expect(rowTextExtent(mounted.internal, mounted.row)).toEqual(painted)
+    } finally {
+      mounted.dispose()
+    }
   })
 
   it('does not reach the whole-row boundary sweep on an unchunked 6,000-character RTL row', () => {
@@ -901,6 +954,34 @@ function withCaretPositionFromPointDisabled(run: () => void): void {
   }
 }
 
+function withCaretHitTestingDisabled(run: () => void): void {
+  const position = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint')
+  const range = Object.getOwnPropertyDescriptor(document, 'caretRangeFromPoint')
+  Object.defineProperty(document, 'caretPositionFromPoint', {
+    configurable: true,
+    value: undefined,
+  })
+  Object.defineProperty(document, 'caretRangeFromPoint', {
+    configurable: true,
+    value: undefined,
+  })
+  try {
+    run()
+  } finally {
+    restoreDocumentProperty('caretPositionFromPoint', position)
+    restoreDocumentProperty('caretRangeFromPoint', range)
+  }
+}
+
+function restoreDocumentProperty(name: string, descriptor: PropertyDescriptor | undefined): void {
+  if (descriptor) {
+    Object.defineProperty(document, name, descriptor)
+    return
+  }
+
+  delete (document as unknown as Record<string, unknown>)[name]
+}
+
 function withCaretPositionFromPointResult(
   result: { readonly node: Node; readonly offset: number },
   run: () => void,
@@ -915,6 +996,29 @@ function withCaretPositionFromPointResult(
   } finally {
     if (own) Object.defineProperty(document, 'caretPositionFromPoint', own)
     else delete (document as { caretPositionFromPoint?: unknown }).caretPositionFromPoint
+  }
+}
+
+function withFirstCaretPositionFromPointResult(
+  result: { readonly node: Node; readonly offset: number },
+  run: () => void,
+): void {
+  const own = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint')
+  const caretPositionFromPoint = document.caretPositionFromPoint.bind(document)
+  let first = true
+  Object.defineProperty(document, 'caretPositionFromPoint', {
+    configurable: true,
+    value: (x: number, y: number) => {
+      if (!first) return caretPositionFromPoint(x, y)
+
+      first = false
+      return { offsetNode: result.node, offset: result.offset }
+    },
+  })
+  try {
+    run()
+  } finally {
+    restoreDocumentProperty('caretPositionFromPoint', own)
   }
 }
 
@@ -944,6 +1048,36 @@ type StandaloneView = {
   readonly internal: BidiGeometryFixture['internal']
   readonly row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']]
   dispose(): void
+}
+
+function mountRecyclingRtlView(): StandaloneView {
+  const lines = Array.from({ length: 80 }, () => BIDI_CORPUS.pureHebrew)
+  return mountStandaloneView(lines.join('\n'))
+}
+
+function assertRecycledExtremalOffset(mounted: StandaloneView): void {
+  const original = mounted.view.getState().mountedRows[0]!
+  const element = original.element
+  clickRowAtVisualLeft(mounted.view, original)
+
+  mounted.view.scrollElement.scrollTop = 40 * 20
+  mounted.view.setScrollMetrics(40 * 20, 20, 600)
+  const recycled = mounted.view
+    .getState()
+    .mountedRows.find((candidate) => candidate.element === element)
+  if (!recycled) throw new Error('RTL row element was not recycled')
+
+  expect(clickRowAtVisualLeft(mounted.view, recycled)).toBe(recycled.endOffset)
+}
+
+function clickRowAtVisualLeft(
+  view: VirtualizedTextView,
+  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
+): number | null {
+  const extent = rowOracleExtent(row)
+  const point = rowClientPoint(row, extent.left + view.getState().metrics.characterWidth * 0.25)
+  const viewport = view.scrollElement.getBoundingClientRect()
+  return view.textOffsetFromPoint(point.x, viewport.top + 10)
 }
 
 function mountStandaloneView(text: string, threshold = 4_096, scale = 1): StandaloneView {

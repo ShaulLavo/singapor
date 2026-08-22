@@ -960,7 +960,7 @@ test/hiddenCharacters.test.ts` (173 tests); `bun run typecheck`; `bun run lint` 
 pre-existing `packedTokens.ts` warnings, no errors).
 
 **Tier A final verification (2026-08-22).** Passing commands: editor package `bun run test` (128
-files, 2,051 tests); editor browser `bun run test --project browser` (8 files, 72 tests); repository
+files, 2,056 tests); editor browser `bun run test --project browser` (8 files, 76 tests); repository
 `bun run typecheck`; repository `bun run lint` (the same two pre-existing warnings, no errors);
 repository `bun run format:check` (17 packages). The repository formatter was run with explicit user
 authorization and retained its incidental formatting of pre-existing Editor/LSP work.
@@ -973,6 +973,12 @@ regression in `test/bidiGeometry.browser.test.ts`. Oversized-grapheme detection 
 renderer segmentation pass for direct rows, while styled inline rows retain a whole-row preflight;
 the stabilized 6,000-character probe passed its 5× ceiling in five consecutive browser runs. The
 full verification commands above were rerun.
+
+The second review pass adds bounded point fallback when a caret API misses or reports an overlay;
+edge fallback compares the browser-measured logical endpoints; extremal caches never accept a null
+geometry identity across recycled rows; and row extents range over source chunks rather than
+selection, hidden-character, or fold overlays. Non-RTL Unicode rows retain their in-place same-line
+edit path. The 6,000-character drag probe still reaches no whole-row boundary sweep.
 
 > **Tier A ends here.** Everything below is a different project with a different budget.
 

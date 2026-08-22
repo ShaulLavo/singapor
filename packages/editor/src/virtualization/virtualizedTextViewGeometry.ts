@@ -1506,21 +1506,49 @@ function measuredTextSegmentRect(
   return measured
 }
 
-/**
- * One rect for the whole chunk, so a row's extent costs a read per chunk rather than one per
- * grapheme. The union rect is the one wanted here — a chunk spans several text nodes and its client
- * rects come back one per node.
- */
 function measuredRowContentsRect(
   measurement: RowMeasurementContext,
 ): { readonly left: number; readonly width: number } | null {
+  let left = Number.POSITIVE_INFINITY
+  let right = Number.NEGATIVE_INFINITY
+  for (const chunk of measurement.row.chunks) {
+    const measured = measuredChunkContentsRect(measurement, chunk)
+    if (!measured) continue
+
+    left = Math.min(left, measured.left)
+    right = Math.max(right, measured.left + measured.width)
+  }
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return null
+
+  return { left, width: Math.max(0, right - left) }
+}
+
+/**
+ * One union rect per text chunk. Selecting the row element itself would also select its absolute
+ * selection/hidden-character layers and trailing fold placeholder, making paint state part of the
+ * source text's extent.
+ */
+function measuredChunkContentsRect(
+  measurement: RowMeasurementContext,
+  chunk: VirtualizedTextChunk,
+): { readonly left: number; readonly width: number } | null {
+  const first = chunk.parts[0]
+  const last = chunk.parts.at(-1)
+  if (!first || !last) return null
+
   const scratch = measurementScratchFor(measurement.row.element.ownerDocument)
-  scratch.range.selectNodeContents(measurement.row.element)
+  scratch.range.setStartBefore(renderedPartNode(first))
+  scratch.range.setEndAfter(renderedPartNode(last))
   const rect = scratch.range.getBoundingClientRect()
   scratch.range.selectNodeContents(scratch.parking)
   if (rect.width <= 0) return null
 
   return rowLocalRect(measurement, rect)
+}
+
+function renderedPartNode(part: VirtualizedTextChunkPart): Node {
+  if (part.kind === 'text') return part.node
+  return part.element
 }
 
 function measurementScratchFor(document: Document): MeasurementScratch {

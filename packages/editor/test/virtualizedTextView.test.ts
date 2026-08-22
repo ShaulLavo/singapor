@@ -1134,6 +1134,20 @@ describe('VirtualizedTextView', () => {
     expect(replaceData).toHaveBeenCalledWith(1, 0, 'X')
   })
 
+  it('keeps the same-line text-node patch for non-RTL Unicode rows', () => {
+    view.setText('café')
+    view.setScrollMetrics(0, 20)
+    const before = view.getState().mountedRows[0]!
+    const replaceData = vi.spyOn(before.textNode, 'replaceData')
+
+    view.applyEdit({ from: 4, to: 4, text: '!' }, 'café!')
+
+    const after = view.getState().mountedRows[0]!
+    expect(after.textNode).toBe(before.textNode)
+    expect(after.textNode.data).toBe('café!')
+    expect(replaceData).toHaveBeenCalledWith(4, 0, '!')
+  })
+
   it('does not read horizontal scroll while re-rendering direct rows', () => {
     view.setText('abc\ndef')
     view.setScrollMetrics(0, 40)

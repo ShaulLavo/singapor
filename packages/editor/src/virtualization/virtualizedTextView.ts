@@ -162,7 +162,13 @@ type BidiExtremalBoundaryCache = {
   readonly right: number
 }
 
+type BidiVisualOrientationCache = {
+  readonly geometry: unknown
+  readonly startOnLeft: boolean
+}
+
 const bidiExtremalBoundaryCaches = new WeakMap<HTMLElement, BidiExtremalBoundaryCache>()
+const bidiVisualOrientationCaches = new WeakMap<HTMLElement, BidiVisualOrientationCache>()
 const AUXILIARY_CARET_HIT_SELECTOR = [
   '.editor-virtualized-caret',
   '.editor-virtualized-caret-layer',
@@ -1209,15 +1215,13 @@ function interpolatedBidiOffset(
   const width = extent.right - extent.left
   if (width <= 0 || row.text.length === 0) return null
 
-  const startOnLeft =
-    closestBoundaryDistance(view, row, row.startOffset, extent.left) <=
-    closestBoundaryDistance(view, row, row.endOffset, extent.left)
+  const startOnLeft = rowStartsOnVisualLeft(view, row, extent.left)
   const visualFraction = Math.max(0, Math.min(1, (x - extent.left) / width))
   const logicalFraction = startOnLeft ? visualFraction : 1 - visualFraction
   const localGuess = Math.round(logicalFraction * row.text.length)
   let closest: number | null = null
   let closestDistance = Number.POSITIVE_INFINITY
-  for (const local of nearbyGraphemeOffsets(row.text, localGuess)) {
+  for (const local of candidateGraphemeOffsets(row.text, localGuess)) {
     const candidate = row.startOffset + local
     const distance = closestBoundaryDistance(view, row, candidate, x)
     if (distance >= closestDistance) continue
@@ -1228,13 +1232,34 @@ function interpolatedBidiOffset(
   return closestDistance <= advance ? closest : null
 }
 
-function nearbyGraphemeOffsets(text: string, localGuess: number): ReadonlySet<number> {
-  const offsets = new Set<number>()
-  for (const delta of [-1, 0, 1]) {
-    const local = Math.max(0, Math.min(text.length, localGuess + delta))
-    offsets.add(previousGraphemeBoundary(text, local))
-    offsets.add(nextGraphemeBoundary(text, local))
+function rowStartsOnVisualLeft(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  left: number,
+): boolean {
+  const cached = bidiVisualOrientationCaches.get(row.element)
+  if (cached && row.geometryCache !== null && cached.geometry === row.geometryCache) {
+    return cached.startOnLeft
   }
+
+  const startOnLeft =
+    closestBoundaryDistance(view, row, row.startOffset, left) <=
+    closestBoundaryDistance(view, row, row.endOffset, left)
+  const geometry = row.geometryCache
+  if (geometry !== null) bidiVisualOrientationCaches.set(row.element, { geometry, startOnLeft })
+  return startOnLeft
+}
+
+function candidateGraphemeOffsets(text: string, localGuess: number): ReadonlySet<number> {
+  const offsets = new Set<number>()
+  const local = Math.max(0, Math.min(text.length, localGuess))
+  const previous = previousGraphemeBoundary(text, local)
+  offsets.add(previous)
+  const current = nextGraphemeBoundary(text, previous)
+  offsets.add(current)
+  if (current !== local) return offsets
+
+  offsets.add(nextGraphemeBoundary(text, local))
   return offsets
 }
 

@@ -279,6 +279,11 @@
   pointer-events: none;
 }
 
+.editor-virtualized-bidi-ceiling {
+  color: var(--editor-hidden-character-foreground);
+  user-select: none;
+}
+
 .editor-virtualized-selection-layer {
   height: var(--editor-row-height);
   left: 0;

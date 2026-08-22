@@ -30,6 +30,11 @@ vi.mock('../src/virtualization/virtualizedTextViewGeometry', async (importOrigin
       renderPhases.events?.push('read')
       return actual.offsetToX(...args)
     },
+    unitRectForOffset: (...args: Parameters<typeof actual.unitRectForOffset>) => {
+      geometry.lookups += 1
+      renderPhases.events?.push('read')
+      return actual.unitRectForOffset(...args)
+    },
   }
 })
 

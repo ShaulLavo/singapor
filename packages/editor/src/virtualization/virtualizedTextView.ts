@@ -1,4 +1,5 @@
 import type { FoldMap } from '../foldMap'
+import { nextGraphemeBoundary, previousGraphemeBoundary } from '../graphemes'
 import type { ResolvedSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
 import {
@@ -25,6 +26,7 @@ import {
   createScrollElement,
   createVirtualizerOptions,
   getDefaultHighlightRegistry,
+  hitTestBoundaryFromPoint,
   indexFoldMarkersByKey,
   indexFoldMarkersByStartRow,
   inlineMapMatchesText,
@@ -88,9 +90,14 @@ import {
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
 import {
+  boundaryPositionXs,
   clearRowGeometryCaches,
   knownRowContentWidth,
   measureRowContentWidth,
+  offsetFromDomBoundary,
+  rowLocalXFromClientPoint,
+  rowMightContainRTL,
+  rowTextExtent,
   xToOffset,
 } from './virtualizedTextViewGeometry'
 import {
@@ -145,7 +152,35 @@ import type {
   VirtualizedTextViewOptions,
   VirtualizedTextViewScrollMode,
   VirtualizedTextViewState,
+  DocumentWithCaretHitTesting,
+  MountedVirtualizedTextRow,
 } from './virtualizedTextViewTypes'
+
+type BidiExtremalBoundaryCache = {
+  readonly geometry: unknown
+  readonly left: number
+  readonly right: number
+}
+
+type BidiVisualOrientationCache = {
+  readonly geometry: unknown
+  readonly startOnLeft: boolean
+}
+
+const bidiExtremalBoundaryCaches = new WeakMap<HTMLElement, BidiExtremalBoundaryCache>()
+const bidiVisualOrientationCaches = new WeakMap<HTMLElement, BidiVisualOrientationCache>()
+const AUXILIARY_CARET_HIT_SELECTOR = [
+  '.editor-virtualized-caret',
+  '.editor-virtualized-caret-layer',
+  '.editor-virtualized-selection-layer',
+  '.editor-virtualized-hidden-character-layer',
+  '.editor-virtualized-fold-placeholder',
+].join(',')
+
+type HiddenCaretHitElement = {
+  readonly element: HTMLElement
+  readonly visibility: string
+}
 
 export type {
   HiddenCharactersMode,
@@ -805,6 +840,9 @@ export class VirtualizedTextView {
     if (!isDocumentTextDisplayRow(view.model.rows[row])) return null
 
     const mounted = view.rowElements.get(row)
+    if (mounted?.kind === 'text' && rowMightContainRTL(view, mounted)) {
+      return bidiOffsetFromViewportPoint(view, mounted, metrics)
+    }
     if (mounted?.kind === 'text') return xToOffset(view, mounted, metrics.x)
 
     const column = Math.floor(metrics.x / Math.max(1, view.metrics.characterWidth))
@@ -1020,6 +1058,242 @@ export class VirtualizedTextView {
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
   }
+}
+
+type ViewportPointMetrics = ReturnType<typeof viewportPointMetrics>
+
+function bidiOffsetFromViewportPoint(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  point: ViewportPointMetrics,
+): number | null {
+  const offset = hitTestRowOffset(row, point.clientX, point.clientY)
+  const advance = rowCharacterAdvance(view, row)
+  const localX = rowLocalXFromClientPoint(row, point.clientX)
+  const edgeOffset = bidiEdgeOffset(view, row, localX, advance)
+  if (edgeOffset !== null) return edgeOffset
+  if (offset !== null) return offset
+
+  const interpolated = interpolatedBidiOffset(view, row, localX, advance)
+  return interpolated ?? xToOffset(view, row, localX)
+}
+
+function bidiEdgeOffset(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  x: number,
+  advance: number,
+): number | null {
+  const extent = rowTextExtent(view, row)
+  const halfAdvance = advance / 2
+  if (x > extent.left + halfAdvance && x < extent.right - halfAdvance) return null
+
+  const extremal = bidiExtremalBoundaries(view, row, advance)
+  if (x <= extent.left + halfAdvance) return extremal.left
+  return extremal.right
+}
+
+function bidiExtremalBoundaries(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  advance: number,
+): { readonly left: number; readonly right: number } {
+  const cached = bidiExtremalBoundaryCaches.get(row.element)
+  if (cached && row.geometryCache !== null && cached.geometry === row.geometryCache) return cached
+
+  const extent = rowTextExtent(view, row)
+  const left = resolveExtremalBoundary(view, row, extent.left, extent.left + advance * 0.75)
+  const right = resolveExtremalBoundary(view, row, extent.right, extent.right - advance * 0.75)
+  const geometry = row.geometryCache
+  if (geometry !== null) bidiExtremalBoundaryCaches.set(row.element, { geometry, left, right })
+  return { left, right }
+}
+
+function resolveExtremalBoundary(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  edge: number,
+  sampleX: number,
+): number {
+  const offset = hitTestRowOffsetAtLocalX(row, sampleX)
+  if (offset === null) return closestRowEndpointToX(view, row, edge)
+
+  const candidates = [offset, offset - 1, offset + 1]
+  for (const candidate of candidates) {
+    if (candidate < row.startOffset || candidate > row.endOffset) continue
+    const positions = boundaryPositionXs(view, row, candidate)
+    if (positions.some((x) => Math.abs(x - edge) <= 1)) return candidate
+  }
+  return offset
+}
+
+function closestRowEndpointToX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  x: number,
+): number {
+  const startDistance = closestBoundaryDistance(view, row, row.startOffset, x)
+  const endDistance = closestBoundaryDistance(view, row, row.endOffset, x)
+  return startDistance <= endDistance ? row.startOffset : row.endOffset
+}
+
+function closestBoundaryDistance(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  x: number,
+): number {
+  const positions = boundaryPositionXs(view, row, offset)
+  return Math.min(...positions.map((position) => Math.abs(position - x)))
+}
+
+function hitTestRowOffsetAtLocalX(row: MountedVirtualizedTextRow, localX: number): number | null {
+  const rect = row.element.getBoundingClientRect()
+  const scale = row.element.offsetWidth > 0 ? rect.width / row.element.offsetWidth : 1
+  return hitTestRowOffset(row, rect.left + localX * scale, rect.top + rect.height / 2)
+}
+
+function hitTestRowOffset(
+  row: MountedVirtualizedTextRow,
+  clientX: number,
+  clientY: number,
+): number | null {
+  const documentWithCaret = row.element.ownerDocument as DocumentWithCaretHitTesting
+  const hit = hitTestBoundaryFromPoint(documentWithCaret, clientX, clientY)
+  if (!hit) return null
+
+  const offset = rowOffsetFromCaretHit(row, hit)
+  if (offset !== null) return offset
+  return hitTestBelowAuxiliaryElement(row, hit.node, clientX, clientY)
+}
+
+function hitTestBelowAuxiliaryElement(
+  row: MountedVirtualizedTextRow,
+  node: Node,
+  clientX: number,
+  clientY: number,
+): number | null {
+  const first = auxiliaryCaretHitElement(node)
+  if (!first) return null
+
+  const hidden = [hideCaretHitElement(first)]
+  try {
+    return hitTestWithAuxiliaryElementsHidden(row, clientX, clientY, hidden)
+  } finally {
+    for (const entry of hidden) restoreCaretHitElement(entry)
+  }
+}
+
+function hitTestWithAuxiliaryElementsHidden(
+  row: MountedVirtualizedTextRow,
+  clientX: number,
+  clientY: number,
+  hidden: HiddenCaretHitElement[],
+): number | null {
+  const documentWithCaret = row.element.ownerDocument as DocumentWithCaretHitTesting
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const hit = hitTestBoundaryFromPoint(documentWithCaret, clientX, clientY)
+    if (!hit) return null
+
+    const offset = rowOffsetFromCaretHit(row, hit)
+    if (offset !== null) return offset
+
+    const auxiliary = auxiliaryCaretHitElement(hit.node)
+    if (!auxiliary || hidden.some((entry) => entry.element === auxiliary)) return null
+    hidden.push(hideCaretHitElement(auxiliary))
+  }
+  return null
+}
+
+function interpolatedBidiOffset(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  x: number,
+  advance: number,
+): number | null {
+  const extent = rowTextExtent(view, row)
+  const width = extent.right - extent.left
+  if (width <= 0 || row.text.length === 0) return null
+
+  const startOnLeft = rowStartsOnVisualLeft(view, row, extent.left)
+  const visualFraction = Math.max(0, Math.min(1, (x - extent.left) / width))
+  const logicalFraction = startOnLeft ? visualFraction : 1 - visualFraction
+  const localGuess = Math.round(logicalFraction * row.text.length)
+  let closest: number | null = null
+  let closestDistance = Number.POSITIVE_INFINITY
+  for (const local of candidateGraphemeOffsets(row.text, localGuess)) {
+    const candidate = row.startOffset + local
+    const distance = closestBoundaryDistance(view, row, candidate, x)
+    if (distance >= closestDistance) continue
+
+    closest = candidate
+    closestDistance = distance
+  }
+  return closestDistance <= advance ? closest : null
+}
+
+function rowStartsOnVisualLeft(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  left: number,
+): boolean {
+  const cached = bidiVisualOrientationCaches.get(row.element)
+  if (cached && row.geometryCache !== null && cached.geometry === row.geometryCache) {
+    return cached.startOnLeft
+  }
+
+  const startOnLeft =
+    closestBoundaryDistance(view, row, row.startOffset, left) <=
+    closestBoundaryDistance(view, row, row.endOffset, left)
+  const geometry = row.geometryCache
+  if (geometry !== null) bidiVisualOrientationCaches.set(row.element, { geometry, startOnLeft })
+  return startOnLeft
+}
+
+function candidateGraphemeOffsets(text: string, localGuess: number): ReadonlySet<number> {
+  const offsets = new Set<number>()
+  const local = Math.max(0, Math.min(text.length, localGuess))
+  const previous = previousGraphemeBoundary(text, local)
+  offsets.add(previous)
+  const current = nextGraphemeBoundary(text, previous)
+  offsets.add(current)
+  if (current !== local) return offsets
+
+  offsets.add(nextGraphemeBoundary(text, local))
+  return offsets
+}
+
+function rowOffsetFromCaretHit(
+  row: MountedVirtualizedTextRow,
+  hit: { readonly node: Node; readonly offset: number },
+): number | null {
+  if (!row.element.contains(hit.node)) return null
+  return offsetFromDomBoundary(row, hit.node, hit.offset)
+}
+
+function auxiliaryCaretHitElement(node: Node): HTMLElement | null {
+  const element = node instanceof Element ? node : node.parentElement
+  return element?.closest<HTMLElement>(AUXILIARY_CARET_HIT_SELECTOR) ?? null
+}
+
+function hideCaretHitElement(element: HTMLElement): HiddenCaretHitElement {
+  const visibility = element.style.visibility
+  element.style.visibility = 'hidden'
+  return { element, visibility }
+}
+
+function restoreCaretHitElement(entry: HiddenCaretHitElement): void {
+  entry.element.style.visibility = entry.visibility
+}
+
+function rowCharacterAdvance(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): number {
+  const rect = row.element.getBoundingClientRect()
+  const scale = row.element.offsetWidth > 0 ? rect.width / row.element.offsetWidth : 1
+  if (!Number.isFinite(scale) || scale <= 0) return Math.max(1, view.metrics.characterWidth)
+  return Math.max(1, view.metrics.characterWidth / scale)
 }
 
 function raiseVisualColumnsSeen(view: VirtualizedTextViewInternal, width: number): boolean {

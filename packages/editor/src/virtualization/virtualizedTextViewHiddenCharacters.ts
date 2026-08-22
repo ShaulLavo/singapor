@@ -1,7 +1,7 @@
 import { measureWhitespaceDotGlyph, type WhitespaceDotGlyph } from './browserMetrics'
 import { setStyleValue } from './virtualizedTextViewHelpers'
 import { isDocumentTextDisplayRow } from '../displayTransforms'
-import { offsetToX } from './virtualizedTextViewGeometry'
+import { rangeSegments, unitRectForOffset } from './virtualizedTextViewGeometry'
 import {
   normalizeSuspiciousCharactersOptions,
   type ResolvedSuspiciousCharactersOptions,
@@ -293,13 +293,13 @@ function appendWhitespaceMarker(
   if (end <= offset) return
   if (!shouldShowHiddenCharacter(context, kind, localIndex, offset)) return
 
-  const left = offsetToX(view, row, offset)
-  const right = offsetToX(view, row, end)
+  const rect = unitRectForOffset(view, row, offset)
+  if (!rect) return
   markers.push({
     kind,
     offset,
-    left: Math.min(left, right),
-    width: Math.abs(right - left),
+    left: rect.left,
+    width: rect.width,
     glyph: hiddenCharacterGlyph(context, kind),
   })
 }
@@ -331,27 +331,26 @@ function appendSuspiciousCharacterMarkers(
       if (range.start < reportedThrough) continue
 
       reportedThrough = range.end
-      markers.push(suspiciousCharacterMarker(view, row, line, range))
+      markers.push(...suspiciousCharacterMarkers(view, row, line, range))
     }
   }
 }
 
-function suspiciousCharacterMarker(
+function suspiciousCharacterMarkers(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   line: SuspiciousCharacterScanLine,
   range: SuspiciousCharacterRange,
-): HiddenCharacterMarker {
+): readonly HiddenCharacterMarker[] {
   const offset = rowOffsetForLocalIndex(row, range.start - line.start)
-  const left = offsetToX(view, row, offset)
-  const right = offsetToX(view, row, rowOffsetForLocalIndex(row, range.end - line.start))
-  return {
+  const end = rowOffsetForLocalIndex(row, range.end - line.start)
+  return rangeSegments(view, row, offset, end).map(({ left, width }) => ({
     kind: range.kind,
     offset,
-    left: Math.min(left, right),
-    width: Math.abs(right - left),
+    left,
+    width,
     glyph: NO_GLYPH,
-  }
+  }))
 }
 
 /**

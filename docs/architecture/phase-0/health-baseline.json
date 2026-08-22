@@ -83,7 +83,12 @@
       ]
     ],
     "lsp-core": [],
-    "lsp-plugin": [],
+    "lsp-plugin": [
+      [
+        "packages/lsp-plugin/src/lspConnection.ts",
+        "packages/lsp-plugin/src/types.ts"
+      ]
+    ],
     "typescript-lsp": []
   }
 }

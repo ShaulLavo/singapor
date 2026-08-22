@@ -1134,6 +1134,20 @@ describe('VirtualizedTextView', () => {
     expect(replaceData).toHaveBeenCalledWith(1, 0, 'X')
   })
 
+  it('keeps the same-line text-node patch for non-RTL Unicode rows', () => {
+    view.setText('café')
+    view.setScrollMetrics(0, 20)
+    const before = view.getState().mountedRows[0]!
+    const replaceData = vi.spyOn(before.textNode, 'replaceData')
+
+    view.applyEdit({ from: 4, to: 4, text: '!' }, 'café!')
+
+    const after = view.getState().mountedRows[0]!
+    expect(after.textNode).toBe(before.textNode)
+    expect(after.textNode.data).toBe('café!')
+    expect(replaceData).toHaveBeenCalledWith(4, 0, '!')
+  })
+
   it('does not read horizontal scroll while re-rendering direct rows', () => {
     view.setText('abc\ndef')
     view.setScrollMetrics(0, 40)
@@ -1434,8 +1448,9 @@ describe('VirtualizedTextView', () => {
     view.setSelection(0, 5_000)
 
     expect(selectionRanges(container)).toHaveLength(1)
-    expect(selectionRanges(container)[0]?.getAttribute('data-editor-selection-start')).toBe('0')
-    expect(selectionRanges(container)[0]?.getAttribute('data-editor-selection-end')).toBe('1000')
+    expect(selectionRanges(container)[0]?.dataset.editorSelectionRect).toBeDefined()
+    expect(selectionRanges(container)[0]?.dataset.editorSelectionStart).toBeUndefined()
+    expect(selectionRanges(container)[0]?.dataset.editorSelectionEnd).toBeUndefined()
   })
 
   it('repaints stored selections when new rows mount', () => {
@@ -2346,8 +2361,9 @@ describe('VirtualizedTextView', () => {
 
     const ranges = selectionRanges(container)
     expect(ranges).toHaveLength(1)
-    expect(ranges[0]?.getAttribute('data-editor-selection-start')).toBe('1')
-    expect(ranges[0]?.getAttribute('data-editor-selection-end')).toBe('4')
+    expect(ranges[0]?.dataset.editorSelectionRect).toBeDefined()
+    expect(ranges[0]?.dataset.editorSelectionStart).toBeUndefined()
+    expect(ranges[0]?.dataset.editorSelectionEnd).toBeUndefined()
     expect(highlightsMap.has('test-selection')).toBe(false)
 
     view.setSelection(0, 0)
@@ -2361,12 +2377,14 @@ describe('VirtualizedTextView', () => {
     view.setSelection(0, 3)
 
     const ranges = selectionRanges(container)
-    const emptyRowRange = ranges.find((range) => range.dataset.editorSelectionStart === '2')
+    const emptyRow = view.getState().mountedRows.find((row) => row.index === 1)!
+    const emptyRowRange = emptyRow.element.querySelector<HTMLElement>(
+      '.editor-virtualized-selection-range',
+    )
     const characterWidth = view.getState().metrics.characterWidth
 
     expect(ranges).toHaveLength(2)
     expect(emptyRowRange).toBeDefined()
-    expect(emptyRowRange?.dataset.editorSelectionEnd).toBe('2')
     expect(Number.parseFloat(emptyRowRange!.style.left)).toBe(0)
     expect(Number.parseFloat(emptyRowRange!.style.width)).toBeCloseTo(characterWidth)
   })
@@ -2377,11 +2395,13 @@ describe('VirtualizedTextView', () => {
     view.setSelection(0, 2)
 
     const ranges = selectionRanges(container)
-    const trailingRowRange = ranges.find((range) => range.dataset.editorSelectionStart === '2')
+    const trailingRow = view.getState().mountedRows.find((row) => row.index === 1)!
+    const trailingRowRange = trailingRow.element.querySelector<HTMLElement>(
+      '.editor-virtualized-selection-range',
+    )
 
     expect(ranges).toHaveLength(2)
     expect(trailingRowRange).toBeDefined()
-    expect(trailingRowRange?.dataset.editorSelectionEnd).toBe('2')
   })
 
   it('renders control characters as visible cells with selection geometry', () => {
@@ -2393,8 +2413,7 @@ describe('VirtualizedTextView', () => {
     const characterWidth = view.getState().metrics.characterWidth
 
     expect(view.scrollElement.textContent).toContain('\u2400PNG\u2400\uFFFD')
-    expect(range.dataset.editorSelectionStart).toBe('0')
-    expect(range.dataset.editorSelectionEnd).toBe('6')
+    expect(range.dataset.editorSelectionRect).toBeDefined()
     expect(Number.parseFloat(range.style.width)).toBeGreaterThan(0)
 
     view.setSelection(1, 1)

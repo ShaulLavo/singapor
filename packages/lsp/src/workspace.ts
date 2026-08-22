@@ -130,10 +130,7 @@ export class LspWorkspace {
    * `didChange` — `updateDocument` sends nothing when the text already matches,
    * which is the ordinary case of two views on one buffer.
    */
-  private reopenDocument(
-    open: MutableLspDocument,
-    options: LspDocumentOpenOptions,
-  ): LspDocument {
+  private reopenDocument(open: MutableLspDocument, options: LspDocumentOpenOptions): LspDocument {
     this.openCountsByUri.set(options.uri, (this.openCountsByUri.get(options.uri) ?? 1) + 1)
     if (open.languageId !== options.languageId) {
       throw new Error(

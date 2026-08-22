@@ -215,6 +215,7 @@ async function connectedEditor(options: {
       id: jsonMessage(transport.sent[0]).id,
       result: {
         capabilities: {
+          completionProvider: {},
           textDocumentSync: { openClose: true, change: 2 },
           ...options.capabilities,
         },

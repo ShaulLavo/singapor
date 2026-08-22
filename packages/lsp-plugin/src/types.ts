@@ -12,6 +12,28 @@ import type { LanguageServerSemanticTokensOptions } from './semanticTokens'
 
 export type LanguageServerStatus = 'idle' | 'loading' | 'ready' | 'error'
 
+export const LANGUAGE_SERVER_FEATURE_IDS = [
+  'completion',
+  'hover',
+  'navigation',
+  'signatureHelp',
+  'diagnostics',
+  'codeActions',
+  'formatting',
+  'rename',
+  'documentHighlights',
+  'semanticTokens',
+] as const
+
+export type LanguageServerFeatureId = (typeof LANGUAGE_SERVER_FEATURE_IDS)[number]
+
+export type LanguageServerFeatureRanks = Partial<Readonly<Record<LanguageServerFeatureId, number>>>
+
+export type LanguageServerReadyNotification = {
+  readonly method: string
+  readonly params: unknown
+}
+
 /** The connection a host is handed the moment it exists. See LanguageServerPluginOptions. */
 export type LanguageServerConnectionContext = {
   readonly client: LspClient
@@ -119,6 +141,41 @@ export type LanguageServerPluginOptions = {
   ) => void | boolean
   readonly onOpenReferences?: (result: LanguageServerReferencesResult) => void | boolean
   readonly onError?: (error: unknown) => void
+}
+
+export type LanguageServerLaneOptions = {
+  readonly id: string
+  readonly features: LanguageServerFeatureRanks
+  readonly rootUri?: lsp.DocumentUri | null
+  readonly initializationOptions?: unknown
+  readonly timeoutMs?: number
+  readonly capabilities?: lsp.ClientCapabilities
+  readonly clientInfo?: lsp.InitializeParams['clientInfo']
+  readonly notificationHandlers?: Readonly<Record<string, LspNotificationHandler<LspClient>>>
+  readonly webSocketRoute: string | URL
+  readonly webSocketTransportOptions?: LspWebSocketTransportOptions
+  readonly connectionProvider?: LspConnectionProvider
+  readonly readyNotifications?: readonly LanguageServerReadyNotification[]
+  onConnectionCreated?(context: LanguageServerConnectionContext): EditorDisposable | void
+  onConnected?(context: LanguageServerConnectionContext): void
+  readonly onStatusChange?: (status: LanguageServerStatus) => void
+  readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
+  readonly onInteractiveReady?: () => void
+  readonly onError?: (error: unknown) => void
+}
+
+export type LanguageServerSetPluginOptions = Pick<
+  LanguageServerPluginOptions,
+  | 'hoverMarkdownCodeBackground'
+  | 'documentSync'
+  | 'semanticTokens'
+  | 'onDiagnostics'
+  | 'onInteractiveReady'
+  | 'onOpenDefinition'
+  | 'onOpenReferences'
+  | 'onError'
+> & {
+  readonly lanes: readonly LanguageServerLaneOptions[]
 }
 
 export type LanguageServerPlugin = EditorPlugin

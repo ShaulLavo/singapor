@@ -145,7 +145,21 @@ export async function connectedEditor(
     jsonrpc: '2.0',
     id: jsonMessage(transport.sent[0]).id,
     result: {
-      capabilities: { textDocumentSync: { openClose: true, change: 2 }, ...options.capabilities },
+      capabilities: {
+        codeActionProvider: true,
+        completionProvider: {},
+        definitionProvider: true,
+        documentFormattingProvider: true,
+        documentHighlightProvider: true,
+        hoverProvider: true,
+        implementationProvider: true,
+        referencesProvider: true,
+        renameProvider: true,
+        signatureHelpProvider: {},
+        textDocumentSync: { openClose: true, change: 2 },
+        typeDefinitionProvider: true,
+        ...options.capabilities,
+      },
     },
   })
   await flushPromises()

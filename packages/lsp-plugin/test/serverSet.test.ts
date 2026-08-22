@@ -1,0 +1,250 @@
+import type { LspClient, LspWorkspace } from '@singapor/lsp'
+import { describe, expect, it, vi } from 'vitest'
+import type * as lsp from 'vscode-languageserver-protocol'
+
+import {
+  CompositeDiagnosticsPresenter,
+  type CompositeDiagnosticsLanePresenter,
+} from '../src/diagnosticsPresenter'
+import type { AcquiredLanguageServerLane } from '../src/lane'
+import { createLanguageServerSetPlugin } from '../src/plugin'
+import { LanguageServerSet, type LanguageServerSetLane } from '../src/serverSet'
+
+describe('LanguageServerSet', () => {
+  it('merges hover and highlights in stable feature-rank order while isolating failures', async () => {
+    const primary = fakeLane('primary', { hover: 0, documentHighlights: 10 }, capabilities(), {
+      'textDocument/hover': hover('primary'),
+      'textDocument/documentHighlight': [highlight(1)],
+    })
+    const secondary = fakeLane('secondary', { hover: 5, documentHighlights: 0 }, capabilities(), {
+      'textDocument/hover': hover('secondary'),
+      'textDocument/documentHighlight': [highlight(2)],
+    })
+    const failed = fakeLane('failed', { hover: 2 }, capabilities(), {
+      'textDocument/hover': new Error('unavailable'),
+    })
+    const servers = new LanguageServerSet([secondary, failed, primary])
+
+    const mergedHover = await servers.request<lsp.Hover, unknown>('textDocument/hover', {})
+    const mergedHighlights = await servers.request<lsp.DocumentHighlight[], unknown>(
+      'textDocument/documentHighlight',
+      {},
+    )
+
+    expect((mergedHover.contents as lsp.MarkupContent).value).toBe('primary\n\n---\n\nsecondary')
+    expect(mergedHighlights).toEqual([highlight(2), highlight(1)])
+    expect(failed.onError).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses one ranked owner for navigation, signature help, formatting, and rename', async () => {
+    const first = fakeLane('first', ownerFeatures(5), ownerCapabilities(), ownerResponses('first'))
+    const second = fakeLane(
+      'second',
+      ownerFeatures(0),
+      ownerCapabilities(),
+      ownerResponses('second'),
+    )
+    const servers = new LanguageServerSet([first, second])
+
+    expect(await servers.request('textDocument/definition', {})).toBe('second:definition')
+    expect(await servers.request('textDocument/signatureHelp', {})).toBe('second:signature')
+    expect(await servers.request('textDocument/formatting', {})).toBe('second:formatting')
+    expect(await servers.request('textDocument/onTypeFormatting', {})).toBe('second:on-type')
+    expect(await servers.request('textDocument/rename', {})).toBe('second:rename')
+    expect(first.connection.client.request).not.toHaveBeenCalled()
+    expect(second.connection.client.request).toHaveBeenCalledTimes(5)
+  })
+
+  it('honours runtime capability absence and keeps the designated semantic owner fixed', () => {
+    const designated = fakeLane('designated', { completion: 0, semanticTokens: 0 }, {}, {})
+    const fallback = fakeLane(
+      'fallback',
+      { completion: 5, semanticTokens: 5 },
+      { completionProvider: {}, semanticTokensProvider: semanticTokensProvider() },
+      {},
+    )
+    const servers = new LanguageServerSet([fallback, designated])
+
+    expect(servers.declared('completion').map((lane) => lane.id)).toEqual([
+      'designated',
+      'fallback',
+    ])
+    expect(servers.ready('completion').map((lane) => lane.id)).toEqual(['fallback'])
+    expect(servers.designated('semanticTokens')?.id).toBe('designated')
+    expect(servers.ready('semanticTokens').map((lane) => lane.id)).toEqual(['fallback'])
+  })
+
+  it('combines code actions in rank order and resolves through their originating lanes', async () => {
+    const firstAction = { title: 'first' }
+    const secondAction = { title: 'second' }
+    const first = fakeLane(
+      'first',
+      { codeActions: 5 },
+      { codeActionProvider: { resolveProvider: true } },
+      {
+        'textDocument/codeAction': [firstAction],
+        'codeAction/resolve': { ...firstAction, edit: { changes: {} } },
+      },
+    )
+    const second = fakeLane(
+      'second',
+      { codeActions: 0 },
+      { codeActionProvider: { resolveProvider: true } },
+      {
+        'textDocument/codeAction': [secondAction],
+        'codeAction/resolve': { ...secondAction, edit: { changes: {} } },
+      },
+    )
+    const servers = new LanguageServerSet([first, second])
+
+    const actions = await servers.request<lsp.CodeAction[], unknown>('textDocument/codeAction', {})
+    await servers.request('codeAction/resolve', actions[1])
+
+    expect(actions.map((action) => action.title)).toEqual(['second', 'first'])
+    expect(first.connection.client.request).toHaveBeenCalledWith(
+      'codeAction/resolve',
+      firstAction,
+      {},
+    )
+    expect(second.connection.client.request).toHaveBeenCalledTimes(1)
+  })
+
+  it('registers one view, command, and edit contribution for several lanes', () => {
+    const registrations = {
+      command: vi.fn(() => ({ dispose: vi.fn() })),
+      edit: vi.fn(() => ({ dispose: vi.fn() })),
+      view: vi.fn(() => ({ dispose: vi.fn() })),
+    }
+    const plugin = createLanguageServerSetPlugin({
+      lanes: [lanePluginOptions('first'), lanePluginOptions('second')],
+    })
+
+    plugin.activate({
+      registerCommandContribution: registrations.command,
+      registerEditContribution: registrations.edit,
+      registerViewContribution: registrations.view,
+    } as never)
+
+    expect(registrations.view).toHaveBeenCalledTimes(1)
+    expect(registrations.command).toHaveBeenCalledTimes(1)
+    expect(registrations.edit).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('CompositeDiagnosticsPresenter', () => {
+  it('unions lane batches in rank order and clearing one preserves the other', () => {
+    const rendered: lsp.Diagnostic[][] = []
+    const presenter = {
+      clear: vi.fn(),
+      render: vi.fn((_text: string, diagnostics: readonly lsp.Diagnostic[]) => {
+        rendered.push([...diagnostics])
+      }),
+      moveMarker: vi.fn(() => false),
+    }
+    const combined = new CompositeDiagnosticsPresenter(presenter as never, ['primary', 'secondary'])
+    const primary = combined.forLane('primary')
+    const secondary = combined.forLane('secondary')
+
+    publish(primary, diagnostic('primary'))
+    publish(secondary, diagnostic('secondary'))
+    primary.clear()
+    publish(secondary, diagnostic('secondary-again'))
+
+    expect(rendered.at(-3)?.map((item) => item.message)).toEqual(['primary', 'secondary'])
+    expect(rendered.at(-2)?.map((item) => item.message)).toEqual(['secondary'])
+    expect(rendered.at(-1)?.map((item) => item.message)).toEqual(['secondary-again'])
+  })
+})
+
+function fakeLane(
+  id: string,
+  features: LanguageServerSetLane['features'],
+  serverCapabilities: lsp.ServerCapabilities,
+  responses: Readonly<Record<string, unknown>>,
+) {
+  const request = vi.fn(async (method: string) => {
+    const response = responses[method]
+    if (response instanceof Error) throw response
+    return response ?? null
+  })
+  const client = {
+    initialized: true,
+    request,
+    serverCapabilities,
+  } as unknown as LspClient
+  const connection = {
+    client,
+    id,
+    isReady: () => true,
+    ready: Promise.resolve({ client, workspace: {} as LspWorkspace }),
+    release: vi.fn(),
+    workspace: {} as LspWorkspace,
+  } satisfies AcquiredLanguageServerLane
+
+  return { connection, features, id, onError: vi.fn() }
+}
+
+function capabilities(): lsp.ServerCapabilities {
+  return {
+    documentHighlightProvider: true,
+    hoverProvider: true,
+  }
+}
+
+function ownerFeatures(rank: number): LanguageServerSetLane['features'] {
+  return { navigation: rank, signatureHelp: rank, formatting: rank, rename: rank }
+}
+
+function ownerCapabilities(): lsp.ServerCapabilities {
+  return {
+    definitionProvider: true,
+    documentFormattingProvider: true,
+    documentOnTypeFormattingProvider: { firstTriggerCharacter: '}' },
+    renameProvider: true,
+    signatureHelpProvider: {},
+  }
+}
+
+function ownerResponses(owner: string) {
+  return {
+    'textDocument/definition': `${owner}:definition`,
+    'textDocument/signatureHelp': `${owner}:signature`,
+    'textDocument/formatting': `${owner}:formatting`,
+    'textDocument/onTypeFormatting': `${owner}:on-type`,
+    'textDocument/rename': `${owner}:rename`,
+  }
+}
+
+function semanticTokensProvider(): lsp.SemanticTokensOptions {
+  return { legend: { tokenModifiers: [], tokenTypes: [] } }
+}
+
+function lanePluginOptions(id: string) {
+  return {
+    features: { completion: 0 },
+    id,
+    webSocketRoute: `ws://localhost/${id}`,
+  }
+}
+
+function hover(value: string): lsp.Hover {
+  return { contents: { kind: 'markdown', value } }
+}
+
+function highlight(character: number): lsp.DocumentHighlight {
+  return {
+    range: {
+      start: { line: 0, character },
+      end: { line: 0, character: character + 1 },
+    },
+  }
+}
+
+function diagnostic(message: string): lsp.Diagnostic {
+  return { message, range: highlight(0).range }
+}
+
+function publish(presenter: CompositeDiagnosticsLanePresenter, item: lsp.Diagnostic): void {
+  presenter.render('text', [item])
+  presenter.publishSummary('file:///test.ts', 1, [item])
+}

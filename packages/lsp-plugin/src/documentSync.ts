@@ -91,6 +91,15 @@ export class DocumentSync {
     this.presenter.publishSummary(active.uri, diagnostics.version, diagnostics.diagnostics)
   }
 
+  public clearDiagnostics(): void {
+    const active = this.document
+    this.diagnosticItems = []
+    this.presenter.clear()
+    if (!active) return
+
+    this.presenter.publishSummary(active.uri, active.lspVersion, [])
+  }
+
   private openOrUpdateDocument(
     descriptor: DocumentDescriptor,
     change: DocumentSessionChange | null,
@@ -167,7 +176,7 @@ function activeDocument(descriptor: DocumentDescriptor, lspVersion: number): Act
 
 function documentDescriptor(
   snapshot: EditorViewSnapshot,
-  options: DocumentSyncOptions,
+  options: LanguageServerDocumentSyncOptions,
 ): DocumentDescriptor | null {
   if (!snapshot.documentId) return null
   if (!snapshot.languageId) return null
@@ -186,6 +195,14 @@ function documentDescriptor(
     lineStarts: snapshot.lineStartsView ?? arrayLspLineStarts(snapshot.lineStarts),
     textVersion: snapshot.textVersion,
   })
+}
+
+export function activeDocumentForSnapshot(
+  snapshot: EditorViewSnapshot,
+  options: LanguageServerDocumentSyncOptions,
+): ActiveDocument | null {
+  const descriptor = documentDescriptor(snapshot, options)
+  return descriptor ? activeDocument(descriptor, 0) : null
 }
 
 function publishDiagnosticsParams(params: unknown): {

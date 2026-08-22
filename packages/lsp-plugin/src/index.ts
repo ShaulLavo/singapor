@@ -1,12 +1,19 @@
 export {
   createLanguageServerAdapterPlugin,
   createLanguageServerPlugin,
+  createLanguageServerSetPlugin,
   type LanguageServerCommandSpec,
   type LanguageServerCommandTarget,
   type LanguageServerConnectionContext,
   type LanguageServerAdapterPluginOptions,
   type LanguageServerResolvedOptions,
 } from './plugin'
+export {
+  acquireLanguageServerLane,
+  type AcquiredLanguageServerLane,
+  type LanguageServerLaneCallbacks,
+} from './lane'
+export { allLanguageServerFeatures, LanguageServerSet, laneSupports } from './serverSet'
 export {
   LspConnectionPool,
   type LspConnectionPoolEvent,
@@ -53,7 +60,13 @@ export type {
   LanguageServerNavigationOpenMode,
   LanguageServerNavigationOptions,
   LanguageServerPlugin,
+  LanguageServerFeatureId,
+  LanguageServerFeatureRanks,
+  LanguageServerLaneOptions,
   LanguageServerPluginOptions,
+  LanguageServerReadyNotification,
   LanguageServerReferencesResult,
+  LanguageServerSetPluginOptions,
   LanguageServerStatus,
 } from './types'
+export { LANGUAGE_SERVER_FEATURE_IDS } from './types'

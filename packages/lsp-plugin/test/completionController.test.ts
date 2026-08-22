@@ -741,7 +741,13 @@ async function connectedEditor(
   transport.receive({
     jsonrpc: '2.0',
     id: jsonMessage(transport.sent[0]).id,
-    result: { capabilities: { textDocumentSync: { openClose: true, change: 2 }, ...capabilities } },
+    result: {
+      capabilities: {
+        completionProvider: {},
+        textDocumentSync: { openClose: true, change: 2 },
+        ...capabilities,
+      },
+    },
   })
   await flushPromises()
 

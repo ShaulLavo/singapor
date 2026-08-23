@@ -8,6 +8,7 @@ import { anchorAt, resolveAnchor } from './pieceTable/anchors'
 
 export type SelectionGoal =
   | { readonly kind: 'none' }
+  // Row-local text x in CSS pixels; gutter and scroll coordinates do not survive vertical runs.
   | { readonly kind: 'horizontal'; readonly x: number }
   // The end of the line is not a column, it is wherever the line happens to stop. A caret sent
   // there by End has to remember that rather than the width of the line it left.

@@ -216,8 +216,20 @@ export function scrollableHeight(
   return snapshot.scrollHeight
 }
 
-export function visualColumnForOffset(view: VirtualizedTextViewInternal, offset: number): number {
-  const row = rowForOffset(view, offset)
+export function visualColumnForOffset(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity?: SelectionAffinity,
+): number {
+  const row = affinity ? rowForCaretPosition(view, offset, affinity) : rowForOffset(view, offset)
+  return visualColumnForDisplayRowOffset(view, row, offset)
+}
+
+function visualColumnForDisplayRowOffset(
+  view: VirtualizedTextViewInternal,
+  row: number,
+  offset: number,
+): number {
   const displayRow = view.model.rows[row]
   if (!isDocumentTextDisplayRow(displayRow)) return 0
 

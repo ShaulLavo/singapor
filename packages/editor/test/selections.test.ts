@@ -32,7 +32,7 @@ describe('selections', () => {
     const snapshot = createPieceTableSnapshot('abcdef')
     const selection = createAnchorSelection(snapshot, 4, 2, {
       id: 'selection-a',
-      goal: SelectionGoal.horizontal(24),
+      goal: SelectionGoal.horizontal(24.5),
     })
     const resolved = resolveSelection(snapshot, selection)
 
@@ -44,7 +44,7 @@ describe('selections', () => {
       headOffset: 2,
       reversed: true,
       collapsed: false,
-      goal: { kind: 'horizontal', x: 24 },
+      goal: { kind: 'horizontal', x: 24.5 },
       affinity: 'after',
       liveness: 'live',
     })

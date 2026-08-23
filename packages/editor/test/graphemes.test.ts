@@ -78,11 +78,12 @@ function move(text: string, command: EditorCommandId, offset: number): number {
     documentLength: snapshot.length,
     rtlMoveVisually: false,
     view: {
+      caretXForOffset: (value) => value,
       offsetAtLineBoundary: (value) => value,
       offsetByDisplayRows: (value) => value,
       pageRowDelta: () => 1,
+      verticalCaretTarget: (value, affinity) => ({ offset: value, affinity }),
       visualHorizontalTarget: () => null,
-      visualColumnForOffset: (value) => value,
     },
   })
 

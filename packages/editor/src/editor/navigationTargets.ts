@@ -30,15 +30,23 @@ export type NavigationLine = {
 
 type NavigationLineReader = (offset: number) => NavigationLine
 
-type VisualColumnView = {
-  readonly visualColumnForOffset: (offset: number) => number
+type VerticalCaretView = {
+  readonly caretXForOffset: (offset: number, affinity: SelectionAffinity) => number
+  readonly verticalCaretTarget: (
+    offset: number,
+    affinity: SelectionAffinity,
+    rowDelta: number,
+    goal: VerticalSelectionGoal,
+  ) => { readonly offset: number; readonly affinity: SelectionAffinity }
 }
+
+type VerticalSelectionGoal = Exclude<SelectionGoal, { readonly kind: 'none' }>
 
 type LineBoundaryView = {
   readonly offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => number
 }
 
-type NavigationTargetView = VisualColumnView &
+type NavigationTargetView = VerticalCaretView &
   LineBoundaryView & {
     readonly offsetByDisplayRows: (offset: number, rowDelta: number, goalColumn: number) => number
     readonly pageRowDelta: () => number
@@ -63,8 +71,7 @@ export function defaultRtlMoveVisually(platform: 'mac' | 'windows' | 'linux'): b
   return platform !== 'windows'
 }
 
-// A column past the end of every line: asking for it yields the line's end, and a caret carrying
-// it as its goal rides the ragged right edge down the file instead of snapping to one line's width.
+// The position conversion clamps this deliberately unreachable column to the buffer line's end.
 const PAST_LINE_END_COLUMN = Number.MAX_SAFE_INTEGER
 
 /**
@@ -263,10 +270,11 @@ function verticalTarget(
   extend: boolean,
   timingName: string,
 ): NavigationTarget {
-  const origin = verticalOriginOffset(context, rowDelta, extend)
-  const { goal, column } = verticalMoveGoal(context.resolved.goal, origin, context.view)
+  const origin = verticalOrigin(context, rowDelta, extend)
+  const goal = verticalMoveGoal(context.resolved.goal, origin.offset, origin.affinity, context.view)
+  const target = context.view.verticalCaretTarget(origin.offset, origin.affinity, rowDelta, goal)
   return {
-    offset: context.view.offsetByDisplayRows(origin, rowDelta, column),
+    ...target,
     extend,
     goal,
     timingName,
@@ -277,14 +285,17 @@ function verticalTarget(
  * Up and Down without Shift leave a selection from the edge they are heading towards, the way
  * every native text control does; only an extending move keeps pivoting on the head.
  */
-function verticalOriginOffset(
+function verticalOrigin(
   context: NavigationTargetContext,
   rowDelta: number,
   extend: boolean,
-): number {
+): { readonly offset: number; readonly affinity: SelectionAffinity } {
   const { resolved } = context
-  if (extend || resolved.collapsed) return resolved.headOffset
-  return rowDelta < 0 ? resolved.startOffset : resolved.endOffset
+  if (extend || resolved.collapsed) {
+    return { offset: resolved.headOffset, affinity: resolved.affinity }
+  }
+  if (rowDelta < 0) return { offset: resolved.startOffset, affinity: 'after' }
+  return { offset: resolved.endOffset, affinity: 'before' }
 }
 
 function boundaryNavigationTarget(
@@ -318,6 +329,7 @@ function lineBoundaryTarget(
       boundary === 'start'
         ? lineStartTargetOffset(context)
         : context.view.offsetAtLineBoundary(head, 'end'),
+    affinity: boundary === 'start' ? 'after' : 'before',
     extend,
     goal: boundary === 'end' ? SelectionGoal.lineEnd() : undefined,
     timingName: extend
@@ -367,9 +379,15 @@ function pageTarget(
   extend: boolean,
 ): NavigationTarget {
   const rowDelta = direction * context.view.pageRowDelta()
-  const { goal, column } = verticalMoveGoal(resolved.goal, resolved.headOffset, context.view)
+  const goal = verticalMoveGoal(resolved.goal, resolved.headOffset, resolved.affinity, context.view)
+  const target = context.view.verticalCaretTarget(
+    resolved.headOffset,
+    resolved.affinity,
+    rowDelta,
+    goal,
+  )
   return {
-    offset: context.view.offsetByDisplayRows(resolved.headOffset, rowDelta, column),
+    ...target,
     extend,
     goal,
     timingName: pageTimingName(direction, extend),
@@ -379,25 +397,23 @@ function pageTarget(
 /**
  * Where a vertical move aims, and the goal it hands to the selection it produces.
  *
- * A run of Up/Down presses has to keep aiming at the column the run started from, so a goal the
- * selection already holds outlives the move and only a selection without one adopts the caret's
- * column. Every kind names its column here because a kind that did not would be answered with the
- * caret's own, discarding the goal the run is built on without anything failing.
+ * A run of Up/Down presses keeps aiming at its first painted x, so an existing pixel goal outlives
+ * the move and only a selection without one measures the caret. Line-end remains a separate logical
+ * aim because a logical RTL end need not be the row's visual-right edge.
  */
 export function verticalMoveGoal(
   goal: SelectionGoal,
   offset: number,
-  view: VisualColumnView,
-): { readonly goal: SelectionGoal; readonly column: number } {
+  affinity: SelectionAffinity,
+  view: VerticalCaretView,
+): VerticalSelectionGoal {
   switch (goal.kind) {
     case 'horizontal':
-      return { goal, column: goal.x }
+      return goal
     case 'lineEnd':
-      return { goal, column: PAST_LINE_END_COLUMN }
-    case 'none': {
-      const column = view.visualColumnForOffset(offset)
-      return { goal: SelectionGoal.horizontal(column), column }
-    }
+      return goal
+    case 'none':
+      return { kind: 'horizontal', x: view.caretXForOffset(offset, affinity) }
     default:
       return unhandledSelectionGoal(goal)
   }

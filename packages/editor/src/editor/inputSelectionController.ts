@@ -1120,18 +1120,24 @@ export class InputSelectionController {
     const rowDelta = direction === 'above' ? -1 : 1
     const inserted = resolved
       .map((selection) => this.cursorSelectionByDisplayRows(selection, rowDelta))
-      .filter((selection) => selection.anchor !== selection.sourceHead)
+      .filter(
+        (selection) =>
+          selection.anchor !== selection.sourceHead ||
+          selection.affinity !== selection.sourceAffinity,
+      )
     const firstInserted = inserted[0]
     if (!firstInserted) return false
 
     const selections = [
       ...resolved.map((selection) => ({
         anchor: selection.anchorOffset,
+        affinity: selection.affinity,
         head: selection.headOffset,
         goal: selection.goal,
       })),
       ...inserted.map((selection) => ({
         anchor: selection.anchor,
+        affinity: selection.affinity,
         head: selection.anchor,
         goal: selection.goal,
       })),
@@ -1140,8 +1146,8 @@ export class InputSelectionController {
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
+    this.options.view.revealCaret(firstInserted.anchor, firstInserted.affinity)
     this.applyChange(change, `input.insertCursor${capitalize(direction)}`, start, {
-      revealOffset: firstInserted.anchor,
       syncDomSelection: false,
     })
     // Counted off the session after the change rather than off the cursors the press asked for, the
@@ -2869,17 +2875,28 @@ export class InputSelectionController {
     rowDelta: -1 | 1,
   ): {
     readonly anchor: number
+    readonly affinity: SelectionAffinity
     readonly goal: SelectionGoalValue
+    readonly sourceAffinity: SelectionAffinity
     readonly sourceHead: number
   } {
-    const { goal, column } = verticalMoveGoal(
+    const goal = verticalMoveGoal(
       selection.goal,
       selection.headOffset,
+      selection.affinity,
       this.options.view,
     )
-    return {
-      anchor: this.options.view.offsetByDisplayRows(selection.headOffset, rowDelta, column),
+    const target = this.options.view.verticalCaretTarget(
+      selection.headOffset,
+      selection.affinity,
+      rowDelta,
       goal,
+    )
+    return {
+      anchor: target.offset,
+      affinity: target.affinity,
+      goal,
+      sourceAffinity: selection.affinity,
       sourceHead: selection.headOffset,
     }
   }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createDocumentTextSnapshot, type TextSnapshot } from '../src/documentTextSnapshot'
 import type { EditorCommandId } from '../src/editor/commands'
@@ -6,6 +6,7 @@ import {
   createNavigationLineReader,
   defaultRtlMoveVisually,
   navigationTargetForCommand,
+  verticalMoveGoal,
   type NavigationTarget,
 } from '../src/editor/navigationTargets'
 import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
@@ -37,26 +38,40 @@ function selection(
 
 /** A view over unwrapped rows, where a display row and a buffer line are the same thing. */
 function createTestView(text: string) {
+  const characterWidth = 10
   const lineStarts = [0, ...[...text].flatMap((char, index) => (char === '\n' ? [index + 1] : []))]
   const rowForOffset = (offset: number) => lineStarts.findLastIndex((start) => start <= offset)
+  const offsetByDisplayRows = (offset: number, rowDelta: number, goalColumn: number) => {
+    const row = Math.min(Math.max(rowForOffset(offset) + rowDelta, 0), lineStarts.length - 1)
+    const start = lineStarts[row] ?? 0
+    return start + Math.min(goalColumn, lineRangeAtOffset(text, start).end - start)
+  }
 
   return {
     offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => {
       const range = lineRangeAtOffset(text, offset)
       return boundary === 'start' ? range.start : range.end
     },
-    offsetByDisplayRows: (offset: number, rowDelta: number, goalColumn: number) => {
-      const row = Math.min(Math.max(rowForOffset(offset) + rowDelta, 0), lineStarts.length - 1)
-      const start = lineStarts[row] ?? 0
-      return start + Math.min(goalColumn, lineRangeAtOffset(text, start).end - start)
-    },
+    caretXForOffset: (offset: number) =>
+      (offset - lineRangeAtOffset(text, offset).start) * characterWidth,
+    offsetByDisplayRows,
     pageRowDelta: () => 10,
+    verticalCaretTarget: (
+      offset: number,
+      _affinity: SelectionAffinity,
+      rowDelta: number,
+      goal: Exclude<SelectionGoal, { readonly kind: 'none' }>,
+    ) => {
+      const column = goal.kind === 'lineEnd' ? Number.MAX_SAFE_INTEGER : goal.x / characterWidth
+      const target = offsetByDisplayRows(offset, rowDelta, column)
+      const end = lineRangeAtOffset(text, target).end
+      return { offset: target, affinity: target >= end ? ('before' as const) : ('after' as const) }
+    },
     visualHorizontalTarget: (
       _offset: number,
       _affinity: SelectionAffinity,
       _direction: 'left' | 'right',
     ): { readonly offset: number; readonly affinity: SelectionAffinity } | null => null,
-    visualColumnForOffset: (offset: number) => offset - lineRangeAtOffset(text, offset).start,
   }
 }
 
@@ -312,6 +327,72 @@ describe('word-part navigation', () => {
 describe('vertical navigation', () => {
   const text = 'one\ntwo\nthree\nfour'
 
+  it('measures one fractional pixel goal and reuses it for arrows and pages', () => {
+    const caretXForOffset = vi.fn(() => 37.25)
+    const verticalCaretTarget = vi.fn(
+      (
+        _offset: number,
+        _affinity: SelectionAffinity,
+        _rowDelta: number,
+        _goal: Exclude<SelectionGoal, { readonly kind: 'none' }>,
+      ) => ({ offset: 8, affinity: 'before' as const }),
+    )
+    const view = { ...createTestView(text), caretXForOffset, verticalCaretTarget }
+    const move = targets(text, view)
+
+    const first = move('cursorDown', selection(1, 1, SelectionGoal.none(), 'before'))
+    expect(first).toMatchObject({
+      offset: 8,
+      affinity: 'before',
+      goal: { kind: 'horizontal', x: 37.25 },
+    })
+    const second = move(
+      'cursorPageDown',
+      selection(first!.offset, first!.offset, first!.goal, first!.affinity),
+    )
+    expect(second).toMatchObject({
+      offset: 8,
+      affinity: 'before',
+      goal: { kind: 'horizontal', x: 37.25 },
+    })
+    expect(caretXForOffset).toHaveBeenCalledOnce()
+    expect(caretXForOffset).toHaveBeenCalledWith(1, 'before')
+    expect(verticalCaretTarget.mock.calls.map((call) => call[3])).toEqual([
+      { kind: 'horizontal', x: 37.25 },
+      { kind: 'horizontal', x: 37.25 },
+    ])
+  })
+
+  it('keeps line-end distinct from a pixel aim', () => {
+    const view = createTestView(text)
+    const goal = verticalMoveGoal(SelectionGoal.lineEnd(), 3, 'before', view)
+    expect(goal).toEqual({ kind: 'lineEnd' })
+  })
+
+  it('uses inside affinities when a vertical move leaves a nonempty selection', () => {
+    const origins: { readonly affinity: SelectionAffinity; readonly offset: number }[] = []
+    const view = {
+      ...createTestView(text),
+      verticalCaretTarget: (
+        offset: number,
+        affinity: SelectionAffinity,
+        _rowDelta: number,
+        _goal: Exclude<SelectionGoal, { readonly kind: 'none' }>,
+      ) => {
+        origins.push({ affinity, offset })
+        return { offset, affinity }
+      },
+    }
+    const move = targets(text, view)
+
+    move('cursorDown', selection(9, 4, SelectionGoal.none(), 'after'))
+    move('cursorUp', selection(4, 9, SelectionGoal.none(), 'before'))
+    expect(origins).toEqual([
+      { offset: 9, affinity: 'before' },
+      { offset: 4, affinity: 'after' },
+    ])
+  })
+
   it('leaves a selection from the edge it is heading towards', () => {
     const move = targets(text)
 
@@ -351,11 +432,28 @@ describe('line boundary navigation', () => {
   it('holds the line end as the caret moves down past a shorter line', () => {
     const move = targets('longer line here\nab\nanother long line')
     const end = move('cursorLineEnd', selection(0))
-    expect(end).toMatchObject({ offset: 16, goal: { kind: 'lineEnd' } })
+    expect(end).toMatchObject({
+      affinity: 'before',
+      offset: 16,
+      goal: { kind: 'lineEnd' },
+    })
 
     const short = move('cursorDown', selection(16, 16, end?.goal))
     expect(short).toMatchObject({ offset: 19, goal: { kind: 'lineEnd' } })
 
     expect(move('cursorDown', selection(19, 19, short?.goal))?.offset).toBe(37)
+  })
+
+  it('uses the inside affinity at each line boundary', () => {
+    const move = targets('plain')
+
+    expect(move('cursorLineStart', selection(3))).toMatchObject({
+      affinity: 'after',
+      offset: 0,
+    })
+    expect(move('cursorLineEnd', selection(3))).toMatchObject({
+      affinity: 'before',
+      offset: 5,
+    })
   })
 })

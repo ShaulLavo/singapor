@@ -258,7 +258,9 @@ function snapshot(): EditorViewSnapshot {
     lineStarts: [0],
     tokens: [],
     brackets: [],
-    selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    selections: [
+      { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },
+    ],
     metrics: { rowHeight: 20, characterWidth: 8 },
     lineCount: 1,
     contentWidth: 88,

@@ -1137,8 +1137,23 @@ the logical path is the Tier A behaviour byte for byte.
       test/virtualizedTextView.test.ts` (156 tests); `bun run typecheck`; `bun run build`; `bun run
       lint` (the same two pre-existing `packedTokens.ts` warnings, no errors). Focused `oxlint`,
       `oxfmt --check`, and `git diff --check` passed across all changed files.
-- [ ] **Visual `cursorLeft`/`cursorRight`/`selectLeft`/`selectRight` behind a platform-defaulted option**
-      `high` `M` — `packages/editor/src/editor/navigationTargets.ts:123-143`, `:145-163`.
+- [x] **Visual `cursorLeft`/`cursorRight`/`selectLeft`/`selectRight` behind a platform-defaulted option**
+      `high` `M` — Added `rtlMoveVisually`, defaulting on for macOS/Linux and off for Windows via
+      the existing hotkey platform detector. Collapsed cursor and Shift-selection motion traverses
+      the engine-derived run list by painted direction and carries affinity through the selection
+      transaction; nonempty collapse, Home/End, explicit opt-out, refused geometry and unmounted
+      rows retain the logical path. Hard line edges land without consuming a glyph, soft-wrap seams
+      consume the destination glyph, and inline insertions plus zero-width BiDi controls cannot pose
+      as row edges. Landed in `4eade66`. Verified 2026-08-23 from `packages/editor`: `bun run test
+      --project browser test/bidiGeometry.browser.test.ts` (69 tests); `bun run test --project
+      browser test/bidiGeometry.browser.test.ts test/virtualizedTextViewGeometry.browser.test.ts
+      test/virtualizedTextView.browser.test.ts` (88 tests); `bun run test --project dom
+      test/navigationTargets.test.ts test/graphemes.test.ts test/virtualizedTextViewLayout.test.ts
+      test/bidiText.test.ts test/virtualizedTextViewGeometry.test.ts
+      test/virtualizedTextView.test.ts` (218 tests); `bun run typecheck`; `bun run build`; `bun run
+      lint` (the same two pre-existing `packedTokens.ts` warnings, no errors). Focused `oxlint`,
+      `oxfmt --check`, and `git diff --check` passed across all changed files. Root `bun run health`
+      passed on the clean commit.
 - [ ] **`SelectionGoal.horizontal` carries a pixel x**
       `high` `M` — `packages/editor/src/selections.ts:9-20`,
       `virtualizedTextViewLayout.ts:260-297`, `navigationTargets.ts:228-241`, `:355-372`,

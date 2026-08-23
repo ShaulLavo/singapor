@@ -1,6 +1,7 @@
 # BiDi geometry — execution plan
 
-> **Status: Tier A M1-M5 complete; Tier B M6-M7 open, reconciled 2026-08-22.**
+> **Status: Tier A M1-M5 and Tier B M6 complete; Tier B M7 in progress, reconciled
+> 2026-08-23.**
 > This is the only active standalone Editor executable plan. It may run in the
 > independent lane defined by
 > [Platform's canonical cross-project roadmap](../../platform/PLAN.md); no
@@ -1122,8 +1123,20 @@ within 1px of its starting x, asserted against the oracle rather than against a 
 behaviour is behind an option whose default is visual on macOS and Linux and logical on Windows, and
 the logical path is the Tier A behaviour byte for byte.
 
-- [ ] **A per-row bidi run list, derived from the engine or ported, with the choice recorded**
-      `high` `L`
+- [x] **A per-row bidi run list, derived from the engine or ported, with the choice recorded**
+      `high` `L` — Chose the engine-derived model: logical half-open runs are stored in visual
+      left-to-right order with direction, so explicit overrides match Chromium without claiming
+      incomplete embedding levels. Shared boundaries resolve by selection affinity; an
+      identity-cached logical index keeps repeated caret lookup logarithmic. The probe is cached
+      with row geometry, retires on text, inline-map, width, metrics and recycled-row keys, and is
+      linear in graphemes, runs and DOM seams. `null` preserves the exact logical path for LTR and
+      measurement-refused rows. Verified 2026-08-23 from `packages/editor`: `bun run test --project
+      browser test/bidiGeometry.browser.test.ts test/virtualizedTextViewGeometry.browser.test.ts
+      test/virtualizedTextView.browser.test.ts` (77 tests); `bun run test --project dom
+      test/bidiText.test.ts test/virtualizedTextViewGeometry.test.ts
+      test/virtualizedTextView.test.ts` (156 tests); `bun run typecheck`; `bun run build`; `bun run
+      lint` (the same two pre-existing `packedTokens.ts` warnings, no errors). Focused `oxlint`,
+      `oxfmt --check`, and `git diff --check` passed across all changed files.
 - [ ] **Visual `cursorLeft`/`cursorRight`/`selectLeft`/`selectRight` behind a platform-defaulted option**
       `high` `M` — `packages/editor/src/editor/navigationTargets.ts:123-143`, `:145-163`.
 - [ ] **`SelectionGoal.horizontal` carries a pixel x**

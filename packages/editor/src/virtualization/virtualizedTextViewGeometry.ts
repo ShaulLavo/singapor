@@ -16,6 +16,7 @@ import { clamp } from '../style-utils'
 import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 import type {
   MountedVirtualizedTextRow,
+  VirtualizedBidiRun,
   VirtualizedTextChunk,
   VirtualizedTextChunkPart,
   VirtualizedTextChunkTextPart,
@@ -41,6 +42,7 @@ const RENDERED_CONTROL_CHARACTER = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/
 const KEY_COLUMN_DISTANCE = 300
 const COLUMN_EPSILON = 1e-9
 const RANGE_RECT_MERGE_EPSILON = 0.9
+const BIDI_BOUNDARY_EPSILON = 0.9
 
 /**
  * Boundaries as two parallel arrays rather than one object per boundary: a row is rebuilt on every
@@ -71,6 +73,7 @@ type RowGeometry = {
    * anchor the boundary did, or a hit test and the caret it places disagree about the same column.
    */
   readonly anchors: Float64Array | null
+  bidiRuns: readonly VirtualizedBidiRun[] | null | undefined
 }
 
 /** No advance is ever NaN, so it is free to stand for a boundary that has not been read yet. */
@@ -180,6 +183,28 @@ type GeometryRangeSegment = {
   readonly width: number
 }
 
+type BidiRunBoundary = {
+  readonly geometryIndex: number
+  readonly offset: number
+  readonly positions: readonly number[]
+}
+
+type BidiRunProbe = {
+  readonly boundaries: readonly BidiRunBoundary[]
+  readonly singleXs: Float64Array
+}
+
+type PositionedBidiRun = {
+  readonly run: VirtualizedBidiRun
+  readonly left: number
+  readonly right: number
+}
+
+type BidiRunEdges = {
+  readonly start: number
+  readonly end: number
+}
+
 type DomBoundary = {
   readonly node: Node
   readonly offset: number
@@ -211,6 +236,10 @@ let measuredRowRects: Map<HTMLElement, DOMRect> | null = null
 let measuredRowScales: Map<HTMLElement, number> | null = null
 let measurementScratch: MeasurementScratch | null = null
 const measuredRowWidths = new WeakMap<HTMLElement, RowContentWidthCache>()
+const bidiMeasurementRefusals = new WeakMap<
+  HTMLElement,
+  { readonly key: string; readonly refused: boolean }
+>()
 /**
  * Kept per element rather than per row: a mounted replacement outlives the rows it is painted into,
  * and its advance is a property of the node, not of whichever row currently hosts it.
@@ -468,11 +497,224 @@ export function boundaryPositionXs(
   const index = firstBoundaryAtOrAfterOffset(geometry.offsets, clamped)
   if (geometry.offsets[index] !== clamped) return [xForOffset(geometry, clamped)]
 
+  return boundaryPositionXsAtIndex(row, geometry, index)
+}
+
+function boundaryPositionXsAtIndex(
+  row: MountedVirtualizedTextRow,
+  geometry: RowGeometry,
+  index: number,
+): readonly number[] {
+  const offset = geometry.offsets[index]!
   const plan = geometry.unitPlan
-  const boundary = plan ? domBoundaryForOffset(row, clamped) : null
-  const xs = boundary && plan ? collapsedBoundaryXs(planMeasurement(plan), boundary) : []
-  if (xs.length > 0) return xs.toSorted((left, right) => left - right)
+  const boundaries = plan ? domBoundariesForGeometryIndex(row, plan, index, offset) : []
+  const xs = plan ? collapsedBoundaryPositionXs(planMeasurement(plan), boundaries) : []
+  if (xs.length > 0) return xs
+  if (plan) {
+    const fallback = zeroRectBoundaryX(plan, index, offset)
+    geometry.xs[index] = fallback
+    return [fallback]
+  }
   return [boundaryX(geometry, index)]
+}
+
+/** Null means no engine result is available, so callers must keep the logical path. */
+export function bidiRunsForRow(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): readonly VirtualizedBidiRun[] | null {
+  if (!rowMightContainRTL(view, row)) return null
+
+  const cached = cachedRowGeometry(view, row)
+  if (cached?.bidiRuns !== undefined) return cached.bidiRuns
+  if (isBidiMeasurementRefusalRow(view, row)) return null
+
+  const geometry = cached ?? ensureRowGeometry(view, row)
+
+  geometry.bidiRuns = buildBidiRuns(view, row, geometry)
+  return geometry.bidiRuns
+}
+
+function buildBidiRuns(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  geometry: RowGeometry,
+): readonly VirtualizedBidiRun[] | null {
+  const probe = probeBidiRunBoundaries(row, geometry)
+  const boundaries = probe.boundaries
+  const positioned: PositionedBidiRun[] = []
+  for (let index = 1; index < boundaries.length; index += 1) {
+    const start = boundaries[index - 1]!
+    const end = boundaries[index]!
+    const candidate = positionedBidiRun(view, row, geometry, probe.singleXs, start, end)
+    if (candidate) positioned.push(candidate)
+  }
+  if (positioned.length === 0) return null
+
+  positioned.sort(comparePositionedBidiRuns)
+  return positioned.map((entry) => entry.run)
+}
+
+function probeBidiRunBoundaries(
+  row: MountedVirtualizedTextRow,
+  geometry: RowGeometry,
+): BidiRunProbe {
+  const boundaries: BidiRunBoundary[] = []
+  const singleXs = new Float64Array(geometry.offsets.length).fill(Number.NaN)
+  const lastIndex = geometry.offsets.length - 1
+  for (let index = 0; index <= lastIndex; index += 1) {
+    const positions = boundaryPositionXsAtIndex(row, geometry, index)
+    if (positions.length === 1) singleXs[index] = positions[0]!
+    const endpoint = index === 0 || index === lastIndex
+    if (!endpoint && positions.length < 2) continue
+    boundaries.push({ geometryIndex: index, offset: geometry.offsets[index]!, positions })
+  }
+  return { boundaries, singleXs }
+}
+
+function positionedBidiRun(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  geometry: RowGeometry,
+  singleXs: Float64Array,
+  start: BidiRunBoundary,
+  end: BidiRunBoundary,
+): PositionedBidiRun | null {
+  if (end.offset <= start.offset) return null
+
+  const edges = bidiRunEdges(view, row, start, end)
+  const direction = bidiRunDirection(view, row, geometry, singleXs, start, end, edges)
+  return {
+    run: { startOffset: start.offset, endOffset: end.offset, direction },
+    left: Math.min(edges.start, edges.end),
+    right: Math.max(edges.start, edges.end),
+  }
+}
+
+function bidiRunEdges(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  start: BidiRunBoundary,
+  end: BidiRunBoundary,
+): BidiRunEdges {
+  return {
+    start: boundaryPositionXsForAffinity(view, row, start.offset, 'after', start.positions)[0]!,
+    end: boundaryPositionXsForAffinity(view, row, end.offset, 'before', end.positions)[0]!,
+  }
+}
+
+function bidiRunDirection(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  geometry: RowGeometry,
+  singleXs: Float64Array,
+  start: BidiRunBoundary,
+  end: BidiRunBoundary,
+  edges: BidiRunEdges,
+): VirtualizedBidiRun['direction'] {
+  const interior = directionFromInteriorBoundaries(singleXs, start, end)
+  if (interior) return interior
+
+  const plan = geometry.unitPlan
+  if (!plan) return directionFromRunEdges(edges)
+
+  let first: { readonly left: number; readonly start: number; readonly end: number } | null = null
+  const firstUnit = Math.max(0, plan.writerUnit[start.geometryIndex] ?? 0)
+  for (let index = firstUnit; index < plan.units.length; index += 1) {
+    const planUnit = plan.units[index]
+    if (!planUnit) break
+    const unitStart = rowOffsetForLocalIndex(row, planUnit.localStart)
+    if (unitStart >= end.offset) break
+
+    const unit = visibleUnitInRun(plan, index, start.offset, end.offset)
+    if (!unit) continue
+    if (!first) {
+      first = unit
+      continue
+    }
+
+    const delta = unit.left - first.left
+    if (Math.abs(delta) <= BIDI_BOUNDARY_EPSILON) continue
+    return delta < 0 ? 'rtl' : 'ltr'
+  }
+  if (!first) return directionFromRunEdges(edges)
+  return directionFromUnit(view, row, first)
+}
+
+function directionFromInteriorBoundaries(
+  singleXs: Float64Array,
+  start: BidiRunBoundary,
+  end: BidiRunBoundary,
+): VirtualizedBidiRun['direction'] | null {
+  let first = Number.NaN
+  for (let index = start.geometryIndex + 1; index < end.geometryIndex; index += 1) {
+    const x = singleXs[index]!
+    if (Number.isNaN(x)) continue
+    if (Number.isNaN(first)) {
+      first = x
+      continue
+    }
+
+    const delta = x - first
+    if (Math.abs(delta) <= BIDI_BOUNDARY_EPSILON) continue
+    return delta < 0 ? 'rtl' : 'ltr'
+  }
+  return null
+}
+
+function visibleUnitInRun(
+  plan: MeasuredRowPlan,
+  index: number,
+  runStart: number,
+  runEnd: number,
+): { readonly left: number; readonly start: number; readonly end: number } | null {
+  const unit = plan.units[index]
+  if (!unit) return null
+
+  const start = rowOffsetForLocalIndex(plan.row, unit.localStart)
+  const end = rowOffsetForLocalIndex(plan.row, unit.localEnd)
+  if (start < runStart) return null
+  if (end > runEnd) return null
+  if (start >= runEnd) return null
+
+  resolveUnit(plan, index)
+  if (plan.widths[index]! <= BIDI_BOUNDARY_EPSILON) return null
+  return { left: plan.lefts[index]!, start, end }
+}
+
+function directionFromUnit(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  unit: { readonly start: number; readonly end: number },
+): VirtualizedBidiRun['direction'] {
+  const start = boundaryPositionXsForAffinity(view, row, unit.start, 'after')[0]!
+  const end = boundaryPositionXsForAffinity(view, row, unit.end, 'before')[0]!
+  return end < start ? 'rtl' : 'ltr'
+}
+
+function directionFromRunEdges(edges: BidiRunEdges): VirtualizedBidiRun['direction'] {
+  return edges.end < edges.start ? 'rtl' : 'ltr'
+}
+
+function comparePositionedBidiRuns(left: PositionedBidiRun, right: PositionedBidiRun): number {
+  return (
+    left.left - right.left ||
+    left.right - right.right ||
+    left.run.startOffset - right.run.startOffset
+  )
+}
+
+function isBidiMeasurementRefusalRow(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): boolean {
+  const key = rowGeometryCacheKey(view, row)
+  const cached = bidiMeasurementRefusals.get(row.element)
+  if (cached?.key === key) return cached.refused
+
+  const refused = row.element.querySelector('[data-editor-bidi-measurement-refusal]') !== null
+  bidiMeasurementRefusals.set(row.element, { key, refused })
+  return refused
 }
 
 export function resetRowGeometrySweepCount(): void {
@@ -510,16 +752,17 @@ export function boundaryPositionXsForAffinity(
   row: MountedVirtualizedTextRow,
   offset: number,
   affinity: SelectionAffinity,
+  positions?: readonly number[],
 ): readonly number[] {
   if (!rowMightContainRTL(view, row)) return [offsetToX(view, row, offset)]
 
-  const positions = boundaryPositionXs(view, row, offset)
-  if (positions.length !== 2) return positions
+  const candidates = positions ?? boundaryPositionXs(view, row, offset)
+  if (candidates.length !== 2) return candidates
 
   const normalized = normalizedBoundaryAffinity(row, offset, affinity)
-  const before = preferredBoundaryPositionIndex(view, row, offset, positions, 'before')
-  const after = preferredBoundaryPositionIndex(view, row, offset, positions, 'after')
-  return orderBoundaryPositionsForAffinity(positions, normalized, before, after)
+  const before = preferredBoundaryPositionIndex(view, row, offset, candidates, 'before')
+  const after = preferredBoundaryPositionIndex(view, row, offset, candidates, 'after')
+  return orderBoundaryPositionsForAffinity(candidates, normalized, before, after)
 }
 
 export function boundaryAffinityForX(
@@ -750,6 +993,51 @@ export function domBoundaryForOffset(
   return domBoundaryForChunkLocalOffset(chunk, local)
 }
 
+function domBoundariesForGeometryIndex(
+  row: MountedVirtualizedTextRow,
+  plan: MeasuredRowPlan,
+  geometryIndex: number,
+  offset: number,
+): readonly DomBoundary[] {
+  const local = clamp(rowLocalIndexForOffset(row, offset), 0, row.text.length)
+  const boundaries: DomBoundary[] = []
+  const writer = plan.writerUnit[geometryIndex] ?? -1
+  for (let unitIndex = writer - 1; unitIndex <= writer + 1; unitIndex += 1) {
+    appendUnitDomBoundariesAtLocal(boundaries, plan.units[unitIndex], local)
+  }
+  if (boundaries.length > 0) return boundaries
+
+  appendDomBoundary(boundaries, domBoundaryForOffset(row, offset))
+  return boundaries
+}
+
+function appendUnitDomBoundariesAtLocal(
+  boundaries: DomBoundary[],
+  unit: MeasuredUnit | undefined,
+  local: number,
+): void {
+  if (!unit) return
+  if (unit.localStart === local) appendDomBoundary(boundaries, measuredUnitBoundary(unit, 'before'))
+  if (unit.localEnd === local) appendDomBoundary(boundaries, measuredUnitBoundary(unit, 'after'))
+}
+
+function measuredUnitBoundary(unit: MeasuredUnit, side: 'before' | 'after'): DomBoundary | null {
+  if (unit.node) {
+    const offset = unit.nodeOffset + (side === 'after' ? unit.nodeLength : 0)
+    return { node: unit.node, offset }
+  }
+  if (!unit.element) return null
+  return elementBoundary(unit.element, side)
+}
+
+function appendDomBoundary(boundaries: DomBoundary[], candidate: DomBoundary | null): void {
+  if (!candidate) return
+  const duplicate = boundaries.some(
+    (boundary) => boundary.node === candidate.node && boundary.offset === candidate.offset,
+  )
+  if (!duplicate) boundaries.push(candidate)
+}
+
 export function offsetFromDomBoundary(
   row: MountedVirtualizedTextRow,
   node: Node,
@@ -803,13 +1091,22 @@ function ensureRowGeometry(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): RowGeometry {
-  const key = rowGeometryCacheKey(view, row)
-  const cached = row.geometryCache as RowGeometryCache | null
-  if (cached?.key === key) return cached.geometry
+  const cached = cachedRowGeometry(view, row)
+  if (cached) return cached
 
+  const key = rowGeometryCacheKey(view, row)
   const geometry = buildRowGeometry(view, row)
   ;(row as MutableRowGeometryCache).geometryCache = { key, geometry }
   return geometry
+}
+
+function cachedRowGeometry(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): RowGeometry | null {
+  const key = rowGeometryCacheKey(view, row)
+  const cached = row.geometryCache as RowGeometryCache | null
+  return cached?.key === key ? cached.geometry : null
 }
 
 function rowGeometryCacheKey(
@@ -1046,6 +1343,7 @@ function buildMeasuredRowGeometry(
     xOrder: null,
     width: UNREAD,
     anchors: null,
+    bidiRuns: undefined,
   }
 }
 
@@ -1260,12 +1558,32 @@ function collapsedBoundaryXs(
   return xs
 }
 
+function collapsedBoundaryPositionXs(
+  measurement: RowMeasurementContext,
+  boundaries: readonly DomBoundary[],
+): readonly number[] {
+  const positions: number[] = []
+  for (const boundary of boundaries) {
+    appendDistinctBoundaryPositions(positions, collapsedBoundaryXs(measurement, boundary))
+  }
+  return positions.toSorted((left, right) => left - right)
+}
+
+function appendDistinctBoundaryPositions(positions: number[], candidates: readonly number[]): void {
+  for (const candidate of candidates) appendDistinctBoundaryPosition(positions, candidate)
+}
+
+function appendDistinctBoundaryPosition(positions: number[], candidate: number): void {
+  if (positions.some((position) => Math.abs(position - candidate) <= BIDI_BOUNDARY_EPSILON)) return
+  positions.push(candidate)
+}
+
 function zeroRectBoundaryX(plan: MeasuredRowPlan, index: number, offset: number): number {
   const local = rowLocalIndexForOffset(plan.row, offset)
-  const preceding = adjacentTextBoundary(plan, local, 'preceding')
+  const preceding = adjacentTextBoundary(plan, index, local, 'preceding')
   if (preceding !== null) return preceding
 
-  const following = adjacentTextBoundary(plan, local, 'following')
+  const following = adjacentTextBoundary(plan, index, local, 'following')
   if (following !== null) return following
 
   const unitIndex = plan.writerUnit[index]!
@@ -1278,15 +1596,33 @@ function zeroRectBoundaryX(plan: MeasuredRowPlan, index: number, offset: number)
 
 function adjacentTextBoundary(
   plan: MeasuredRowPlan,
+  geometryIndex: number,
   local: number,
   side: 'preceding' | 'following',
 ): number | null {
-  const unit = plan.units.find((candidate) => {
-    if (candidate.kind !== 'text') return false
-    return side === 'preceding' ? candidate.localEnd === local : candidate.localStart === local
-  })
-  if (!unit?.node) return null
+  const writer = plan.writerUnit[geometryIndex] ?? -1
+  for (let unitIndex = writer - 1; unitIndex <= writer + 1; unitIndex += 1) {
+    const unit = plan.units[unitIndex]
+    if (!isAdjacentTextUnit(unit, local, side)) continue
+    return collapsedTextBoundaryX(plan, unit, side)
+  }
+  return null
+}
 
+function isAdjacentTextUnit(
+  unit: MeasuredUnit | undefined,
+  local: number,
+  side: 'preceding' | 'following',
+): unit is MeasuredUnit & { readonly node: Text } {
+  if (unit?.kind !== 'text' || !unit.node) return false
+  return side === 'preceding' ? unit.localEnd === local : unit.localStart === local
+}
+
+function collapsedTextBoundaryX(
+  plan: MeasuredRowPlan,
+  unit: MeasuredUnit & { readonly node: Text },
+  side: 'preceding' | 'following',
+): number | null {
   const offset = side === 'preceding' ? unit.nodeOffset + unit.nodeLength : unit.nodeOffset
   const xs = collapsedBoundaryXs(planMeasurement(plan), { node: unit.node, offset })
   return xs.length > 0 ? Math.min(...xs) : null
@@ -1440,6 +1776,7 @@ function geometryFromBoundaries(
     xOrder: ascending ? null : boundaryOrderByX(offsets, xs),
     width: Math.max(fallbackWidth, contentRight),
     anchors: anchors && anchors.length > 0 ? Float64Array.from(anchors) : null,
+    bidiRuns: null,
   }
 }
 

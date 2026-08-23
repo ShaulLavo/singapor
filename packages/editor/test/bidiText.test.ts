@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { INVISIBLE_CODE_POINT_DATA } from '../src/unicodeHighlightData'
 import {
   BIDI_CONTROL_CODE_POINTS,
+  bidiVisualRunIndexAt,
   containsRTL,
   memoizedContainsRTL,
   rtlClassifierScanCount,
@@ -56,5 +57,44 @@ describe('BiDi row classifier', () => {
     expect(rowMightContainRTL(view, row)).toBe(false)
     expect(rowMightContainRTL(view, row)).toBe(false)
     expect(rtlClassifierScanCount(view)).toBe(1)
+  })
+
+  it('uses affinity to choose a visual run at a shared boundary', () => {
+    const nested = [
+      { startOffset: 7, endOffset: 11, direction: 'rtl' },
+      { startOffset: 4, endOffset: 7, direction: 'ltr' },
+      { startOffset: 0, endOffset: 4, direction: 'rtl' },
+    ] as const
+
+    expect(bidiVisualRunIndexAt(nested, 4, 'before')).toBe(2)
+    expect(bidiVisualRunIndexAt(nested, 4, 'after')).toBe(1)
+    expect(bidiVisualRunIndexAt(nested, 7, 'before')).toBe(1)
+    expect(bidiVisualRunIndexAt(nested, 7, 'after')).toBe(0)
+    expect(bidiVisualRunIndexAt(nested, 5, 'before')).toBe(1)
+    expect(bidiVisualRunIndexAt(nested, 0, 'before')).toBeNull()
+    expect(bidiVisualRunIndexAt(nested, 0, 'after')).toBe(2)
+    expect(bidiVisualRunIndexAt(nested, 11, 'before')).toBe(0)
+    expect(bidiVisualRunIndexAt(nested, 11, 'after')).toBeNull()
+    expect(bidiVisualRunIndexAt(nested, 12, 'after')).toBeNull()
+  })
+
+  it('caches a logical index for logarithmic lookup in visual runs', () => {
+    const values = Array.from({ length: 1_024 }, (_, index) => ({
+      startOffset: index,
+      endOffset: index + 1,
+      direction: index % 2 === 0 ? ('ltr' as const) : ('rtl' as const),
+    })).reverse()
+    let reads = 0
+    const runs = new Proxy(values, {
+      get(target, property, receiver) {
+        if (typeof property === 'string' && /^\d+$/.test(property)) reads += 1
+        return Reflect.get(target, property, receiver)
+      },
+    })
+
+    expect(bidiVisualRunIndexAt(runs, 512, 'after')).toBe(511)
+    reads = 0
+    expect(bidiVisualRunIndexAt(runs, 700, 'after')).toBe(323)
+    expect(reads).toBeLessThanOrEqual(20)
   })
 })

@@ -1,3 +1,6 @@
+import type { SelectionAffinity } from '../selections'
+import type { VirtualizedBidiRun } from './virtualizedTextViewTypes'
+
 export const BIDI_CONTROL_CODE_POINTS = [
   0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
 ] as const
@@ -16,6 +19,7 @@ type BidiClassifierHost = {
 }
 
 const classifierMemos = new WeakMap<BidiClassifierHost, BidiClassifierMemo>()
+const logicalBidiRunIndexes = new WeakMap<readonly VirtualizedBidiRun[], readonly number[]>()
 
 export function containsRTL(text: string): boolean {
   if (RTL_CHARACTER.test(text)) return true
@@ -46,6 +50,77 @@ export function memoizedContainsRTL(view: BidiClassifierHost, text: string): boo
 
 export function rtlClassifierScanCount(view: BidiClassifierHost): number {
   return classifierMemos.get(view)?.scans ?? 0
+}
+
+export function bidiVisualRunIndexAt(
+  runs: readonly VirtualizedBidiRun[],
+  offset: number,
+  affinity: SelectionAffinity,
+): number | null {
+  const logicalIndexes = logicalBidiRunIndexesFor(runs)
+  const insertion = logicalRunInsertionIndex(runs, logicalIndexes, offset)
+  const nextVisualIndex = logicalIndexes[insertion]
+  if (nextVisualIndex !== undefined && runs[nextVisualIndex]!.startOffset === offset) {
+    if (affinity === 'after') return nextVisualIndex
+    return logicalIndexes[insertion - 1] ?? null
+  }
+
+  const previousVisualIndex = logicalIndexes[insertion - 1]
+  if (previousVisualIndex === undefined) return null
+
+  const previous = runs[previousVisualIndex]!
+  if (offset < previous.endOffset) return previousVisualIndex
+  if (affinity === 'before' && offset === previous.endOffset) return previousVisualIndex
+  return null
+}
+
+function logicalBidiRunIndexesFor(runs: readonly VirtualizedBidiRun[]): readonly number[] {
+  const cached = logicalBidiRunIndexes.get(runs)
+  if (cached) return cached
+
+  const indexByStart = new Map<number, number>()
+  let firstVisualIndex = 0
+  for (let visualIndex = 0; visualIndex < runs.length; visualIndex += 1) {
+    const run = runs[visualIndex]!
+    indexByStart.set(run.startOffset, visualIndex)
+    if (run.startOffset < runs[firstVisualIndex]!.startOffset) firstVisualIndex = visualIndex
+  }
+
+  const indexes = linkedLogicalRunIndexes(runs, indexByStart, firstVisualIndex)
+  logicalBidiRunIndexes.set(runs, indexes)
+  return indexes
+}
+
+function linkedLogicalRunIndexes(
+  runs: readonly VirtualizedBidiRun[],
+  indexByStart: ReadonlyMap<number, number>,
+  firstVisualIndex: number,
+): readonly number[] {
+  if (runs.length === 0) return []
+
+  const indexes: number[] = []
+  let visualIndex: number | undefined = firstVisualIndex
+  while (visualIndex !== undefined && indexes.length < runs.length) {
+    indexes.push(visualIndex)
+    visualIndex = indexByStart.get(runs[visualIndex]!.endOffset)
+  }
+  return indexes
+}
+
+function logicalRunInsertionIndex(
+  runs: readonly VirtualizedBidiRun[],
+  logicalIndexes: readonly number[],
+  offset: number,
+): number {
+  let low = 0
+  let high = logicalIndexes.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    const start = runs[logicalIndexes[middle]!]!.startOffset
+    if (start < offset) low = middle + 1
+    else high = middle
+  }
+  return low
 }
 
 function classifierMemo(view: BidiClassifierHost): BidiClassifierMemo {

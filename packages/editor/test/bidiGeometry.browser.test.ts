@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '../src/style.css'
 
 import { Editor } from '../src/editor'
@@ -16,6 +16,7 @@ import {
   gutterWidth,
 } from '../src/virtualization/virtualizedTextViewRows'
 import {
+  bidiRunsForRow,
   boundaryPositionXs,
   domBoundaryForOffset,
   getRowGeometrySweepCount,
@@ -56,6 +57,30 @@ const CARET_TRUTH_CASES = [
   { name: 'Ab', text: 'אb', before: [0, 1], after: [1, 0] },
   { name: 'AB', text: 'אב', before: [0], after: [0] },
 ] as const
+
+const BIDI_RUN_TRUTH = {
+  pureHebrew: [{ start: 0, end: 9, direction: 'rtl' }],
+  pureArabic: [{ start: 0, end: 13, direction: 'rtl' }],
+  mixed: [
+    { start: 0, end: 8, direction: 'ltr' },
+    { start: 8, end: 12, direction: 'rtl' },
+    { start: 12, end: 18, direction: 'ltr' },
+  ],
+  nested: [
+    { start: 7, end: 11, direction: 'rtl' },
+    { start: 4, end: 7, direction: 'ltr' },
+    { start: 0, end: 4, direction: 'rtl' },
+  ],
+  tabRtl: [
+    { start: 0, end: 1, direction: 'ltr' },
+    { start: 1, end: 8, direction: 'rtl' },
+  ],
+  override: [
+    { start: 0, end: 3, direction: 'ltr' },
+    { start: 3, end: 10, direction: 'rtl' },
+  ],
+  latin: null,
+} as const
 
 describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry browser oracle', () => {
   let fixture: BidiGeometryFixture | null
@@ -276,6 +301,303 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       } finally {
         mounted.dispose()
       }
+    }
+  })
+
+  it('derives visually ordered engine runs for the complete corpus', () => {
+    for (const name of BIDI_CORPUS_NAMES) {
+      const row = fixture!.rows[name]
+      const runs = bidiRunsForRow(fixture!.internal, row)
+      const expected = BIDI_RUN_TRUTH[name]
+      if (expected === null) {
+        expect(runs, name).toBeNull()
+        continue
+      }
+
+      expect(localBidiRuns(row, runs), name).toEqual(expected)
+      assertBidiRunsAgainstBrowser(row, runs!)
+    }
+  })
+
+  it('derives direction for single-glyph runs', () => {
+    const cases = [
+      {
+        text: 'aא',
+        expected: [
+          { start: 0, end: 1, direction: 'ltr' },
+          { start: 1, end: 2, direction: 'rtl' },
+        ],
+      },
+      {
+        text: 'אb',
+        expected: [
+          { start: 0, end: 1, direction: 'rtl' },
+          { start: 1, end: 2, direction: 'ltr' },
+        ],
+      },
+      {
+        text: 'abאcd',
+        expected: [
+          { start: 0, end: 2, direction: 'ltr' },
+          { start: 2, end: 3, direction: 'rtl' },
+          { start: 3, end: 5, direction: 'ltr' },
+        ],
+      },
+      {
+        text: 'אב1גד',
+        expected: [
+          { start: 3, end: 5, direction: 'rtl' },
+          { start: 2, end: 3, direction: 'ltr' },
+          { start: 0, end: 2, direction: 'rtl' },
+        ],
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const mounted = mountStandaloneView(testCase.text)
+      try {
+        const runs = bidiRunsForRow(mounted.internal, mounted.row)
+        expect(localBidiRuns(mounted.row, runs)).toEqual(testCase.expected)
+        assertBidiRunsAgainstBrowser(mounted.row, runs!)
+      } finally {
+        mounted.dispose()
+      }
+    }
+  })
+
+  it('derives runs through a rendered control unit', () => {
+    const supplementary = mountSupplementaryBidiFixture()
+    try {
+      const runs = bidiRunsForRow(supplementary.controlInternal, supplementary.controlRow)
+      expect(localBidiRuns(supplementary.controlRow, runs)).toEqual([
+        { start: 0, end: 7, direction: 'rtl' },
+      ])
+      assertBidiRunsAgainstBrowser(supplementary.controlRow, runs!)
+    } finally {
+      supplementary.dispose()
+    }
+  })
+
+  it('caches the engine run probe with row geometry', () => {
+    const mounted = mountStandaloneView(BIDI_CORPUS.mixed)
+    try {
+      resetRowGeometrySweepCount()
+      const results: ReturnType<typeof bidiRunsForRow>[] = []
+      const coldReads = countRangeReads(() => {
+        results.push(bidiRunsForRow(mounted.internal, mounted.row))
+      })
+      const runs = results[0]
+      expect(runs).not.toBeNull()
+      expect(coldReads).toBeGreaterThan(0)
+      expect(coldReads).toBeLessThanOrEqual(mounted.row.text.length + 3 * runs!.length + 3)
+      expect(getRowGeometrySweepCount()).toBe(0)
+
+      const warmReads = countRangeReads(() => {
+        results.push(bidiRunsForRow(mounted.internal, mounted.row))
+      })
+      expect(warmReads).toBe(0)
+      expect(results[1]).toBe(runs)
+
+      mounted.view.setText(BIDI_CORPUS.nested)
+      const nextRow = mounted.view.getState().mountedRows[0]!
+      const next = bidiRunsForRow(mounted.internal, nextRow)
+      expect(next).not.toBe(runs)
+      expect(localBidiRuns(nextRow, next)).toEqual(BIDI_RUN_TRUTH.nested)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('retires cached runs when a row element is recycled', () => {
+    const mounted = mountRecyclingRtlView()
+    try {
+      const original = mounted.view.getState().mountedRows[0]!
+      const element = original.element
+      const runs = bidiRunsForRow(mounted.internal, original)
+
+      mounted.view.scrollElement.scrollTop = 40 * 20
+      mounted.view.setScrollMetrics(40 * 20, 20, 600)
+      const recycled = mounted.view
+        .getState()
+        .mountedRows.find((candidate) => candidate.element === element)
+      expect(recycled).toBeDefined()
+
+      const next = bidiRunsForRow(mounted.internal, recycled!)
+      expect(next).not.toBe(runs)
+      expect(next?.[0]?.startOffset).toBe(recycled!.startOffset)
+      expect(next?.[0]?.endOffset).toBe(recycled!.endOffset)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('keeps the alternating-run probe linear in layout reads', () => {
+    const text = 'aא'.repeat(80)
+    const mounted = mountStandaloneView(text)
+    try {
+      const results: ReturnType<typeof bidiRunsForRow>[] = []
+      const reads = countRangeReads(() => {
+        results.push(bidiRunsForRow(mounted.internal, mounted.row))
+      })
+      expect(results[0]!.length).toBeGreaterThan(text.length / 2)
+      expect(reads).toBeLessThanOrEqual(text.length * 8 + 1)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('keeps zero-rect element seam fallbacks linear in row parts', () => {
+    const text = `א${'\u0085'.repeat(80)}ב`
+    const mounted = mountStandaloneView(text)
+    try {
+      const chunk = mounted.row.chunks[0]!
+      let partReads = 0
+      const parts = new Proxy(chunk.parts, {
+        get(target, property, receiver) {
+          if (typeof property === 'string' && /^\d+$/.test(property)) partReads += 1
+          return Reflect.get(target, property, receiver)
+        },
+      })
+      expect(Reflect.set(chunk, 'parts', parts)).toBe(true)
+
+      expect(bidiRunsForRow(mounted.internal, mounted.row)).not.toBeNull()
+      expect(partReads).toBeLessThanOrEqual(parts.length * 4)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('keeps LTR and refused rows off the engine run probe', () => {
+    const latin = mountStandaloneView('plain Latin')
+    const cjk = mountStandaloneView('日本語')
+    const refused = mountStandaloneView('א'.repeat(BIDI_LINE_MEASUREMENT_CEILING + 1))
+    const refusalQuery = vi.spyOn(refused.row.element, 'querySelector')
+    try {
+      assertNoBidiRunReads(latin)
+      assertNoBidiRunReads(cjk)
+      assertNoBidiRunReads(refused)
+      assertNoBidiRunReads(refused)
+      expect(refusalQuery).toHaveBeenCalledTimes(1)
+    } finally {
+      refusalQuery.mockRestore()
+      latin.dispose()
+      cjk.dispose()
+      refused.dispose()
+    }
+  })
+
+  it('recovers a direction boundary split across adjacent text nodes', () => {
+    const text = `${'x'.repeat(50)}אב`
+    const mounted = mountStandaloneView(text)
+    try {
+      const seam = 50
+      const seamParts = mounted.row.chunks[0]!.parts.filter(
+        (part) => part.kind === 'text' && (part.localStart === seam || part.localEnd === seam),
+      )
+      expect(seamParts).toHaveLength(2)
+      expect(boundaryPositionXs(mounted.internal, mounted.row, seam)).toHaveLength(2)
+      expect(localBidiRuns(mounted.row, bidiRunsForRow(mounted.internal, mounted.row))).toEqual([
+        { start: 0, end: seam, direction: 'ltr' },
+        { start: seam, end: text.length, direction: 'rtl' },
+      ])
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('deduplicates a same-direction boundary split across adjacent text nodes', () => {
+    const text = 'א'.repeat(52)
+    const mounted = mountStandaloneView(text)
+    try {
+      const seam = 50
+      const seamParts = mounted.row.chunks[0]!.parts.filter(
+        (part) => part.kind === 'text' && (part.localStart === seam || part.localEnd === seam),
+      )
+      expect(seamParts).toHaveLength(2)
+      expect(boundaryPositionXs(mounted.internal, mounted.row, seam)).toHaveLength(1)
+      expect(localBidiRuns(mounted.row, bidiRunsForRow(mounted.internal, mounted.row))).toEqual([
+        { start: 0, end: text.length, direction: 'rtl' },
+      ])
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('keeps grapheme clusters inside an engine run', () => {
+    const text = 'aא\u05B0ב c'
+    const mounted = mountStandaloneView(text)
+    try {
+      const runs = bidiRunsForRow(mounted.internal, mounted.row)
+      expect(localBidiRuns(mounted.row, runs)).toEqual([
+        { start: 0, end: 1, direction: 'ltr' },
+        { start: 1, end: 4, direction: 'rtl' },
+        { start: 4, end: 6, direction: 'ltr' },
+      ])
+      expect(runs?.some((run) => run.startOffset === 2 || run.endOffset === 2)).toBe(false)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('probes grapheme boundaries rather than UTF-16 positions', () => {
+    const grapheme = 'א\u05B0\u05B1\u05B2'
+    const text = grapheme.repeat(40)
+    const mounted = mountStandaloneView(text)
+    try {
+      const results: ReturnType<typeof bidiRunsForRow>[] = []
+      const reads = countRangeReads(() => {
+        results.push(bidiRunsForRow(mounted.internal, mounted.row))
+      })
+      expect(localBidiRuns(mounted.row, results[0])).toEqual([
+        { start: 0, end: text.length, direction: 'rtl' },
+      ])
+      expect(reads).toBeLessThan(text.length)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('maps an inline widget run back to buffer offsets', () => {
+    const text = 'אבגדהוז'
+    const mounted = mountStandaloneView(text)
+    try {
+      const before = bidiRunsForRow(mounted.internal, mounted.row)
+      expect(localBidiRuns(mounted.row, before)).toEqual([
+        { start: 0, end: text.length, direction: 'rtl' },
+      ])
+      mounted.view.setInlineMap(
+        createInlineMap(createPieceTableSnapshot(text), [
+          {
+            id: 'visual-run-widget',
+            startIndex: 2,
+            endIndex: 5,
+            text: 'W',
+            render: (host) => {
+              const box = host.ownerDocument.createElement('span')
+              box.style.display = 'inline-block'
+              box.style.height = '1em'
+              box.style.width = '1em'
+              host.append(box)
+              return { dispose: () => {} }
+            },
+          },
+        ]),
+      )
+      const row = mounted.view.getState().mountedRows[0]!
+      expect(row.textRenderMode).toBe('widget')
+      const after = bidiRunsForRow(mounted.internal, row)
+      expect(after).not.toBe(before)
+      expect(localBidiRuns(row, after)).toEqual([{ start: 0, end: text.length, direction: 'rtl' }])
+      expect(
+        after?.some(
+          (run) =>
+            (run.startOffset > 2 && run.startOffset < 5) ||
+            (run.endOffset > 2 && run.endOffset < 5),
+        ),
+      ).toBe(false)
+      assertBidiRunsAgainstBrowser(row, after!)
+    } finally {
+      mounted.dispose()
     }
   })
 
@@ -767,6 +1089,62 @@ function defaultAfterCaretX(name: 'mixed' | 'nested', oracle: readonly OracleRec
   const xs = oracle.map((rect) => rect.left)
   if (xs.length === 1) return xs[0]!
   return name === 'mixed' ? Math.max(...xs) : Math.min(...xs)
+}
+
+function localBidiRuns(
+  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
+  runs: ReturnType<typeof bidiRunsForRow>,
+): readonly { readonly start: number; readonly end: number; readonly direction: 'ltr' | 'rtl' }[] {
+  expect(runs).not.toBeNull()
+  return runs!.map((run) => ({
+    start: run.startOffset - row.startOffset,
+    end: run.endOffset - row.startOffset,
+    direction: run.direction,
+  }))
+}
+
+function assertBidiRunsAgainstBrowser(
+  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
+  runs: NonNullable<ReturnType<typeof bidiRunsForRow>>,
+): void {
+  const logical = runs.toSorted((left, right) => left.startOffset - right.startOffset)
+  expect(logical[0]!.startOffset).toBe(row.startOffset)
+  expect(logical.at(-1)!.endOffset).toBe(row.endOffset)
+  for (let index = 1; index < logical.length; index += 1) {
+    expect(logical[index - 1]!.endOffset).toBe(logical[index]!.startOffset)
+  }
+
+  const visualLefts: number[] = []
+  for (const run of runs) {
+    const rects = mergedRangeOracle(
+      row,
+      run.startOffset - row.startOffset,
+      run.endOffset - row.startOffset,
+    )
+    expect(rects).toHaveLength(1)
+    visualLefts.push(rects[0]!.left)
+  }
+  for (let index = 1; index < visualLefts.length; index += 1) {
+    expect(visualLefts[index]!).toBeGreaterThanOrEqual(visualLefts[index - 1]! - 1)
+  }
+
+  const runSplits = logical.slice(1).map((run) => run.startOffset)
+  const oracleSplits: number[] = []
+  for (let local = 1; local < row.text.length; local += 1) {
+    if (collapsedRangeOracle(row, local).length > 1) {
+      oracleSplits.push(row.startOffset + local)
+    }
+  }
+  expect(runSplits).toEqual(oracleSplits)
+}
+
+function assertNoBidiRunReads(mounted: StandaloneView): void {
+  const results: ReturnType<typeof bidiRunsForRow>[] = []
+  const reads = countRangeReads(() => {
+    results.push(bidiRunsForRow(mounted.internal, mounted.row))
+  })
+  expect(reads).toBe(0)
+  expect(results[0]).toBeNull()
 }
 
 function assertCaretTruthCase(testCase: (typeof CARET_TRUTH_CASES)[number]): void {

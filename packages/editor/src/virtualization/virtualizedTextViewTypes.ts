@@ -32,6 +32,13 @@ export type VirtualizedBidiSelectionAnchor = {
   readonly rightOffset: number
 }
 
+/** A half-open logical range; run arrays are ordered from visual left to visual right. */
+export type VirtualizedBidiRun = {
+  readonly startOffset: number
+  readonly endOffset: number
+  readonly direction: 'ltr' | 'rtl'
+}
+
 export type VirtualizedCaretPosition = {
   readonly left: number
   readonly top: number

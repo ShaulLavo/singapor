@@ -1,6 +1,6 @@
 # BiDi geometry — execution plan
 
-> **Status: Tier A M1-M5 and Tier B M6 complete; Tier B M7 in progress, reconciled
+> **Status: Tier A M1-M5 and Tier B M6-M7 complete; final acceptance passed
 > 2026-08-23.**
 > This is the only active standalone Editor executable plan. It may run in the
 > independent lane defined by
@@ -1186,11 +1186,32 @@ the logical path is the Tier A behaviour byte for byte.
       paint); `bun run typecheck`; `bun run build`; `bun run lint` (the same two pre-existing
       `packedTokens.ts` warnings, no errors). Focused `oxlint`, `oxfmt --check`, and `git diff
       --check` passed across all changed files. Root `bun run health` passed on the clean commit.
-- [ ] **Tier B M6/M7 final acceptance**
-      Every M6/M7 item is done, tested and committed. The combined affinity, navigation,
-      real-browser geometry/hit-testing/paint, cross-package, full Editor, static and architecture
-      health gates pass on the clean task commit. Record the exact commands and counts here. Delete
-      this plan only after this checkbox is `[x]` and committed.
+- [x] **Tier B M6/M7 final acceptance**
+      Every item is done, tested and committed. The full gate found and closed stale affinity test
+      fixtures in secondary views, scope-lines, find, minimap and TypeScript LSP (`0b0b448`,
+      `bd1e15f`, `2f6485e`, `27ef997`, `8347be9`). Verified 2026-08-23 in a clean detached
+      worktree at `8347be9`, after `bun run build` passed all 17 workspace tasks. From
+      `packages/editor`: `bun run test --project browser test/bidiGeometry.browser.test.ts
+      test/virtualizedTextViewGeometry.browser.test.ts test/virtualizedTextView.browser.test.ts`
+      (101 tests); `bun run test --project dom test/bidiText.test.ts test/selections.test.ts
+      test/documentSession.test.ts test/history.test.ts test/cursorHistory.test.ts
+      test/selectionRanges.test.ts test/snippets.test.ts test/editor-helpers.test.ts
+      test/navigationTargets.test.ts test/graphemes.test.ts test/virtualizedTextViewLayout.test.ts
+      test/virtualizedTextViewGeometry.test.ts test/virtualizedTextView.test.ts test/editor.test.ts`
+      (661 tests); `bun run test` (2,082 tests); `bun run test --project browser` (119 tests); `bun
+      run typecheck`; `bun run build`; `bun run lint` (the same two pre-existing
+      `packedTokens.ts` warnings, no errors); `bun run format:check`. Cross-package commands:
+      `packages/lsp-plugin`: `bun run test test/completion.test.ts
+      test/completionController.test.ts test/completionCommit.test.ts
+      test/completionSnippet.test.ts test/completionSources.test.ts` (74 tests) and `bun run
+      typecheck`; `packages/tree-sitter`: `bun run test test/structuralSelection.test.ts` (5 tests)
+      and `bun run typecheck`. Focused acceptance regressions passed in `packages/editor` (2 tests),
+      `packages/scope-lines` (13), `packages/find` (11), `packages/minimap` (63 plus 1 browser,
+      1 skipped) and `packages/typescript-lsp` (38), with each affected package's typecheck, lint
+      and format check green. From the repository root: `bun run typecheck` (34 tasks); `bun run
+      lint` (17 tasks, the same two warnings); `bun run format:check` (17 tasks); `bun run health`
+      (no missing scripts, new cycles, public-API drift or timer drift). `git diff --check` passed
+      and the clean worktree had no tracked changes. This plan may now be deleted.
 
 ---
 

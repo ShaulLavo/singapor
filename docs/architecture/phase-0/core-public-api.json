@@ -1018,6 +1018,12 @@
         },
         {
           "kind": "type",
+          "name": "SelectionAffinity",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "SemanticTokenDropReason",
           "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
@@ -1884,6 +1890,12 @@
           "kind": "type",
           "name": "ResolvedAnchor",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SelectionAffinity",
+          "source": "packages/editor/src/selections.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -3678,6 +3690,12 @@
           "kind": "type",
           "name": "PieceTableAnchor",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/internal.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SelectionAffinity",
+          "source": "packages/editor/src/selections.ts",
           "via": "packages/editor/src/internal.ts"
         },
         {

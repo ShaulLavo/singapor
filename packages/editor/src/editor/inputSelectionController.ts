@@ -142,6 +142,7 @@ export type InputSelectionControllerOptions = {
   readonly el: HTMLDivElement
   readonly announcer: EditorAnnouncer
   readonly selectionSyncMode: EditorSelectionSyncMode
+  readonly rtlMoveVisually: boolean
   readonly tabSize: number
   /** Whether Tab is the page's key for leaving the editor rather than the editor's for indenting. */
   readonly tabMovesFocus: boolean
@@ -1286,6 +1287,7 @@ export class InputSelectionController {
         resolved,
         readLine,
         documentLength: snapshot.length,
+        rtlMoveVisually: this.options.rtlMoveVisually,
         wordSeparators,
         view: this.options.view,
       }),
@@ -1294,18 +1296,23 @@ export class InputSelectionController {
     if (!primary?.target) return false
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
-    const selections = []
+    const selections: DocumentSessionSelectionRange[] = []
     for (const { resolved, target } of navigation) {
       if (!target) return false
       selections.push({
         anchor: target.extend ? resolved.anchorOffset : target.offset,
         head: target.offset,
+        ...(target.affinity ? { affinity: target.affinity } : {}),
         goal: target.goal ?? SelectionGoal.none(),
       })
     }
     const change = session.setSelections(selections)
     this.markSessionSelectionForNextInput()
-    this.options.view.revealOffset(primary.target.offset)
+    if (primary.target.affinity) {
+      this.options.view.revealCaret(primary.target.offset, primary.target.affinity)
+    } else {
+      this.options.view.revealOffset(primary.target.offset)
+    }
     this.applyChange(change, primary.target.timingName, start)
     return true
   }

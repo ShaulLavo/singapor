@@ -72,6 +72,7 @@ import {
   offsetForViewportColumn,
   rebuildDisplayRows,
   refreshDisplayRowsForWrapWidth,
+  rowForCaretPosition,
   rowForOffset,
   rowForViewportY,
   sameLineEditPatch,
@@ -98,7 +99,10 @@ import {
   rowMightContainRTL,
   rowTextExtent,
   unitRectForOffset,
+  visualCaretAtRowEdge,
+  visualCaretMoveInRow,
   xToOffset,
+  type VisualCaretTarget,
 } from './virtualizedTextViewGeometry'
 import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 import {
@@ -669,6 +673,20 @@ export class VirtualizedTextView {
 
     ensureOffsetMounted(view, offset)
     scrollOffsetIntoView(view, offset)
+  }
+
+  public revealCaret(offset: number, affinity: SelectionAffinity): void {
+    const view = this.view
+    ensureOffsetMounted(view, offset, affinity)
+    scrollOffsetIntoView(view, offset, affinity)
+  }
+
+  public visualHorizontalTarget(
+    offset: number,
+    affinity: SelectionAffinity,
+    direction: 'left' | 'right',
+  ): VisualCaretTarget | null {
+    return visualHorizontalTarget(this.view, offset, affinity, direction)
   }
 
   public visualColumnForOffset(offset: number): number {
@@ -1545,6 +1563,64 @@ function documentTextRowByDisplayDelta(
   }
 
   return current
+}
+
+function visualHorizontalTarget(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity: SelectionAffinity,
+  direction: 'left' | 'right',
+): VisualCaretTarget | null {
+  const rowIndex = rowForCaretPosition(view, offset, affinity)
+  const row = view.rowElements.get(rowIndex)
+  if (!row || row.source !== 'document') return null
+
+  const move = visualCaretMoveInRow(view, row, offset, affinity, direction)
+  if (!move) return null
+  if (!('kind' in move)) return move
+
+  return visualTargetAcrossDisplayRows(view, rowIndex, { offset, affinity }, direction)
+}
+
+function visualTargetAcrossDisplayRows(
+  view: VirtualizedTextViewInternal,
+  sourceRow: number,
+  origin: VisualCaretTarget,
+  direction: 'left' | 'right',
+): VisualCaretTarget | null {
+  const rowDelta = direction === 'left' ? -1 : 1
+  const targetRowIndex = documentTextRowByDisplayDelta(view, sourceRow, rowDelta)
+  if (targetRowIndex === sourceRow) return origin
+
+  const targetRow = view.rowElements.get(targetRowIndex)
+  if (!targetRow || targetRow.source !== 'document') return null
+
+  const edge = direction === 'left' ? 'right' : 'left'
+  const edgeTarget = visualCaretAtRowEdge(view, targetRow, edge)
+  if (!edgeTarget) return null
+  if (!displayRowsShareBoundary(view, sourceRow, targetRowIndex, direction)) return edgeTarget
+
+  const move = visualCaretMoveInRow(
+    view,
+    targetRow,
+    edgeTarget.offset,
+    edgeTarget.affinity,
+    direction,
+  )
+  if (!move) return null
+  return 'kind' in move ? edgeTarget : move
+}
+
+function displayRowsShareBoundary(
+  view: VirtualizedTextViewInternal,
+  sourceRow: number,
+  targetRow: number,
+  direction: 'left' | 'right',
+): boolean {
+  if (direction === 'right') {
+    return lineEndOffset(view, sourceRow) === lineStartOffset(view, targetRow)
+  }
+  return lineStartOffset(view, sourceRow) === lineEndOffset(view, targetRow)
 }
 
 function nextDocumentTextRow(view: VirtualizedTextViewInternal, row: number, step: 1 | -1): number {

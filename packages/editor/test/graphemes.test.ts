@@ -76,10 +76,12 @@ function move(text: string, command: EditorCommandId, offset: number): number {
     resolved: caret(offset),
     readLine: createNavigationLineReader(snapshot, createDocumentTextSnapshot(snapshot)),
     documentLength: snapshot.length,
+    rtlMoveVisually: false,
     view: {
       offsetAtLineBoundary: (value) => value,
       offsetByDisplayRows: (value) => value,
       pageRowDelta: () => 1,
+      visualHorizontalTarget: () => null,
       visualColumnForOffset: (value) => value,
     },
   })

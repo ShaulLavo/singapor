@@ -1,3 +1,4 @@
+import { detectPlatform } from '@tanstack/hotkeys'
 import {
   documentSessionChangeTextSnapshot,
   type DocumentSession,
@@ -14,6 +15,7 @@ import { EditorFoldState } from './foldState'
 import { guessedTabSize } from './indentationGuess'
 import { EditorKeymapController } from './keymap'
 import { InputSelectionController } from './inputSelectionController'
+import { defaultRtlMoveVisually } from './navigationTargets'
 import { EditorSyntaxController } from './syntaxController'
 import { DocumentEditChain } from './editChain'
 import type { LineStartsView } from '../virtualization/lineStartIndex'
@@ -476,6 +478,7 @@ export class Editor {
     this.inputSelection = new InputSelectionController({
       el: this.el,
       announcer: this.announcer,
+      rtlMoveVisually: options.rtlMoveVisually ?? defaultRtlMoveVisually(detectPlatform()),
       selectionSyncMode: normalizeEditorSelectionSyncMode(options.selectionSyncMode),
       get tabSize(): number {
         return effectiveTabSize()

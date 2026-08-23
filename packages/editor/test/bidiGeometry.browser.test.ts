@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { detectPlatform } from '@tanstack/hotkeys'
 import '../src/style.css'
 
-import { Editor } from '../src/editor'
+import { Editor, type EditorOptions } from '../src/editor'
 import { createInlineMap } from '../src/inlineMap'
 import { createDocumentSession, createPieceTableSnapshot } from '../src/public/document'
 import { resolveSelection } from '../src/selections'
@@ -81,6 +82,146 @@ const BIDI_RUN_TRUTH = {
   ],
   latin: null,
 } as const
+
+type CaretState = {
+  readonly offset: number
+  readonly affinity: 'before' | 'after'
+}
+
+type VisualCaretPath = {
+  readonly right: readonly CaretState[]
+  readonly left: readonly CaretState[]
+}
+
+const BIDI_VISUAL_PATHS = {
+  pureHebrew: simpleRtlVisualPath(BIDI_CORPUS.pureHebrew.length),
+  pureArabic: simpleRtlVisualPath(BIDI_CORPUS.pureArabic.length),
+  mixed: {
+    right: caretStates([
+      [0, 'after'],
+      [1, 'before'],
+      [2, 'before'],
+      [3, 'before'],
+      [4, 'before'],
+      [5, 'before'],
+      [6, 'before'],
+      [7, 'before'],
+      [8, 'before'],
+      [11, 'after'],
+      [10, 'after'],
+      [9, 'after'],
+      [8, 'after'],
+      [13, 'before'],
+      [14, 'before'],
+      [15, 'before'],
+      [16, 'before'],
+      [17, 'before'],
+      [18, 'before'],
+    ]),
+    left: caretStates([
+      [18, 'before'],
+      [17, 'after'],
+      [16, 'after'],
+      [15, 'after'],
+      [14, 'after'],
+      [13, 'after'],
+      [12, 'after'],
+      [9, 'before'],
+      [10, 'before'],
+      [11, 'before'],
+      [12, 'before'],
+      [7, 'after'],
+      [6, 'after'],
+      [5, 'after'],
+      [4, 'after'],
+      [3, 'after'],
+      [2, 'after'],
+      [1, 'after'],
+      [0, 'after'],
+    ]),
+  },
+  nested: {
+    right: caretStates([
+      [11, 'before'],
+      [10, 'after'],
+      [9, 'after'],
+      [8, 'after'],
+      [7, 'after'],
+      [5, 'before'],
+      [6, 'before'],
+      [7, 'before'],
+      [3, 'after'],
+      [2, 'after'],
+      [1, 'after'],
+      [0, 'after'],
+    ]),
+    left: caretStates([
+      [0, 'after'],
+      [1, 'before'],
+      [2, 'before'],
+      [3, 'before'],
+      [4, 'before'],
+      [6, 'after'],
+      [5, 'after'],
+      [4, 'after'],
+      [8, 'before'],
+      [9, 'before'],
+      [10, 'before'],
+      [11, 'before'],
+    ]),
+  },
+  tabRtl: {
+    right: caretStates([
+      [0, 'after'],
+      [1, 'before'],
+      [7, 'after'],
+      [6, 'after'],
+      [5, 'after'],
+      [4, 'after'],
+      [3, 'after'],
+      [2, 'after'],
+      [1, 'after'],
+    ]),
+    left: caretStates([
+      [1, 'after'],
+      [2, 'before'],
+      [3, 'before'],
+      [4, 'before'],
+      [5, 'before'],
+      [6, 'before'],
+      [7, 'before'],
+      [8, 'before'],
+      [0, 'after'],
+    ]),
+  },
+  override: {
+    right: caretStates([
+      [0, 'after'],
+      [1, 'before'],
+      [2, 'before'],
+      [3, 'before'],
+      [9, 'after'],
+      [8, 'after'],
+      [7, 'after'],
+      [6, 'after'],
+      [5, 'after'],
+      [4, 'after'],
+    ]),
+    left: caretStates([
+      [3, 'after'],
+      [5, 'before'],
+      [6, 'before'],
+      [7, 'before'],
+      [8, 'before'],
+      [9, 'before'],
+      [10, 'before'],
+      [2, 'after'],
+      [1, 'after'],
+      [0, 'after'],
+    ]),
+  },
+  latin: simpleLtrVisualPath(BIDI_CORPUS.latin.length),
+} satisfies Record<(typeof BIDI_CORPUS_NAMES)[number], VisualCaretPath>
 
 describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry browser oracle', () => {
   let fixture: BidiGeometryFixture | null
@@ -316,6 +457,307 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
 
       expect(localBidiRuns(row, runs), name).toEqual(expected)
       assertBidiRunsAgainstBrowser(row, runs!)
+    }
+  })
+
+  it('moves Left and Right one painted glyph across every corpus line', () => {
+    for (const name of BIDI_CORPUS_NAMES) {
+      assertVisualCaretPath(name, 'right', BIDI_VISUAL_PATHS[name].right)
+      assertVisualCaretPath(name, 'left', BIDI_VISUAL_PATHS[name].left)
+    }
+  })
+
+  it('keeps Shift selection anchored while its head and affinity move visually', () => {
+    const path = BIDI_VISUAL_PATHS.nested.right.slice(0, 8)
+    const mounted = mountBidiEditor(BIDI_CORPUS.nested, path[0], {
+      rtlMoveVisually: true,
+    })
+    let sevenAfterX: number | null = null
+    try {
+      for (const expected of path.slice(1)) {
+        sevenAfterX = assertNestedSelectionStep(mounted, expected, sevenAfterX)
+      }
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('crosses hard line breaks at the destination visual edge', () => {
+    const cases = [
+      {
+        text: 'abc\nאב',
+        start: { offset: 3, affinity: 'before' as const },
+        next: { offset: 6, affinity: 'before' as const },
+      },
+      {
+        text: 'אב\nabc',
+        start: { offset: 0, affinity: 'after' as const },
+        next: { offset: 3, affinity: 'after' as const },
+      },
+    ]
+    for (const testCase of cases) {
+      const mounted = mountBidiEditor(testCase.text, testCase.start, { rtlMoveVisually: true })
+      try {
+        const firstTop = primaryCaretTop(mounted.container)
+        expect(mounted.editor.dispatchCommand('cursorRight')).toBe(true)
+        expect(resolvedPrimary(mounted.session)).toMatchObject({
+          headOffset: testCase.next.offset,
+          affinity: testCase.next.affinity,
+        })
+        expect(primaryCaretTop(mounted.container)).toBeGreaterThan(firstTop)
+
+        expect(mounted.editor.dispatchCommand('cursorLeft')).toBe(true)
+        expect(resolvedPrimary(mounted.session)).toMatchObject({
+          headOffset: testCase.start.offset,
+          affinity: testCase.start.affinity,
+        })
+        expect(primaryCaretTop(mounted.container)).toBeCloseTo(firstTop, 0)
+      } finally {
+        mounted.dispose()
+      }
+    }
+  })
+
+  it('skips the override control and keeps a handled document-edge no-op', () => {
+    const edge = mountBidiEditor(
+      BIDI_CORPUS.override,
+      { offset: 4, affinity: 'after' },
+      { rtlMoveVisually: true },
+    )
+    try {
+      const left = primaryCaretLeft(edge.container)
+      expect(edge.editor.dispatchCommand('cursorRight')).toBe(true)
+      expect(resolvedPrimary(edge.session)).toMatchObject({ headOffset: 4, affinity: 'after' })
+      expect(primaryCaretLeft(edge.container)).toBeCloseTo(left, 0)
+    } finally {
+      edge.dispose()
+    }
+
+    const nextLine = mountBidiEditor(
+      `${BIDI_CORPUS.override}\nx`,
+      { offset: 4, affinity: 'after' },
+      { rtlMoveVisually: true },
+    )
+    try {
+      const top = primaryCaretTop(nextLine.container)
+      expect(nextLine.editor.dispatchCommand('cursorRight')).toBe(true)
+      expect(resolvedPrimary(nextLine.session)).toMatchObject({ headOffset: 11, affinity: 'after' })
+      expect(primaryCaretTop(nextLine.container)).toBeGreaterThan(top)
+    } finally {
+      nextLine.dispose()
+    }
+  })
+
+  it('uses affinity to own wrap seams and consumes the destination row first glyph', () => {
+    const viewport = { height: 120, width: 40 }
+    const right = mountBidiEditor(
+      BIDI_CORPUS.pureHebrew,
+      { offset: 0, affinity: 'after' },
+      { rtlMoveVisually: true, wordWrap: true },
+      viewport,
+    )
+    try {
+      const rows = right.view.getState().mountedRows
+      expect(rows.length).toBeGreaterThan(1)
+      const first = rows[0]!
+      const second = rows[1]!
+      expect(first.endOffset).toBe(second.startOffset)
+
+      right.view.setSelection(first.endOffset, first.endOffset, 'before')
+      const beforeTop = primaryCaretTop(right.container)
+      right.view.setSelection(first.endOffset, first.endOffset, 'after')
+      expect(primaryCaretTop(right.container)).toBeGreaterThan(beforeTop)
+
+      right.view.setSelection(0, 0, 'after')
+      expect(right.editor.dispatchCommand('cursorRight')).toBe(true)
+      expect(resolvedPrimary(right.session)).toMatchObject({
+        headOffset: second.endOffset - 1,
+        affinity: 'after',
+      })
+    } finally {
+      right.dispose()
+    }
+
+    const left = mountBidiEditor(
+      BIDI_CORPUS.pureHebrew,
+      { offset: BIDI_CORPUS.pureHebrew.length, affinity: 'before' },
+      { rtlMoveVisually: true, wordWrap: true },
+      viewport,
+    )
+    try {
+      const rows = left.view.getState().mountedRows
+      const source = rows.at(-1)!
+      const target = rows.at(-2)!
+      expect(source.startOffset).toBe(target.endOffset)
+
+      expect(left.editor.dispatchCommand('cursorLeft')).toBe(true)
+      expect(resolvedPrimary(left.session)).toMatchObject({
+        headOffset: target.startOffset + 1,
+        affinity: 'before',
+      })
+    } finally {
+      left.dispose()
+    }
+  })
+
+  it('skips phantom inline text instead of mistaking its source point for a row edge', () => {
+    const text = 'foobar'
+    const mounted = mountBidiEditor(
+      text,
+      { offset: 3, affinity: 'after' },
+      { rtlMoveVisually: true },
+    )
+    try {
+      mounted.view.setInlineMap(
+        createInlineMap(createPieceTableSnapshot(text), [
+          {
+            id: 'hint',
+            startIndex: 3,
+            endIndex: 3,
+            text: 'HINT',
+            insertion: true,
+          },
+        ]),
+      )
+      const startX = primaryCaretLeft(mounted.container)
+
+      expect(mounted.editor.dispatchCommand('cursorRight')).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({ headOffset: 4, affinity: 'before' })
+      expect(primaryCaretLeft(mounted.container)).toBeGreaterThan(startX + 1)
+
+      expect(mounted.editor.dispatchCommand('cursorLeft')).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({ headOffset: 3, affinity: 'after' })
+      expect(primaryCaretLeft(mounted.container)).toBeCloseTo(startX, 0)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('retains Tier A logical motion when the option is false and keeps Home and End logical', () => {
+    const logical = mountBidiEditor(
+      BIDI_CORPUS.nested,
+      { offset: 0, affinity: 'after' },
+      { rtlMoveVisually: false },
+    )
+    try {
+      expect(logical.editor.dispatchCommand('cursorRight')).toBe(true)
+      expect(resolvedPrimary(logical.session).headOffset).toBe(1)
+    } finally {
+      logical.dispose()
+    }
+
+    const boundaries = mountBidiEditor(
+      BIDI_CORPUS.pureHebrew,
+      { offset: 4, affinity: 'after' },
+      { rtlMoveVisually: true },
+    )
+    try {
+      expect(boundaries.editor.dispatchCommand('cursorLineStart')).toBe(true)
+      expect(resolvedPrimary(boundaries.session).headOffset).toBe(0)
+      const startX = primaryCaretLeft(boundaries.container)
+
+      expect(boundaries.editor.dispatchCommand('cursorLineEnd')).toBe(true)
+      expect(resolvedPrimary(boundaries.session).headOffset).toBe(BIDI_CORPUS.pureHebrew.length)
+      expect(primaryCaretLeft(boundaries.container)).toBeLessThan(startX)
+    } finally {
+      boundaries.dispose()
+    }
+  })
+
+  it('uses the host platform default when the option is omitted', () => {
+    const mounted = mountBidiEditor(BIDI_CORPUS.nested, { offset: 0, affinity: 'after' })
+    try {
+      expect(mounted.editor.dispatchCommand('cursorRight')).toBe(true)
+      const expected = detectPlatform() === 'windows' ? 1 : 0
+      expect(resolvedPrimary(mounted.session).headOffset).toBe(expected)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('uses the logical fallback when an RTL row refuses geometry', () => {
+    const text = 'א'.repeat(BIDI_LINE_MEASUREMENT_CEILING + 1)
+    const mounted = mountBidiEditor(
+      text,
+      { offset: 1, affinity: 'after' },
+      { rtlMoveVisually: true },
+    )
+    try {
+      expect(
+        mounted.row.element.querySelector('[data-editor-bidi-measurement-refusal]'),
+      ).not.toBeNull()
+      expect(mounted.editor.dispatchCommand('cursorRight')).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        headOffset: 2,
+        affinity: 'after',
+      })
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('moves mounted cursors visually and unmounted cursors through the logical fallback', () => {
+    const text = [
+      BIDI_CORPUS.nested,
+      ...Array.from({ length: 80 }, () => BIDI_CORPUS.pureHebrew),
+    ].join('\n')
+    const farStart = text.lastIndexOf('\n') + 1
+    const container = document.createElement('div')
+    container.style.height = '24px'
+    container.style.width = '600px'
+    document.body.append(container)
+    const session = createDocumentSession(text)
+    session.setSelections([
+      { anchor: 11, head: 11, affinity: 'before' },
+      { anchor: farStart + 1, head: farStart + 1, affinity: 'before' },
+    ])
+    const editor = new Editor(container, { rtlMoveVisually: true })
+    editor.attachSession(session)
+    const view = Reflect.get(editor, 'view') as VirtualizedTextView
+    view.setScrollMetrics(0, 24, 600)
+    try {
+      expect(
+        view
+          .getState()
+          .mountedRows.some((row) => row.startOffset <= farStart && row.endOffset >= farStart + 1),
+      ).toBe(false)
+
+      expect(editor.dispatchCommand('cursorRight')).toBe(true)
+      const resolved = session
+        .getSelections()
+        .selections.map((selection) => resolveSelection(session.getSnapshot(), selection))
+      expect(resolved).toMatchObject([
+        { anchorOffset: 10, headOffset: 10, affinity: 'after', collapsed: true },
+        {
+          anchorOffset: farStart + 2,
+          headOffset: farStart + 2,
+          affinity: 'after',
+          collapsed: true,
+        },
+      ])
+    } finally {
+      editor.dispose()
+      container.remove()
+    }
+  })
+
+  it('returns to logical motion when the destination row is not mounted', () => {
+    const container = document.createElement('div')
+    container.style.height = '20px'
+    container.style.width = '600px'
+    document.body.append(container)
+    const view = new VirtualizedTextView(container, { overscan: 0, rowHeight: 20 })
+    view.setText(Array.from({ length: 20 }, (_value, index) => `line ${index}`).join('\n'))
+    view.setScrollMetrics(0, 20, 600)
+    try {
+      const mounted = view.getState().mountedRows
+      const source = mounted.at(-1)!
+      expect(source.index).toBeLessThan(view.getState().lineCount - 1)
+      expect(mounted.some((row) => row.index === source.index + 1)).toBe(false)
+      expect(view.visualHorizontalTarget(source.endOffset, 'before', 'right')).toBeNull()
+    } finally {
+      view.dispose()
+      container.remove()
     }
   })
 
@@ -1586,29 +2028,155 @@ function rowClientPoint(
   return { x: rect.left + localX * scale, y: rect.top + rect.height / 2 }
 }
 
+function caretStates(
+  values: readonly (readonly [number, 'before' | 'after'])[],
+): readonly CaretState[] {
+  return values.map(([offset, affinity]) => ({ offset, affinity }))
+}
+
+function simpleLtrVisualPath(length: number): VisualCaretPath {
+  return {
+    right: [
+      { offset: 0, affinity: 'after' },
+      ...Array.from({ length }, (_value, index) => ({
+        offset: index + 1,
+        affinity: 'before' as const,
+      })),
+    ],
+    left: [
+      { offset: length, affinity: 'before' },
+      ...Array.from({ length }, (_value, index) => ({
+        offset: length - index - 1,
+        affinity: 'after' as const,
+      })),
+    ],
+  }
+}
+
+function simpleRtlVisualPath(length: number): VisualCaretPath {
+  return {
+    right: [
+      { offset: length, affinity: 'before' },
+      ...Array.from({ length }, (_value, index) => ({
+        offset: length - index - 1,
+        affinity: 'after' as const,
+      })),
+    ],
+    left: [
+      { offset: 0, affinity: 'after' },
+      ...Array.from({ length }, (_value, index) => ({
+        offset: index + 1,
+        affinity: 'before' as const,
+      })),
+    ],
+  }
+}
+
+function assertVisualCaretPath(
+  name: (typeof BIDI_CORPUS_NAMES)[number],
+  direction: 'left' | 'right',
+  path: readonly CaretState[],
+): void {
+  const initial = path[0]
+  expect(initial).toBeDefined()
+  const mounted = mountBidiEditor(BIDI_CORPUS[name], initial, { rtlMoveVisually: true })
+  try {
+    let previousX = primaryCaretLeft(mounted.container)
+    for (const expected of path.slice(1)) {
+      expect(
+        mounted.editor.dispatchCommand(direction === 'left' ? 'cursorLeft' : 'cursorRight'),
+      ).toBe(true)
+      expect(resolvedPrimary(mounted.session), `${name} ${direction}`).toMatchObject({
+        headOffset: expected.offset,
+        affinity: expected.affinity,
+      })
+
+      const x = primaryCaretLeft(mounted.container)
+      expectCaretAdvanced(name, direction, previousX, x)
+      previousX = x
+    }
+  } finally {
+    mounted.dispose()
+  }
+}
+
+function expectCaretAdvanced(
+  name: (typeof BIDI_CORPUS_NAMES)[number],
+  direction: 'left' | 'right',
+  previousX: number,
+  x: number,
+): void {
+  if (direction === 'left') {
+    expect(x, `${name} Left`).toBeLessThan(previousX - 1)
+    return
+  }
+  expect(x, `${name} Right`).toBeGreaterThan(previousX + 1)
+}
+
+function assertNestedSelectionStep(
+  mounted: ReturnType<typeof mountBidiEditor>,
+  expected: CaretState,
+  sevenAfterX: number | null,
+): number | null {
+  expect(mounted.editor.dispatchCommand('selectRight')).toBe(true)
+  expect(resolvedPrimary(mounted.session)).toMatchObject({
+    anchorOffset: 11,
+    headOffset: expected.offset,
+    affinity: expected.affinity,
+  })
+  if (expected.offset !== 7) return sevenAfterX
+
+  assertPaintedSelectionRects(mounted.row, mergedRangeOracle(mounted.row, 7, 11))
+  const x = primaryCaretLeft(mounted.container)
+  if (expected.affinity === 'after') return x
+
+  expect(sevenAfterX).not.toBeNull()
+  expect(Math.abs(x - sevenAfterX!)).toBeGreaterThan(1)
+  return sevenAfterX
+}
+
+function primaryCaretLeft(container: HTMLElement): number {
+  return primaryCaretElement(container).getBoundingClientRect().left
+}
+
+function primaryCaretTop(container: HTMLElement): number {
+  return new DOMMatrix(primaryCaretElement(container).style.transform).m42
+}
+
+function primaryCaretElement(container: HTMLElement): HTMLElement {
+  const caret = visibleCaretElements(container)[0]
+  expect(caret).toBeDefined()
+  return caret!
+}
+
 function mountBidiEditor(
   text: string,
   selection?: { readonly offset: number; readonly affinity: 'before' | 'after' },
+  options: EditorOptions = {},
+  viewport: { readonly height?: number; readonly width?: number } = {},
 ) {
+  const height = viewport.height ?? 24
+  const width = viewport.width ?? 600
   const container = document.createElement('div')
   container.style.display = 'flex'
-  container.style.height = '24px'
-  container.style.width = '600px'
+  container.style.height = `${height}px`
+  container.style.width = `${width}px`
   document.body.append(container)
 
   const session = createDocumentSession(text)
   if (selection) {
     session.setSelection(selection.offset, selection.offset, { affinity: selection.affinity })
   }
-  const editor = new Editor(container)
+  const editor = new Editor(container, options)
   editor.attachSession(session)
   const view = Reflect.get(editor, 'view') as VirtualizedTextView
-  view.setScrollMetrics(0, 24, 600)
+  view.setScrollMetrics(0, height, width)
   const row = view.getState().mountedRows[0]
   expect(row).toBeDefined()
 
   return {
     container,
+    editor,
     row: row!,
     session,
     view,

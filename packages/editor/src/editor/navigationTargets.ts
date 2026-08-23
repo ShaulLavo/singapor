@@ -1,7 +1,7 @@
 import type { TextSnapshot } from '../documentTextSnapshot'
 import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import { offsetToPoint, pointToOffset } from '../pieceTable/positions'
-import { SelectionGoal, type ResolvedSelection } from '../selections'
+import { SelectionGoal, type ResolvedSelection, type SelectionAffinity } from '../selections'
 import {
   nextCodePointOffset,
   nextWordOffset,
@@ -17,6 +17,7 @@ import type { EditorCommandId } from './commands'
 export type NavigationTarget = {
   readonly offset: number
   readonly extend: boolean
+  readonly affinity?: SelectionAffinity
   readonly goal?: SelectionGoal
   readonly timingName: string
 }
@@ -41,6 +42,11 @@ type NavigationTargetView = VisualColumnView &
   LineBoundaryView & {
     readonly offsetByDisplayRows: (offset: number, rowDelta: number, goalColumn: number) => number
     readonly pageRowDelta: () => number
+    readonly visualHorizontalTarget: (
+      offset: number,
+      affinity: SelectionAffinity,
+      direction: 'left' | 'right',
+    ) => { readonly offset: number; readonly affinity: SelectionAffinity } | null
   }
 
 type NavigationTargetContext = {
@@ -48,8 +54,13 @@ type NavigationTargetContext = {
   readonly resolved: ResolvedSelection
   readonly readLine: NavigationLineReader
   readonly documentLength: number
+  readonly rtlMoveVisually: boolean
   readonly wordSeparators?: string
   readonly view: NavigationTargetView
+}
+
+export function defaultRtlMoveVisually(platform: 'mac' | 'windows' | 'linux'): boolean {
+  return platform !== 'windows'
 }
 
 // A column past the end of every line: asking for it yields the line's end, and a caret carrying
@@ -114,10 +125,23 @@ function renderedRowTarget(
 ): NavigationTarget {
   const rendered = renderedRowCaretOffset(context.view, target.offset)
   if (rendered === target.offset) return target
-  if (target.offset <= context.resolved.headOffset) return { ...target, offset: rendered }
+  if (target.offset <= context.resolved.headOffset) {
+    return targetAtLogicalOffset(target, rendered)
+  }
 
   const beyondRegion = context.view.offsetByDisplayRows(target.offset, 1, 0)
-  return { ...target, offset: beyondRegion > target.offset ? beyondRegion : rendered }
+  const offset = beyondRegion > target.offset ? beyondRegion : rendered
+  return targetAtLogicalOffset(target, offset)
+}
+
+function targetAtLogicalOffset(target: NavigationTarget, offset: number): NavigationTarget {
+  const logical = {
+    offset,
+    extend: target.extend,
+    timingName: target.timingName,
+  }
+  if (!target.goal) return logical
+  return { ...logical, goal: target.goal }
 }
 
 function commandNavigationTarget(context: NavigationTargetContext): NavigationTarget | null {
@@ -150,16 +174,24 @@ function horizontalTarget(
   const { resolved } = context
   const collapsedOffset = direction === 'left' ? resolved.startOffset : resolved.endOffset
   const shouldMoveHead = extend || resolved.collapsed
-  const offset = shouldMoveHead
-    ? codePointOffset(context, resolved.headOffset, direction)
-    : collapsedOffset
+  const timingName = extend
+    ? `input.select${capitalize(direction)}`
+    : `input.cursor${capitalize(direction)}`
+  if (!shouldMoveHead) return { offset: collapsedOffset, extend, timingName }
+
+  if (context.rtlMoveVisually) {
+    const target = context.view.visualHorizontalTarget(
+      resolved.headOffset,
+      resolved.affinity,
+      direction,
+    )
+    if (target) return { ...target, extend, timingName }
+  }
 
   return {
-    offset,
+    offset: codePointOffset(context, resolved.headOffset, direction),
     extend,
-    timingName: extend
-      ? `input.select${capitalize(direction)}`
-      : `input.cursor${capitalize(direction)}`,
+    timingName,
   }
 }
 

@@ -7,6 +7,7 @@ import {
   codePointLength,
   isCombiningMark,
   isVariationSelector,
+  nextGraphemeBoundary,
   previousGraphemeBoundary,
   segmentGraphemes,
   type TextSegment,
@@ -22,7 +23,12 @@ import type {
   VirtualizedTextChunkTextPart,
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
-import { isSimpleRowText, memoizedContainsRTL } from './virtualizedTextViewBidi'
+import {
+  BIDI_CONTROL_CODE_POINTS,
+  bidiVisualRunIndexAt,
+  isSimpleRowText,
+  memoizedContainsRTL,
+} from './virtualizedTextViewBidi'
 
 export { isSimpleRowText } from './virtualizedTextViewBidi'
 
@@ -204,6 +210,13 @@ type BidiRunEdges = {
   readonly start: number
   readonly end: number
 }
+
+export type VisualCaretTarget = {
+  readonly offset: number
+  readonly affinity: SelectionAffinity
+}
+
+export type VisualRowCaretMove = VisualCaretTarget | { readonly kind: 'row-edge' }
 
 type DomBoundary = {
   readonly node: Node
@@ -535,6 +548,139 @@ export function bidiRunsForRow(
   return geometry.bidiRuns
 }
 
+export function visualCaretMoveInRow(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  affinity: SelectionAffinity,
+  direction: 'left' | 'right',
+): VisualRowCaretMove | null {
+  const runs = bidiRunsForRow(view, row)
+  if (!runs) return plainCaretMoveInRow(view, row, offset, direction)
+
+  const clamped = clamp(offset, row.startOffset, row.endOffset)
+  const normalized = normalizedBoundaryAffinity(row, clamped, affinity)
+  let current = { offset: clamped, affinity: normalized }
+  let currentX = strongCaretX(view, row, current)
+  for (let steps = 0; steps <= row.text.length + runs.length; steps += 1) {
+    const next = nextBidiCaretMove(row, runs, current, direction)
+    if (!next || 'kind' in next) return next
+
+    const nextX = strongCaretX(view, row, next)
+    if (Math.abs(nextX - currentX) > BIDI_BOUNDARY_EPSILON) return next
+
+    current = next
+    currentX = nextX
+  }
+
+  return { kind: 'row-edge' }
+}
+
+function plainCaretMoveInRow(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  direction: 'left' | 'right',
+): VisualRowCaretMove | null {
+  if (rowMightContainRTL(view, row)) return null
+
+  const clamped = clamp(offset, row.startOffset, row.endOffset)
+  const logicalDirection = direction === 'left' ? 'backward' : 'forward'
+  const target = rowUnitOffset(row, clamped, logicalDirection)
+  if (target === clamped) return { kind: 'row-edge' }
+
+  return {
+    offset: target,
+    affinity: logicalDirection === 'forward' ? 'before' : 'after',
+  }
+}
+
+function nextBidiCaretMove(
+  row: MountedVirtualizedTextRow,
+  runs: readonly VirtualizedBidiRun[],
+  current: VisualCaretTarget,
+  direction: 'left' | 'right',
+): VisualRowCaretMove | null {
+  const runIndex = bidiVisualRunIndexAt(runs, current.offset, current.affinity)
+  if (runIndex === null) return null
+
+  const run = runs[runIndex]!
+  const target = moveOneBidiUnit(row, run, current.offset, direction)
+  if (target) return target
+
+  const adjacentIndex = runIndex + (direction === 'left' ? -1 : 1)
+  const adjacent = runs[adjacentIndex]
+  if (!adjacent) return { kind: 'row-edge' }
+
+  const entryEdge = direction === 'left' ? 'right' : 'left'
+  const entry = visualRunEdgeTarget(adjacent, entryEdge)
+  return moveOneBidiUnit(row, adjacent, entry.offset, direction) ?? entry
+}
+
+function strongCaretX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  target: VisualCaretTarget,
+): number {
+  return boundaryPositionXsForAffinity(view, row, target.offset, target.affinity)[0]!
+}
+
+export function visualCaretAtRowEdge(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  edge: 'left' | 'right',
+): VisualCaretTarget | null {
+  const runs = bidiRunsForRow(view, row)
+  if (!runs) return plainCaretAtRowEdge(view, row, edge)
+
+  const run = edge === 'left' ? runs[0] : runs.at(-1)
+  return run ? visualRunEdgeTarget(run, edge) : null
+}
+
+function plainCaretAtRowEdge(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  edge: 'left' | 'right',
+): VisualCaretTarget | null {
+  if (rowMightContainRTL(view, row)) return null
+  if (edge === 'left') return { offset: row.startOffset, affinity: 'after' }
+  return { offset: row.endOffset, affinity: 'before' }
+}
+
+function moveOneBidiUnit(
+  row: MountedVirtualizedTextRow,
+  run: VirtualizedBidiRun,
+  offset: number,
+  direction: 'left' | 'right',
+): VisualCaretTarget | null {
+  const logicalDirection = logicalDirectionForVisualMove(run.direction, direction)
+  const target = rowUnitOffset(row, offset, logicalDirection)
+  if (target === offset) return null
+  if (target < run.startOffset || target > run.endOffset) return null
+
+  return {
+    offset: target,
+    affinity: logicalDirection === 'forward' ? 'before' : 'after',
+  }
+}
+
+function logicalDirectionForVisualMove(
+  runDirection: VirtualizedBidiRun['direction'],
+  direction: 'left' | 'right',
+): 'backward' | 'forward' {
+  if (direction === 'right') return runDirection === 'ltr' ? 'forward' : 'backward'
+  return runDirection === 'ltr' ? 'backward' : 'forward'
+}
+
+function visualRunEdgeTarget(run: VirtualizedBidiRun, edge: 'left' | 'right'): VisualCaretTarget {
+  if (edge === 'left' && run.direction === 'ltr') {
+    return { offset: run.startOffset, affinity: 'after' }
+  }
+  if (edge === 'left') return { offset: run.endOffset, affinity: 'before' }
+  if (run.direction === 'ltr') return { offset: run.endOffset, affinity: 'before' }
+  return { offset: run.startOffset, affinity: 'after' }
+}
+
 function buildBidiRuns(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
@@ -812,6 +958,9 @@ function preferredBoundaryPositionIndex(
   positions: readonly number[],
   affinity: SelectionAffinity,
 ): number | null {
+  const coincident = coincidentUnitBoundaryIndex(view, row, offset, positions, affinity)
+  if (coincident !== null) return coincident
+
   const unitOffset = affinity === 'before' ? previousRowUnitOffset(row, offset) : offset
   const rect = unitRectForOffset(view, row, unitOffset)
   if (!rect) return null
@@ -820,6 +969,36 @@ function preferredBoundaryPositionIndex(
   const second = unitEdgeDistance(rect, positions[1]!)
   if (Math.abs(first - second) <= 1) return null
   return first < second ? 0 : 1
+}
+
+function coincidentUnitBoundaryIndex(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  positions: readonly number[],
+  affinity: SelectionAffinity,
+): number | null {
+  const unitOffset = affinity === 'before' ? previousRowUnitOffset(row, offset) : offset
+  if (!isBidiControlAtOffset(row, unitOffset)) return null
+
+  // Chromium gives an invisible BiDi control's nonempty range a neighbor's box. Its collapsed far
+  // boundary is the trustworthy zero-advance signal.
+  const adjacentOffset =
+    affinity === 'before' ? previousRowUnitOffset(row, offset) : nextRowUnitOffset(row, offset)
+  if (adjacentOffset === offset) return null
+
+  const adjacent = boundaryPositionXs(view, row, adjacentOffset)
+  const matches = positions.map((position) =>
+    adjacent.some((candidate) => Math.abs(candidate - position) <= BIDI_BOUNDARY_EPSILON),
+  )
+  if (matches[0] === matches[1]) return null
+  return matches[0] ? 0 : 1
+}
+
+function isBidiControlAtOffset(row: MountedVirtualizedTextRow, offset: number): boolean {
+  const local = rowLocalIndexForOffset(row, offset, 'after')
+  const codePoint = row.text.codePointAt(local)
+  return BIDI_CONTROL_CODE_POINTS.some((candidate) => candidate === codePoint)
 }
 
 function normalizedBoundaryAffinity(
@@ -833,9 +1012,40 @@ function normalizedBoundaryAffinity(
 }
 
 function previousRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
-  const local = rowLocalIndexForOffset(row, offset, 'before')
-  const previous = previousGraphemeBoundary(row.text, local)
-  return rowOffsetForLocalIndex(row, previous, 'before')
+  let local = rowLocalIndexForOffset(row, offset, 'before')
+  while (local > 0) {
+    const previous = previousGraphemeBoundary(row.text, local)
+    if (previous === local) return offset
+
+    const target = rowOffsetForLocalIndex(row, previous, 'before')
+    if (target !== offset) return target
+    local = previous
+  }
+
+  return offset
+}
+
+function nextRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
+  let local = rowLocalIndexForOffset(row, offset, 'after')
+  while (local < row.text.length) {
+    const next = nextGraphemeBoundary(row.text, local)
+    if (next === local) return offset
+
+    const target = rowOffsetForLocalIndex(row, next, 'after')
+    if (target !== offset) return target
+    local = next
+  }
+
+  return offset
+}
+
+function rowUnitOffset(
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  direction: 'backward' | 'forward',
+): number {
+  if (direction === 'backward') return previousRowUnitOffset(row, offset)
+  return nextRowUnitOffset(row, offset)
 }
 
 function unitEdgeDistance(

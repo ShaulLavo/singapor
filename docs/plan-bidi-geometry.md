@@ -1050,8 +1050,13 @@ test still passes.
       `bun run typecheck`; tree-sitter `bun run test test/structuralSelection.test.ts` (5 tests)
       and `bun run typecheck`. Focused `oxlint`, `oxfmt --check`, and `git diff --check` passed
       across all changed files.
-- [ ] **Drag anchoring re-picks the side across a bidi jump**
+- [x] **Drag anchoring re-picks the side across a bidi jump**
       `high` `M` — `packages/editor/src/editor/inputSelectionController.ts:2030`, `:2148`.
+      Verified 2026-08-23: editor `bun run test --project browser
+      test/bidiGeometry.browser.test.ts` (41 tests), `bun run test --project dom
+      test/editor.test.ts` (264 tests), `bun run test --project dom test/editor-helpers.test.ts
+      test/virtualizedTextView.test.ts` (180 tests), `bun run typecheck`, and `bun run build`.
+      Focused `oxlint`, `oxfmt --check`, and `git diff --check` passed across all changed files.
 - [ ] **`caretPosition` returns one-or-two positions and the caret layer mounts the secondary**
       `medium` `M` — `virtualizedTextViewRows.ts:2724`, `virtualizedTextViewHighlights.ts:341`,
       `:1424`.

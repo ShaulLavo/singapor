@@ -1,4 +1,5 @@
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
+import type { SelectionAffinity } from '../selections'
 import type { EditorTokenStyle } from '../tokens'
 import type { DisplayTextRowSource, InjectedTextRow } from '../displayTransforms'
 import type { BrowserTextMetrics } from './browserMetrics'
@@ -8,6 +9,27 @@ import type { FixedRowVisibleRange } from './fixedRowVirtualizer'
 type CaretPositionResult = {
   readonly offsetNode: Node
   readonly offset: number
+}
+
+export type VirtualizedTextHitPosition = {
+  readonly offset: number
+  readonly affinity: SelectionAffinity
+  readonly displayRow: number
+  readonly rowX: number
+}
+
+/** The two logical anchors that share one visual caret at a BiDi boundary. */
+export type VirtualizedBidiSelectionAnchor = {
+  readonly displayRow: number
+  readonly textRevision: number
+  readonly rawOffset: number
+  readonly rawAffinity: SelectionAffinity
+  readonly intervalStart: number
+  readonly intervalEnd: number
+  readonly insideOffset: number
+  readonly outsideOffset: number
+  readonly leftOffset: number
+  readonly rightOffset: number
 }
 
 export type DocumentWithCaretHitTesting = Document & {

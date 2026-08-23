@@ -10,6 +10,7 @@ import {
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
 import type { EditorTheme } from '../theme'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
+import type { SelectionAffinity } from '../selections'
 import type { EditorToken, TextEdit } from '../tokens'
 import { applyEditorTheme } from '../theme'
 import { measureBrowserTextMetrics, type BrowserTextMetrics } from './browserMetrics'
@@ -95,8 +96,10 @@ import {
   rowLocalXFromClientPoint,
   rowMightContainRTL,
   rowTextExtent,
+  unitRectForOffset,
   xToOffset,
 } from './virtualizedTextViewGeometry'
+import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 import {
   applyRowHeight,
   disposeGutterCells,
@@ -145,6 +148,8 @@ import type {
   VirtualizedTextViewState,
   DocumentWithCaretHitTesting,
   MountedVirtualizedTextRow,
+  VirtualizedBidiSelectionAnchor,
+  VirtualizedTextHitPosition,
 } from './virtualizedTextViewTypes'
 
 type BidiExtremalBoundaryCache = {
@@ -779,35 +784,107 @@ export class VirtualizedTextView {
   }
 
   public textOffsetFromPoint(clientX: number, clientY: number): number | null {
-    return this.textOffsetFromViewportPoint(clientX, clientY)
+    return this.textPositionFromPoint(clientX, clientY)?.offset ?? null
   }
 
   public textOffsetFromViewportPoint(clientX: number, clientY: number): number | null {
+    return this.textPositionFromViewportPoint(clientX, clientY)?.offset ?? null
+  }
+
+  public textPositionFromPoint(
+    clientX: number,
+    clientY: number,
+  ): VirtualizedTextHitPosition | null {
+    return this.textPositionFromViewportPoint(clientX, clientY)
+  }
+
+  public textPositionFromViewportPoint(
+    clientX: number,
+    clientY: number,
+  ): VirtualizedTextHitPosition | null {
     const view = this.view
     const metrics = viewportPointMetrics(view, clientX, clientY)
-    if (metrics.verticalDirection < 0)
-      return lineStartOffset(view, rowForViewportY(view, metrics.y))
-    if (metrics.verticalDirection > 0) return lineEndOffset(view, rowForViewportY(view, metrics.y))
-
     const row = rowForViewportY(view, metrics.y)
+    if (metrics.verticalDirection < 0) {
+      return textHitPosition(lineStartOffset(view, row), 'after', row, metrics.x)
+    }
+    if (metrics.verticalDirection > 0) {
+      return textHitPosition(lineEndOffset(view, row), 'before', row, metrics.x)
+    }
     if (!isDocumentTextDisplayRow(view.model.rows[row])) return null
 
     const mounted = view.rowElements.get(row)
     if (mounted?.kind === 'text' && rowMightContainRTL(view, mounted)) {
-      return bidiOffsetFromViewportPoint(view, mounted, metrics)
+      return bidiTextHitPosition(view, mounted, metrics)
     }
-    if (mounted?.kind === 'text') return xToOffset(view, mounted, metrics.x)
+    if (mounted?.kind === 'text') {
+      const offset = xToOffset(view, mounted, metrics.x)
+      return textHitPosition(offset, endpointAffinity(mounted, offset), row, metrics.x)
+    }
 
     const column = Math.floor(metrics.x / Math.max(1, view.metrics.characterWidth))
-    return offsetForViewportColumn(view, row, column)
+    const offset = offsetForViewportColumn(view, row, column)
+    const affinity = offset === lineEndOffset(view, row) ? 'before' : 'after'
+    return textHitPosition(offset, affinity, row, metrics.x)
+  }
+
+  public createBidiSelectionAnchor(
+    position: VirtualizedTextHitPosition,
+  ): VirtualizedBidiSelectionAnchor | null {
+    const view = this.view
+    const row = view.rowElements.get(position.displayRow)
+    if (row?.kind !== 'text') return null
+    if (!rowMightContainRTL(view, row)) return null
+
+    const positions = boundaryPositionXs(view, row, position.offset)
+    if (positions.length !== 2) return null
+    if (positions[1]! - positions[0]! <= 1) return null
+
+    const alternate = alternateBoundaryOffset(view, row, position.offset, positions)
+    if (alternate === null) return null
+
+    const intervalStart = Math.min(position.offset, alternate)
+    const intervalEnd = Math.max(position.offset, alternate)
+    const direction = bidiTwinIntervalDirection(view, row, intervalStart, intervalEnd)
+    if (!direction) return null
+
+    const anchorAtLeft = closestPositionX(positions, position.rowX) === positions[0]
+    const mappings = bidiTwinAnchorMappings(intervalStart, intervalEnd, direction, anchorAtLeft)
+    return {
+      displayRow: position.displayRow,
+      textRevision: view.textRevision,
+      rawOffset: position.offset,
+      rawAffinity: position.affinity,
+      intervalStart,
+      intervalEnd,
+      ...mappings,
+    }
+  }
+
+  public resolveBidiSelectionAnchor(
+    anchor: VirtualizedBidiSelectionAnchor,
+    head: VirtualizedTextHitPosition,
+  ): number {
+    if (anchor.textRevision !== this.view.textRevision) return anchor.rawOffset
+    if (head.displayRow < anchor.displayRow) return anchor.rightOffset
+    if (head.displayRow > anchor.displayRow) return anchor.leftOffset
+    if (head.offset === anchor.rawOffset && head.affinity === anchor.rawAffinity) {
+      return anchor.rawOffset
+    }
+    if (bidiHeadInsideTwinInterval(anchor, head)) return anchor.insideOffset
+    return anchor.outsideOffset
   }
 
   public textOffsetFromDomBoundary(node: Node, offset: number): number | null {
     return textOffsetFromDomBoundary(this.view, node, offset)
   }
 
-  public setSelection(anchorOffset: number, headOffset: number): void {
-    setSelection(this.view, anchorOffset, headOffset)
+  public setSelection(
+    anchorOffset: number,
+    headOffset: number,
+    affinity: SelectionAffinity = 'after',
+  ): void {
+    setSelection(this.view, anchorOffset, headOffset, affinity)
     this.refreshInlineReveal()
   }
 
@@ -1012,6 +1089,201 @@ export class VirtualizedTextView {
 }
 
 type ViewportPointMetrics = ReturnType<typeof viewportPointMetrics>
+
+function textHitPosition(
+  offset: number,
+  affinity: SelectionAffinity,
+  displayRow: number,
+  rowX: number,
+): VirtualizedTextHitPosition {
+  return { offset, affinity, displayRow, rowX }
+}
+
+function bidiTextHitPosition(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  point: ViewportPointMetrics,
+): VirtualizedTextHitPosition | null {
+  const offset = bidiOffsetFromViewportPoint(view, row, point)
+  if (offset === null) return null
+
+  const rowX = rowLocalXFromClientPoint(row, point.clientX)
+  const affinity = bidiPointAffinity(view, row, offset, rowX)
+  return textHitPosition(offset, affinity, row.index, rowX)
+}
+
+function bidiPointAffinity(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  rowX: number,
+): SelectionAffinity {
+  const endpoint = endpointAffinity(row, offset)
+  if (offset <= row.startOffset || offset >= row.endOffset) return endpoint
+
+  const positions = boundaryPositionXs(view, row, offset)
+  if (positions.length !== 2) return endpoint
+
+  const boundaryX = closestPositionX(positions, rowX)
+  const following = unitRectForOffset(view, row, offset)
+  const previousOffset = previousRowUnitOffset(row, offset)
+  const previous = unitRectForOffset(view, row, previousOffset)
+  const followingDistance = unitEdgeDistance(following, boundaryX)
+  const previousDistance = unitEdgeDistance(previous, boundaryX)
+  if (previousDistance < followingDistance) return 'before'
+  return 'after'
+}
+
+function endpointAffinity(row: MountedVirtualizedTextRow, offset: number): SelectionAffinity {
+  return offset >= row.endOffset ? 'before' : 'after'
+}
+
+function previousRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
+  const local = rowLocalIndexForOffset(row, offset, 'before')
+  const previous = previousGraphemeBoundary(row.text, local)
+  return rowOffsetForLocalIndex(row, previous, 'before')
+}
+
+function unitEdgeDistance(
+  rect: { readonly left: number; readonly width: number } | null,
+  x: number,
+): number {
+  if (!rect) return Number.POSITIVE_INFINITY
+  return Math.min(Math.abs(rect.left - x), Math.abs(rect.left + rect.width - x))
+}
+
+function closestPositionX(positions: readonly number[], target: number): number {
+  let closest = positions[0] ?? target
+  let distance = Math.abs(closest - target)
+  for (const position of positions.slice(1)) {
+    const candidateDistance = Math.abs(position - target)
+    if (candidateDistance >= distance) continue
+
+    closest = position
+    distance = candidateDistance
+  }
+  return closest
+}
+
+function alternateBoundaryOffset(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  positions: readonly number[],
+): number | null {
+  for (const position of positions) {
+    const candidate = hitTestRowOffsetAtLocalX(row, position)
+    if (candidate === null || candidate === offset) continue
+    if (!boundarySharesPositions(view, row, candidate, positions)) continue
+    return candidate
+  }
+  return null
+}
+
+function boundarySharesPositions(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  expected: readonly number[],
+): boolean {
+  const actual = boundaryPositionXs(view, row, offset)
+  if (actual.length !== expected.length) return false
+  return expected.every((position) =>
+    actual.some((candidate) => Math.abs(candidate - position) <= 1),
+  )
+}
+
+type BidiTwinIntervalDirection = 'ltr' | 'rtl'
+
+function bidiTwinIntervalDirection(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  intervalStart: number,
+  intervalEnd: number,
+): BidiTwinIntervalDirection | null {
+  const next = nextRowUnitOffset(row, intervalStart)
+  if (next <= intervalStart || next > intervalEnd) return null
+
+  const rect = unitRectForOffset(view, row, intervalStart)
+  if (!rect || rect.width <= 1) return null
+
+  const left = hitTestRowOffsetAtLocalX(row, rect.left + rect.width * 0.25)
+  const right = hitTestRowOffsetAtLocalX(row, rect.left + rect.width * 0.75)
+  const leftAtStart = hitRepresentsBoundary(view, row, left, intervalStart)
+  const leftAtNext = hitRepresentsBoundary(view, row, left, next)
+  const rightAtStart = hitRepresentsBoundary(view, row, right, intervalStart)
+  const rightAtNext = hitRepresentsBoundary(view, row, right, next)
+  if (leftAtStart && rightAtNext) return 'ltr'
+  if (leftAtNext && rightAtStart) return 'rtl'
+  return null
+}
+
+function hitRepresentsBoundary(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  hit: number | null,
+  expected: number,
+): boolean {
+  if (hit === expected) return true
+  if (hit === null) return false
+  return boundarySharesPositions(view, row, hit, boundaryPositionXs(view, row, expected))
+}
+
+function nextRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
+  const local = rowLocalIndexForOffset(row, offset, 'after')
+  const next = nextGraphemeBoundary(row.text, local)
+  return rowOffsetForLocalIndex(row, next, 'after')
+}
+
+function bidiTwinAnchorMappings(
+  intervalStart: number,
+  intervalEnd: number,
+  direction: BidiTwinIntervalDirection,
+  anchorAtLeft: boolean,
+): Pick<
+  VirtualizedBidiSelectionAnchor,
+  'insideOffset' | 'outsideOffset' | 'leftOffset' | 'rightOffset'
+> {
+  if (direction === 'ltr') {
+    return anchorAtLeft
+      ? {
+          insideOffset: intervalStart,
+          outsideOffset: intervalEnd,
+          leftOffset: intervalEnd,
+          rightOffset: intervalStart,
+        }
+      : {
+          insideOffset: intervalEnd,
+          outsideOffset: intervalStart,
+          leftOffset: intervalEnd,
+          rightOffset: intervalStart,
+        }
+  }
+
+  return anchorAtLeft
+    ? {
+        insideOffset: intervalEnd,
+        outsideOffset: intervalStart,
+        leftOffset: intervalStart,
+        rightOffset: intervalEnd,
+      }
+    : {
+        insideOffset: intervalStart,
+        outsideOffset: intervalEnd,
+        leftOffset: intervalStart,
+        rightOffset: intervalEnd,
+      }
+}
+
+function bidiHeadInsideTwinInterval(
+  anchor: VirtualizedBidiSelectionAnchor,
+  head: VirtualizedTextHitPosition,
+): boolean {
+  if (head.offset > anchor.intervalStart && head.offset < anchor.intervalEnd) return true
+  if (head.offset === anchor.intervalStart) return head.affinity === 'after'
+  if (head.offset === anchor.intervalEnd) return head.affinity === 'before'
+  return false
+}
 
 function bidiOffsetFromViewportPoint(
   view: VirtualizedTextViewInternal,

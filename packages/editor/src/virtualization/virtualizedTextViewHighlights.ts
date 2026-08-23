@@ -1,4 +1,5 @@
 import type { EditorToken, EditorTokenStyle } from '../tokens'
+import type { SelectionAffinity } from '../selections'
 import {
   editorPerformanceDiagnosticsEnabled,
   recordEditorPerformanceDiagnostic,
@@ -207,8 +208,9 @@ export function setSelection(
   view: VirtualizedTextViewInternal,
   anchorOffset: number,
   headOffset: number,
+  affinity: SelectionAffinity = 'after',
 ): void {
-  setSelections(view, [{ anchorOffset, headOffset }])
+  setSelections(view, [{ anchorOffset, headOffset, affinity }])
 }
 
 export function setSelections(

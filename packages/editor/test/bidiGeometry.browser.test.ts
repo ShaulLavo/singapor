@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import '../src/style.css'
 
+import { Editor } from '../src/editor'
 import { createInlineMap } from '../src/inlineMap'
-import { createPieceTableSnapshot } from '../src/public/document'
+import { createDocumentSession, createPieceTableSnapshot } from '../src/public/document'
+import { resolveSelection } from '../src/selections'
 import {
   normalizeSuspiciousCharactersOptions,
   suspiciousCharacterRanges,
@@ -355,6 +357,106 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
 
     fixture!.view.setSelection(start!, end!)
     assertPaintedSelectionRects(row, mergedRangeOracle(row, 8, 11))
+  })
+
+  it('keeps the pressed visual side when a real drag leaves an RTL run', () => {
+    const mounted = mountBidiEditor(BIDI_CORPUS.mixed)
+    try {
+      const glyphs = glyphRectOracle(mounted.row)
+      const startRect = glyphs[8]!.rects[0]!
+      const endRect = glyphs[7]!.rects[0]!
+      const start = rowClientPoint(mounted.row, startRect.left + startRect.width * 0.75)
+      const end = rowClientPoint(mounted.row, endRect.left + endRect.width * 0.75)
+      const down = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: start.x,
+        clientY: start.y,
+        detail: 1,
+      })
+
+      expect(mounted.view.textPositionFromPoint(start.x, start.y)).toMatchObject({
+        offset: 12,
+        affinity: 'after',
+      })
+      expect(mounted.view.textPositionFromPoint(end.x, end.y)).toMatchObject({
+        offset: 8,
+        affinity: 'before',
+      })
+
+      mounted.view.scrollElement.dispatchEvent(down)
+      dispatchDragMouse('mousemove', end)
+
+      expect(down.defaultPrevented).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        affinity: 'before',
+        anchorOffset: 12,
+        endOffset: 12,
+        headOffset: 8,
+        reversed: true,
+        startOffset: 8,
+      })
+      assertPaintedSelectionRects(mounted.row, mergedRangeOracle(mounted.row, 8, 12))
+
+      dispatchDragMouse('mouseup', end)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        affinity: 'before',
+        anchorOffset: 12,
+        endOffset: 12,
+        headOffset: 8,
+        reversed: true,
+        startOffset: 8,
+      })
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('distinguishes embedded RTL and nested LTR drag intervals', () => {
+    const mixedRow = fixture!.rows.mixed
+    const nestedRow = fixture!.rows.nested
+    const mixedRect = glyphRectOracle(mixedRow)[8]!.rects[0]!
+    const nestedRect = glyphRectOracle(nestedRow)[4]!.rects[0]!
+    const mixedPoint = rowClientPoint(mixedRow, mixedRect.left + mixedRect.width * 0.75)
+    const nestedPoint = rowClientPoint(nestedRow, nestedRect.left + nestedRect.width * 0.25)
+    const mixedPosition = fixture!.view.textPositionFromPoint(mixedPoint.x, mixedPoint.y)
+    const nestedPosition = fixture!.view.textPositionFromPoint(nestedPoint.x, nestedPoint.y)
+    expect(mixedPosition).not.toBeNull()
+    expect(nestedPosition).not.toBeNull()
+
+    const mixedAnchor = fixture!.view.createBidiSelectionAnchor(mixedPosition!)
+    const nestedAnchor = fixture!.view.createBidiSelectionAnchor(nestedPosition!)
+    expect(mixedAnchor).not.toBeNull()
+    expect(nestedAnchor).not.toBeNull()
+
+    expect(
+      fixture!.view.resolveBidiSelectionAnchor(mixedAnchor!, {
+        ...mixedPosition!,
+        offset: mixedRow.startOffset + 9,
+      }),
+    ).toBe(mixedRow.startOffset + 8)
+    expect(
+      fixture!.view.resolveBidiSelectionAnchor(mixedAnchor!, {
+        ...mixedPosition!,
+        offset: mixedRow.startOffset + 8,
+        affinity: 'before',
+      }),
+    ).toBe(mixedRow.startOffset + 12)
+    expect(
+      fixture!.view.resolveBidiSelectionAnchor(nestedAnchor!, {
+        ...nestedPosition!,
+        offset: nestedRow.startOffset + 5,
+      }),
+    ).toBe(nestedRow.startOffset + 4)
+    expect(
+      fixture!.view.resolveBidiSelectionAnchor(nestedAnchor!, {
+        ...nestedPosition!,
+        offset: nestedRow.startOffset + 4,
+        affinity: 'before',
+      }),
+    ).toBe(nestedRow.startOffset + 7)
   })
 
   it('uses caretRangeFromPoint when caretPositionFromPoint is unavailable', () => {
@@ -919,6 +1021,54 @@ function rowClientPoint(
   const rect = row.element.getBoundingClientRect()
   const scale = row.element.offsetWidth > 0 ? rect.width / row.element.offsetWidth : 1
   return { x: rect.left + localX * scale, y: rect.top + rect.height / 2 }
+}
+
+function mountBidiEditor(text: string) {
+  const container = document.createElement('div')
+  container.style.display = 'flex'
+  container.style.height = '24px'
+  container.style.width = '600px'
+  document.body.append(container)
+
+  const session = createDocumentSession(text)
+  const editor = new Editor(container)
+  editor.attachSession(session)
+  const view = Reflect.get(editor, 'view') as VirtualizedTextView
+  view.setScrollMetrics(0, 24, 600)
+  const row = view.getState().mountedRows[0]
+  expect(row).toBeDefined()
+
+  return {
+    row: row!,
+    session,
+    view,
+    dispose: () => {
+      editor.dispose()
+      container.remove()
+    },
+  }
+}
+
+function dispatchDragMouse(
+  type: 'mousemove' | 'mouseup',
+  point: { readonly x: number; readonly y: number },
+): void {
+  document.dispatchEvent(
+    new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: type === 'mousemove' ? 1 : 0,
+      clientX: point.x,
+      clientY: point.y,
+    }),
+  )
+}
+
+function resolvedPrimary(session: ReturnType<typeof createDocumentSession>) {
+  const selection = session.getSelections().selections[0]
+  expect(selection).toBeDefined()
+  return resolveSelection(session.getSnapshot(), selection!)
 }
 
 function rowOracleExtent(row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']]): {

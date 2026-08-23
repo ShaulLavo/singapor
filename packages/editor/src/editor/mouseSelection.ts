@@ -1,6 +1,10 @@
 import type { TextOffsetRange } from '../textRanges'
 import { clamp } from '../style-utils'
 import type { TextEdit } from '../tokens'
+import type {
+  VirtualizedBidiSelectionAnchor,
+  VirtualizedTextHitPosition,
+} from '../virtualization/virtualizedTextViewTypes'
 import { nowMs } from './timing'
 
 /**
@@ -9,12 +13,17 @@ import { nowMs } from './timing'
  */
 export type MouseSelectionGranularity = 'char' | 'word' | 'line' | 'column'
 
+export type MouseSelectionAnchor = {
+  readonly range: TextOffsetRange
+  readonly bidi: VirtualizedBidiSelectionAnchor | null
+}
+
 export type MouseSelectionDrag = {
   // The drag pivots on whichever end of the anchored word or line the pointer is away from, so the
   // unit the press landed on stays whole however far the pointer travels in either direction.
-  readonly anchor: TextOffsetRange
+  readonly anchor: MouseSelectionAnchor
   readonly granularity: MouseSelectionGranularity
-  headOffset: number
+  head: VirtualizedTextHitPosition
   clientX: number
   clientY: number
 }

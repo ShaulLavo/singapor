@@ -11,6 +11,7 @@ import {
   lastAddedSelectionIndex,
   resolveSelection,
   type ResolvedSelection,
+  type SelectionAffinity,
   type SelectionGoal as SelectionGoalValue,
   type SelectionSet,
 } from '../selections'
@@ -64,11 +65,13 @@ import {
   mouseSelectionEnds,
   mouseTextMove,
   requestFrame,
+  type MouseSelectionAnchor,
   type MouseSelectionDrag,
   type MouseSelectionEnds,
   type MouseSelectionGranularity,
   type MouseTextMoveDrag,
 } from './mouseSelection'
+import type { VirtualizedTextHitPosition } from '../virtualization/virtualizedTextViewTypes'
 import {
   createNavigationLineReader,
   navigationTargetForCommand,
@@ -235,7 +238,7 @@ export class InputSelectionController {
   private occurrenceRun: OccurrenceRun | null = null
   private mouseSelectionDrag: MouseSelectionDrag | null = null
   private mouseTextMoveDrag: MouseTextMoveDrag | null = null
-  private mouseSelectionAnchor: TextOffsetRange | null = null
+  private mouseSelectionAnchor: MouseSelectionAnchor | null = null
   private columnSelection: ColumnSelectionRun | null = null
   private mouseSelectionAutoScrollFrame = 0
   private inputState: EditorInputState = createEditorInputState()
@@ -1636,36 +1639,37 @@ export class InputSelectionController {
       return
     }
 
-    const offset = this.textOffsetFromMouseEvent(event)
-    if (offset === null) return
+    const position = this.textPositionFromMouseEvent(event)
+    if (!position) return
+    const { offset } = position
 
     // Alt on its own already means "another cursor here", so the rectangle takes the pair.
     if (event.altKey && event.shiftKey) {
-      this.startMouseSelectionDrag(event, offset, 'column')
+      this.startMouseSelectionDrag(event, position, 'column')
       return
     }
 
     if (event.detail === 3) {
-      this.startMouseSelectionDrag(event, offset, 'line')
+      this.startMouseSelectionDrag(event, position, 'line')
       return
     }
 
     if (event.detail === 2) {
-      this.startMouseSelectionDrag(event, offset, 'word')
+      this.startMouseSelectionDrag(event, position, 'word')
       return
     }
 
     if (event.altKey) {
-      this.addCursorAtOffset(event, offset)
+      this.addCursorAtPosition(event, position)
       return
     }
 
     if (this.startMouseTextMoveDrag(event, offset)) return
 
-    this.startMouseSelectionDrag(event, offset, 'char')
+    this.startMouseSelectionDrag(event, position, 'char')
   }
 
-  private addCursorAtOffset(event: MouseEvent, offset: number): void {
+  private addCursorAtPosition(event: MouseEvent, position: VirtualizedTextHitPosition): void {
     const session = this.session
     if (!session) return
     if (event.button !== 0) return
@@ -1673,7 +1677,9 @@ export class InputSelectionController {
 
     const start = eventStartMs(event)
     event.preventDefault()
-    const change = session.addSelection(offset)
+    const change = session.addSelection(position.offset, position.offset, {
+      affinity: position.affinity,
+    })
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.addCursor', start, {
@@ -1690,28 +1696,32 @@ export class InputSelectionController {
    */
   private startMouseSelectionDrag(
     event: MouseEvent,
-    offset: number,
+    position: VirtualizedTextHitPosition,
     granularity: MouseSelectionGranularity,
   ): void {
     const session = this.session
     if (!session) return
     if (event.button !== 0) return
 
+    const { offset } = position
     const head = this.offsetRangeAt(offset, granularity)
-    const anchor = event.shiftKey ? this.mouseSelectionExtendAnchor() : head
+    const anchor = event.shiftKey
+      ? this.mouseSelectionExtendAnchor()
+      : this.mouseSelectionAnchorAt(position, head, granularity)
     if (!anchor) return
 
     const start = eventStartMs(event)
     event.preventDefault()
     this.options.view.focusInput()
     this.mouseSelectionAnchor = anchor
-    this.mouseSelectionDrag = {
+    const drag: MouseSelectionDrag = {
       anchor,
       granularity,
-      headOffset: offset,
+      head: position,
       clientX: event.clientX,
       clientY: event.clientY,
     }
+    this.mouseSelectionDrag = drag
     this.transitionInputState({ type: 'mouse-selection-start' })
     this.options.el.ownerDocument.addEventListener('mousemove', this.updateMouseSelectionDrag)
     this.options.el.ownerDocument.addEventListener('mouseup', this.finishMouseSelectionDrag)
@@ -1723,16 +1733,27 @@ export class InputSelectionController {
     // A press that only drops the caret somewhere has nothing to show until it moves or lifts, and
     // committing here would spend a selection change on every click.
     if (granularity === 'char' && !event.shiftKey) {
-      this.syncCustomSelectionHighlight(offset, offset)
+      this.syncCustomSelectionHighlight(offset, offset, position.affinity)
       return
     }
 
     this.applyMouseSelection(
       session,
-      mouseSelectionEnds(anchor, head),
+      this.mouseSelectionEndsForDrag(drag),
       mouseSelectionTimingName(granularity),
       start,
+      position.affinity,
     )
+  }
+
+  private mouseSelectionAnchorAt(
+    position: VirtualizedTextHitPosition,
+    range: TextOffsetRange,
+    granularity: MouseSelectionGranularity,
+  ): MouseSelectionAnchor {
+    const bidi =
+      granularity === 'char' ? this.options.view.createBidiSelectionAnchor(position) : null
+    return { range, bidi }
   }
 
   private offsetRangeAt(offset: number, granularity: MouseSelectionGranularity): TextOffsetRange {
@@ -1752,19 +1773,23 @@ export class InputSelectionController {
    * owes that press nothing, so extending falls back to the end the selection is anchored by —
    * never the end the caret happens to sit at.
    */
-  private mouseSelectionExtendAnchor(): TextOffsetRange | null {
+  private mouseSelectionExtendAnchor(): MouseSelectionAnchor | null {
     const primary = this.primaryResolvedSelection()
     if (!primary) return null
 
     const remembered = this.mouseSelectionAnchor
     if (
       remembered &&
-      (primary.anchorOffset === remembered.start || primary.anchorOffset === remembered.end)
+      (primary.anchorOffset === remembered.range.start ||
+        primary.anchorOffset === remembered.range.end)
     ) {
       return remembered
     }
 
-    return { start: primary.anchorOffset, end: primary.anchorOffset }
+    return {
+      range: { start: primary.anchorOffset, end: primary.anchorOffset },
+      bidi: null,
+    }
   }
 
   private applyMouseSelection(
@@ -1772,9 +1797,10 @@ export class InputSelectionController {
     ends: MouseSelectionEnds,
     timingName: string,
     start: number,
+    affinity: SelectionAffinity,
   ): void {
-    const change = session.setSelection(ends.anchorOffset, ends.headOffset)
-    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
+    const change = session.setSelection(ends.anchorOffset, ends.headOffset, { affinity })
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, { syncDomSelection: false })
   }
@@ -1997,20 +2023,23 @@ export class InputSelectionController {
 
     // A release can arrive from over the gutter, a scrollbar, or past the last line, where a hit
     // test answers with an offset the pointer never visited.
-    const { anchor, granularity, headOffset } = drag
+    const { granularity, head } = drag
     event.preventDefault()
     this.stopMouseSelectionDrag('finish')
 
     const start = nowMs()
     if (granularity === 'column') {
-      this.commitColumnSelection(session, headOffset, start)
+      this.commitColumnSelection(session, head.offset, start)
       return
     }
 
-    const ends = mouseSelectionEnds(anchor, this.offsetRangeAt(headOffset, granularity))
-    const change = session.setSelection(ends.anchorOffset, ends.headOffset)
+    const ends = this.mouseSelectionEndsForDrag(drag)
+    this.rememberMouseSelectionAnchor(drag, ends.anchorOffset)
+    const change = session.setSelection(ends.anchorOffset, ends.headOffset, {
+      affinity: head.affinity,
+    })
     const syncDomSelection = ends.anchorOffset === ends.headOffset
-    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, head.affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.selection', start, { syncDomSelection })
   }
@@ -2150,16 +2179,17 @@ export class InputSelectionController {
     const session = this.session
     if (!drag || !session) return
 
-    const offset = this.mouseSelectionOffsetFromPoint(drag.clientX, drag.clientY)
-    drag.headOffset = offset
+    const position = this.mouseSelectionPositionFromPoint(drag.clientX, drag.clientY, drag.head)
+    drag.head = position
+    const { offset } = position
     if (drag.granularity === 'column') {
       this.updateColumnSelection(session, offset)
       return
     }
 
-    const ends = mouseSelectionEnds(drag.anchor, this.offsetRangeAt(offset, drag.granularity))
-    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
-    session.setSelection(ends.anchorOffset, ends.headOffset)
+    const ends = this.mouseSelectionEndsForDrag(drag)
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, position.affinity)
+    session.setSelection(ends.anchorOffset, ends.headOffset, { affinity: position.affinity })
     this.options.notifyViewContributions('selection', null)
     if (ends.anchorOffset === ends.headOffset) {
       this.markDomSelectionForNextInput()
@@ -2169,13 +2199,33 @@ export class InputSelectionController {
     this.markSessionSelectionForNextInput()
   }
 
-  private mouseSelectionOffsetFromPoint(clientX: number, clientY: number): number {
-    const offset =
-      this.options.view.textOffsetFromPoint(clientX, clientY) ??
-      this.options.view.textOffsetFromViewportPoint(clientX, clientY)
-    if (offset !== null) return offset
+  private mouseSelectionEndsForDrag(drag: MouseSelectionDrag): MouseSelectionEnds {
+    const head = this.offsetRangeAt(drag.head.offset, drag.granularity)
+    const bidi = drag.granularity === 'char' ? drag.anchor.bidi : null
+    if (!bidi) return mouseSelectionEnds(drag.anchor.range, head)
 
-    return this.mouseSelectionDrag?.headOffset ?? 0
+    const anchorOffset = this.options.view.resolveBidiSelectionAnchor(bidi, drag.head)
+    return mouseSelectionEnds({ start: anchorOffset, end: anchorOffset }, head)
+  }
+
+  private rememberMouseSelectionAnchor(drag: MouseSelectionDrag, anchorOffset: number): void {
+    if (drag.granularity !== 'char') return
+    this.mouseSelectionAnchor = {
+      range: { start: anchorOffset, end: anchorOffset },
+      bidi: drag.anchor.bidi,
+    }
+  }
+
+  private mouseSelectionPositionFromPoint(
+    clientX: number,
+    clientY: number,
+    fallback: VirtualizedTextHitPosition,
+  ): VirtualizedTextHitPosition {
+    const position =
+      this.options.view.textPositionFromPoint(clientX, clientY) ??
+      this.options.view.textPositionFromViewportPoint(clientX, clientY)
+    if (position) return position
+    return fallback
   }
 
   private updateMouseSelectionAutoScroll(): void {
@@ -3047,8 +3097,12 @@ export class InputSelectionController {
     this.syncCustomSelectionHighlight(offsets.anchorOffset, offsets.headOffset)
   }
 
-  private syncCustomSelectionHighlight(anchorOffset: number, headOffset: number): void {
-    this.options.view.setSelection(anchorOffset, headOffset)
+  private syncCustomSelectionHighlight(
+    anchorOffset: number,
+    headOffset: number,
+    affinity: SelectionAffinity = 'after',
+  ): void {
+    this.options.view.setSelection(anchorOffset, headOffset, affinity)
     this.transitionInputState({ owner: 'dom', type: 'selection-reconciled' })
     // A drag paints from offsets it worked out for itself and never reaches
     // syncSessionSelectionHighlight, so without this the window would go stale for exactly the
@@ -3083,8 +3137,11 @@ export class InputSelectionController {
     return this.externalBoundaryToTextOffset(node, offset)
   }
 
-  private textOffsetFromMouseEvent(event: MouseEvent): number | null {
-    return this.textOffsetFromPoint(event.clientX, event.clientY)
+  private textPositionFromMouseEvent(event: MouseEvent): VirtualizedTextHitPosition | null {
+    return (
+      this.options.view.textPositionFromPoint(event.clientX, event.clientY) ??
+      this.options.view.textPositionFromViewportPoint(event.clientX, event.clientY)
+    )
   }
 
   private externalBoundaryToTextOffset(node: Node, offset: number): number | null {

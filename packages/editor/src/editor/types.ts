@@ -94,7 +94,10 @@ export type EditorOptions = {
   readonly rangeDecorations?: readonly EditorRangeDecoration[]
   readonly rowGap?: number
   readonly rowPositioning?: EditorRowPositioning
-  /** Moves horizontal carets by screen direction; defaults off on Windows and on elsewhere. */
+  /**
+   * Moves character-step carets by screen direction; word and subword motion stay logical.
+   * Defaults off on Windows and on elsewhere.
+   */
   readonly rtlMoveVisually?: boolean
   readonly scrollMode?: EditorScrollMode
   readonly selectionSyncMode?: EditorSelectionSyncMode

@@ -992,6 +992,42 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     }
   })
 
+  it('keeps word cursor and selection motion in logical document order', () => {
+    const mounted = mountBidiEditor(
+      BIDI_CORPUS.mixed,
+      { offset: 10, affinity: 'after' },
+      { rtlMoveVisually: true },
+    )
+    try {
+      const row = mounted.view.getState().mountedRows[0]!
+
+      expect(mounted.editor.dispatchCommand('cursorWordLeft')).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({ collapsed: true, headOffset: 8 })
+
+      mounted.session.setSelection(10, 10, { affinity: 'after' })
+      expect(mounted.editor.dispatchCommand('cursorWordRight')).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({ collapsed: true, headOffset: 13 })
+
+      mounted.session.setSelection(10, 10, { affinity: 'after' })
+      expect(mounted.editor.dispatchCommand('selectWordLeft')).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        anchorOffset: 10,
+        headOffset: 8,
+      })
+      assertPaintedSelectionRects(row, mergedRangeOracle(row, 8, 10))
+
+      mounted.session.setSelection(10, 10, { affinity: 'after' })
+      expect(mounted.editor.dispatchCommand('selectWordRight')).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        anchorOffset: 10,
+        headOffset: 13,
+      })
+      assertPaintedSelectionRects(row, mergedRangeOracle(row, 10, 13))
+    } finally {
+      mounted.dispose()
+    }
+  })
+
   it('uses the host platform default when the option is omitted', () => {
     const mounted = mountBidiEditor(BIDI_CORPUS.nested, { offset: 0, affinity: 'after' })
     try {

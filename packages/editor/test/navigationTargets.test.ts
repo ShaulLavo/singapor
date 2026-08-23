@@ -207,6 +207,38 @@ describe('word navigation', () => {
     expect(move('cursorWordRight', selection(0))?.offset).toBe(2)
     expect(move('cursorWordRight', selection(0), wordSeparatorsForLanguage('css'))?.offset).toBe(13)
   })
+
+  it('stays in logical document order when character-step motion is visual', () => {
+    const bidiText = 'let x = שלום world'
+    const visualHorizontalTarget = vi.fn(() => ({ offset: 0, affinity: 'after' as const }))
+    const view = {
+      ...createTestView(bidiText),
+      visualHorizontalTarget,
+    }
+    const move = targets(bidiText, view, true)
+    const logicalMove = targets(bidiText)
+    const origin = selection(10, 10, SelectionGoal.none(), 'before')
+    const cases = [
+      { command: 'cursorWordLeft' as const, extend: false, offset: 8 },
+      { command: 'cursorWordRight' as const, extend: false, offset: 13 },
+      { command: 'selectWordLeft' as const, extend: true, offset: 8 },
+      { command: 'selectWordRight' as const, extend: true, offset: 13 },
+      { command: 'cursorWordPartLeft' as const, extend: false, offset: 8 },
+      { command: 'cursorWordPartRight' as const, extend: false, offset: 12 },
+      { command: 'cursorWordPartLeftSelect' as const, extend: true, offset: 8 },
+      { command: 'cursorWordPartRightSelect' as const, extend: true, offset: 12 },
+    ]
+
+    for (const testCase of cases) {
+      const target = move(testCase.command, origin)
+      expect(target).toEqual(logicalMove(testCase.command, origin))
+      expect(target).toMatchObject({
+        extend: testCase.extend,
+        offset: testCase.offset,
+      })
+    }
+    expect(visualHorizontalTarget).not.toHaveBeenCalled()
+  })
 })
 
 describe('visual horizontal navigation', () => {

@@ -207,6 +207,7 @@ function wordTarget(
   direction: 'left' | 'right',
   extend: boolean,
 ): NavigationTarget {
+  // Word and subword commands follow document order under visual character motion, matching Monaco.
   const line = context.readLine(context.resolved.headOffset)
   const column = context.resolved.headOffset - line.start
   const offset =

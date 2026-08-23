@@ -939,7 +939,9 @@ describe('createTypeScriptLspPlugin', () => {
     const worker = new FakeWorker()
     const context = viewContributionContext(
       editorSnapshot({
-        selections: [{ anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6 }],
+        selections: [
+          { anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6, affinity: 'after' },
+        ],
       }),
     )
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -1143,7 +1145,9 @@ describe('createTypeScriptLspPlugin', () => {
     const contribution = provider.createContribution(
       viewContributionContext(
         editorSnapshot({
-          selections: [{ anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6 }],
+          selections: [
+            { anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6, affinity: 'after' },
+          ],
         }),
       ),
     ) as
@@ -1285,7 +1289,9 @@ describe('createTypeScriptLspPlugin', () => {
     const worker = new FakeWorker()
     const context = viewContributionContext(
       editorSnapshot({
-        selections: [{ anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6 }],
+        selections: [
+          { anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6, affinity: 'after' },
+        ],
       }),
     )
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -1320,7 +1326,9 @@ describe('createTypeScriptLspPlugin', () => {
     const context = viewContributionContext(
       editorSnapshot({
         fullText: 'const value = 1; console.log(value);',
-        selections: [{ anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6 }],
+        selections: [
+          { anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6, affinity: 'after' },
+        ],
       }),
     )
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -1367,7 +1375,9 @@ describe('createTypeScriptLspPlugin', () => {
     const worker = new FakeWorker()
     const context = viewContributionContext(
       editorSnapshot({
-        selections: [{ anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6 }],
+        selections: [
+          { anchorOffset: 6, headOffset: 6, startOffset: 6, endOffset: 6, affinity: 'after' },
+        ],
       }),
     )
     const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
@@ -1641,6 +1651,7 @@ function collapsedSelection(offset: number): EditorViewSnapshot['selections'][nu
     headOffset: offset,
     startOffset: offset,
     endOffset: offset,
+    affinity: 'after',
   }
 }
 

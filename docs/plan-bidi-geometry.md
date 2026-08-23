@@ -1154,10 +1154,27 @@ the logical path is the Tier A behaviour byte for byte.
       lint` (the same two pre-existing `packedTokens.ts` warnings, no errors). Focused `oxlint`,
       `oxfmt --check`, and `git diff --check` passed across all changed files. Root `bun run health`
       passed on the clean commit.
-- [ ] **`SelectionGoal.horizontal` carries a pixel x**
-      `high` `M` — `packages/editor/src/selections.ts:9-20`,
-      `virtualizedTextViewLayout.ts:260-297`, `navigationTargets.ts:228-241`, `:355-372`,
-      `inputSelectionController.ts:2736-2746`.
+- [x] **`SelectionGoal.horizontal` carries a pixel x**
+      `high` `M` — The goal now stores row-local CSS pixels measured from the affinity-selected
+      painted caret. Arrow, Shift-arrow, Page and insert-cursor vertical paths target the same x
+      through mounted browser geometry, preserve destination affinity, keep End as a logical aim,
+      and skip injected rows. Wrap seams use source affinity; display edges preserve an ambiguous
+      caret unchanged. Inline insertions use measured widths and the closest grapheme boundary;
+      unmounted and measurement-refused rows use the existing deterministic cell estimate without
+      forcing a mount or a BiDi sweep, then recover the stored pixel x on measurable rows. Vertical
+      motion is intentionally independent of `rtlMoveVisually`, matching CodeMirror's vertical
+      policy. Landed in `807edc2`. Verified 2026-08-23 from `packages/editor`: `bun run test
+      --project browser test/bidiGeometry.browser.test.ts` (81 tests); `bun run test --project
+      browser test/bidiGeometry.browser.test.ts test/virtualizedTextViewGeometry.browser.test.ts
+      test/virtualizedTextView.browser.test.ts` (100 tests); `bun run test --project dom
+      test/navigationTargets.test.ts test/graphemes.test.ts test/selections.test.ts
+      test/virtualizedTextViewLayout.test.ts` (88 tests); `bun run test --project dom
+      test/navigationTargets.test.ts test/graphemes.test.ts test/selections.test.ts
+      test/virtualizedTextViewLayout.test.ts test/bidiText.test.ts
+      test/virtualizedTextViewGeometry.test.ts test/virtualizedTextView.test.ts test/editor.test.ts`
+      (508 tests); `bun run typecheck`; `bun run build`; `bun run lint` (the same two pre-existing
+      `packedTokens.ts` warnings, no errors). Focused `oxlint`, `oxfmt --check`, and `git diff
+      --check` passed across all changed files. Root `bun run health` passed on the clean commit.
 - [ ] **Word-left/right: accept logical, or make visual with the same option**
       `medium` `M` — `navigationTargets.ts:129-136`, `:166-226`. Monaco accepts logical. Decide and
       record; do not leave it ambiguous.

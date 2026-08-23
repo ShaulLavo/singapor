@@ -10,7 +10,11 @@ import {
   suspiciousCharacterRanges,
 } from '../src/unicodeHighlight'
 import { VirtualizedTextView } from '../src/virtualization'
-import { BIDI_LINE_MEASUREMENT_CEILING } from '../src/virtualization/virtualizedTextViewRows'
+import {
+  BIDI_LINE_MEASUREMENT_CEILING,
+  caretPosition,
+  gutterWidth,
+} from '../src/virtualization/virtualizedTextViewRows'
 import {
   boundaryPositionXs,
   domBoundaryForOffset,
@@ -45,6 +49,13 @@ const DIRECTION_BOUNDARIES = {
   override: [3],
   latin: [],
 } as const
+
+const CARET_TRUTH_CASES = [
+  { name: 'ab', text: 'ab', before: [0], after: [0] },
+  { name: 'aB', text: 'aא', before: [0, 1], after: [1, 0] },
+  { name: 'Ab', text: 'אb', before: [0, 1], after: [1, 0] },
+  { name: 'AB', text: 'אב', before: [0], after: [0] },
+] as const
 
 describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry browser oracle', () => {
   let fixture: BidiGeometryFixture | null
@@ -186,7 +197,84 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
         expect(caret).not.toBeNull()
         expect(
           caret!.getBoundingClientRect().left - row.element.getBoundingClientRect().left,
-        ).toBeCloseTo(Math.min(...oracle.map((rect) => rect.left)), 0)
+        ).toBeCloseTo(defaultAfterCaretX(name, oracle), 0)
+      }
+    }
+  })
+
+  it('matches the CodeMirror affinity truth table for ab, aB, Ab, and AB', () => {
+    for (const testCase of CARET_TRUTH_CASES) assertCaretTruthCase(testCase)
+  })
+
+  it('draws the affinity caret first and mounts the other BiDi position second', () => {
+    const row = fixture!.rows.mixed
+    const glyph = glyphRectOracle(row)[8]!.rects[0]!
+    const click = rowClientPoint(row, glyph.left + glyph.width * 0.75)
+    const hit = fixture!.view.textPositionFromPoint(click.x, click.y)
+    expect(hit).toMatchObject({
+      offset: row.startOffset + 12,
+      affinity: 'after',
+    })
+
+    const oracle = collapsedRangeOracle(row, 12)
+      .map((rect) => rect.left)
+      .toSorted((left, right) => left - right)
+    expect(oracle).toHaveLength(2)
+    fixture!.view.setSelection(hit!.offset, hit!.offset, hit!.affinity)
+    assertCaretLayerPositions(fixture!.container, row, oracle[1]!, oracle[0]!)
+    assertInputAndCompositionAtPrimaryCaret(fixture!, hit!.offset, hit!.affinity)
+
+    fixture!.view.setSelection(hit!.offset, hit!.offset, 'before')
+    assertCaretLayerPositions(fixture!.container, row, oracle[0]!, oracle[1]!)
+    assertInputAndCompositionAtPrimaryCaret(fixture!, hit!.offset, 'before')
+
+    fixture!.view.setSelections([
+      {
+        anchorOffset: row.startOffset + 13,
+        headOffset: row.startOffset + 13,
+        affinity: 'after',
+      },
+      {
+        anchorOffset: row.startOffset + 14,
+        headOffset: row.startOffset + 14,
+        affinity: 'after',
+      },
+    ])
+    const reused = visibleCaretElements(fixture!.container)
+    expect(reused).toHaveLength(2)
+    expect(reused[1]!.classList.contains('editor-virtualized-caret-bidi-secondary')).toBe(false)
+    expect(reused[1]!.getBoundingClientRect().height).toBeCloseTo(
+      reused[0]!.getBoundingClientRect().height,
+      0,
+    )
+
+    fixture!.view.setSelection(row.startOffset + 13, row.startOffset + 13, 'after')
+    expect(visibleCaretElements(fixture!.container)).toHaveLength(1)
+  })
+
+  it('renders affinity supplied by a real document session', () => {
+    const cases = [
+      { affinity: 'before', primary: 0, secondary: 1 },
+      { affinity: 'after', primary: 1, secondary: 0 },
+    ] as const
+    for (const testCase of cases) {
+      const mounted = mountBidiEditor(BIDI_CORPUS.mixed, {
+        offset: 12,
+        affinity: testCase.affinity,
+      })
+      try {
+        const oracle = collapsedRangeOracle(mounted.row, 12)
+          .map((rect) => rect.left)
+          .toSorted((left, right) => left - right)
+        expect(resolvedPrimary(mounted.session).affinity).toBe(testCase.affinity)
+        assertCaretLayerPositions(
+          mounted.container,
+          mounted.row,
+          oracle[testCase.primary]!,
+          oracle[testCase.secondary]!,
+        )
+      } finally {
+        mounted.dispose()
       }
     }
   })
@@ -215,6 +303,23 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       }
     })
     expect(reads).toBe(0)
+  })
+
+  it('keeps non-ASCII LTR carets on the single calculated position', () => {
+    const mounted = mountStandaloneView('日本語')
+    try {
+      const expectedX = gutterWidth(mounted.internal) + offsetToX(mounted.internal, mounted.row, 1)
+      const results: ReturnType<typeof caretPosition>[] = []
+      const reads = countRangeReads(() => {
+        results.push(caretPosition(mounted.internal, 1, 'after'))
+      })
+      const positions = results[0]
+      expect(reads).toBe(0)
+      expect(positions).toHaveLength(1)
+      expect(positions?.[0]?.left).toBeCloseTo(expectedX, 4)
+    } finally {
+      mounted.dispose()
+    }
   })
 
   it('resolves control and widget boundaries through adjacent text when element ranges are empty', () => {
@@ -658,6 +763,86 @@ function assertRectsClose(actual: readonly OracleRect[], expected: readonly Orac
   }
 }
 
+function defaultAfterCaretX(name: 'mixed' | 'nested', oracle: readonly OracleRect[]): number {
+  const xs = oracle.map((rect) => rect.left)
+  if (xs.length === 1) return xs[0]!
+  return name === 'mixed' ? Math.max(...xs) : Math.min(...xs)
+}
+
+function assertCaretTruthCase(testCase: (typeof CARET_TRUTH_CASES)[number]): void {
+  const mounted = mountStandaloneView(testCase.text)
+  try {
+    const oracle = collapsedRangeOracle(mounted.row, 1)
+      .map((rect) => rect.left)
+      .toSorted((left, right) => left - right)
+    assertCaretPositionOrder(mounted, 'before', oracle, testCase.before)
+    assertCaretPositionOrder(mounted, 'after', oracle, testCase.after)
+  } finally {
+    mounted.dispose()
+  }
+}
+
+function assertCaretPositionOrder(
+  mounted: StandaloneView,
+  affinity: 'before' | 'after',
+  oracle: readonly number[],
+  expectedIndices: readonly number[],
+): void {
+  const positions = caretPosition(mounted.internal, 1, affinity)
+  expect(positions).not.toBeNull()
+  expect(positions).toHaveLength(expectedIndices.length)
+  const gutter = gutterWidth(mounted.internal)
+  for (let index = 0; index < expectedIndices.length; index += 1) {
+    const position = positions![index]!
+    expect(position.left - gutter).toBeCloseTo(oracle[expectedIndices[index]!]!, 0)
+    expect(position.top).toBe(mounted.row.top)
+    expect(position.height).toBe(mounted.row.height)
+  }
+}
+
+function assertCaretLayerPositions(
+  container: HTMLElement,
+  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
+  primaryX: number,
+  secondaryX: number,
+): void {
+  const carets = visibleCaretElements(container)
+  expect(carets).toHaveLength(2)
+  const rowRect = row.element.getBoundingClientRect()
+  const primaryRect = carets[0]!.getBoundingClientRect()
+  const secondaryRect = carets[1]!.getBoundingClientRect()
+  expect(carets[0]!.parentElement).toBe(carets[1]!.parentElement)
+  expect(carets[0]!.parentElement?.classList.contains('editor-virtualized-caret-layer')).toBe(true)
+  expect(primaryRect.left - rowRect.left).toBeCloseTo(primaryX, 0)
+  expect(secondaryRect.left - rowRect.left).toBeCloseTo(secondaryX, 0)
+  expect(carets[1]!.classList.contains('editor-virtualized-caret-secondary')).toBe(true)
+  expect(carets[1]!.classList.contains('editor-virtualized-caret-bidi-secondary')).toBe(true)
+  expect(secondaryRect.top).toBeCloseTo(primaryRect.top, 0)
+  expect(secondaryRect.height).toBeCloseTo(primaryRect.height * 0.85, 0)
+}
+
+function visibleCaretElements(container: HTMLElement): readonly HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('.editor-virtualized-caret:not([hidden])')]
+}
+
+function assertInputAndCompositionAtPrimaryCaret(
+  fixture: BidiGeometryFixture,
+  offset: number,
+  affinity: 'before' | 'after',
+): void {
+  const position = caretPosition(fixture.internal, offset, affinity)?.[0]
+  expect(position).toBeDefined()
+  expect(Number.parseFloat(fixture.view.inputElement.style.left)).toBeCloseTo(position!.left, 3)
+
+  fixture.view.setCompositionPreedit('x')
+  const preedit = fixture.container.querySelector<HTMLElement>('.editor-virtualized-composition')
+  expect(preedit).not.toBeNull()
+  const transform = new DOMMatrix(preedit!.style.transform)
+  expect(transform.m41).toBeCloseTo(position!.left, 3)
+  expect(transform.m42).toBeCloseTo(position!.top, 3)
+  fixture.view.setCompositionPreedit('')
+}
+
 type BoundaryCollision = {
   readonly left: number
   readonly right: number
@@ -1023,7 +1208,10 @@ function rowClientPoint(
   return { x: rect.left + localX * scale, y: rect.top + rect.height / 2 }
 }
 
-function mountBidiEditor(text: string) {
+function mountBidiEditor(
+  text: string,
+  selection?: { readonly offset: number; readonly affinity: 'before' | 'after' },
+) {
   const container = document.createElement('div')
   container.style.display = 'flex'
   container.style.height = '24px'
@@ -1031,6 +1219,9 @@ function mountBidiEditor(text: string) {
   document.body.append(container)
 
   const session = createDocumentSession(text)
+  if (selection) {
+    session.setSelection(selection.offset, selection.offset, { affinity: selection.affinity })
+  }
   const editor = new Editor(container)
   editor.attachSession(session)
   const view = Reflect.get(editor, 'view') as VirtualizedTextView
@@ -1039,6 +1230,7 @@ function mountBidiEditor(text: string) {
   expect(row).toBeDefined()
 
   return {
+    container,
     row: row!,
     session,
     view,

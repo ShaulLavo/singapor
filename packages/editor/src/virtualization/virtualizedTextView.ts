@@ -88,6 +88,7 @@ import {
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
 import {
+  boundaryAffinityForX,
   boundaryPositionXs,
   clearRowGeometryCaches,
   knownRowContentWidth,
@@ -1118,38 +1119,13 @@ function bidiPointAffinity(
   offset: number,
   rowX: number,
 ): SelectionAffinity {
-  const endpoint = endpointAffinity(row, offset)
-  if (offset <= row.startOffset || offset >= row.endOffset) return endpoint
-
   const positions = boundaryPositionXs(view, row, offset)
-  if (positions.length !== 2) return endpoint
-
   const boundaryX = closestPositionX(positions, rowX)
-  const following = unitRectForOffset(view, row, offset)
-  const previousOffset = previousRowUnitOffset(row, offset)
-  const previous = unitRectForOffset(view, row, previousOffset)
-  const followingDistance = unitEdgeDistance(following, boundaryX)
-  const previousDistance = unitEdgeDistance(previous, boundaryX)
-  if (previousDistance < followingDistance) return 'before'
-  return 'after'
+  return boundaryAffinityForX(view, row, offset, boundaryX, positions)
 }
 
 function endpointAffinity(row: MountedVirtualizedTextRow, offset: number): SelectionAffinity {
   return offset >= row.endOffset ? 'before' : 'after'
-}
-
-function previousRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
-  const local = rowLocalIndexForOffset(row, offset, 'before')
-  const previous = previousGraphemeBoundary(row.text, local)
-  return rowOffsetForLocalIndex(row, previous, 'before')
-}
-
-function unitEdgeDistance(
-  rect: { readonly left: number; readonly width: number } | null,
-  x: number,
-): number {
-  if (!rect) return Number.POSITIVE_INFINITY
-  return Math.min(Math.abs(rect.left - x), Math.abs(rect.left + rect.width - x))
 }
 
 function closestPositionX(positions: readonly number[], target: number): number {

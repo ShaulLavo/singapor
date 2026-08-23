@@ -7,7 +7,9 @@ import {
   memoizedContainsRTL,
   rtlClassifierScanCount,
 } from '../src/virtualization/virtualizedTextViewBidi'
+import { rowMightContainRTL } from '../src/virtualization/virtualizedTextViewGeometry'
 import type { VirtualizedTextViewInternal } from '../src/virtualization/virtualizedTextViewInternals'
+import type { MountedVirtualizedTextRow } from '../src/virtualization/virtualizedTextViewTypes'
 
 describe('BiDi row classifier', () => {
   it('recognizes RTL scripts and every layout-affecting bidi control', () => {
@@ -44,6 +46,15 @@ describe('BiDi row classifier', () => {
 
     expect(memoizedContainsRTL(view, line)).toBe(false)
     expect(memoizedContainsRTL(view, line)).toBe(false)
+    expect(rtlClassifierScanCount(view)).toBe(1)
+  })
+
+  it('reuses the memo when caret geometry classifies an ASCII row', () => {
+    const view = { textRevision: 11 } as VirtualizedTextViewInternal
+    const row = { text: 'x'.repeat(2_000_000) } as MountedVirtualizedTextRow
+
+    expect(rowMightContainRTL(view, row)).toBe(false)
+    expect(rowMightContainRTL(view, row)).toBe(false)
     expect(rtlClassifierScanCount(view)).toBe(1)
   })
 })

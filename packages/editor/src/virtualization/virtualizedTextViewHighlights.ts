@@ -44,6 +44,7 @@ import type {
   TokenRowSegment,
   HighlightRegistry,
   VirtualizedTextChunk,
+  VirtualizedCaretPosition,
 } from './virtualizedTextViewTypes'
 import type {
   SameLineTokenEdit,
@@ -317,45 +318,57 @@ export function clearRangeHighlight(view: VirtualizedTextViewInternal, name: str
 
 function renderCaret(view: VirtualizedTextViewInternal): void {
   const selections = view.selections
-  ensureCaretElementCount(view, selections.length)
-
   if (selections.length === 0) {
     hideCaretElement(view.caretElement)
     hideSecondaryCaretElements(view, 0)
     return
   }
 
-  renderCaretElement(view, view.caretElement, selections[0]!)
-  renderSecondaryCaretElements(view, selections)
+  const primary = selections[0]!
+  const primaryPositions = caretPosition(view, primary.head, primary.affinity)
+  renderCaretElement(view.caretElement, primaryPositions?.[0] ?? null, false)
+
+  let secondaryIndex = 0
+  const primaryOther = primaryPositions?.[1]
+  if (primaryOther) secondaryIndex = renderPooledCaret(view, secondaryIndex, primaryOther, true)
+  for (let selectionIndex = 1; selectionIndex < selections.length; selectionIndex += 1) {
+    const selection = selections[selectionIndex]!
+    const positions = caretPosition(view, selection.head, selection.affinity) ?? []
+    const position = positions[0]
+    if (position) secondaryIndex = renderPooledCaret(view, secondaryIndex, position, false)
+    const other = positions[1]
+    if (other) secondaryIndex = renderPooledCaret(view, secondaryIndex, other, true)
+  }
+  hideSecondaryCaretElements(view, secondaryIndex)
   // Whatever the OS is about to anchor on the input — a candidate window, an accent picker — belongs
   // over the caret the reader is watching, and this is where that caret stops moving.
-  positionInputAtCaret(view)
+  positionInputAtCaret(view, primaryPositions?.[0] ?? null)
 }
 
-function renderSecondaryCaretElements(
+function renderPooledCaret(
   view: VirtualizedTextViewInternal,
-  selections: readonly VirtualizedStoredSelection[],
-): void {
-  for (let index = 1; index < selections.length; index += 1) {
-    renderCaretElement(view, view.secondaryCaretElements[index - 1]!, selections[index]!)
-  }
-
-  hideSecondaryCaretElements(view, Math.max(0, selections.length - 1))
+  index: number,
+  position: VirtualizedCaretPosition,
+  bidiSecondary: boolean,
+): number {
+  renderCaretElement(secondaryCaretElementAt(view, index), position, bidiSecondary)
+  return index + 1
 }
 
 function renderCaretElement(
-  view: VirtualizedTextViewInternal,
   element: HTMLElement,
-  selection: VirtualizedStoredSelection,
+  position: VirtualizedCaretPosition | null,
+  bidiSecondary: boolean,
 ): void {
-  const position = caretPosition(view, selection.head)
   if (!position) {
     hideCaretElement(element)
     return
   }
 
   setElementHidden(element, false)
-  setStyleValue(element, 'height', `${position.height}px`)
+  element.classList.toggle('editor-virtualized-caret-bidi-secondary', bidiSecondary)
+  const height = bidiSecondary ? position.height * 0.85 : position.height
+  setStyleValue(element, 'height', `${height}px`)
   setStyleValue(element, 'transform', `translate(${position.left}px, ${position.top}px)`)
 }
 
@@ -1428,11 +1441,13 @@ function hasSelectionRanges(selections: readonly VirtualizedStoredSelection[]): 
   return selections.some((selection) => selection.start !== selection.end)
 }
 
-function ensureCaretElementCount(view: VirtualizedTextViewInternal, selectionCount: number): void {
-  const neededSecondaryCount = Math.max(0, selectionCount - 1)
-  while (view.secondaryCaretElements.length < neededSecondaryCount) {
-    view.secondaryCaretElements.push(createSecondaryCaretElement(view))
-  }
+function secondaryCaretElementAt(view: VirtualizedTextViewInternal, index: number): HTMLDivElement {
+  const existing = view.secondaryCaretElements[index]
+  if (existing) return existing
+
+  const created = createSecondaryCaretElement(view)
+  view.secondaryCaretElements.push(created)
+  return created
 }
 
 function createSecondaryCaretElement(view: VirtualizedTextViewInternal): HTMLDivElement {

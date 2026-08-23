@@ -1057,9 +1057,13 @@ test still passes.
       test/editor.test.ts` (264 tests), `bun run test --project dom test/editor-helpers.test.ts
       test/virtualizedTextView.test.ts` (180 tests), `bun run typecheck`, and `bun run build`.
       Focused `oxlint`, `oxfmt --check`, and `git diff --check` passed across all changed files.
-- [ ] **`caretPosition` returns one-or-two positions and the caret layer mounts the secondary**
+- [x] **`caretPosition` returns one-or-two positions and the caret layer mounts the secondary**
       `medium` `M` — `virtualizedTextViewRows.ts:2724`, `virtualizedTextViewHighlights.ts:341`,
-      `:1424`.
+      `:1424`. Verified 2026-08-23: editor `bun run test --project browser
+      test/bidiGeometry.browser.test.ts` (45 tests), `bun run test --project dom
+      test/editor.test.ts test/virtualizedTextView.test.ts` (394 tests), `bun run test --project
+      dom test/bidiText.test.ts` (5 tests), `bun run typecheck`, and `bun run build`. Focused
+      `oxlint`, `oxfmt --check`, and `git diff --check` passed across all changed files.
 
 ---
 

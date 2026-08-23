@@ -7,9 +7,11 @@ import {
   codePointLength,
   isCombiningMark,
   isVariationSelector,
+  previousGraphemeBoundary,
   segmentGraphemes,
   type TextSegment,
 } from '../graphemes'
+import type { SelectionAffinity } from '../selections'
 import { clamp } from '../style-utils'
 import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 import type {
@@ -453,7 +455,6 @@ export function rowMightContainRTL(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): boolean {
-  if (isSimpleRowText(row.text)) return false
   return memoizedContainsRTL(view, row.text)
 }
 
@@ -502,6 +503,103 @@ export function unitRectForOffset(
 
   resolveUnit(plan, unitIndex)
   return { left: plan.lefts[unitIndex]!, width: plan.widths[unitIndex]! }
+}
+
+export function boundaryPositionXsForAffinity(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  affinity: SelectionAffinity,
+): readonly number[] {
+  if (!rowMightContainRTL(view, row)) return [offsetToX(view, row, offset)]
+
+  const positions = boundaryPositionXs(view, row, offset)
+  if (positions.length !== 2) return positions
+
+  const normalized = normalizedBoundaryAffinity(row, offset, affinity)
+  const before = preferredBoundaryPositionIndex(view, row, offset, positions, 'before')
+  const after = preferredBoundaryPositionIndex(view, row, offset, positions, 'after')
+  return orderBoundaryPositionsForAffinity(positions, normalized, before, after)
+}
+
+export function boundaryAffinityForX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  x: number,
+  positions?: readonly number[],
+): SelectionAffinity {
+  const endpoint = normalizedBoundaryAffinity(row, offset, 'after')
+  if (!rowMightContainRTL(view, row)) return endpoint
+
+  const candidates = positions ?? boundaryPositionXs(view, row, offset)
+  if (candidates.length !== 2) return endpoint
+
+  const beforeIndex = preferredBoundaryPositionIndex(view, row, offset, candidates, 'before')
+  const afterIndex = preferredBoundaryPositionIndex(view, row, offset, candidates, 'after')
+  const before = orderBoundaryPositionsForAffinity(
+    candidates,
+    'before',
+    beforeIndex,
+    afterIndex,
+  )[0]!
+  const after = orderBoundaryPositionsForAffinity(candidates, 'after', beforeIndex, afterIndex)[0]!
+  if (before === after) return endpoint
+  return Math.abs(x - before) < Math.abs(x - after) ? 'before' : 'after'
+}
+
+function orderBoundaryPositionsForAffinity(
+  positions: readonly number[],
+  affinity: SelectionAffinity,
+  before: number | null,
+  after: number | null,
+): readonly number[] {
+  const preferred = affinity === 'before' ? before : after
+  if (preferred !== null) return [positions[preferred]!, positions[1 - preferred]!]
+
+  const other = affinity === 'before' ? after : before
+  if (other !== null) return [positions[1 - other]!, positions[other]!]
+  return positions
+}
+
+function preferredBoundaryPositionIndex(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  positions: readonly number[],
+  affinity: SelectionAffinity,
+): number | null {
+  const unitOffset = affinity === 'before' ? previousRowUnitOffset(row, offset) : offset
+  const rect = unitRectForOffset(view, row, unitOffset)
+  if (!rect) return null
+
+  const first = unitEdgeDistance(rect, positions[0]!)
+  const second = unitEdgeDistance(rect, positions[1]!)
+  if (Math.abs(first - second) <= 1) return null
+  return first < second ? 0 : 1
+}
+
+function normalizedBoundaryAffinity(
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  affinity: SelectionAffinity,
+): SelectionAffinity {
+  if (offset <= row.startOffset) return 'after'
+  if (offset >= row.endOffset) return 'before'
+  return affinity
+}
+
+function previousRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
+  const local = rowLocalIndexForOffset(row, offset, 'before')
+  const previous = previousGraphemeBoundary(row.text, local)
+  return rowOffsetForLocalIndex(row, previous, 'before')
+}
+
+function unitEdgeDistance(
+  rect: { readonly left: number; readonly width: number },
+  x: number,
+): number {
+  return Math.min(Math.abs(rect.left - x), Math.abs(rect.left + rect.width - x))
 }
 
 function calculatedUnitRect(

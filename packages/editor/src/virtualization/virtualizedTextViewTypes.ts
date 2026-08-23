@@ -32,6 +32,16 @@ export type VirtualizedBidiSelectionAnchor = {
   readonly rightOffset: number
 }
 
+export type VirtualizedCaretPosition = {
+  readonly left: number
+  readonly top: number
+  readonly height: number
+}
+
+export type VirtualizedCaretPositions =
+  | readonly [VirtualizedCaretPosition]
+  | readonly [VirtualizedCaretPosition, VirtualizedCaretPosition]
+
 export type DocumentWithCaretHitTesting = Document & {
   readonly caretPositionFromPoint?: (x: number, y: number) => CaretPositionResult | null
   readonly caretRangeFromPoint?: (x: number, y: number) => Range | null

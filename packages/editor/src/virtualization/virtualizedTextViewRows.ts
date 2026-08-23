@@ -11,6 +11,7 @@ import {
 } from '../displayTransforms'
 import { clamp } from '../style-utils'
 import type { InlineMap } from '../inlineMap'
+import type { SelectionAffinity } from '../selections'
 import type {
   EditorGutterContribution,
   EditorGutterRowContext,
@@ -57,6 +58,8 @@ import type {
   VirtualizedTextChunkPart,
   VirtualizedTextRowDecoration,
   VirtualizedTextRenderMode,
+  VirtualizedCaretPosition,
+  VirtualizedCaretPositions,
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
 import {
@@ -67,6 +70,7 @@ import {
 import {
   type InlineWidgetPlacement,
   type RenderedChunkParts,
+  boundaryPositionXsForAffinity,
   clearRowGeometryCaches,
   createRenderedChunkParts,
   createTextChunkParts,
@@ -2363,11 +2367,14 @@ function scrollHorizontallyToOffset(
  * composition event at all. A caret nobody can see has no box worth pointing at, and an input moved
  * outside the viewport invites the browser to scroll it back into view, so the corner stands in.
  */
-export function positionInputAtCaret(view: VirtualizedTextViewInternal): void {
+export function positionInputAtCaret(
+  view: VirtualizedTextViewInternal,
+  knownPosition?: VirtualizedCaretPosition | null,
+): void {
   // The virtualizer's copy of the scroll offsets, never the element's: this runs inside the render
   // pass, where reading scroll back off the DOM is what forces the layout it has just written.
   const snapshot = view.virtualizer.getSnapshot()
-  const caret = visibleCaretPosition(view, snapshot)
+  const caret = visibleCaretPosition(view, snapshot, knownPosition)
   // The input hangs off the scroll element rather than the spacer, so it does not come with the
   // offset the spacer is translated by on a document taller than the browser will scroll.
   const spacerOffset = snapshot.nativeScrollTop - snapshot.scrollTop
@@ -2384,16 +2391,20 @@ export function positionInputAtCaret(view: VirtualizedTextViewInternal): void {
 function visibleCaretPosition(
   view: VirtualizedTextViewInternal,
   snapshot: FixedRowVirtualizerSnapshot,
+  knownPosition?: VirtualizedCaretPosition | null,
 ): { readonly left: number; readonly top: number } | null {
-  const selection = view.selections[0]
-  if (!selection) return null
-
-  const position = caretPosition(view, selection.head)
+  const position = knownPosition === undefined ? primaryCaretPosition(view) : knownPosition
   if (!position) return null
   if (position.left < snapshot.scrollLeft + gutterWidth(view)) return null
   if (position.left > snapshot.scrollLeft + snapshot.viewportWidth) return null
 
   return position
+}
+
+function primaryCaretPosition(view: VirtualizedTextViewInternal): VirtualizedCaretPosition | null {
+  const selection = view.selections[0]
+  if (!selection) return null
+  return caretPosition(view, selection.head, selection.affinity)?.[0] ?? null
 }
 
 export function restoreScrollPosition(
@@ -2575,17 +2586,26 @@ export function gutterWidth(view: VirtualizedTextViewInternal): number {
 export function caretPosition(
   view: VirtualizedTextViewInternal,
   offset: number,
-): {
-  readonly left: number
-  readonly top: number
-  readonly height: number
-} | null {
+  affinity: SelectionAffinity,
+): VirtualizedCaretPositions | null {
   const rowIndex = rowForOffset(view, offset)
   const row = view.rowElements.get(rowIndex)
   if (!row) return null
 
+  const xs = boundaryPositionXsForAffinity(view, row, offset, affinity)
+  const primary = caretPositionAtX(view, row, xs[0] ?? offsetToX(view, row, offset))
+  const secondaryX = xs[1]
+  if (secondaryX === undefined) return [primary]
+  return [primary, caretPositionAtX(view, row, secondaryX)]
+}
+
+function caretPositionAtX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  x: number,
+): VirtualizedCaretPosition {
   return {
-    left: gutterWidth(view) + offsetToX(view, row, offset),
+    left: gutterWidth(view) + x,
     top: row.top,
     height: row.height,
   }

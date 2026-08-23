@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest'
 import '../src/style.css'
 
+import { createInlineMap } from '../src/inlineMap'
+import { createPieceTableSnapshot } from '../src/public/document'
 import { VirtualizedTextView } from '../src/virtualization'
 import {
   getRowGeometrySweepCount,
@@ -39,6 +41,61 @@ it('bounds cold visual-arrow probes on 6,000-character RTL rows', () => {
   // time is runner-dependent; the bounded synchronous reads are the stable proof that length does
   // not turn this arrow into a whole-row geometry sweep.
   expect(mixedMove.hitReads).toBeLessThanOrEqual(12)
+})
+
+it('bounds cold visual-arrow reads on a 6,000-character inline-mapped mixed row', () => {
+  const text = 'aא'.repeat(3_000)
+  const mounted = mountMeasured(text)
+  try {
+    mounted.view.setInlineMap(
+      createInlineMap(createPieceTableSnapshot(text), [
+        {
+          id: 'end-hint',
+          startIndex: text.length,
+          endIndex: text.length,
+          text: 'HINT',
+          insertion: true,
+        },
+      ]),
+    )
+    resetRowGeometrySweepCount()
+
+    const move = coldVisualMove(mounted, 0)
+
+    expect(move.target).toEqual({ offset: 1, affinity: 'before' })
+    expect(move.rangeReads).toBeLessThanOrEqual(32)
+    expect(move.hitReads).toBeLessThanOrEqual(24)
+    expect(getRowGeometrySweepCount()).toBe(0)
+  } finally {
+    mounted.dispose()
+  }
+})
+
+it('bounds cold vertical motion into a 6,000-character non-simple LTR row', () => {
+  const source = 'xxxx'
+  const targetText = '日'.repeat(6_000)
+  const mounted = mountMeasured(`${source}\n${targetText}`, 40)
+  try {
+    const targetRow = mounted.view.getState().mountedRows[1]!
+    expect(targetRow.geometryCache).toBeNull()
+    resetRowGeometrySweepCount()
+
+    let target: ReturnType<VirtualizedTextView['verticalCaretTarget']> | undefined
+    const rangeReads = countRangeReads(() => {
+      target = mounted.view.verticalCaretTarget(2, 'after', 1, {
+        kind: 'horizontal',
+        x: mounted.view.getState().metrics.characterWidth * 4,
+      })
+    })
+
+    expect(target).toBeDefined()
+    expect(target!.offset).toBeGreaterThanOrEqual(targetRow.startOffset)
+    expect(target!.offset).toBeLessThanOrEqual(targetRow.endOffset)
+    expect(rangeReads).toBeLessThanOrEqual(24)
+    expect(getRowGeometrySweepCount()).toBe(0)
+  } finally {
+    mounted.dispose()
+  }
 })
 
 it('keeps long invisible BiDi-control rows off the homogeneous fast path', () => {

@@ -297,6 +297,14 @@ export type EditorViewContributionContext = {
     timingName: string,
     options?: EditorSetSelectionOptions,
   ): void
+  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
+  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
+  ): void
   setSelections(
     selections: readonly EditorSelectionRange[],
     timingName: string,
@@ -383,6 +391,14 @@ export type EditorSelectionContributionContext = {
     head: number,
     timingName: string,
     options?: EditorSetSelectionOptions,
+  ): void
+  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
+  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
   ): void
   setSelections(
     selections: readonly EditorSelectionRange[],

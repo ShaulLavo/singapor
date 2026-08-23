@@ -69,7 +69,12 @@ import {
   rangeDecorationsWithProjectionStacking,
   sameEditorRangeDecorations,
 } from './rangeDecorations'
-import { selectionRevealOffset, type EditorSetSelectionOptions } from './selectionReveal'
+import {
+  normalizeEditorSetSelectionOptions,
+  selectionRevealOffset,
+  type EditorSetSelectionInput,
+  type EditorSetSelectionOptions,
+} from './selectionReveal'
 import { syncTextEdit } from './textEdits'
 import type {
   EditorDocumentMode,
@@ -135,7 +140,7 @@ import {
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
 } from '../plugins'
-import { resolveSelection } from '../selections'
+import { lastAddedSelectionIndex, resolveSelection } from '../selections'
 import { type EditorSyntaxLanguageId } from '../syntax/session'
 import type { EditorSyntaxRange } from '../syntax/session'
 import {
@@ -1001,7 +1006,15 @@ export class Editor {
     this.view.focusInput()
   }
 
-  setSelection(anchor: number, head = anchor, options?: EditorSetSelectionOptions): void {
+  setSelection(anchor: number, head?: number, options?: EditorSetSelectionOptions): void
+  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
+  setSelection(anchor: number, head?: number, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head?: number,
+    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
+  ): void
+  setSelection(anchor: number, head = anchor, options?: EditorSetSelectionInput): void {
     this.runInOperation(() => {
       this.applyRequestedSelection(anchor, head, 'editor.setSelection', options, true)
     })
@@ -2898,7 +2911,9 @@ export class Editor {
 
   private captureCursorHistoryEntry(): CursorHistoryEntry {
     const scrollPosition = this.getScrollPosition()
+    const selectionSet = this.session?.getSelections()
     return {
+      lastAddedIndex: selectionSet ? lastAddedSelectionIndex(selectionSet) : 0,
       scrollLeft: scrollPosition.left,
       scrollTop: scrollPosition.top,
       selections: this.inputSelection.resolveViewSelections().map((selection) => ({
@@ -2921,7 +2936,7 @@ export class Editor {
     this.restoringCursorHistory = true
     try {
       this.runInOperation(() => {
-        this.applyRequestedSelections(entry.selections, timingName)
+        this.applyRequestedSelections(entry.selections, timingName, undefined, entry.lastAddedIndex)
       })
     } finally {
       this.restoringCursorHistory = false
@@ -3177,13 +3192,14 @@ export class Editor {
     anchor: number,
     head: number,
     timingName: string,
-    options?: EditorSetSelectionOptions,
+    options?: EditorSetSelectionInput,
     revealByDefault = false,
   ): void {
+    const normalizedOptions = normalizeEditorSetSelectionOptions(options)
     this.revealFoldedOffset(head)
     this.inputSelection.applyFindSelection(anchor, head, timingName, {
-      affinity: options?.affinity,
-      revealOffset: selectionRevealOffset(options, head, revealByDefault),
+      affinity: normalizedOptions?.affinity,
+      revealOffset: selectionRevealOffset(normalizedOptions, head, revealByDefault),
     })
   }
 
@@ -3192,10 +3208,11 @@ export class Editor {
     selections: readonly EditorSelectionRange[],
     timingName: string,
     revealOffset?: number,
+    lastAddedIndex?: number,
   ): void {
     const primary = selections[0]
     if (primary) this.revealFoldedOffset(primary.head)
-    this.inputSelection.applyFindSelections(selections, timingName, revealOffset)
+    this.inputSelection.applyFindSelections(selections, timingName, revealOffset, lastAddedIndex)
   }
 
   /**

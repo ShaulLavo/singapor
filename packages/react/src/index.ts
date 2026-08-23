@@ -81,6 +81,13 @@ export type ReactEditorCommands = {
   setText(text: string, options?: EditorSetTextOptions): void
   edit(editOrEdits: EditorEditInput, options?: EditorEditOptions): void
   setSelection(anchor: number, head?: number, options?: EditorSetSelectionOptions): void
+  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
+  setSelection(anchor: number, head?: number, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head?: number,
+    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
+  ): void
   setScrollPosition(scrollPosition: EditorScrollPosition): void
   dispatchCommand(command: EditorCommandId, context?: EditorCommandContext): boolean
   openFind(): boolean

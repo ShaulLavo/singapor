@@ -1663,6 +1663,191 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     }
   })
 
+  it.each(['first', 'last'] as const)(
+    'recovers engine runs when collapsed ranges expose only their %s rect',
+    (keptRect) => {
+      const restore = retainOneCollapsedRangeRect(keptRect)
+      const mixed = mountStandaloneView(BIDI_CORPUS.mixed)
+      const nested = mountStandaloneView(BIDI_CORPUS.nested)
+      const override = mountStandaloneView(BIDI_CORPUS.override)
+      const tabRtl = mountStandaloneView(BIDI_CORPUS.tabRtl)
+      const singleton = mountStandaloneView('aאb')
+      const scaledSingleton = mountStandaloneView('aאb', 4_096, 0.1)
+      const nestedSingleton = mountStandaloneView('א1ב')
+      const singletonOverride = mountStandaloneView('a\u202E1\u202Cz')
+      const nestedEmbedding = mountStandaloneView('a\u202Bבc\u202Cz')
+      const scaledNestedEmbedding = mountStandaloneView('a\u202Bבc\u202Cz', 4_096, 0.1)
+      const rtlIsolate = mountStandaloneView('a\u2067bא\u2069z')
+      const fsiLrm = mountStandaloneView('a\u2068 \u200Eא\u2069z')
+      const widget = mountInlineWidgetView('אבגדהוז', 2, 5, 'one-rect-widget')
+      const leadingRtlWidget = mountInlineWidgetView('אבגדהוז', 0, 3, 'leading-rtl-widget')
+      const trailingRtlWidget = mountInlineWidgetView('אבגדהוז', 4, 7, 'trailing-rtl-widget')
+      const leadingMixedWidget = mountInlineWidgetView('aאבb', 0, 1, 'leading-mixed-widget')
+      const strongMixedWidget = mountInlineWidgetView('aאבb', 1, 2, 'strong-mixed-widget')
+      try {
+        const mixedBoundary = boundaryPositionXs(mixed.internal, mixed.row, 8)
+        expect(mixedBoundary).toHaveLength(2)
+        expect(boundaryPositionXs(mixed.internal, mixed.row, 12)).toHaveLength(2)
+        expect(localBidiRuns(mixed.row, bidiRunsForRow(mixed.internal, mixed.row))).toEqual(
+          BIDI_RUN_TRUTH.mixed,
+        )
+        expect(mixed.view.visualHorizontalTarget(8, 'before', 'right')).toEqual({
+          offset: 11,
+          affinity: 'after',
+        })
+        mixed.view.setSelection(8, 8, 'before')
+        assertCaretLayerPositions(mixed.container, mixed.row, mixedBoundary[0]!, mixedBoundary[1]!)
+
+        expect(boundaryPositionXs(nested.internal, nested.row, 4)).toHaveLength(2)
+        expect(boundaryPositionXs(nested.internal, nested.row, 7)).toHaveLength(2)
+        expect(localBidiRuns(nested.row, bidiRunsForRow(nested.internal, nested.row))).toEqual(
+          BIDI_RUN_TRUTH.nested,
+        )
+
+        expect(boundaryPositionXs(override.internal, override.row, 3)).toHaveLength(2)
+        expect(
+          localBidiRuns(override.row, bidiRunsForRow(override.internal, override.row)),
+        ).toEqual(BIDI_RUN_TRUTH.override)
+
+        expect(boundaryPositionXs(tabRtl.internal, tabRtl.row, 1)).toHaveLength(2)
+        expect(localBidiRuns(tabRtl.row, bidiRunsForRow(tabRtl.internal, tabRtl.row))).toEqual(
+          BIDI_RUN_TRUTH.tabRtl,
+        )
+
+        expect(boundaryPositionXs(singleton.internal, singleton.row, 1)).toHaveLength(2)
+        expect(boundaryPositionXs(singleton.internal, singleton.row, 2)).toHaveLength(2)
+        expect(
+          localBidiRuns(singleton.row, bidiRunsForRow(singleton.internal, singleton.row)),
+        ).toEqual([
+          { start: 0, end: 1, direction: 'ltr' },
+          { start: 1, end: 2, direction: 'rtl' },
+          { start: 2, end: 3, direction: 'ltr' },
+        ])
+        expect(boundaryPositionXs(scaledSingleton.internal, scaledSingleton.row, 1)).toHaveLength(2)
+        expect(boundaryPositionXs(scaledSingleton.internal, scaledSingleton.row, 2)).toHaveLength(2)
+        expect(
+          localBidiRuns(
+            scaledSingleton.row,
+            bidiRunsForRow(scaledSingleton.internal, scaledSingleton.row),
+          ),
+        ).toEqual([
+          { start: 0, end: 1, direction: 'ltr' },
+          { start: 1, end: 2, direction: 'rtl' },
+          { start: 2, end: 3, direction: 'ltr' },
+        ])
+
+        expect(
+          localBidiRuns(
+            nestedSingleton.row,
+            bidiRunsForRow(nestedSingleton.internal, nestedSingleton.row),
+          ),
+        ).toEqual([
+          { start: 2, end: 3, direction: 'rtl' },
+          { start: 1, end: 2, direction: 'ltr' },
+          { start: 0, end: 1, direction: 'rtl' },
+        ])
+
+        expect(
+          boundaryPositionXs(singletonOverride.internal, singletonOverride.row, 1),
+        ).toHaveLength(2)
+        expect(
+          boundaryPositionXs(singletonOverride.internal, singletonOverride.row, 3),
+        ).toHaveLength(2)
+        expect(
+          localBidiRuns(
+            singletonOverride.row,
+            bidiRunsForRow(singletonOverride.internal, singletonOverride.row),
+          ),
+        ).toEqual([
+          { start: 0, end: 1, direction: 'ltr' },
+          { start: 1, end: 3, direction: 'rtl' },
+          { start: 3, end: 5, direction: 'ltr' },
+        ])
+
+        expect(boundaryPositionXs(nestedEmbedding.internal, nestedEmbedding.row, 4)).toHaveLength(2)
+        expect(
+          localBidiRuns(
+            nestedEmbedding.row,
+            bidiRunsForRow(nestedEmbedding.internal, nestedEmbedding.row),
+          ),
+        ).toEqual([
+          { start: 0, end: 1, direction: 'ltr' },
+          { start: 3, end: 4, direction: 'ltr' },
+          { start: 1, end: 3, direction: 'rtl' },
+          { start: 4, end: 6, direction: 'ltr' },
+        ])
+        expect(
+          boundaryPositionXs(scaledNestedEmbedding.internal, scaledNestedEmbedding.row, 4),
+        ).toHaveLength(2)
+        expect(
+          localBidiRuns(
+            scaledNestedEmbedding.row,
+            bidiRunsForRow(scaledNestedEmbedding.internal, scaledNestedEmbedding.row),
+          ),
+        ).toEqual([
+          { start: 0, end: 1, direction: 'ltr' },
+          { start: 3, end: 4, direction: 'ltr' },
+          { start: 1, end: 3, direction: 'rtl' },
+          { start: 4, end: 6, direction: 'ltr' },
+        ])
+
+        expect(boundaryPositionXs(rtlIsolate.internal, rtlIsolate.row, 2)).toHaveLength(2)
+        expect(
+          localBidiRuns(rtlIsolate.row, bidiRunsForRow(rtlIsolate.internal, rtlIsolate.row)),
+        ).toEqual([
+          { start: 0, end: 2, direction: 'ltr' },
+          { start: 3, end: 4, direction: 'rtl' },
+          { start: 2, end: 3, direction: 'ltr' },
+          { start: 4, end: 6, direction: 'ltr' },
+        ])
+        expect(boundaryPositionXs(fsiLrm.internal, fsiLrm.row, 4)).toHaveLength(2)
+        expect(localBidiRuns(fsiLrm.row, bidiRunsForRow(fsiLrm.internal, fsiLrm.row))).toEqual([
+          { start: 0, end: 4, direction: 'ltr' },
+          { start: 4, end: 5, direction: 'rtl' },
+          { start: 5, end: 7, direction: 'ltr' },
+        ])
+
+        const widgetRow = widget.view.getState().mountedRows[0]!
+        expect(localBidiRuns(widgetRow, bidiRunsForRow(widget.internal, widgetRow))).toEqual([
+          { start: 0, end: 7, direction: 'rtl' },
+        ])
+        expect(localBidiRunsForMounted(leadingRtlWidget)).toEqual([
+          { start: 0, end: 7, direction: 'rtl' },
+        ])
+        expect(localBidiRunsForMounted(trailingRtlWidget)).toEqual([
+          { start: 0, end: 7, direction: 'rtl' },
+        ])
+        expect(localBidiRunsForMounted(leadingMixedWidget)).toEqual([
+          { start: 0, end: 3, direction: 'rtl' },
+          { start: 3, end: 4, direction: 'ltr' },
+        ])
+        expect(localBidiRunsForMounted(strongMixedWidget)).toEqual([
+          { start: 0, end: 3, direction: 'ltr' },
+          { start: 3, end: 4, direction: 'ltr' },
+        ])
+      } finally {
+        restore()
+        mixed.dispose()
+        nested.dispose()
+        override.dispose()
+        tabRtl.dispose()
+        singleton.dispose()
+        scaledSingleton.dispose()
+        nestedSingleton.dispose()
+        singletonOverride.dispose()
+        nestedEmbedding.dispose()
+        scaledNestedEmbedding.dispose()
+        rtlIsolate.dispose()
+        fsiLrm.dispose()
+        widget.dispose()
+        leadingRtlWidget.dispose()
+        trailingRtlWidget.dispose()
+        leadingMixedWidget.dispose()
+        strongMixedWidget.dispose()
+      }
+    },
+  )
+
   it('derives runs through a rendered control unit', () => {
     const supplementary = mountSupplementaryBidiFixture()
     try {
@@ -1763,6 +1948,27 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     } finally {
       mounted.dispose()
     }
+  })
+
+  it.each([
+    {
+      name: 'embedding carrier tails',
+      build: (size: number) => `a${'\u202A'.repeat(size)}b`,
+    },
+    {
+      name: 'nested first-strong isolates',
+      build: (size: number) => `a${'\u2068'.repeat(size)}b${'\u2069'.repeat(size)}z`,
+    },
+    {
+      name: 'unmatched isolate terminators',
+      build: (size: number) => `${'\u202A'.repeat(size)}${'\u2069'.repeat(size)}א`,
+    },
+  ])('keeps forced one-rect $name linear', ({ build }) => {
+    const small = countForcedOneRectCodePointReads(build(128))
+    const largeText = build(256)
+    const large = countForcedOneRectCodePointReads(largeText)
+    expect(large).toBeLessThanOrEqual(small * 2.5 + 20)
+    expect(large).toBeLessThanOrEqual(largeText.length * 16)
   })
 
   it('keeps zero-rect element seam fallbacks linear in row parts', () => {
@@ -2653,6 +2859,11 @@ function localBidiRuns(
   }))
 }
 
+function localBidiRunsForMounted(mounted: StandaloneView): ReturnType<typeof localBidiRuns> {
+  const row = mounted.view.getState().mountedRows[0]!
+  return localBidiRuns(row, bidiRunsForRow(mounted.internal, row))
+}
+
 function assertBidiRunsAgainstBrowser(
   row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
   runs: NonNullable<ReturnType<typeof bidiRunsForRow>>,
@@ -2962,6 +3173,46 @@ function countRangeReads(run: () => void): number {
     Range.prototype.getBoundingClientRect = boundingRect
   }
   return reads
+}
+
+function countForcedOneRectCodePointReads(text: string): number {
+  const restoreRects = retainOneCollapsedRangeRect('first')
+  const mounted = mountStandaloneView(text)
+  const codePointAt = String.prototype.codePointAt
+  let reads = 0
+  String.prototype.codePointAt = function countedCodePointAt(this: string, index: number) {
+    reads += 1
+    return codePointAt.call(this, index)
+  }
+  try {
+    expect(bidiRunsForRow(mounted.internal, mounted.row)).not.toBeNull()
+  } finally {
+    String.prototype.codePointAt = codePointAt
+    restoreRects()
+    mounted.dispose()
+  }
+  return reads
+}
+
+function retainOneCollapsedRangeRect(kept: 'first' | 'last'): () => void {
+  const getClientRects = Range.prototype.getClientRects
+  Range.prototype.getClientRects = function oneCollapsedRangeRect(this: Range) {
+    const rects = getClientRects.call(this)
+    if (!this.collapsed || rects.length <= 1) return rects
+
+    const index = kept === 'first' ? 0 : rects.length - 1
+    const rect = rects.item(index)
+    return rect ? oneRectList(rect) : rects
+  }
+  return () => {
+    Range.prototype.getClientRects = getClientRects
+  }
+}
+
+function oneRectList(rect: DOMRect): DOMRectList {
+  const list = [rect] as unknown as DOMRectList & DOMRect[]
+  list.item = (index: number) => list[index] ?? null
+  return list
 }
 
 function countEditorCommandRangeReads(
@@ -3680,6 +3931,34 @@ type StandaloneView = {
   readonly internal: BidiGeometryFixture['internal']
   readonly row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']]
   dispose(): void
+}
+
+function mountInlineWidgetView(
+  text: string,
+  startIndex: number,
+  endIndex: number,
+  id: string,
+): StandaloneView {
+  const mounted = mountStandaloneView(text)
+  mounted.view.setInlineMap(
+    createInlineMap(createPieceTableSnapshot(text), [
+      {
+        id,
+        startIndex,
+        endIndex,
+        text: 'W',
+        render: (host) => {
+          const box = host.ownerDocument.createElement('span')
+          box.style.display = 'inline-block'
+          box.style.height = '1em'
+          box.style.width = '1em'
+          host.append(box)
+          return { dispose: () => {} }
+        },
+      },
+    ]),
+  )
+  return mounted
 }
 
 function mountRecyclingRtlView(): StandaloneView {

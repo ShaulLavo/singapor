@@ -1398,13 +1398,15 @@ export class InputSelectionController {
     selections: readonly EditorSelectionRange[],
     timingName: string,
     revealOffset?: number,
+    lastAddedIndex?: number,
   ): void {
     const session = this.session
     if (!session) return
     if (selections.length === 0) return
 
     const start = nowMs()
-    const change = session.setSelections(selections)
+    const orderedSelections = selectionsWithLastAddedAtEnd(selections, lastAddedIndex)
+    const change = session.setSelections(orderedSelections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, {
@@ -3298,6 +3300,20 @@ function surroundedSelection(
 
 function generatedSelectionForRange(range: TextOffsetRange): DocumentSessionSelectionRange {
   return { anchor: range.start, affinity: 'after', head: range.end }
+}
+
+function selectionsWithLastAddedAtEnd(
+  selections: readonly EditorSelectionRange[],
+  lastAddedIndex: number | undefined,
+): readonly EditorSelectionRange[] {
+  // Session selection ids encode creation order. Replaying the saved last-added range last restores
+  // that identity; callers still use the untouched array's first item for primary reveal semantics.
+  if (lastAddedIndex === undefined || lastAddedIndex === selections.length - 1) return selections
+  if (lastAddedIndex < 0 || lastAddedIndex >= selections.length) return selections
+
+  const lastAdded = selections[lastAddedIndex]
+  if (!lastAdded) return selections
+  return selections.filter((_selection, index) => index !== lastAddedIndex).concat(lastAdded)
 }
 
 function occurrenceSelectionForRange(

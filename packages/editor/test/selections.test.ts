@@ -1,5 +1,5 @@
 import { detectPlatform } from '@tanstack/hotkeys'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '../src/editor'
 import {
   createDocumentSession,
@@ -27,6 +27,64 @@ import {
   redoEditorHistory,
   undoEditorHistory,
 } from '../src/history'
+
+const backspaceEditReads = vi.hoisted(() => ({ coordinates: 0, enabled: false }))
+
+vi.mock('../src/pieceTable/edits', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/pieceTable/edits')>()
+  return {
+    ...actual,
+    applyBatchToPieceTable: (
+      ...args: Parameters<typeof actual.applyBatchToPieceTable>
+    ): ReturnType<typeof actual.applyBatchToPieceTable> => {
+      const result = actual.applyBatchToPieceTable(...args)
+      if (!backspaceEditReads.enabled) return result
+
+      for (const edit of args[1]) countEditCoordinates(edit)
+      return result
+    },
+  }
+})
+
+function countEditCoordinates(edit: { readonly from: number; readonly to: number }): void {
+  const from = edit.from
+  const to = edit.to
+  Object.defineProperties(edit, {
+    from: {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        backspaceEditReads.coordinates += 1
+        return from
+      },
+    },
+    to: {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        backspaceEditReads.coordinates += 1
+        return to
+      },
+    },
+  })
+}
+
+function countSeparatedBackspaceEditReads(cursorCount: number): number {
+  const snapshot = createPieceTableSnapshot('a '.repeat(cursorCount))
+  const selections = Array.from({ length: cursorCount }, (_value, index) =>
+    createAnchorSelection(snapshot, index * 2 + 1),
+  )
+  backspaceEditReads.coordinates = 0
+  backspaceEditReads.enabled = true
+  try {
+    const result = backspaceSelections(snapshot, createSelectionSet(selections))
+    expect(result.edits).toHaveLength(cursorCount)
+    expect(result.selections.selections).toHaveLength(cursorCount)
+    return backspaceEditReads.coordinates
+  } finally {
+    backspaceEditReads.enabled = false
+  }
+}
 
 function affinityBackspaceSelectionSet(
   snapshot: Parameters<typeof createAnchorSelection>[0],
@@ -282,6 +340,18 @@ describe('selections', () => {
     })
   })
 
+  it('projects separated multi-cursor backspaces with linearly bounded edit reads', () => {
+    const smallCount = 128
+    const largeCount = 512
+    const smallReads = countSeparatedBackspaceEditReads(smallCount)
+    const largeReads = countSeparatedBackspaceEditReads(largeCount)
+
+    expect(smallReads).toBeGreaterThan(0)
+    expect(smallReads).toBeLessThanOrEqual(smallCount * 8)
+    expect(largeReads).toBeLessThanOrEqual(largeCount * 8)
+    expect(largeReads).toBeLessThanOrEqual(smallReads * 4 + 16)
+  })
+
   it('keeps a backspace caret before text later inserted at its offset', () => {
     const snapshot = createPieceTableSnapshot('abc')
     const set = createSelectionSet([createAnchorSelection(snapshot, 2)])
@@ -405,6 +475,24 @@ describe('selections', () => {
       { affinity: 'before', id: 'partial', offset: 0 },
       { affinity: 'after', id: 'full', offset: 0 },
     ])
+  })
+
+  it('preserves selection identity when indentation backspace reorders target ranges', () => {
+    const snapshot = createPieceTableSnapshot('    x')
+    const set = createSelectionSet([
+      createAnchorSelection(snapshot, 2, 3, { affinity: 'before', id: 'range' }),
+      createAnchorSelection(snapshot, 4, 4, { affinity: 'after', id: 'indent' }),
+    ])
+
+    const result = backspaceSelections(snapshot, set, 4)
+
+    expect(materializePieceTableFullText(result.snapshot)).toBe('x')
+    expect(result.edits).toEqual([{ from: 0, text: '', to: 4 }])
+    expect(resolvedBackspaceStates(result)).toEqual([
+      { affinity: 'before', goal: SelectionGoal.none(), id: 'range', offset: 0 },
+      { affinity: 'after', goal: SelectionGoal.none(), id: 'indent', offset: 0 },
+    ])
+    expect(result.selections.selections[result.selections.lastAddedIndex ?? 0]?.id).toBe('indent')
   })
 
   it('deletes selected ranges without deleting collapsed cursors', () => {

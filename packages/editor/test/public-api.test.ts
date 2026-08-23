@@ -13,7 +13,12 @@ import {
   type TextEdit,
   type TextOffsetRange,
 } from '@singapor/core/document'
-import { Editor, type EditorSetSelectionOptions } from '@singapor/core/editor'
+import {
+  Editor,
+  type EditorSelectionRevealOptions,
+  type EditorSelectionRevealTarget,
+  type EditorSetSelectionOptions,
+} from '@singapor/core/editor'
 import {
   createEditorCapabilityToken,
   createEditorLanguageFeatureToken,
@@ -64,7 +69,12 @@ import {
 import { createEmptySyntaxResult, treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
 import { EditorPluginHost } from '@singapor/core/testing'
 import { debugPieceTable } from '@singapor/core/debug'
-import { createSelectionSet, type SelectionSet, VirtualizedTextView } from '@singapor/core/internal'
+import {
+  createSelectionSet,
+  type EditorSelectionContributionContext,
+  type SelectionSet,
+  VirtualizedTextView,
+} from '@singapor/core/internal'
 import {
   createMergeConflictDocumentText,
   EDITOR_MERGE_CONFLICT_FEATURE,
@@ -265,10 +275,32 @@ describe('public API facade', () => {
     }
     const contributionOptions: Parameters<EditorViewContributionContext['setSelection']>[3] =
       rootOptions
+    const editorNumericArgs: Parameters<Editor['setSelection']> = [1, 2, 3]
+    const viewNumericArgs: Parameters<EditorViewContributionContext['setSelection']> = [
+      1,
+      2,
+      'test.numericViewSelection',
+      3,
+    ]
+    const selectionNumericArgs: Parameters<EditorSelectionContributionContext['setSelection']> = [
+      1,
+      2,
+      'test.numericSelection',
+      3,
+    ]
+    const legacyOptions: EditorSelectionRevealOptions = { reveal: false, revealOffset: 9 }
+    const legacyTarget: EditorSelectionRevealTarget = 12
+    const rootLegacyOptions: core.EditorSelectionRevealOptions = legacyOptions
+    const rootLegacyTarget: core.EditorSelectionRevealTarget = legacyTarget
 
     expect(categoryOptions.affinity).toBe('before')
     expect(editSelection.affinity).toBe('after')
     expect(contributionOptions?.revealOffset).toBe(12)
+    expect(editorNumericArgs[2]).toBe(3)
+    expect(viewNumericArgs[3]).toBe(3)
+    expect(selectionNumericArgs[3]).toBe(3)
+    expect(rootLegacyOptions.revealOffset).toBe(9)
+    expect(rootLegacyTarget).toBe(12)
   })
 
   it('exports the whitespace modes a host can select', () => {

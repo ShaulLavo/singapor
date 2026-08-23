@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Editor } from '@singapor/core/editor'
 import {
   createEditor,
+  type SolidEditorCommands,
   type SolidEditorController,
   type SolidEditorDocument,
   type SolidEditorSelection,
@@ -105,6 +106,21 @@ describe('createEditor', () => {
       endOffset: 2,
     })
 
+    mounted.dispose()
+  })
+
+  it('forwards the deprecated numeric selection reveal target', () => {
+    const mounted = mountInRoot({
+      document: () => ({ text: 'alpha', documentId: 'a.ts', revision: 1 }),
+    })
+    const instance = mounted.controller.editor()
+    if (!instance) throw new Error('editor did not mount')
+    const setSelection = vi.spyOn(instance, 'setSelection')
+    const selectionArgs: Parameters<SolidEditorCommands['setSelection']> = [1, 1, 4]
+
+    mounted.controller.commands.setSelection(...selectionArgs)
+
+    expect(setSelection).toHaveBeenLastCalledWith(1, 1, 4)
     mounted.dispose()
   })
 

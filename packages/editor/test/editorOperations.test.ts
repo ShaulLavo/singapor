@@ -262,6 +262,17 @@ describe('editor operations', () => {
     expect(revealOffset).not.toHaveBeenCalled()
   })
 
+  it('keeps the deprecated numeric public reveal target working', () => {
+    editor = new Editor(container, { defaultText: 'abc' })
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+
+    editor.setSelection(0, 0, 2)
+
+    expect(revealCaret).not.toHaveBeenCalled()
+    expect(revealOffset).toHaveBeenLastCalledWith(2, undefined)
+  })
+
   it('round-trips affinity through an explicit post-edit selection', () => {
     const session = createDocumentSession('abc')
     editor = new Editor(container)
@@ -316,6 +327,11 @@ describe('editor operations', () => {
       reveal: false,
       revealOffset: 2,
     })
+    expect(revealCaret).not.toHaveBeenCalled()
+    expect(revealOffset).toHaveBeenLastCalledWith(2, undefined)
+
+    revealOffset.mockClear()
+    context.setSelection(1, 1, 'test.legacyRevealTarget', 2)
     expect(revealCaret).not.toHaveBeenCalled()
     expect(revealOffset).toHaveBeenLastCalledWith(2, undefined)
   })

@@ -111,7 +111,7 @@ import {
   type VisualRowCaretMove,
 } from './virtualizedTextViewGeometry'
 import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
-import { BIDI_CONTROL_CODE_POINTS } from './virtualizedTextViewBidi'
+import { BIDI_CONTROL_CODE_POINTS, isSimpleRowText } from './virtualizedTextViewBidi'
 import {
   applyRowHeight,
   disposeGutterCells,
@@ -1182,19 +1182,33 @@ function textHitPositionAtRowX(
 ): VirtualizedTextHitPosition | null {
   if (rowMightContainRTL(view, row)) return bidiTextHitPositionAtRowX(view, row, rowX)
 
-  const offset = closestTextOffsetAtRowX(view, row, rowX)
+  const hit = initialTextOffsetAtRowX(view, row, rowX)
+  if (hit === null) return null
+
+  const offset = closestTextOffsetNearHit(view, row, hit, rowX)
   return textHitPosition(offset, endpointAffinity(row, offset), row.index, rowX)
 }
 
-function closestTextOffsetAtRowX(
+function initialTextOffsetAtRowX(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   rowX: number,
+): number | null {
+  // Calculated rows answer without touching layout. Measured rows must not fall through to xToOffset:
+  // resolving that inverse reads every boundary in the row, while the browser already has the hit.
+  if (!row.inlineMapping && isSimpleRowText(row.text)) return xToOffset(view, row, rowX)
+  return hitTestBidiVisualProbeAtLocalX(view, row, rowX)
+}
+
+function closestTextOffsetNearHit(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  hit: number,
+  rowX: number,
 ): number {
-  const hit = xToOffset(view, row, rowX)
   const localHit = rowLocalIndexForOffset(row, hit)
   let closest = hit
-  let distance = closestBoundaryDistance(view, row, hit, rowX)
+  let distance = Number.POSITIVE_INFINITY
   for (const local of candidateGraphemeOffsets(row.text, localHit)) {
     const candidate = rowOffsetForLocalIndex(row, local)
     const candidateDistance = closestBoundaryDistance(view, row, candidate, rowX)
@@ -1340,15 +1354,32 @@ function hitRepresentsBoundary(
 }
 
 function previousRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
-  const local = rowLocalIndexForOffset(row, offset, 'before')
-  const previous = previousGraphemeBoundary(row.text, local)
-  return rowOffsetForLocalIndex(row, previous, 'before')
+  let local = rowLocalIndexForOffset(row, offset, 'before')
+  while (local > 0) {
+    const previous = previousGraphemeBoundary(row.text, local)
+    if (previous === local) return offset
+
+    // An insertion or replacement can paint several graphemes at one source point. Keep walking until
+    // motion reaches a distinct document offset instead of reporting the same caret as its neighbor.
+    const target = rowOffsetForLocalIndex(row, previous, 'before')
+    if (target !== offset) return target
+    local = previous
+  }
+  return offset
 }
 
 function nextRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
-  const local = rowLocalIndexForOffset(row, offset, 'after')
-  const next = nextGraphemeBoundary(row.text, local)
-  return rowOffsetForLocalIndex(row, next, 'after')
+  let local = rowLocalIndexForOffset(row, offset, 'after')
+  while (local < row.text.length) {
+    const next = nextGraphemeBoundary(row.text, local)
+    if (next === local) return offset
+
+    // See previousRowUnitOffset: projected display units sharing one source point are atomic to motion.
+    const target = rowOffsetForLocalIndex(row, next, 'after')
+    if (target !== offset) return target
+    local = next
+  }
+  return offset
 }
 
 function bidiTwinAnchorMappings(
@@ -1945,7 +1976,6 @@ function horizontalCaretMoveInRow(
 ): VisualRowCaretMove | null {
   const homogeneous = homogeneousRtlCaretMoveInRow(view, row, offset, direction)
   if (homogeneous) return homogeneous
-  if (row.inlineMapping) return visualCaretMoveInRow(view, row, offset, affinity, direction)
   if (row.text.length <= BIDI_WINDOWED_VISUAL_MOVE_MIN_TEXT_LENGTH) {
     return visualCaretMoveInRow(view, row, offset, affinity, direction)
   }
@@ -2250,7 +2280,6 @@ function horizontalCaretAtRowEdge(
 ): VisualCaretTarget | null {
   const homogeneous = homogeneousRtlCaretAtRowEdge(view, row, edge)
   if (homogeneous) return homogeneous
-  if (row.inlineMapping) return visualCaretAtRowEdge(view, row, edge)
   if (row.text.length <= BIDI_WINDOWED_VISUAL_MOVE_MIN_TEXT_LENGTH) {
     return visualCaretAtRowEdge(view, row, edge)
   }

@@ -658,6 +658,18 @@
         },
         {
           "kind": "type",
+          "name": "EditorSelectionRevealOptions",
+          "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSelectionRevealTarget",
+          "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorSelectionSyncMode",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
@@ -2574,6 +2586,18 @@
           "kind": "type",
           "name": "EditorSelectionRange",
           "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSelectionRevealOptions",
+          "source": "packages/editor/src/editor/selectionReveal.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSelectionRevealTarget",
+          "source": "packages/editor/src/editor/selectionReveal.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {

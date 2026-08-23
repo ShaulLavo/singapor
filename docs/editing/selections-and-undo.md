@@ -44,7 +44,9 @@ contexts, and the React and Solid command/controlled-selection APIs. Public
 `Editor.setSelection(anchor, head?, options?)` accepts `affinity`, `reveal`, and `revealOffset` in
 one options object. The public editor setter reveals the head by default; contribution setters are
 reveal-opt-in. An explicit `revealOffset` is the reveal target and takes precedence over the boolean
-default. `Editor.edit(..., { selection })` accepts affinity independently of reveal behavior.
+default. The deprecated numeric reveal argument remains accepted as shorthand for
+`{ revealOffset: number }`. `Editor.edit(..., { selection })` accepts affinity independently of
+reveal behavior.
 
 ### Storage
 

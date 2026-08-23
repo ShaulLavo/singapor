@@ -192,12 +192,9 @@ export const backspaceSelections = (
   const targets = normalized.selections
     .map((selection) => resolveSelection(snapshot, selection))
     .map((selection) => backspaceTargetForSelection(snapshot, selection, tabSize))
-  const deletionRanges: OffsetRange[] = []
-  for (const target of targets) {
-    if (target.range.start === target.range.end) continue
-    deletionRanges.push(target.range)
-  }
-  const edits = mergeOffsetRanges(deletionRanges).map((range) => rangeToEdit(range, ''))
+  const lastAddedTarget = targets[normalized.lastAddedIndex ?? 0]
+  const orderedTargets = targets.toSorted(compareSelectionEditTargets)
+  const edits = mergeOrderedTargetRanges(orderedTargets).map((range) => rangeToEdit(range, ''))
   const nextSnapshot = applyBatchToPieceTable(snapshot, edits)
 
   if (edits.length === 0) {
@@ -210,19 +207,20 @@ export const backspaceSelections = (
 
   return {
     snapshot: nextSnapshot,
-    selections: backspaceSelectionsAfterEdits(nextSnapshot, normalized, targets, edits),
+    selections: backspaceSelectionsAfterEdits(nextSnapshot, orderedTargets, edits, lastAddedTarget),
     edits,
   }
 }
 
 const backspaceSelectionsAfterEdits = (
   snapshot: PieceTableSnapshot,
-  source: SelectionSet<PieceTableAnchor>,
   targets: readonly SelectionEditTarget[],
   edits: readonly PieceTableEdit[],
+  lastAddedTarget: SelectionEditTarget | undefined,
 ): SelectionSet<PieceTableAnchor> => {
+  const projectOffset = createBackspaceOffsetProjector(edits)
   const selections = targets.map((target) => {
-    const offset = backspaceOffsetAfterEdits(target.range.start, edits)
+    const offset = projectOffset(target.range.start)
     return createAnchorSelection(snapshot, offset, offset, {
       affinity: target.affinity,
       cursorBias: 'left',
@@ -230,23 +228,34 @@ const backspaceSelectionsAfterEdits = (
       id: target.id,
     })
   })
+  const lastAddedIndex = lastAddedTarget ? Math.max(0, targets.indexOf(lastAddedTarget)) : 0
 
   return normalizeSelectionSet(snapshot, {
     selections,
-    lastAddedIndex: source.lastAddedIndex,
+    lastAddedIndex,
     normalized: false,
   })
 }
 
-const backspaceOffsetAfterEdits = (offset: number, edits: readonly PieceTableEdit[]): number => {
+const createBackspaceOffsetProjector = (
+  edits: readonly PieceTableEdit[],
+): ((offset: number) => number) => {
   let delta = 0
-  for (const edit of edits) {
-    if (offset < edit.from) break
-    if (offset <= edit.to) return edit.from + delta
-    delta -= edit.to - edit.from
+  let editIndex = 0
+
+  function projectOffset(offset: number): number {
+    let edit = edits[editIndex]
+    while (edit && offset > edit.to) {
+      delta -= edit.to - edit.from
+      editIndex += 1
+      edit = edits[editIndex]
+    }
+
+    if (!edit || offset < edit.from) return offset + delta
+    return edit.from + delta
   }
 
-  return offset + delta
+  return projectOffset
 }
 
 const emptySelectionEdit = (
@@ -445,11 +454,18 @@ const lastItem = <T>(items: readonly T[]): T | null => {
   return items[items.length - 1] ?? null
 }
 
-const mergeOffsetRanges = (ranges: readonly OffsetRange[]): OffsetRange[] => {
-  const sorted = ranges.toSorted((left, right) => left.start - right.start || left.end - right.end)
+const compareSelectionEditTargets = (
+  left: SelectionEditTarget,
+  right: SelectionEditTarget,
+): number => left.range.start - right.range.start || left.range.end - right.range.end
+
+const mergeOrderedTargetRanges = (targets: readonly SelectionEditTarget[]): OffsetRange[] => {
   const merged: OffsetRange[] = []
 
-  for (const range of sorted) {
+  for (const target of targets) {
+    const range = target.range
+    if (range.start === range.end) continue
+
     const previous = lastItem(merged)
     if (!previous || range.start > previous.end) {
       merged.push(range)

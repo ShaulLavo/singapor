@@ -2,11 +2,27 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor'
 import { defaultEditorKeyBindings, editorCommandPackForCommand } from '../src/editor/keymap'
-import { createDocumentSession } from '../src/public/document'
+import { createDocumentSession, type DocumentSession } from '../src/public/document'
 import { resetEditorInstanceCount } from '../src/public/testing'
 import { resolveSelection } from '../src/selections'
 
 const LONG_TEXT = Array.from({ length: 500 }, (_value, index) => `line ${index}`).join('\n')
+
+function affinityCursorState(session: DocumentSession): {
+  readonly affinities: readonly ('before' | 'after')[]
+  readonly lastAddedAffinity: 'before' | 'after'
+} {
+  const snapshot = session.getSnapshot()
+  const set = session.getSelections()
+  const resolved = set.selections.map((selection) => resolveSelection(snapshot, selection))
+  const lastAdded = resolved[set.lastAddedIndex ?? 0]
+  if (!lastAdded) throw new Error('missing last-added selection')
+
+  return {
+    affinities: resolved.map((selection) => selection.affinity),
+    lastAddedAffinity: lastAdded.affinity,
+  }
+}
 
 describe('cursor history', () => {
   let container: HTMLElement
@@ -54,6 +70,46 @@ describe('cursor history', () => {
       const selection = session.getSelections().selections[0]!
       return resolveSelection(session.getSnapshot(), selection).affinity
     }
+  })
+
+  it('keeps the last-added opposite-affinity caret through cursor undo', () => {
+    const session = createDocumentSession('abc')
+    session.setSelection(1, 1, { affinity: 'after' })
+    session.addSelection(1, 1, { affinity: 'before' })
+    editor = new Editor(container)
+    editor.attachSession(session)
+
+    editor.setSelection(2)
+    expect(editor.cursorUndo()).toBe(true)
+    expect(affinityCursorState(session)).toEqual({
+      affinities: ['before', 'after'],
+      lastAddedAffinity: 'before',
+    })
+
+    expect(editor.dispatchCommand('clearSecondarySelections')).toBe(true)
+    expect(affinityCursorState(session)).toEqual({
+      affinities: ['before'],
+      lastAddedAffinity: 'before',
+    })
+  })
+
+  it('keeps the last-added opposite-affinity caret through cursor redo', () => {
+    const session = createDocumentSession('abc')
+    editor = new Editor(container)
+    editor.attachSession(session)
+    editor.setSelection(0)
+
+    session.setSelection(1, 1, { affinity: 'after' })
+    session.addSelection(1, 1, { affinity: 'before' })
+    editor.setSelection(2)
+
+    expect(editor.cursorUndo()).toBe(true)
+    expect(editor.cursorUndo()).toBe(true)
+    expect(editor.cursorRedo()).toBe(true)
+    expect(affinityCursorState(session)).toEqual({
+      affinities: ['before', 'after'],
+      lastAddedAffinity: 'before',
+    })
   })
 
   it('leaves the document alone when the caret is undone', () => {

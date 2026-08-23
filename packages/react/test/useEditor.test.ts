@@ -13,6 +13,7 @@ import {
   EditorHost,
   useEditor,
   useEditorSelector,
+  type ReactEditorCommands,
   type ReactEditorController,
   type ReactEditorOptions,
 } from '../src'
@@ -131,6 +132,21 @@ describe('useEditor', () => {
       endOffset: 2,
     })
 
+    mounted.dispose()
+  })
+
+  it('forwards the deprecated numeric selection reveal target', () => {
+    const mounted = mountReactEditor({
+      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+    })
+    const instance = mounted.controller.getEditor()
+    if (!instance) throw new Error('editor did not mount')
+    const setSelection = vi.spyOn(instance, 'setSelection')
+    const selectionArgs: Parameters<ReactEditorCommands['setSelection']> = [1, 1, 4]
+
+    act(() => mounted.controller.commands.setSelection(...selectionArgs))
+
+    expect(setSelection).toHaveBeenLastCalledWith(1, 1, 4)
     mounted.dispose()
   })
 

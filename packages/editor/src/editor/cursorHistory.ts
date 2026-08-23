@@ -8,6 +8,7 @@ const MAX_CURSOR_HISTORY_DEPTH = 50
 
 export type CursorHistoryEntry = {
   readonly selections: readonly EditorSelectionRange[]
+  readonly lastAddedIndex: number
   readonly scrollTop: number
   readonly scrollLeft: number
 }
@@ -73,6 +74,7 @@ export function sameCursorSelections(
 ): boolean {
   if (!a) return false
   if (a.selections.length !== b.selections.length) return false
+  if (a.lastAddedIndex !== b.lastAddedIndex) return false
 
   return a.selections.every((selection, index) => {
     const other = b.selections[index]

@@ -44,7 +44,11 @@ export {
   parseMergeConflicts,
   resolveMergeConflict,
 } from './mergeConflicts'
-export type { EditorSetSelectionOptions } from './editor/selectionReveal'
+export type {
+  EditorSelectionRevealOptions,
+  EditorSelectionRevealTarget,
+  EditorSetSelectionOptions,
+} from './editor/selectionReveal'
 export type {
   EditorChangeHandler,
   EditorDocumentMode,

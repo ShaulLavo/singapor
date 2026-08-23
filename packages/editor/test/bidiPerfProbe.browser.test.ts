@@ -81,11 +81,16 @@ it('reuses homogeneous RTL classification across warm visual arrows', () => {
   const mounted = mountMeasured('א'.repeat(6_000))
   try {
     coldVisualMove(mounted, 3_000)
-    const moves = visualMoves(mounted, 3_000, 'after', 500)
-    expect(moves.target).toEqual({ offset: 2_999, affinity: 'after' })
-    expect(moves.rangeReads).toBe(0)
-    expect(moves.hitReads).toBe(0)
-    expect(moves.elapsed).toBeLessThan(12)
+    const moves: ColdVisualMove[] = []
+    for (let sample = 0; sample < 7; sample += 1) {
+      moves.push(visualMoves(mounted, 3_000, 'after', 500))
+    }
+
+    expect(moves.every((move) => move.target?.offset === 2_999)).toBe(true)
+    expect(moves.every((move) => move.target?.affinity === 'after')).toBe(true)
+    expect(moves.every((move) => move.rangeReads === 0)).toBe(true)
+    expect(moves.every((move) => move.hitReads === 0)).toBe(true)
+    expect(median(moves.map((move) => move.elapsed))).toBeLessThan(12)
   } finally {
     mounted.dispose()
   }

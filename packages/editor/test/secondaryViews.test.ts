@@ -31,7 +31,7 @@ describe('secondary view projections', () => {
       { start: 0, end: 5, style: { color: '#ff0000' } },
     ])
     expect(projection.selections).toEqual([
-      { anchorOffset: 1, headOffset: 3, startOffset: 1, endOffset: 3 },
+      { anchorOffset: 1, headOffset: 3, startOffset: 1, endOffset: 3, affinity: 'after' },
     ])
     expect(projection.foldSummaries).toEqual([
       {

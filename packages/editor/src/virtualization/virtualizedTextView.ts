@@ -1461,6 +1461,7 @@ function bidiEdgeBoundaryHalfWidth(
   edge: number,
   fallback: number,
 ): number {
+  const minimum = fallback / 2
   const local = rowLocalIndexForOffset(row, boundary)
   const previous = previousGraphemeBoundary(row.text, local)
   const candidates = new Set([local, previous])
@@ -1472,7 +1473,9 @@ function bidiEdgeBoundaryHalfWidth(
     const touchesEdge =
       Math.abs(rect.left - edge) <= 1 || Math.abs(rect.left + rect.width - edge) <= 1
     if (!touchesEdge) continue
-    return Math.min(fallback, rect.width / 2)
+    // RTL fallback glyphs are not guaranteed to fill the editor's Latin monospace advance. Keep
+    // the outer quarter-advance in the repair band even when that glyph's own box is narrower.
+    return Math.max(minimum, Math.min(fallback, rect.width / 2))
   }
   return fallback
 }

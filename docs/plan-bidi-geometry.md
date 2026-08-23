@@ -1065,6 +1065,17 @@ test still passes.
       dom test/bidiText.test.ts` (5 tests), `bun run typecheck`, and `bun run build`. Focused
       `oxlint`, `oxfmt --check`, and `git diff --check` passed across all changed files.
 
+**Milestone 6 verification (2026-08-23).** Hit testing and caret rendering share one engine-derived
+boundary ordering, so affinity-to-x and x-to-affinity remain inverse at ambiguous boundaries; LTR
+rows retain the memoized legacy single-position path. The strong and weak carets share the caret
+layer, while hidden-input and composition geometry use only the strong position. Passing commands:
+`bun run test --project browser test/bidiGeometry.browser.test.ts` (45 tests); `bun run test
+--project dom test/bidiText.test.ts test/selections.test.ts test/documentSession.test.ts
+test/history.test.ts test/cursorHistory.test.ts test/selectionRanges.test.ts test/snippets.test.ts
+test/editor-helpers.test.ts test/virtualizedTextView.test.ts test/editor.test.ts` (573 tests); `bun
+run typecheck`; `bun run build`; `bun run lint` (the same two pre-existing `packedTokens.ts`
+warnings, no errors).
+
 ---
 
 ## Milestone 7 — Visual motion

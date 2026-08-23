@@ -1175,9 +1175,22 @@ the logical path is the Tier A behaviour byte for byte.
       (508 tests); `bun run typecheck`; `bun run build`; `bun run lint` (the same two pre-existing
       `packedTokens.ts` warnings, no errors). Focused `oxlint`, `oxfmt --check`, and `git diff
       --check` passed across all changed files. Root `bun run health` passed on the clean commit.
-- [ ] **Word-left/right: accept logical, or make visual with the same option**
-      `medium` `M` — `navigationTargets.ts:129-136`, `:166-226`. Monaco accepts logical. Decide and
-      record; do not leave it ambiguous.
+- [x] **Word-left/right: accept logical, or make visual with the same option**
+      `medium` `M` — Accepted logical document-order motion for word and subword cursor/selection
+      commands, independent of `rtlMoveVisually`. This matches Monaco and keeps language separator,
+      identifier-part and delete-word semantics independent of mounted geometry; CodeMirror's
+      visual word policy is deliberately not adopted. The public option now states that it governs
+      character-step motion. Landed in `b4d75bb`. Verified 2026-08-23 from `packages/editor`: `bun
+      run test --project dom test/navigationTargets.test.ts` (25 tests); `bun run test --project
+      browser test/bidiGeometry.browser.test.ts` (82 tests, including browser-oracle selection
+      paint); `bun run typecheck`; `bun run build`; `bun run lint` (the same two pre-existing
+      `packedTokens.ts` warnings, no errors). Focused `oxlint`, `oxfmt --check`, and `git diff
+      --check` passed across all changed files. Root `bun run health` passed on the clean commit.
+- [ ] **Tier B M6/M7 final acceptance**
+      Every M6/M7 item is done, tested and committed. The combined affinity, navigation,
+      real-browser geometry/hit-testing/paint, cross-package, full Editor, static and architecture
+      health gates pass on the clean task commit. Record the exact commands and counts here. Delete
+      this plan only after this checkbox is `[x]` and committed.
 
 ---
 

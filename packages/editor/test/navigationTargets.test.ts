@@ -26,6 +26,7 @@ function selection(
     reversed: head < anchor,
     collapsed: anchor === head,
     goal,
+    affinity: 'after',
     liveness: 'live',
     startLiveness: 'live',
     endLiveness: 'live',

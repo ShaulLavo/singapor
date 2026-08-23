@@ -61,6 +61,7 @@ function caret(offset: number): ResolvedSelection {
     reversed: false,
     collapsed: true,
     goal: { kind: 'none' },
+    affinity: 'after',
     liveness: 'live',
     startLiveness: 'live',
     endLiveness: 'live',

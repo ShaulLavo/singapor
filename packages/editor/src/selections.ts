@@ -19,12 +19,15 @@ export const SelectionGoal = {
   lineEnd: (): SelectionGoal => ({ kind: 'lineEnd' }),
 } as const
 
+export type SelectionAffinity = 'before' | 'after'
+
 export type Selection<T> = {
   readonly id: string
   readonly start: T
   readonly end: T
   readonly reversed: boolean
   readonly goal: SelectionGoal
+  readonly affinity: SelectionAffinity
 }
 
 export type AnchorSelection = Selection<PieceTableAnchor>
@@ -47,6 +50,7 @@ export type ResolvedSelection = {
   readonly reversed: boolean
   readonly collapsed: boolean
   readonly goal: SelectionGoal
+  readonly affinity: SelectionAffinity
   readonly liveness: AnchorLiveness
   readonly startLiveness: AnchorLiveness
   readonly endLiveness: AnchorLiveness
@@ -58,6 +62,7 @@ export type CreateAnchorSelectionOptions = {
   readonly goal?: SelectionGoal
   readonly cursorBias?: AnchorBias
   readonly reversed?: boolean
+  readonly affinity?: SelectionAffinity
 }
 
 export type SelectionIdFactory = () => string
@@ -86,9 +91,10 @@ const createFallbackSelectionId = (
   anchorOffset: number,
   headOffset: number,
   reversed: boolean,
+  affinity: SelectionAffinity,
 ): string => {
   const direction = reversed ? 'reversed' : 'forward'
-  return `selection:${anchorOffset}:${headOffset}:${direction}`
+  return `selection:${anchorOffset}:${headOffset}:${direction}:${affinity}`
 }
 
 /** Where in the run of ids above this one was handed out, or -1 for an id from anywhere else. */
@@ -165,10 +171,11 @@ export const createAnchorSelection = (
   const endpoints = createEndpointAnchors(snapshot, range, cursorBias)
   const collapsed = range.start === range.end
   const reversed = collapsed ? false : (options.reversed ?? headOffset < anchorOffset)
+  const affinity = options.affinity ?? 'after'
   const id =
     options.id ??
     options.idFactory?.() ??
-    createFallbackSelectionId(anchorOffset, headOffset, reversed)
+    createFallbackSelectionId(anchorOffset, headOffset, reversed, affinity)
 
   return {
     id,
@@ -176,6 +183,7 @@ export const createAnchorSelection = (
     end: endpoints.end,
     reversed,
     goal: options.goal ?? SelectionGoal.none(),
+    affinity,
   }
 }
 
@@ -224,6 +232,7 @@ export const resolveSelection = (
     reversed,
     collapsed,
     goal: selection.goal,
+    affinity: selection.affinity,
     liveness: isLiveSelection(start.liveness, end.liveness),
     startLiveness: start.liveness,
     endLiveness: end.liveness,

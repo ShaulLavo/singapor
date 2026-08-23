@@ -1034,8 +1034,12 @@ rather than at 67.22. A drag starting inside an RTL run and crossing a direction
 invert the selection under the pointer. Every existing selection, history, snippet and multi-cursor
 test still passes.
 
-- [ ] **Affinity on `Selection<T>` and its identity**
+- [x] **Affinity on `Selection<T>` and its identity**
       `high` `L` — `packages/editor/src/selections.ts:22-28`, `:85-91`.
+      Verified 2026-08-23 from `packages/editor`: `bun run test --project dom
+      test/selections.test.ts` (20 tests); `bun run typecheck`; `./node_modules/.bin/oxlint
+      src/selections.ts test/selections.test.ts test/graphemes.test.ts
+      test/navigationTargets.test.ts`; `./node_modules/.bin/oxfmt --check` over the same four files.
 - [ ] **Affinity survives anchors, history, LSP sync, snippets and normalization**
       `high` `L`
 - [ ] **Drag anchoring re-picks the side across a bidi jump**

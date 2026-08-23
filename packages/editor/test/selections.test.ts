@@ -45,8 +45,19 @@ describe('selections', () => {
       reversed: true,
       collapsed: false,
       goal: { kind: 'horizontal', x: 24 },
+      affinity: 'after',
       liveness: 'live',
     })
+  })
+
+  it('keeps affinity in the selection identity at an ambiguous offset', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const before = createAnchorSelection(snapshot, 1, 1, { affinity: 'before' })
+    const after = createAnchorSelection(snapshot, 1, 1, { affinity: 'after' })
+
+    expect(before.id).not.toBe(after.id)
+    expect(resolveSelection(snapshot, before).affinity).toBe('before')
+    expect(resolveSelection(snapshot, after).affinity).toBe('after')
   })
 
   it('sorts selections and keeps non-empty ranges that only touch apart', () => {

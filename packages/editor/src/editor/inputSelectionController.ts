@@ -1220,12 +1220,14 @@ export class InputSelectionController {
     if (ranges.length === 0) return false
 
     const selections = ranges.map((range) => occurrenceSelectionForRange(query, range))
+    const primary = occurrenceSelectionForRange(query, query.range)
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, occurrenceSelectTimingName(command), start, {
-      revealOffset: occurrenceSelectionForRange(query, query.range).head,
+      revealAffinity: survivingPrimarySelectionAffinity(change, primary, primary.head),
+      revealOffset: primary.head,
       syncDomSelection: false,
     })
     this.announceOccurrenceSelection(ranges.length)
@@ -1269,6 +1271,11 @@ export class InputSelectionController {
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.moveSelectionToNextFindMatch', start, {
+      revealAffinity: survivingPrimarySelectionAffinity(
+        change,
+        movedSelection,
+        movedSelection.head,
+      ),
       revealOffset: movedSelection.head,
       syncDomSelection: false,
     })
@@ -1375,8 +1382,9 @@ export class InputSelectionController {
     // recognizes the match it is sitting on by the selection it left behind.
     const caret =
       anchorOffset === headOffset ? renderedRowCaretOffset(this.options.view, headOffset) : null
+    const affinity = options.affinity ?? 'after'
     const change = session.setSelection(caret ?? anchorOffset, caret ?? headOffset, {
-      affinity: options.affinity,
+      affinity,
     })
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
@@ -1400,6 +1408,7 @@ export class InputSelectionController {
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, {
+      revealAffinity: survivingPrimarySelectionAffinity(change, selections[0], revealOffset),
       revealOffset,
       syncDomSelection: false,
     })
@@ -1552,7 +1561,12 @@ export class InputSelectionController {
       this.snippet.advance(change.snapshot, change.edits)
     }
 
-    this.options.applySessionChange(change, totalName, totalStart, options)
+    this.options.applySessionChange(
+      change,
+      totalName,
+      totalStart,
+      selectionRevealOptions(change, options),
+    )
   }
 
   clearSelectionHighlight(): void {
@@ -1787,12 +1801,13 @@ export class InputSelectionController {
       return
     }
 
+    const ends = this.mouseSelectionEndsForDrag(drag)
     this.applyMouseSelection(
       session,
-      this.mouseSelectionEndsForDrag(drag),
+      ends,
       mouseSelectionTimingName(granularity),
       start,
-      position.affinity,
+      this.mouseSelectionAffinity(drag, ends),
     )
   }
 
@@ -1853,6 +1868,16 @@ export class InputSelectionController {
     this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, { syncDomSelection: false })
+  }
+
+  private mouseSelectionAffinity(
+    drag: MouseSelectionDrag,
+    ends: MouseSelectionEnds,
+  ): SelectionAffinity {
+    if (drag.granularity === 'char') return drag.head.affinity
+    if (ends.headOffset < ends.anchorOffset) return 'after'
+    if (ends.headOffset > ends.anchorOffset) return 'before'
+    return drag.head.affinity
   }
 
   private startColumnSelection(session: DocumentSession, offset: number, start: number): void {
@@ -2088,12 +2113,13 @@ export class InputSelectionController {
     }
 
     const ends = this.mouseSelectionEndsForDrag(drag)
+    const affinity = this.mouseSelectionAffinity(drag, ends)
     this.rememberMouseSelectionAnchor(drag, ends.anchorOffset)
     const change = session.setSelection(ends.anchorOffset, ends.headOffset, {
-      affinity: head.affinity,
+      affinity,
     })
     const syncDomSelection = ends.anchorOffset === ends.headOffset
-    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, head.affinity)
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.selection', start, { syncDomSelection })
   }
@@ -2254,8 +2280,9 @@ export class InputSelectionController {
     }
 
     const ends = this.mouseSelectionEndsForDrag(drag)
-    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, position.affinity)
-    session.setSelection(ends.anchorOffset, ends.headOffset, { affinity: position.affinity })
+    const affinity = this.mouseSelectionAffinity(drag, ends)
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, affinity)
+    session.setSelection(ends.anchorOffset, ends.headOffset, { affinity })
     this.options.notifyViewContributions('selection', null)
     if (ends.anchorOffset === ends.headOffset) {
       this.markDomSelectionForNextInput()
@@ -3350,6 +3377,47 @@ function columnSelectionRowDelta(command: EditorCommandId, pageRows: number): nu
   if (command === 'cursorColumnSelectDown') return 1
   if (command === 'cursorColumnSelectPageUp') return -pageRows
   return pageRows
+}
+
+function selectionRevealOptions(
+  change: DocumentSessionChange,
+  options: SessionChangeOptions | undefined,
+): SessionChangeOptions | undefined {
+  if (!options) return undefined
+  if (options.revealAffinity !== undefined) return options
+
+  const revealOffset = options.revealOffset
+  if (revealOffset === undefined) return options
+
+  let affinity: SelectionAffinity | undefined
+  for (const selection of change.selections.selections) {
+    const resolved = resolveSelection(change.snapshot, selection)
+    if (resolved.headOffset !== revealOffset) continue
+    if (affinity && affinity !== resolved.affinity) return options
+    affinity = resolved.affinity
+  }
+  if (!affinity) return options
+  return { ...options, revealAffinity: affinity }
+}
+
+function survivingPrimarySelectionAffinity(
+  change: DocumentSessionChange,
+  primary: DocumentSessionSelectionRange | undefined,
+  revealOffset: number | undefined,
+): SelectionAffinity | undefined {
+  if (!primary) return undefined
+
+  const head = primary.head ?? primary.anchor
+  if (head !== revealOffset) return undefined
+
+  const affinity = primary.affinity ?? 'after'
+  for (const selection of change.selections.selections) {
+    const resolved = resolveSelection(change.snapshot, selection)
+    if (resolved.anchorOffset !== primary.anchor) continue
+    if (resolved.headOffset !== head) continue
+    if (resolved.affinity === affinity) return affinity
+  }
+  return undefined
 }
 
 function pasteRevealBlock(text: string): SessionChangeOptions['revealBlock'] {

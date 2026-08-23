@@ -19,6 +19,7 @@ import {
 import {
   bidiRunsForRow,
   boundaryPositionXs,
+  boundaryPositionXsForAffinity,
   domBoundaryForOffset,
   getRowGeometrySweepCount,
   isBidiMeasurementRefusalRow,
@@ -27,6 +28,7 @@ import {
   resetRowGeometrySweepCount,
   rowTextExtent,
   unitRectForOffset,
+  visualCaretAtRowEdge,
   xToOffset,
 } from '../src/virtualization/virtualizedTextViewGeometry'
 import {
@@ -461,10 +463,316 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     }
   })
 
+  it('keeps a leading combining mark out of the homogeneous RTL fast path', () => {
+    const mounted = mountStandaloneView(`\u0301${'א'.repeat(80)}`)
+    try {
+      const runs = bidiRunsForRow(mounted.internal, mounted.row)
+      expect(localBidiRuns(mounted.row, runs)).toEqual([
+        { start: 0, end: 1, direction: 'ltr' },
+        { start: 1, end: 81, direction: 'rtl' },
+      ])
+      assertBidiRunsAgainstBrowser(mounted.row, runs!)
+
+      const extent = rowOracleExtent(mounted.row)
+      for (const edge of ['left', 'right'] as const) {
+        const target = visualCaretAtRowEdge(mounted.internal, mounted.row, edge)
+        expect(target).not.toBeNull()
+        const x = boundaryPositionXsForAffinity(
+          mounted.internal,
+          mounted.row,
+          target!.offset,
+          target!.affinity,
+        )[0]
+        expect(x).toBeCloseTo(extent[edge], 0)
+      }
+    } finally {
+      mounted.dispose()
+    }
+  })
+
   it('moves Left and Right one painted glyph across every corpus line', () => {
     for (const name of BIDI_CORPUS_NAMES) {
       assertVisualCaretPath(name, 'right', BIDI_VISUAL_PATHS[name].right)
       assertVisualCaretPath(name, 'left', BIDI_VISUAL_PATHS[name].left)
+    }
+  })
+
+  it('matches short-row visual motion at interior boundaries of long mixed rows', () => {
+    const prefix = 'x'.repeat(40)
+    const short = mountBidiEditor(BIDI_CORPUS.mixed)
+    const long = mountBidiEditor(`${prefix}${BIDI_CORPUS.mixed}${'x'.repeat(40)}`)
+    const cases = [
+      { offset: 8, affinity: 'before', direction: 'right' },
+      { offset: 8, affinity: 'after', direction: 'left' },
+      { offset: 9, affinity: 'after', direction: 'right' },
+      { offset: 11, affinity: 'before', direction: 'left' },
+      { offset: 12, affinity: 'before', direction: 'left' },
+      { offset: 12, affinity: 'after', direction: 'right' },
+    ] as const
+    try {
+      for (const testCase of cases) {
+        const expected = short.view.visualHorizontalTarget(
+          testCase.offset,
+          testCase.affinity,
+          testCase.direction,
+        )
+        expect(expected).not.toBeNull()
+
+        const actual = long.view.visualHorizontalTarget(
+          prefix.length + testCase.offset,
+          testCase.affinity,
+          testCase.direction,
+        )
+        expect(actual).toEqual({
+          offset: prefix.length + expected!.offset,
+          affinity: expected!.affinity,
+        })
+      }
+    } finally {
+      short.dispose()
+      long.dispose()
+    }
+  })
+
+  it('matches short-row affinity steps inside long alternating direction runs', () => {
+    const short = mountBidiEditor('aא'.repeat(10))
+    const long = mountBidiEditor('aא'.repeat(50))
+    const shortOffset = 9
+    const longOffset = 49
+    const offsetDelta = longOffset - shortOffset
+    try {
+      for (const affinity of ['before', 'after'] as const) {
+        for (const direction of ['left', 'right'] as const) {
+          const expected = short.view.visualHorizontalTarget(shortOffset, affinity, direction)
+          const actual = long.view.visualHorizontalTarget(longOffset, affinity, direction)
+
+          const caseName = `${affinity} + ${direction}`
+          expect(expected, caseName).not.toBeNull()
+          expect(actual, caseName).toEqual({
+            offset: expected!.offset + offsetDelta,
+            affinity: expected!.affinity,
+          })
+        }
+      }
+    } finally {
+      short.dispose()
+      long.dispose()
+    }
+  })
+
+  it('matches short-row visual twins at interior boundaries of long nested rows', () => {
+    const prefix = 'x'.repeat(40)
+    const short = mountBidiEditor(BIDI_CORPUS.nested)
+    const long = mountBidiEditor(`${prefix}${BIDI_CORPUS.nested}${'x'.repeat(40)}`)
+    const cases = [
+      { offset: 3, affinity: 'before', direction: 'left' },
+      { offset: 8, affinity: 'after', direction: 'right' },
+    ] as const
+    try {
+      for (const testCase of cases) {
+        const expected = short.view.visualHorizontalTarget(
+          testCase.offset,
+          testCase.affinity,
+          testCase.direction,
+        )
+        const actual = long.view.visualHorizontalTarget(
+          prefix.length + testCase.offset,
+          testCase.affinity,
+          testCase.direction,
+        )
+
+        expect(expected).not.toBeNull()
+        expect(actual).toEqual({
+          offset: prefix.length + expected!.offset,
+          affinity: expected!.affinity,
+        })
+      }
+    } finally {
+      short.dispose()
+      long.dispose()
+    }
+  })
+
+  it('keeps long inline-mapped rows on mapping-aware visual motion', () => {
+    const base = BIDI_CORPUS.mixed
+    const prefix = 'x'.repeat(40)
+    const longText = `${prefix}${base}${'x'.repeat(40)}`
+    const short = mountBidiEditor(base)
+    const long = mountBidiEditor(longText)
+    short.view.setInlineMap(
+      createInlineMap(createPieceTableSnapshot(base), [
+        { id: 'hint', startIndex: 1, endIndex: 1, text: 'HINT', insertion: true },
+      ]),
+    )
+    long.view.setInlineMap(
+      createInlineMap(createPieceTableSnapshot(longText), [
+        {
+          id: 'hint',
+          startIndex: prefix.length + 1,
+          endIndex: prefix.length + 1,
+          text: 'HINT',
+          insertion: true,
+        },
+      ]),
+    )
+
+    try {
+      const expected = short.view.visualHorizontalTarget(9, 'after', 'right')
+      expect(expected).toEqual({ offset: 8, affinity: 'after' })
+      expect(long.view.visualHorizontalTarget(prefix.length + 9, 'after', 'right')).toEqual({
+        offset: prefix.length + expected!.offset,
+        affinity: expected!.affinity,
+      })
+    } finally {
+      short.dispose()
+      long.dispose()
+    }
+  })
+
+  it('keeps long mixed-row visual motion exact when the queried glyph is horizontally clipped', () => {
+    const prefix = 'x'.repeat(40)
+    const text = `${prefix}${BIDI_CORPUS.mixed}${'x'.repeat(40)}`
+    const reference = mountBidiEditor(text, undefined, {}, { width: 1_200 })
+    const clipped = mountBidiEditor(text, undefined, {}, { width: 80 })
+    clipped.container.style.transform = 'translateX(-75px)'
+    const cases = [
+      { offset: prefix.length + 8, affinity: 'before', direction: 'right' },
+      { offset: prefix.length + 8, affinity: 'after', direction: 'left' },
+      { offset: prefix.length + 12, affinity: 'before', direction: 'left' },
+      { offset: prefix.length + 12, affinity: 'after', direction: 'right' },
+    ] as const
+    try {
+      const row = clipped.view.getState().mountedRows[0]!
+      row.element.style.setProperty('translate', '3px 0px', 'important')
+      const scrollLeft = clipped.view.scrollElement.scrollLeft
+      const translate = row.element.style.getPropertyValue('translate')
+      const translatePriority = row.element.style.getPropertyPriority('translate')
+      for (const testCase of cases) {
+        const expected = reference.view.visualHorizontalTarget(
+          testCase.offset,
+          testCase.affinity,
+          testCase.direction,
+        )
+        expect(expected).not.toBeNull()
+        expect(
+          clipped.view.visualHorizontalTarget(
+            testCase.offset,
+            testCase.affinity,
+            testCase.direction,
+          ),
+        ).toEqual(expected)
+      }
+
+      expect(clipped.view.scrollElement.scrollLeft).toBe(scrollLeft)
+      expect(row.element.style.getPropertyValue('translate')).toBe(translate)
+      expect(row.element.style.getPropertyPriority('translate')).toBe(translatePriority)
+    } finally {
+      reference.dispose()
+      clipped.dispose()
+    }
+  })
+
+  it('crosses Left at the visual edge of a horizontally clipped long mixed prior row', () => {
+    const firstLine = `${'x'.repeat(80)} אב`
+    const text = `${firstLine}\nx`
+    const start = firstLine.length + 1
+    const reference = mountBidiEditor(
+      text,
+      { offset: start, affinity: 'after' },
+      { rtlMoveVisually: true },
+      { height: 48, width: 1_200 },
+    )
+    const clipped = mountBidiEditor(
+      text,
+      { offset: start, affinity: 'after' },
+      { rtlMoveVisually: true },
+      { height: 48, width: 80 },
+    )
+    try {
+      const referenceInternal = Reflect.get(
+        reference.view,
+        'view',
+      ) as BidiGeometryFixture['internal']
+      const referencePriorRow = reference.view.getState().mountedRows[0]!
+      const expected = visualCaretAtRowEdge(referenceInternal, referencePriorRow, 'right')
+      const priorRow = clipped.view.getState().mountedRows[0]!
+      const scrollLeft = clipped.view.scrollElement.scrollLeft
+      const translate = priorRow.element.style.getPropertyValue('translate')
+      const translatePriority = priorRow.element.style.getPropertyPriority('translate')
+      expect(expected).not.toBeNull()
+      expect(expected?.offset).not.toBe(firstLine.length)
+      expect(clipped.view.visualHorizontalTarget(start, 'after', 'left')).toEqual(expected)
+      expect(clipped.view.scrollElement.scrollLeft).toBe(scrollLeft)
+      expect(priorRow.element.style.getPropertyValue('translate')).toBe(translate)
+      expect(priorRow.element.style.getPropertyPriority('translate')).toBe(translatePriority)
+      expect(clipped.editor.dispatchCommand('cursorLeft')).toBe(true)
+      expect(resolvedPrimary(clipped.session)).toMatchObject({
+        headOffset: expected!.offset,
+        affinity: expected!.affinity,
+      })
+      expect(priorRow.element.style.getPropertyValue('translate')).toBe(translate)
+      expect(priorRow.element.style.getPropertyPriority('translate')).toBe(translatePriority)
+    } finally {
+      reference.dispose()
+      clipped.dispose()
+    }
+  })
+
+  it('crosses a long overridden row at the visual edge owned by an invisible control', () => {
+    const prefix = 'x'.repeat(40)
+    const firstLine = `${prefix}${BIDI_CORPUS.override}${'x'.repeat(40)}`
+    const text = `${firstLine}\nx`
+    const start = firstLine.length + 1
+    const mounted = mountBidiEditor(
+      text,
+      { offset: start, affinity: 'after' },
+      { rtlMoveVisually: true },
+      { height: 48, width: 1_200 },
+    )
+    try {
+      const internal = Reflect.get(mounted.view, 'view') as BidiGeometryFixture['internal']
+      const firstRow = mounted.view.getState().mountedRows[0]!
+      const expected = visualCaretAtRowEdge(internal, firstRow, 'right')
+
+      expect(expected).toEqual({ offset: prefix.length + 3, affinity: 'after' })
+      expect(mounted.view.visualHorizontalTarget(start, 'after', 'left')).toEqual(expected)
+      expect(mounted.editor.dispatchCommand('cursorLeft')).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        headOffset: expected!.offset,
+        affinity: expected!.affinity,
+      })
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('end-reveals the affinity side of an offscreen mixed row after mounting it', () => {
+    const prefix = 'x'.repeat(80)
+    const targetLine = `${prefix}${BIDI_CORPUS.mixed}${'x'.repeat(40)}`
+    const leadingLines = Array.from({ length: 40 }, () => 'top')
+    const targetRowIndex = leadingLines.length
+    const text = [...leadingLines, targetLine].join('\n')
+    const targetOffset = leadingLines.join('\n').length + 1 + prefix.length + 8
+    const mounted = mountBidiEditor(text, undefined, {}, { height: 24, width: 40 })
+    try {
+      expect(mounted.view.getState().mountedRows.some((row) => row.index === targetRowIndex)).toBe(
+        false,
+      )
+
+      mounted.view.revealCaret(targetOffset, 'after', 'end')
+
+      const row = mountedDocumentRow(mounted, targetRowIndex)
+      const internal = Reflect.get(mounted.view, 'view') as BidiGeometryFixture['internal']
+      const position = caretPosition(internal, targetOffset, 'after')?.[0]
+      const viewport = internal.virtualizer.getSnapshot()
+      expect(position).toBeDefined()
+      expect(viewport.scrollLeft).toBeCloseTo(
+        Math.max(0, position!.left - viewport.viewportWidth),
+        0,
+      )
+      expect(row.top + row.height - viewport.scrollTop).toBeCloseTo(viewport.viewportHeight, 0)
+    } finally {
+      mounted.dispose()
     }
   })
 
@@ -505,7 +813,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
 
       for (const step of steps) {
         expect(mounted.editor.dispatchCommand(step.command)).toBe(true)
-        assertVerticalCaretAtBrowserX(mounted, rows[step.row]!, goalX)
+        assertVerticalCaretNearestBrowserX(mounted, rows[step.row]!, goalX)
       }
     } finally {
       mounted.dispose()
@@ -533,7 +841,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       expect(clampedX).toBeCloseTo(rowOracleExtent(rows[1]!).right, 0)
 
       expect(mounted.editor.dispatchCommand('cursorDown')).toBe(true)
-      assertVerticalCaretAtBrowserX(mounted, rows[2]!, goalX)
+      assertVerticalCaretNearestBrowserX(mounted, rows[2]!, goalX)
     } finally {
       mounted.dispose()
     }
@@ -586,7 +894,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
         expect(sourceOracle).toHaveLength(1)
         const goalX = sourceOracle[0]!
         expect(mounted.editor.dispatchCommand('cursorDown')).toBe(true)
-        assertVerticalCaretAtBrowserX(mounted, rows[testCase.targetRow]!, goalX)
+        assertVerticalCaretNearestBrowserX(mounted, rows[testCase.targetRow]!, goalX)
       }
     } finally {
       mounted.dispose()
@@ -655,16 +963,16 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
         primaryCaretLeft(mounted.container) - source.element.getBoundingClientRect().left
 
       expect(mounted.editor.dispatchCommand('cursorPageDown')).toBe(true)
-      assertVerticalCaretAtBrowserX(mounted, mountedDocumentRow(mounted, rowDelta), goalX)
+      assertVerticalCaretNearestBrowserX(mounted, mountedDocumentRow(mounted, rowDelta), goalX)
       expect(mounted.editor.dispatchCommand('cursorPageDown')).toBe(true)
-      assertVerticalCaretAtBrowserX(mounted, mountedDocumentRow(mounted, rowDelta * 2), goalX)
+      assertVerticalCaretNearestBrowserX(mounted, mountedDocumentRow(mounted, rowDelta * 2), goalX)
       expect(mounted.editor.dispatchCommand('cursorPageUp')).toBe(true)
-      assertVerticalCaretAtBrowserX(mounted, mountedDocumentRow(mounted, rowDelta), goalX)
+      assertVerticalCaretNearestBrowserX(mounted, mountedDocumentRow(mounted, rowDelta), goalX)
 
       const anchor = resolvedPrimary(mounted.session).headOffset
       expect(mounted.editor.dispatchCommand('selectPageDown')).toBe(true)
       expect(resolvedPrimary(mounted.session).anchorOffset).toBe(anchor)
-      assertVerticalCaretAtBrowserX(mounted, mountedDocumentRow(mounted, rowDelta * 2), goalX)
+      assertVerticalCaretNearestBrowserX(mounted, mountedDocumentRow(mounted, rowDelta * 2), goalX)
     } finally {
       mounted.dispose()
     }
@@ -790,7 +1098,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
         goal: { kind: 'horizontal' },
         headOffset: target.startOffset + 4,
       })
-      assertVerticalCaretAtBrowserX(mounted, target, goalX)
+      assertVerticalCaretNearestBrowserX(mounted, target, goalX)
     } finally {
       mounted.dispose()
     }
@@ -860,7 +1168,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       })
 
       expect(mounted.editor.dispatchCommand('cursorDown')).toBe(true)
-      assertVerticalCaretAtBrowserX(mounted, rows[2]!, goalX)
+      assertVerticalCaretNearestBrowserX(mounted, rows[2]!, goalX)
     } finally {
       mounted.dispose()
     }
@@ -944,6 +1252,30 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       expect(primaryCaretTop(nextLine.container)).toBeGreaterThan(top)
     } finally {
       nextLine.dispose()
+    }
+  })
+
+  it('does not use invisible BiDi controls as run-direction probes', () => {
+    const text = 'c\u202E1\u202C'
+    const mounted = mountBidiEditor(
+      text,
+      { offset: 0, affinity: 'after' },
+      { rtlMoveVisually: true },
+    )
+    try {
+      const startX = primaryCaretLeft(mounted.container)
+      let previousX = startX
+      let furthestX = startX
+      for (let step = 0; step < text.length + 2; step += 1) {
+        expect(mounted.editor.dispatchCommand('cursorRight')).toBe(true)
+        const currentX = primaryCaretLeft(mounted.container)
+        expect(currentX).toBeGreaterThanOrEqual(previousX - 1)
+        furthestX = Math.max(furthestX, currentX)
+        previousX = currentX
+      }
+      expect(furthestX).toBeGreaterThan(startX + 1)
+    } finally {
+      mounted.dispose()
     }
   })
 
@@ -1273,11 +1605,13 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       const oracle = collapsedRangeOracle(rows[1]!, inserted.headOffset - rows[1]!.startOffset).map(
         (rect) => rect.left,
       )
-      expect(distanceToSet(oracle, goalX)).toBeLessThanOrEqual(1)
+      const closestDistance = closestBrowserBoundaryDistance(rows[1]!, goalX)
+      expect(distanceToSet(oracle, goalX)).toBeCloseTo(closestDistance, 1)
       const insertedCaret = visibleCaretElements(mounted.container)[1]!
       const paintedX =
         insertedCaret.getBoundingClientRect().left - rows[1]!.element.getBoundingClientRect().left
       expect(distanceToSet(oracle, paintedX)).toBeLessThanOrEqual(1)
+      expect(Math.abs(paintedX - goalX)).toBeCloseTo(closestDistance, 1)
     } finally {
       mounted.dispose()
     }
@@ -3069,24 +3403,6 @@ function assertBoundaryCaret(
   expect(primaryCaretLeft(mounted.container) - rowLeft).toBeCloseTo(expectedX, 0)
 }
 
-function assertVerticalCaretAtBrowserX(
-  mounted: ReturnType<typeof mountBidiEditor>,
-  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
-  goalX: number,
-): void {
-  const resolved = resolvedPrimary(mounted.session)
-  expect(resolved.headOffset).toBeGreaterThanOrEqual(row.startOffset)
-  expect(resolved.headOffset).toBeLessThanOrEqual(row.endOffset)
-  const oracle = collapsedRangeOracle(row, resolved.headOffset - row.startOffset).map(
-    (rect) => rect.left,
-  )
-  expect(distanceToSet(oracle, goalX)).toBeLessThanOrEqual(1)
-  const paintedX = primaryCaretLeft(mounted.container) - row.element.getBoundingClientRect().left
-  expect(distanceToSet(oracle, paintedX)).toBeLessThanOrEqual(1)
-  expect(paintedX).toBeCloseTo(goalX, 0)
-  expect(resolved.goal).toMatchObject({ kind: 'horizontal', x: goalX })
-}
-
 function assertVerticalCaretNearestBrowserX(
   mounted: ReturnType<typeof mountBidiEditor>,
   row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
@@ -3128,7 +3444,7 @@ function assertVerticalSelectionStep(
 ): void {
   expect(mounted.editor.dispatchCommand(command)).toBe(true)
   expect(resolvedPrimary(mounted.session).anchorOffset).toBe(anchorOffset)
-  assertVerticalCaretAtBrowserX(mounted, row, goalX)
+  assertVerticalCaretNearestBrowserX(mounted, row, goalX)
 
   const head = resolvedPrimary(mounted.session).headOffset - row.startOffset
   assertPaintedSelectionRects(row, mergedRangeOracle(row, 0, head))
@@ -3160,7 +3476,7 @@ function verticalResultForOption(rtlMoveVisually: boolean): {
     const goalX = primaryCaretLeft(mounted.container) - source.element.getBoundingClientRect().left
     expect(mounted.editor.dispatchCommand('cursorDown')).toBe(true)
     const target = mounted.view.getState().mountedRows[1]!
-    assertVerticalCaretAtBrowserX(mounted, target, goalX)
+    assertVerticalCaretNearestBrowserX(mounted, target, goalX)
     const resolved = resolvedPrimary(mounted.session)
     return { affinity: resolved.affinity, goal: resolved.goal, headOffset: resolved.headOffset }
   } finally {

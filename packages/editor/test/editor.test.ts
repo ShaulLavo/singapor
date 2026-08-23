@@ -3044,7 +3044,7 @@ describe('Editor', () => {
       expect(session.materializeFullText()).toBe('abcd')
     })
 
-    it('keeps a visible row stable when pasting single-line text', () => {
+    it('reveals the affinity-owned row when a single-line paste crosses a row boundary', () => {
       const originalResizeObserver = globalThis.ResizeObserver
       globalThis.ResizeObserver = MockResizeObserver
       MockResizeObserver.instances = []
@@ -3070,7 +3070,7 @@ describe('Editor', () => {
         editorInput().dispatchEvent(createPasteEvent('!'))
 
         expect(editor.getState().cursor).toEqual({ row: 2, column: 7 })
-        expect(root.scrollTop).toBe(30)
+        expect(root.scrollTop).toBe(40)
       } finally {
         globalThis.ResizeObserver = originalResizeObserver
       }
@@ -3662,14 +3662,29 @@ describe('Editor', () => {
       session.setSelection(3, 0, { affinity: 'before' })
       editor.attachSession(session)
       const view = Reflect.get(editor, 'view') as VirtualizedTextView
-      const revealOffset = vi.spyOn(view, 'revealOffset')
+      const revealCaret = vi.spyOn(view, 'revealCaret')
 
       expect(editor.dispatchCommand('editor.action.selectHighlights')).toBe(true)
       expect(resolvedSelectionMetadata(session)).toEqual([
         { affinity: 'before', anchor: 3, goal: SelectionGoal.none(), head: 0 },
         { affinity: 'after', anchor: 8, goal: SelectionGoal.none(), head: 11 },
       ])
-      expect(revealOffset.mock.lastCall?.[0]).toBe(0)
+      expect(revealCaret).toHaveBeenLastCalledWith(0, 'before', undefined)
+    })
+
+    it('reveals the current side when adjacent matches share the same head', () => {
+      const session = createDocumentSession('foofoo')
+      session.setSelection(6, 3, { affinity: 'before' })
+      editor.attachSession(session)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      const revealCaret = vi.spyOn(view, 'revealCaret')
+
+      expect(editor.dispatchCommand('editor.action.selectHighlights')).toBe(true)
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'after', anchor: 0, goal: SelectionGoal.none(), head: 3 },
+        { affinity: 'before', anchor: 6, goal: SelectionGoal.none(), head: 3 },
+      ])
+      expect(revealCaret).toHaveBeenLastCalledWith(3, 'before', undefined)
     })
 
     it('preserves every existing occurrence while generating missing matches', () => {
@@ -3733,13 +3748,31 @@ describe('Editor', () => {
       session.setSelection(3, 0, { affinity: 'before' })
       editor.attachSession(session)
       const view = Reflect.get(editor, 'view') as VirtualizedTextView
-      const revealOffset = vi.spyOn(view, 'revealOffset')
+      const revealCaret = vi.spyOn(view, 'revealCaret')
 
       expect(editor.dispatchCommand('editor.action.moveSelectionToNextFindMatch')).toBe(true)
       expect(resolvedSelectionMetadata(session)).toEqual([
         { affinity: 'before', anchor: 11, goal: SelectionGoal.none(), head: 8 },
       ])
-      expect(revealOffset.mock.lastCall?.[0]).toBe(8)
+      expect(revealCaret).toHaveBeenLastCalledWith(8, 'before', undefined)
+    })
+
+    it('reveals the moved side when adjacent occurrences share the same head', () => {
+      const session = createDocumentSession('foofoofoo')
+      session.setSelections([
+        { anchor: 0, affinity: 'after', head: 3 },
+        { anchor: 9, affinity: 'before', head: 6 },
+      ])
+      editor.attachSession(session)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      const revealCaret = vi.spyOn(view, 'revealCaret')
+
+      expect(editor.dispatchCommand('editor.action.moveSelectionToNextFindMatch')).toBe(true)
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'after', anchor: 0, goal: SelectionGoal.none(), head: 3 },
+        { affinity: 'before', anchor: 6, goal: SelectionGoal.none(), head: 3 },
+      ])
+      expect(revealCaret).toHaveBeenLastCalledWith(3, 'before', undefined)
     })
 
     it('moves the last-added occurrence even when it sorts before the other selections', () => {
@@ -3748,7 +3781,7 @@ describe('Editor', () => {
       session.addSelection(3, 0, { affinity: 'before' })
       editor.attachSession(session)
       const view = Reflect.get(editor, 'view') as VirtualizedTextView
-      const revealOffset = vi.spyOn(view, 'revealOffset')
+      const revealCaret = vi.spyOn(view, 'revealCaret')
 
       expect(session.getSelections().lastAddedIndex).toBe(0)
       expect(editor.dispatchCommand('editor.action.moveSelectionToNextFindMatch')).toBe(true)
@@ -3757,7 +3790,7 @@ describe('Editor', () => {
         { affinity: 'before', anchor: 19, goal: SelectionGoal.none(), head: 16 },
       ])
       expect(session.getSelections().lastAddedIndex).toBe(1)
-      expect(revealOffset.mock.lastCall?.[0]).toBe(16)
+      expect(revealCaret).toHaveBeenLastCalledWith(16, 'before', undefined)
     })
 
     it('reveals the wrapped occurrence when Mod+D loops to the top', () => {
@@ -3980,6 +4013,24 @@ describe('Editor', () => {
       resolved = resolveSelection(session.getSnapshot(), session.getSelections().selections[0]!)
       expect(resolved.startOffset).toBe(1)
       expect(resolved.endOffset).toBe(3)
+    })
+
+    it('keeps the browser affinity for an unsnapped character drag', () => {
+      const session = createDocumentSession('abcd')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 120, 40)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      vi.spyOn(view, 'textPositionFromPoint')
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 0, offset: 1, rowX: 8 })
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 0, offset: 3, rowX: 24 })
+
+      pressMouse({ clientX: 8, clientY: 10 })
+      moveMouse({ clientX: 24, clientY: 10 })
+      releaseMouse({ clientX: 24, clientY: 10 })
+
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'after', anchor: 1, goal: SelectionGoal.none(), head: 3 },
+      ])
     })
 
     it('ignores browser selectionchange while dragging', () => {
@@ -4803,6 +4854,10 @@ describe('Editor', () => {
       const session = createDocumentSession('alpha bravo charlie')
       editor.attachSession(session)
       mockEditorViewport(editorRoot(), 200, 200, 200)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      vi.spyOn(view, 'textPositionFromPoint')
+        .mockReturnValueOnce({ affinity: 'before', displayRow: 0, offset: 8, rowX: 64 })
+        .mockReturnValueOnce({ affinity: 'before', displayRow: 0, offset: 2, rowX: 16 })
 
       pressMouse({ clientX: 64, clientY: 10, detail: 2 })
       moveMouse({ clientX: 16, clientY: 10 })
@@ -4812,18 +4867,24 @@ describe('Editor', () => {
       releaseMouse({ clientX: 16, clientY: 10 })
 
       expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 11, head: 0, start: 0, end: 11 }])
+      expect(resolvedSelectionMetadata(session)[0]?.affinity).toBe('after')
     })
 
     it('selects whole lines while dragging out of a triple click', () => {
       const session = createDocumentSession('one\ntwo\nthree')
       editor.attachSession(session)
       mockEditorViewport(editorRoot(), 200, 200, 200)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      vi.spyOn(view, 'textPositionFromPoint')
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 1, offset: 5, rowX: 8 })
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 2, offset: 9, rowX: 8 })
 
       pressMouse({ clientX: 8, clientY: 30, detail: 3 })
       moveMouse({ clientX: 8, clientY: 54 })
       releaseMouse({ clientX: 8, clientY: 54 })
 
       expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 4, head: 13, start: 4, end: 13 }])
+      expect(resolvedSelectionMetadata(session)[0]?.affinity).toBe('before')
     })
 
     it('drags a column of cursors that skips lines ending before the rectangle', () => {

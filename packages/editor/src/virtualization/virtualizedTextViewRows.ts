@@ -2457,15 +2457,23 @@ export function scrollOffsetIntoView(
   syncVirtualizerMetricsFromScrollElement(view)
 }
 
-export function scrollOffsetToViewportEnd(view: VirtualizedTextViewInternal, offset: number): void {
-  const snapshot = view.virtualizer.getSnapshot()
-  const row = rowForOffset(view, offset)
+export function scrollOffsetToViewportEnd(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity?: SelectionAffinity,
+): void {
+  const row = rowForOptionalAffinity(view, offset, affinity)
+  let snapshot = view.virtualizer.getSnapshot()
   const bottom = rowTop(view, row) + getRowHeight(view)
   const scrollTop = scrollTopForRowBottom(bottom, snapshot)
-  const scrollLeft = scrollLeftForVisibleOffset(view, row, offset, snapshot)
-  if (scrollTop === snapshot.scrollTop && scrollLeft === snapshot.scrollLeft) return
+  if (scrollTop !== snapshot.scrollTop) {
+    view.scrollElement.scrollTop = scrollTop
+    syncVirtualizerMetricsFromScrollElement(view)
+    snapshot = view.virtualizer.getSnapshot()
+  }
 
-  view.scrollElement.scrollTop = scrollTop
+  const scrollLeft = scrollLeftForVisibleOffset(view, row, offset, snapshot, affinity)
+  if (scrollLeft === snapshot.scrollLeft) return
   view.scrollElement.scrollLeft = scrollLeft
   syncVirtualizerMetricsFromScrollElement(view)
 }

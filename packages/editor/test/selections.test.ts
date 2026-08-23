@@ -5,6 +5,7 @@ import {
   createDocumentSession,
   createPieceTableSnapshot,
   deleteFromPieceTable,
+  insertIntoPieceTable,
   materializePieceTableFullText,
 } from '../src/public/document'
 import { setHighlightRegistry } from '../src/public/testing'
@@ -278,6 +279,33 @@ describe('selections', () => {
     expect(resolveSelection(result.snapshot, result.selections.selections[0]!)).toMatchObject({
       startOffset: 1,
       endOffset: 1,
+    })
+  })
+
+  it('keeps a backspace caret before text later inserted at its offset', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const set = createSelectionSet([createAnchorSelection(snapshot, 2)])
+
+    const result = backspaceSelections(snapshot, set)
+    const inserted = insertIntoPieceTable(result.snapshot, 1, 'X')
+
+    expect(materializePieceTableFullText(inserted)).toBe('aXc')
+    expect(resolveSelection(inserted, result.selections.selections[0]!)).toMatchObject({
+      headOffset: 1,
+      startOffset: 1,
+    })
+  })
+
+  it('does not copy range-start bias when deleted text collapses a selection', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const selection = createAnchorSelection(snapshot, 1, 2)
+    const deleted = deleteFromPieceTable(snapshot, 1, 2)
+    const normalized = normalizeSelectionSet(deleted, createSelectionSet([selection]))
+    const inserted = insertIntoPieceTable(deleted, 1, 'X')
+
+    expect(resolveSelection(inserted, normalized.selections[0]!)).toMatchObject({
+      headOffset: 2,
+      startOffset: 2,
     })
   })
 

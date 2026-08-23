@@ -295,11 +295,19 @@ const selectionFromResolved = (
   resolved: ResolvedSelectionWithSource,
 ): AnchorSelection =>
   createAnchorSelection(snapshot, resolved.anchorOffset, resolved.headOffset, {
+    cursorBias: cursorBiasFromResolved(resolved),
     id: resolved.id,
     goal: resolved.goal,
     reversed: resolved.reversed,
     affinity: resolved.affinity,
   })
+
+const cursorBiasFromResolved = (resolved: ResolvedSelectionWithSource): AnchorBias | undefined => {
+  if (!resolved.collapsed) return undefined
+  if (resolved.source.start !== resolved.source.end) return undefined
+  if (resolved.source.start.kind !== 'anchor') return undefined
+  return resolved.source.start.bias
+}
 
 const normalizeResolvedSelection = (
   snapshot: PieceTableSnapshot,
@@ -329,6 +337,7 @@ const mergeResolvedSelections = (
     steering.reversed ? endOffset : startOffset,
     steering.reversed ? startOffset : endOffset,
     {
+      cursorBias: cursorBiasFromResolved(steering),
       id: steering.id,
       goal: steering.goal,
       affinity: steering.affinity,

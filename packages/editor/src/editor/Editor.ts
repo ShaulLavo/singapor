@@ -2807,7 +2807,11 @@ export class Editor {
     let timedChange = flush.latest.change
     if (flush.revealOffset !== null) {
       const revealStart = nowMs()
-      this.view.revealOffset(flush.revealOffset, flush.revealBlock)
+      if (flush.revealAffinity) {
+        this.view.revealCaret(flush.revealOffset, flush.revealAffinity, flush.revealBlock)
+      } else {
+        this.view.revealOffset(flush.revealOffset, flush.revealBlock)
+      }
       invalidateRowRectMeasurements()
       timedChange = appendTiming(timedChange, 'editor.reveal', revealStart)
     }

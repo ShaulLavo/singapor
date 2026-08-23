@@ -14,6 +14,7 @@ import {
 } from '../graphemes'
 import type { SelectionAffinity } from '../selections'
 import { clamp } from '../style-utils'
+import { RTL_BIDI_CHARACTER } from './bidiClassData'
 import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
 import type {
   MountedVirtualizedTextRow,
@@ -173,6 +174,16 @@ type MutableRowGeometryCache = MountedVirtualizedTextRow & {
   geometryCache: RowGeometryCache | null
 }
 
+type HomogeneousRtlTextCache = {
+  readonly textRevision: number
+  readonly chunkKey: string
+  readonly startOffset: number
+  readonly textLength: number
+  readonly classification: RtlTextClassification
+}
+
+type RtlTextClassification = 'controls-only' | 'homogeneous' | 'other'
+
 type RowContentWidthCache = {
   readonly key: string
   readonly width: number
@@ -253,6 +264,7 @@ const bidiMeasurementRefusals = new WeakMap<
   HTMLElement,
   { readonly key: string; readonly refused: boolean }
 >()
+const homogeneousRtlTextCaches = new WeakMap<MountedVirtualizedTextRow, HomogeneousRtlTextCache>()
 /**
  * Kept per element rather than per row: a mounted replacement outlives the rows it is painted into,
  * and its advance is a property of the node, not of whichever row currently hosts it.
@@ -542,10 +554,75 @@ export function bidiRunsForRow(
   if (cached?.bidiRuns !== undefined) return cached.bidiRuns
   if (isBidiMeasurementRefusalRow(view, row)) return null
 
-  const geometry = cached ?? ensureRowGeometry(view, row)
+  const homogeneous = homogeneousRtlRun(row)
+  if (homogeneous) return homogeneous
 
+  const geometry = cached ?? ensureRowGeometry(view, row)
   geometry.bidiRuns = buildBidiRuns(view, row, geometry)
   return geometry.bidiRuns
+}
+
+function homogeneousRtlRun(row: MountedVirtualizedTextRow): readonly VirtualizedBidiRun[] | null {
+  if (row.inlineMapping || row.text.length === 0) return null
+  if (!hasHomogeneousRtlText(row)) return null
+
+  return [{ startOffset: row.startOffset, endOffset: row.endOffset, direction: 'rtl' }]
+}
+
+function hasHomogeneousRtlText(row: MountedVirtualizedTextRow): boolean {
+  return rtlTextClassification(row) === 'homogeneous'
+}
+
+export function rowHasOnlyBidiControls(row: MountedVirtualizedTextRow): boolean {
+  if (row.inlineMapping || row.text.length === 0) return false
+  return rtlTextClassification(row) === 'controls-only'
+}
+
+function rtlTextClassification(row: MountedVirtualizedTextRow): RtlTextClassification {
+  const cached = homogeneousRtlTextCaches.get(row)
+  if (
+    cached?.textRevision === row.textRevision &&
+    cached.chunkKey === row.chunkKey &&
+    cached.startOffset === row.startOffset &&
+    cached.textLength === row.text.length
+  ) {
+    return cached.classification
+  }
+
+  const classification = classifyRtlText(row.text)
+  homogeneousRtlTextCaches.set(row, {
+    textRevision: row.textRevision,
+    chunkKey: row.chunkKey,
+    startOffset: row.startOffset,
+    textLength: row.text.length,
+    classification,
+  })
+  return classification
+}
+
+function classifyRtlText(text: string): RtlTextClassification {
+  let hasStrongCharacter = false
+  let hasBidiControl = false
+  let hasNonControl = false
+  for (let index = 0; index < text.length; index += codePointLength(text, index)) {
+    const codePoint = text.codePointAt(index)!
+    if (isBidiControlCodePoint(codePoint)) {
+      hasBidiControl = true
+      continue
+    }
+    hasNonControl = true
+    if (RTL_BIDI_CHARACTER.test(String.fromCodePoint(codePoint))) {
+      hasStrongCharacter = true
+      continue
+    }
+    const inheritsDirection = isCombiningMark(codePoint) || isVariationSelector(codePoint)
+    if (inheritsDirection && !hasStrongCharacter) return 'other'
+    if (inheritsDirection) continue
+    return 'other'
+  }
+  if (hasBidiControl && !hasNonControl) return 'controls-only'
+  if (hasBidiControl) return 'other'
+  return hasStrongCharacter ? 'homogeneous' : 'other'
 }
 
 export function visualCaretMoveInRow(
@@ -555,6 +632,9 @@ export function visualCaretMoveInRow(
   affinity: SelectionAffinity,
   direction: 'left' | 'right',
 ): VisualRowCaretMove | null {
+  const homogeneous = homogeneousRtlCaretMoveInRow(view, row, offset, direction)
+  if (homogeneous) return homogeneous
+
   const runs = bidiRunsForRow(view, row)
   if (!runs) return plainCaretMoveInRow(view, row, offset, direction)
 
@@ -574,6 +654,46 @@ export function visualCaretMoveInRow(
   }
 
   return { kind: 'row-edge' }
+}
+
+export function homogeneousRtlCaretMoveInRow(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  direction: 'left' | 'right',
+): VisualRowCaretMove | null {
+  if (!rowMightContainRTL(view, row)) return null
+  if (isBidiMeasurementRefusalRow(view, row)) return null
+  if (!homogeneousRtlRun(row)) return null
+  return homogeneousRtlCaretMove(row, offset, direction)
+}
+
+export function homogeneousRtlCaretAtRowEdge(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  edge: 'left' | 'right',
+): VisualCaretTarget | null {
+  if (!rowMightContainRTL(view, row)) return null
+  if (isBidiMeasurementRefusalRow(view, row)) return null
+  if (!homogeneousRtlRun(row)) return null
+  if (edge === 'left') return { offset: row.endOffset, affinity: 'before' }
+  return { offset: row.startOffset, affinity: 'after' }
+}
+
+function homogeneousRtlCaretMove(
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  direction: 'left' | 'right',
+): VisualRowCaretMove {
+  const clamped = clamp(offset, row.startOffset, row.endOffset)
+  const logicalDirection = direction === 'right' ? 'backward' : 'forward'
+  const target = rowUnitOffset(row, clamped, logicalDirection)
+  if (target === clamped) return { kind: 'row-edge' }
+
+  return {
+    offset: target,
+    affinity: logicalDirection === 'forward' ? 'before' : 'after',
+  }
 }
 
 function plainCaretMoveInRow(
@@ -822,6 +942,7 @@ function visibleUnitInRun(
   if (start < runStart) return null
   if (end > runEnd) return null
   if (start >= runEnd) return null
+  if (isBidiControlAtLocalIndex(plan.row, unit.localStart)) return null
 
   resolveUnit(plan, index)
   if (plan.widths[index]! <= BIDI_BOUNDARY_EPSILON) return null
@@ -997,7 +1118,15 @@ function coincidentUnitBoundaryIndex(
 
 function isBidiControlAtOffset(row: MountedVirtualizedTextRow, offset: number): boolean {
   const local = rowLocalIndexForOffset(row, offset, 'after')
+  return isBidiControlAtLocalIndex(row, local)
+}
+
+function isBidiControlAtLocalIndex(row: MountedVirtualizedTextRow, local: number): boolean {
   const codePoint = row.text.codePointAt(local)
+  return isBidiControlCodePoint(codePoint)
+}
+
+function isBidiControlCodePoint(codePoint: number | undefined): boolean {
   return BIDI_CONTROL_CODE_POINTS.some((candidate) => candidate === codePoint)
 }
 

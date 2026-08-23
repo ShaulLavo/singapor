@@ -4,7 +4,12 @@ import {
   type TextEdit,
 } from '@singapor/core/document'
 import type { EditorSetSelectionOptions } from '@singapor/core/editor'
-import type { EditorDisposable, EditorViewContributionUpdateKind } from '@singapor/core/extensions'
+import type {
+  EditorDisposable,
+  EditorResolvedSelection,
+  EditorSelectionRange,
+  EditorViewContributionUpdateKind,
+} from '@singapor/core/extensions'
 import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
 import { EditorSecondaryViewScheduler } from '@singapor/core/secondary-views'
 import {
@@ -74,16 +79,9 @@ const FIND_RESEARCH_KEY = 'find.research'
 const FIND_RESEARCH_DELAY_MS = 100
 const FIND_RESEARCH_MAX_DELAY_MS = 400
 
-type EditorFindSelectionRange = {
-  readonly anchor: number
-  readonly head: number
-}
+type EditorFindSelectionRange = EditorSelectionRange
 
-export type EditorFindResolvedSelection = {
-  readonly anchorOffset: number
-  readonly headOffset: number
-  readonly startOffset: number
-  readonly endOffset: number
+export type EditorFindResolvedSelection = EditorResolvedSelection & {
   readonly collapsed: boolean
 }
 
@@ -363,10 +361,7 @@ export class EditorFindController {
     const matches = this.findAll(false, FIND_REPLACE_ALL_LIMIT)
     if (matches.length === 0) return false
 
-    const selections = orderedMatchSelections(
-      matches,
-      matchAtSelection(matches, this.primarySelection()),
-    )
+    const selections = orderedMatchSelections(matches, this.primarySelection())
     host.setSelections(selections, 'input.findSelectAll', selections[0]?.head)
     return true
   }
@@ -834,15 +829,24 @@ function matchAtSelection(
 
 function orderedMatchSelections(
   matches: readonly FindMatch[],
-  currentMatch: FindMatch | null,
+  currentSelection: EditorFindResolvedSelection | null,
 ): readonly EditorFindSelectionRange[] {
-  const selections = matches.map((match) => ({ anchor: match.start, head: match.end }))
+  const selections = matches.map(selectionForMatch)
+  const currentMatch = matchAtSelection(matches, currentSelection)
   const currentIndex = currentMatch ? findMatchIndex(matches, currentMatch) : -1
-  if (currentIndex <= 0) return selections
+  if (!currentSelection || currentIndex < 0) return selections
 
-  const current = selections[currentIndex]
-  if (!current) return selections
+  const current = {
+    anchor: currentSelection.anchorOffset,
+    head: currentSelection.headOffset,
+    affinity: currentSelection.affinity,
+  }
+  if (currentIndex === 0) return [current, ...selections.slice(1)]
   return [current, ...selections.slice(0, currentIndex), ...selections.slice(currentIndex + 1)]
+}
+
+function selectionForMatch(match: FindMatch): EditorFindSelectionRange {
+  return { anchor: match.start, head: match.end, affinity: 'after' }
 }
 
 function mergeAdjacentReplaceEdits(edits: readonly TextEdit[]): readonly TextEdit[] {

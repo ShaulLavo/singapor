@@ -550,7 +550,9 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
     textSnapshot: stringTextSnapshot(fullText),
     tokens: [],
     brackets: [],
-    selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    selections: [
+      { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },
+    ],
     metrics: {} as EditorViewSnapshot['metrics'],
     lineCount: lineStarts.length,
     contentWidth: 0,

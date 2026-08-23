@@ -178,6 +178,7 @@ export type {
   PieceTableWalkerChunk,
   Point,
   ResolvedAnchor,
+  SelectionAffinity,
   TextEdit,
   TextSnapshot,
 } from './public/document'

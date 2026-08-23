@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor'
 import { defaultEditorKeyBindings, editorCommandPackForCommand } from '../src/editor/keymap'
+import { createDocumentSession } from '../src/public/document'
 import { resetEditorInstanceCount } from '../src/public/testing'
+import { resolveSelection } from '../src/selections'
 
 const LONG_TEXT = Array.from({ length: 500 }, (_value, index) => `line ${index}`).join('\n')
 
@@ -33,6 +35,25 @@ describe('cursor history', () => {
     expect(editor.getState().cursor).toMatchObject({ column: 15, row: 0 })
     expect(editor.cursorRedo()).toBe(true)
     expect(editor.getState().cursor).toMatchObject({ column: 4, row: 0 })
+  })
+
+  it('restores affinity while walking the caret history', () => {
+    const session = createDocumentSession('const value = 1')
+    session.setSelection(4, 4, { affinity: 'before' })
+    editor = new Editor(container)
+    editor.attachSession(session)
+
+    editor.setSelection(11)
+    expect(editor.cursorUndo()).toBe(true)
+    expect(primaryAffinity()).toBe('before')
+
+    expect(editor.cursorRedo()).toBe(true)
+    expect(primaryAffinity()).toBe('after')
+
+    function primaryAffinity(): 'before' | 'after' {
+      const selection = session.getSelections().selections[0]!
+      return resolveSelection(session.getSnapshot(), selection).affinity
+    }
   })
 
   it('leaves the document alone when the caret is undone', () => {

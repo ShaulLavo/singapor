@@ -255,6 +255,9 @@ const compareResolvedSelections = (
 ): number => {
   if (left.startOffset !== right.startOffset) return left.startOffset - right.startOffset
   if (left.endOffset !== right.endOffset) return left.endOffset - right.endOffset
+  if (left.collapsed && right.collapsed && left.affinity !== right.affinity) {
+    return left.affinity === 'before' ? -1 : 1
+  }
   return left.id.localeCompare(right.id)
 }
 
@@ -263,6 +266,7 @@ const compareResolvedSelections = (
 // where they genuinely overlap. A collapsed cursor has no text of its own to lose, so a neighbour
 // that reaches its offset absorbs it.
 const shouldMergeSelections = (left: ResolvedSelection, right: ResolvedSelection): boolean => {
+  if (left.collapsed && right.collapsed && left.affinity !== right.affinity) return false
   if (left.collapsed || right.collapsed) return right.startOffset <= left.endOffset
   return right.startOffset < left.endOffset
 }
@@ -275,6 +279,7 @@ const selectionFromResolved = (
     id: resolved.id,
     goal: resolved.goal,
     reversed: resolved.reversed,
+    affinity: resolved.affinity,
   })
 
 const normalizeResolvedSelection = (
@@ -307,6 +312,7 @@ const mergeResolvedSelections = (
     {
       id: steering.id,
       goal: steering.goal,
+      affinity: steering.affinity,
     },
   )
 

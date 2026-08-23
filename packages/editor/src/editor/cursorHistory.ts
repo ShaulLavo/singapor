@@ -76,6 +76,11 @@ export function sameCursorSelections(
 
   return a.selections.every((selection, index) => {
     const other = b.selections[index]
-    return other !== undefined && selection.anchor === other.anchor && selection.head === other.head
+    if (!other) return false
+    return (
+      selection.anchor === other.anchor &&
+      selection.head === other.head &&
+      (selection.affinity ?? 'after') === (other.affinity ?? 'after')
+    )
   })
 }

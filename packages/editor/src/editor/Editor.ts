@@ -2895,9 +2895,11 @@ export class Editor {
     return {
       scrollLeft: scrollPosition.left,
       scrollTop: scrollPosition.top,
-      selections: this.inputSelection
-        .resolveViewSelections()
-        .map((selection) => ({ anchor: selection.anchorOffset, head: selection.headOffset })),
+      selections: this.inputSelection.resolveViewSelections().map((selection) => ({
+        anchor: selection.anchorOffset,
+        head: selection.headOffset,
+        affinity: selection.affinity,
+      })),
     }
   }
 

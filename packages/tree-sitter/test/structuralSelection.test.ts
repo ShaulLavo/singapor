@@ -39,14 +39,30 @@ const backend = {
 }
 
 describe('tree-sitter structural selection', () => {
-  it('keeps the direction the selection was made in', async () => {
+  it('keeps the direction and affinity the selection was made with', async () => {
     const snapshot = createPieceTableSnapshot(TEXT)
-    const selections = createSelectionSet([createAnchorSelection(snapshot, 12, 6)])
+    const selections = createSelectionSet([
+      createAnchorSelection(snapshot, 12, 6, { affinity: 'before' }),
+    ])
 
     const expanded = await expandTreeSitterSelection({ ...request(snapshot), selections })
 
     expect(resolveSelection(snapshot, expanded.selections.selections[0]!)).toMatchObject({
+      affinity: 'before',
       anchorOffset: 16,
+      headOffset: 6,
+      reversed: true,
+    })
+
+    const shrunk = shrinkTreeSitterSelection({
+      ...request(snapshot),
+      selections: expanded.selections,
+      state: expanded.state,
+    })
+
+    expect(resolveSelection(snapshot, shrunk.selections.selections[0]!)).toMatchObject({
+      affinity: 'before',
+      anchorOffset: 12,
       headOffset: 6,
       reversed: true,
     })

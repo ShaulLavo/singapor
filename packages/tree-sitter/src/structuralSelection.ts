@@ -151,6 +151,7 @@ const selectionSetFromRanges = (
   const selections = ranges.map((range, index) => {
     const source = original.selections[index]
     return createAnchorSelection(snapshot, range.startIndex, range.endIndex, {
+      affinity: source?.affinity,
       id: source?.id,
       // Which end leads is the user's, not the tree's: a selection dragged right to left keeps
       // growing away from its anchor.

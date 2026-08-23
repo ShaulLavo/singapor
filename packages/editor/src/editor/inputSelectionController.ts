@@ -844,10 +844,11 @@ export class InputSelectionController {
   private moveSnippetStop(session: DocumentSession, direction: 1 | -1): boolean {
     if (!this.snippet.active) return false
 
+    const affinity = this.primaryResolvedSelection()?.affinity ?? 'after'
     const range = this.snippet.move(session.getSnapshot(), direction)
     if (!range) return false
 
-    const change = session.setSelection(range.start, range.end)
+    const change = session.setSelection(range.start, range.end, { affinity })
     this.autoClose.advance(change.snapshot)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.snippetStop')
@@ -1382,6 +1383,7 @@ export class InputSelectionController {
         headOffset: resolved.headOffset,
         startOffset: resolved.startOffset,
         endOffset: resolved.endOffset,
+        affinity: resolved.affinity,
       }
     })
   }
@@ -1434,6 +1436,7 @@ export class InputSelectionController {
       return {
         anchorOffset: resolved.anchorOffset,
         headOffset: resolved.headOffset,
+        affinity: resolved.affinity,
       }
     })
     this.options.view.setSelections(selections)
@@ -3120,7 +3123,7 @@ function surroundedSelection(
 
 /** What tells one cursor from another when a set of them is compared across a change. */
 function selectionKey(selection: ResolvedSelection): string {
-  return `${selection.anchorOffset}:${selection.headOffset}`
+  return `${selection.anchorOffset}:${selection.headOffset}:${selection.affinity}`
 }
 
 /** An empty range is asked for often enough here — a stop with no default — to answer for one. */

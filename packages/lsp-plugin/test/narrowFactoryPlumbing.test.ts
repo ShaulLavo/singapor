@@ -417,7 +417,9 @@ function snapshot(): EditorViewSnapshot {
     lineStarts: [0, fullText.indexOf('\n') + 1],
     tokens: [],
     brackets: [],
-    selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    selections: [
+      { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },
+    ],
     metrics: {} as EditorViewSnapshot['metrics'],
     lineCount: 2,
     contentWidth: 0,
@@ -606,7 +608,9 @@ function layerSnapshot(
     lineStarts: [0, lineLength],
     tokens: [],
     brackets: [],
-    selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    selections: [
+      { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },
+    ],
     metrics: {} as EditorViewSnapshot['metrics'],
     lineCount: 2,
     contentWidth: 0,

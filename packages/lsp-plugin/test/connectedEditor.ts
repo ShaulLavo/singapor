@@ -7,7 +7,7 @@
  * stay green.
  */
 
-import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import type { DocumentSessionChange, SelectionAffinity, TextEdit } from '@singapor/core/document'
 import type { EditorCommandId } from '@singapor/core/editor'
 import type {
   EditorCommandHandler,
@@ -107,6 +107,7 @@ type SnippetStopRange = {
 export type ConnectedEditorOptions = {
   readonly capabilities?: lsp.ServerCapabilities
   readonly acceptOnCommitCharacter?: boolean
+  readonly affinity?: SelectionAffinity
 }
 
 /**
@@ -123,7 +124,7 @@ export async function connectedEditor(
   const focusEditor = vi.fn()
   const features = new Map<unknown, unknown>()
   const element = document.createElement('div')
-  let snapshot = editorSnapshot(text, caretOffset, 1)
+  let snapshot = editorSnapshot(text, caretOffset, 1, options.affinity ?? 'after')
   let anchorRect = new DOMRect(10, 20, 40, 18)
 
   const commands = new Map<EditorCommandId, EditorCommandHandler>()
@@ -185,7 +186,12 @@ export async function connectedEditor(
 
   const applyChange = (edit: TextEdit, caretOffset: number): void => {
     const next = `${snapshot.fullText.slice(0, edit.from)}${edit.text}${snapshot.fullText.slice(edit.to)}`
-    snapshot = editorSnapshot(next, caretOffset, snapshot.textVersion + 1)
+    snapshot = editorSnapshot(
+      next,
+      caretOffset,
+      snapshot.textVersion + 1,
+      caretAffinityOf(snapshot),
+    )
     contribution.update(snapshot, 'content', documentChange([edit]))
   }
 
@@ -202,11 +208,22 @@ export async function connectedEditor(
     },
     editElsewhere: (edit) => applyChange(edit, caretOffsetOf(snapshot)),
     moveCaret: (offset) => {
-      snapshot = editorSnapshot(snapshot.fullText, offset, snapshot.textVersion)
+      snapshot = editorSnapshot(
+        snapshot.fullText,
+        offset,
+        snapshot.textVersion,
+        caretAffinityOf(snapshot),
+      )
       contribution.update(snapshot, 'selection', null)
     },
     selectRange: (start, end) => {
-      snapshot = editorSnapshot(snapshot.fullText, end, snapshot.textVersion, start)
+      snapshot = editorSnapshot(
+        snapshot.fullText,
+        end,
+        snapshot.textVersion,
+        caretAffinityOf(snapshot),
+        start,
+      )
       contribution.update(snapshot, 'selection', null)
     },
     scroll: (by) => moveView(by, 'viewport'),
@@ -387,6 +404,7 @@ function editorSnapshot(
   fullText: string,
   caretOffset: number,
   textVersion: number,
+  affinity: SelectionAffinity,
   anchorOffset = caretOffset,
 ): EditorViewSnapshot {
   return {
@@ -403,6 +421,7 @@ function editorSnapshot(
         headOffset: caretOffset,
         startOffset: Math.min(anchorOffset, caretOffset),
         endOffset: Math.max(anchorOffset, caretOffset),
+        affinity,
       },
     ],
     metrics: {} as EditorViewSnapshot['metrics'],
@@ -441,6 +460,10 @@ function caretOffsetOf(snapshot: EditorViewSnapshot): number {
   const selection = snapshot.selections[0]
   if (!selection) throw new Error('missing selection')
   return selection.headOffset
+}
+
+function caretAffinityOf(snapshot: EditorViewSnapshot): SelectionAffinity {
+  return snapshot.selections[0]!.affinity
 }
 
 function documentChange(edits: readonly TextEdit[]): DocumentSessionChange {

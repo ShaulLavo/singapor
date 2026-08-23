@@ -16,6 +16,7 @@ import {
   type AnchorSelection,
   type CreateAnchorSelectionOptions,
   type ResolvedSelection,
+  type SelectionAffinity,
   type SelectionGoal,
   type SelectionSet,
 } from './selections'
@@ -35,6 +36,7 @@ type SelectionEditTarget = {
   readonly range: OffsetRange
   readonly id: string
   readonly goal: SelectionGoal
+  readonly affinity: SelectionAffinity
 }
 
 const rangeLength = (range: OffsetRange): number => range.end - range.start
@@ -52,6 +54,7 @@ const selectionToEditTarget = (selection: ResolvedSelection): SelectionEditTarge
   },
   id: selection.id,
   goal: selection.goal,
+  affinity: selection.affinity,
 })
 
 const resolvedSelectionsToRanges = (
@@ -78,6 +81,7 @@ const collapseSelectionsAfterEdits = (
         cursorBias: 'left',
         goal: target.goal,
         id: target.id,
+        affinity: target.affinity,
       }),
     )
     delta += text.length - rangeLength(range)
@@ -323,6 +327,7 @@ const selectionOptions = (selection: ResolvedSelection): CreateAnchorSelectionOp
   id: selection.id,
   goal: selection.goal,
   reversed: selection.reversed,
+  affinity: selection.affinity,
 })
 
 /**
@@ -396,6 +401,7 @@ const backspaceTargetForSelection = (
     range,
     id: selection.id,
     goal: selection.goal,
+    affinity: selection.affinity,
   }
 }
 

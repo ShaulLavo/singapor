@@ -19,6 +19,7 @@ import {
 } from './syntax/session'
 import type { InlineReplacementSpec } from './inlineMap'
 import type { TextOffsetRange } from './textRanges'
+import type { SelectionAffinity } from './selections'
 import type { BrowserTextMetrics } from './virtualization/browserMetrics'
 import type { FixedRowVisibleRange } from './virtualization/fixedRowVirtualizer'
 import type {
@@ -171,6 +172,7 @@ export type EditorResolvedSelection = {
   readonly headOffset: number
   readonly startOffset: number
   readonly endOffset: number
+  readonly affinity: SelectionAffinity
 }
 
 export type EditorViewportSnapshot = {
@@ -351,6 +353,7 @@ export type EditorCommandHandler = (context: EditorCommandContext) => boolean
 export type EditorSelectionRange = {
   readonly anchor: number
   readonly head: number
+  readonly affinity?: SelectionAffinity
 }
 
 export type EditorFeatureDomContributionContext = {

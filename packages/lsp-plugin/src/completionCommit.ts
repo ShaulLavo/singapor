@@ -65,5 +65,5 @@ function completionCommitApplication(
   if (application.snippetStops) return { ...application, edits }
 
   const head = application.selection.head + character.length
-  return { edits, selection: { anchor: head, head } }
+  return { edits, selection: { ...application.selection, anchor: head, head } }
 }

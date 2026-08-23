@@ -134,6 +134,7 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
         endOffset: options.selectionEnd ?? caret,
         headOffset: caret,
         startOffset: options.selectionStart ?? caret,
+        affinity: 'after',
       },
     ],
     tabSize: 2,

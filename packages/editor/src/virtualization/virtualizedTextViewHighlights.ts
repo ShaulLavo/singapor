@@ -1396,6 +1396,7 @@ function clampSelection(
     start: Math.min(anchor, head),
     end: Math.max(anchor, head),
     head,
+    affinity: selection.affinity ?? 'after',
   }
 }
 
@@ -1408,6 +1409,7 @@ function clampStoredSelectionRange(
     start,
     end: clamp(selection.end, start, view.model.textLength),
     head: clamp(selection.head, 0, view.model.textLength),
+    affinity: selection.affinity,
   }
 }
 

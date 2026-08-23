@@ -1,4 +1,4 @@
-import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import type { DocumentSessionChange, SelectionAffinity, TextEdit } from '@singapor/core/document'
 import type { EditorEditContributionContext, EditorSelectionRange } from '@singapor/core/extensions'
 import { createEditorCapabilityToken } from '@singapor/core/extensions'
 import { lspPositionToOffset } from '@singapor/lsp'
@@ -264,11 +264,12 @@ export type CompletionApplicationDocument = {
  * The document an accepted item is applied against.
  *
  * `text` and `offset` are what the request went out with, and the item's ranges are positions in
- * that text. `caretOffset` is where the caret has reached since — rarely the same place, because the
- * widget stays up while the user keeps typing.
+ * that text. `caretOffset` and `caretAffinity` are where the caret has reached since — rarely the
+ * same position, because the widget stays up while the user keeps typing.
  */
 export type CompletionApplicationRequest = CompletionApplicationDocument & {
   readonly caretOffset: number
+  readonly caretAffinity: SelectionAffinity
 }
 
 export function completionApplication(
@@ -282,7 +283,9 @@ export function completionApplication(
   const edits = [primary.edit, ...additional]
   const head = completionSelectionHead(primary.edit, additional)
   const snippet = primary.snippet
-  if (!snippet) return { edits, selection: { anchor: head, head } }
+  if (!snippet) {
+    return { edits, selection: { anchor: head, head, affinity: request.caretAffinity } }
+  }
 
   // A snippet's first placeholder is selected so the next keystroke replaces it; without a stop the
   // caret sits after the insertion exactly as a plain completion leaves it.
@@ -290,7 +293,7 @@ export function completionApplication(
   const first = snippetInitialSelection(snippet, insertionOffset)
   return {
     edits,
-    selection: { anchor: first.start, head: first.end },
+    selection: { anchor: first.start, head: first.end, affinity: request.caretAffinity },
     snippetStops: snippetStopRanges(snippet, insertionOffset),
   }
 }

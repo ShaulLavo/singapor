@@ -60,6 +60,22 @@ describe('selections', () => {
     expect(resolveSelection(snapshot, after).affinity).toBe('after')
   })
 
+  it('keeps opposite affinities apart through multi-cursor normalization', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const normalized = normalizeSelectionSet(
+      snapshot,
+      createSelectionSet([
+        createAnchorSelection(snapshot, 1, 1, { id: 'after', affinity: 'after' }),
+        createAnchorSelection(snapshot, 1, 1, { id: 'before', affinity: 'before' }),
+      ]),
+    )
+
+    expect(normalized.selections).toHaveLength(2)
+    expect(
+      normalized.selections.map((selection) => resolveSelection(snapshot, selection).affinity),
+    ).toEqual(['before', 'after'])
+  })
+
   it('sorts selections and keeps non-empty ranges that only touch apart', () => {
     const snapshot = createPieceTableSnapshot('abcdef')
     const set = createSelectionSet([
@@ -94,11 +110,15 @@ describe('selections', () => {
     })
   })
 
-  it('merges overlapping ranges behind the last-added direction and goal', () => {
+  it('merges overlapping ranges behind the last-added direction, goal, and affinity', () => {
     const snapshot = createPieceTableSnapshot('abcdef')
     const set = createSelectionSet([
       createAnchorSelection(snapshot, 1, 4, { id: 'first' }),
-      createAnchorSelection(snapshot, 5, 2, { id: 'last', goal: SelectionGoal.horizontal(12) }),
+      createAnchorSelection(snapshot, 5, 2, {
+        id: 'last',
+        goal: SelectionGoal.horizontal(12),
+        affinity: 'before',
+      }),
     ])
     const normalized = normalizeSelectionSet(snapshot, set)
 
@@ -111,6 +131,7 @@ describe('selections', () => {
       headOffset: 1,
       reversed: true,
       goal: { kind: 'horizontal', x: 12 },
+      affinity: 'before',
     })
   })
 
@@ -181,6 +202,17 @@ describe('selections', () => {
       startOffset: 5,
       endOffset: 5,
     })
+  })
+
+  it('carries affinity through edit-created piece-table anchors', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const set = createSelectionSet([createAnchorSelection(snapshot, 1, 1, { affinity: 'before' })])
+
+    const result = applyTextToSelections(snapshot, set, 'X')
+
+    expect(resolveSelection(result.snapshot, result.selections.selections[0]!).affinity).toBe(
+      'before',
+    )
   })
 
   it('backspaces collapsed cursors by code point', () => {

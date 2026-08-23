@@ -1040,8 +1040,16 @@ test still passes.
       test/selections.test.ts` (20 tests); `bun run typecheck`; `./node_modules/.bin/oxlint
       src/selections.ts test/selections.test.ts test/graphemes.test.ts
       test/navigationTargets.test.ts`; `./node_modules/.bin/oxfmt --check` over the same four files.
-- [ ] **Affinity survives anchors, history, LSP sync, snippets and normalization**
-      `high` `L`
+- [x] **Affinity survives anchors, history, LSP sync, snippets and normalization**
+      `high` `L` — Verified 2026-08-23: editor `bun run test --project dom
+      test/selections.test.ts test/documentSession.test.ts test/history.test.ts
+      test/cursorHistory.test.ts test/selectionRanges.test.ts test/snippets.test.ts` (124 tests),
+      `bun run typecheck`, and `bun run build`; LSP `bun run test test/completion.test.ts
+      test/completionController.test.ts test/completionCommit.test.ts
+      test/completionSnippet.test.ts test/completionSources.test.ts` (74 tests) and
+      `bun run typecheck`; tree-sitter `bun run test test/structuralSelection.test.ts` (5 tests)
+      and `bun run typecheck`. Focused `oxlint`, `oxfmt --check`, and `git diff --check` passed
+      across all changed files.
 - [ ] **Drag anchoring re-picks the side across a bidi jump**
       `high` `M` — `packages/editor/src/editor/inputSelectionController.ts:2030`, `:2148`.
 - [ ] **`caretPosition` returns one-or-two positions and the caret layer mounts the secondary**

@@ -74,7 +74,7 @@ describe('accepting a completion', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 6, to: 10, text: 'value' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 11, head: 11 },
+      { anchor: 11, head: 11, affinity: 'after' },
     )
   })
 
@@ -100,7 +100,7 @@ describe('accepting a completion', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 6, to: 13, text: 'fooobaz' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 13, head: 13 },
+      { anchor: 13, head: 13, affinity: 'after' },
     )
   })
 
@@ -135,7 +135,7 @@ describe('accepting a completion', () => {
         { from: 0, to: 0, text: 'import { value } from "m"\n' },
       ],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 37, head: 37 },
+      { anchor: 37, head: 37, affinity: 'after' },
     )
   })
 
@@ -417,7 +417,7 @@ describe('a completion session while the user keeps typing', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 6, to: 11, text: 'valueOf' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 13, head: 13 },
+      { anchor: 13, head: 13, affinity: 'after' },
     )
   })
 })
@@ -474,7 +474,7 @@ describe('a list the user has moved the focus in', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 6, to: 10, text: 'valueOf' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 13, head: 13 },
+      { anchor: 13, head: 13, affinity: 'after' },
     )
   })
 
@@ -500,7 +500,7 @@ describe('a list the user has moved the focus in', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 12, to: 15, text: 'toString' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 20, head: 20 },
+      { anchor: 20, head: 20, affinity: 'after' },
     )
   })
 })
@@ -925,6 +925,7 @@ function editorSnapshot(
         headOffset: caretOffset,
         startOffset: Math.min(anchorOffset, caretOffset),
         endOffset: Math.max(anchorOffset, caretOffset),
+        affinity: 'after',
       },
     ],
     metrics: {} as EditorViewSnapshot['metrics'],

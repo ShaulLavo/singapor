@@ -1,4 +1,5 @@
 import type { EditorEditContributionContext } from '@singapor/core/extensions'
+import type { SelectionAffinity } from '@singapor/core/document'
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
@@ -39,13 +40,13 @@ describe('completion helpers', () => {
     expect(
       feature.applyCompletion({
         edits: [{ from: 0, to: 1, text: 'value' }],
-        selection: { anchor: 5, head: 5 },
+        selection: { anchor: 5, head: 5, affinity: 'before' },
       }),
     ).toBe(true)
     expect(context.applyEdits).toHaveBeenCalledWith(
       [{ from: 0, to: 1, text: 'value' }],
       'testLsp.completion.accept',
-      { anchor: 5, head: 5 },
+      { anchor: 5, head: 5, affinity: 'before' },
     )
   })
 
@@ -75,7 +76,7 @@ describe('completion helpers', () => {
         { from: 6, to: 8, text: 'value' },
         { from: 0, to: 0, text: 'import { value } from "module";\n' },
       ],
-      selection: { anchor: 43, head: 43 },
+      selection: { anchor: 43, head: 43, affinity: 'after' },
     })
   })
 
@@ -154,26 +155,26 @@ describe('snippet completions', () => {
 
   it('expands a snippet and selects its first placeholder', () => {
     const application = completionApplication(
-      atCaret('const x = f', 11),
+      atCaret('const x = f', 11, 'before'),
       snippetItem('fn(${1:arg})'),
     )
 
     expect(application?.edits).toEqual([{ from: 10, to: 11, text: 'fn(arg)' }])
-    expect(application?.selection).toEqual({ anchor: 13, head: 16 })
+    expect(application?.selection).toEqual({ anchor: 13, head: 16, affinity: 'before' })
   })
 
   it('puts the caret at an empty tab stop', () => {
     const application = completionApplication(atCaret('f', 1), snippetItem('fn($1)'))
 
     expect(application?.edits[0]?.text).toBe('fn()')
-    expect(application?.selection).toEqual({ anchor: 3, head: 3 })
+    expect(application?.selection).toEqual({ anchor: 3, head: 3, affinity: 'after' })
   })
 
   // Without a stop there is nothing to select, so it behaves like a plain completion.
   it('falls back to the end of the insertion when a snippet has no stops', () => {
     const application = completionApplication(atCaret('f', 1), snippetItem('fn()'))
 
-    expect(application?.selection).toEqual({ anchor: 4, head: 4 })
+    expect(application?.selection).toEqual({ anchor: 4, head: 4, affinity: 'after' })
   })
 
   it('leaves a non-snippet completion alone', () => {
@@ -207,7 +208,7 @@ describe('completion ranges', () => {
 
   it('grows the replacement over the characters typed since the request', () => {
     const application = completionApplication(
-      { text: 'const val', offset: 9, caretOffset: 11 },
+      { text: 'const val', offset: 9, caretOffset: 11, caretAffinity: 'after' },
       item({ range: singleLineRange(6, 9), newText: 'value' }),
     )
 
@@ -217,7 +218,7 @@ describe('completion ranges', () => {
   it('follows the caret back when characters are removed after the request', () => {
     const removed = (caretOffset: number) =>
       completionApplication(
-        { text: 'const val', offset: 9, caretOffset },
+        { text: 'const val', offset: 9, caretOffset, caretAffinity: 'after' },
         item({ range: singleLineRange(6, 9), newText: 'value' }),
       )?.edits
 
@@ -228,7 +229,7 @@ describe('completion ranges', () => {
 
   it('moves an additional edit below the caret along with what was typed', () => {
     const application = completionApplication(
-      { text: 'const val\nend', offset: 9, caretOffset: 10 },
+      { text: 'const val\nend', offset: 9, caretOffset: 10, caretAffinity: 'after' },
       {
         label: 'value',
         textEdit: { range: singleLineRange(6, 9), newText: 'value' },
@@ -271,8 +272,12 @@ describe('completion ranges', () => {
   })
 })
 
-function atCaret(text: string, offset: number): Parameters<typeof completionApplication>[0] {
-  return { text, offset, caretOffset: offset }
+function atCaret(
+  text: string,
+  offset: number,
+  caretAffinity: SelectionAffinity = 'after',
+): Parameters<typeof completionApplication>[0] {
+  return { text, offset, caretOffset: offset, caretAffinity }
 }
 
 function singleLineRange(start: number, end: number): lsp.Range {

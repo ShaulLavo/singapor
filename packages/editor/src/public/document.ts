@@ -81,5 +81,6 @@ export type {
   EditorViewSession,
 } from '../documentSession'
 export type { DocumentTextSnapshot, TextSnapshot } from '../documentTextSnapshot'
+export type { SelectionAffinity } from '../selections'
 export type { EditorDocument, TextEdit } from '../tokens'
 export type { TextCharacterClass, TextOffsetRange } from '../textRanges'

@@ -73,9 +73,17 @@ const OPTION_SAMPLES: Record<EditorControlledOptionName, OptionSample> = {
   },
   selection: {
     initial: { anchor: 0, head: 0 },
-    next: { anchor: 2, head: 5 },
+    next: { affinity: 'before', anchor: 2, head: 5 },
     method: 'setSelection',
-    applied: [2, 5, undefined],
+    applied: [
+      2,
+      5,
+      {
+        affinity: 'before',
+        reveal: undefined,
+        revealOffset: undefined,
+      },
+    ],
   },
   suspiciousCharacters: {
     initial: { ambiguous: true, invisible: true },

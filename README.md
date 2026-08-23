@@ -23,6 +23,8 @@ moving, but the current packages include:
   offset/point conversion, durable anchors, selections, and undo/redo helpers.
 - Rendering through the CSS Highlight API, mounted-row painting, fixed-row virtualization, and
   horizontal chunking for very long lines.
+- Browser-grounded BiDi geometry for caret placement, hit testing, selection paint, caret
+  affinity, and visual character-step motion.
 - Editing behavior for multi-selection edits, keyboard navigation, folds, display transforms, and
   syntax-aware structural selection.
 - Optional worker-backed Tree-sitter runtime package for syntax highlights, folds, structural
@@ -41,19 +43,19 @@ For system design and open architecture questions, see
 
 ## Packages
 
-| Package | Purpose |
-| --- | --- |
-| `@singapor/core` | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, Shiki highlighter, and plugin contracts. |
-| `@singapor/gutters` | Line-number and fold-gutter plugins for the core editor. |
-| `@singapor/find` | Find and replace plugin for the core editor. |
-| `@singapor/markdown` | Markdown live preview: renders markdown as formatted text while the buffer keeps holding markdown source. |
-| `@singapor/minimap` | Minimap plugin with worker-backed document rendering. |
-| `@singapor/scope-lines` | Scope-line view contribution plugin. |
-| `@singapor/tree-sitter` | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers. |
-| `@singapor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON. |
-| `@singapor/typescript-lsp` | TypeScript language-service plugin built on the generic LSP layer. |
-| `@singapor/lsp` | Generic LSP transport and plugin primitives. |
-| `@singapor/example-app` | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing. |
+| Package                           | Purpose                                                                                                                                                                  |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `@singapor/core`                  | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, Shiki highlighter, and plugin contracts. |
+| `@singapor/gutters`               | Line-number and fold-gutter plugins for the core editor.                                                                                                                 |
+| `@singapor/find`                  | Find and replace plugin for the core editor.                                                                                                                             |
+| `@singapor/markdown`              | Markdown live preview: renders markdown as formatted text while the buffer keeps holding markdown source.                                                                |
+| `@singapor/minimap`               | Minimap plugin with worker-backed document rendering.                                                                                                                    |
+| `@singapor/scope-lines`           | Scope-line view contribution plugin.                                                                                                                                     |
+| `@singapor/tree-sitter`           | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers.                                                 |
+| `@singapor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON.                                                                          |
+| `@singapor/typescript-lsp`        | TypeScript language-service plugin built on the generic LSP layer.                                                                                                       |
+| `@singapor/lsp`                   | Generic LSP transport and plugin primitives.                                                                                                                             |
+| `@singapor/example-app`           | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing.                                             |
 
 ## Requirements
 
@@ -81,15 +83,15 @@ Vite.
 Minimal editor embedding looks like this:
 
 ```ts
-import { Editor } from "@singapor/core/editor";
-import "@singapor/core/style.css";
+import { Editor } from '@singapor/core/editor'
+import '@singapor/core/style.css'
 
-const editor = new Editor(document.querySelector("#editor")!);
+const editor = new Editor(document.querySelector('#editor')!)
 editor.openDocument({
-  documentId: "example.ts",
-  text: "const value = 1;\n",
-  languageId: "typescript",
-});
+  documentId: 'example.ts',
+  text: 'const value = 1;\n',
+  languageId: 'typescript',
+})
 ```
 
 ## Common Commands
@@ -145,15 +147,16 @@ bun --cwd packages/editor run bench:virtualization
 
 - [Architecture](ARCHITECTURE.md) - main-thread/worker split, core systems, data flow, and open questions.
 - [Progress](PROGRESS.md) - reconciled implementation status and verification boundaries.
-- [BiDi geometry plan](docs/plan-bidi-geometry.md) - the active standalone Editor plan; Tier B is open.
 - [TODO backlog](TODO.md) - unordered ideas and technical debt; not an execution index.
 - [Platform roadmap](../platform/PLAN.md) - authoritative cross-project execution order.
 - [Storage: Piece Table](docs/storage/piece-table.md) - treap-backed storage model.
 - [Positions: Types & Conversions](docs/positions/types-and-conversions.md) - offsets, points, and conversions.
 - [Positions: Anchors](docs/positions/anchors.md) - durable position references.
-- [Editing: Selections & Undo](docs/editing/selections-and-undo.md) - selection, batch edit, and history model.
+- [Editing: Selections & Undo](docs/editing/selections-and-undo.md) - affinity-aware selections,
+  normalization, batch edit, and history model.
 - [Display: Transforms](docs/display/transforms.md) - transform layers and invalidation.
-- [Display: Browser Virtualization](docs/display/browser-virtualization.md) - browser layout and viewport strategy.
+- [Display: Browser Virtualization](docs/display/browser-virtualization.md) - browser layout,
+  viewport strategy, and BiDi geometry.
 - [Syntax: Tree-sitter](docs/syntax/tree-sitter.md) - syntax engine design.
 
 ## Source Layout

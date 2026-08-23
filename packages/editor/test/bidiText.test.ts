@@ -23,6 +23,18 @@ describe('BiDi row classifier', () => {
     }
   })
 
+  it('uses Unicode 17 assigned classes and right-to-left missing defaults', () => {
+    expect(containsRTL(String.fromCodePoint(0x088f))).toBe(true)
+    expect(containsRTL(String.fromCodePoint(0x10d50))).toBe(true)
+    expect(containsRTL(String.fromCodePoint(0x10d66))).toBe(true)
+    expect(containsRTL(String.fromCodePoint(0x10d70))).toBe(true)
+    expect(containsRTL(String.fromCodePoint(0x10d40))).toBe(false)
+    expect(containsRTL(String.fromCodePoint(0x10d69))).toBe(false)
+    expect(containsRTL(String.fromCodePoint(0x10d6e))).toBe(false)
+    expect(containsRTL('\ud803')).toBe(false)
+    expect(containsRTL('\udd50')).toBe(false)
+  })
+
   it('keeps the eleven bidi controls aligned with the invisible-character table', () => {
     const invisible = new Set<number>(JSON.parse(INVISIBLE_CODE_POINT_DATA) as number[])
     for (const codePoint of BIDI_CONTROL_CODE_POINTS) expect(invisible.has(codePoint)).toBe(true)

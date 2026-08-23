@@ -114,6 +114,7 @@ export interface VirtualizedTextViewInternal {
   model: VirtualizedTextViewModelState
   text: string
   textRevision: number
+  displayProjectionRevision: number
   tokens: readonly EditorToken[]
   tokenRenderEntries: readonly TokenRenderEntry[]
   tokenRenderEntryMaxEnds: readonly number[]

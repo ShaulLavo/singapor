@@ -16,6 +16,7 @@ import type { BrowserTextMetrics } from '../virtualization/browserMetrics'
 import type { EditorKeymapOptions } from './keymap'
 import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'
 import type { TextEdit } from '../tokens'
+import type { SelectionAffinity } from '../selections'
 
 /** Minimal interface for the CSS Custom Highlight API registry. */
 export interface HighlightRegistry {
@@ -129,6 +130,7 @@ export type EditorEditHistoryMode = 'record' | 'skip'
 
 export type EditorEditSelection = {
   readonly anchor: number
+  readonly affinity?: SelectionAffinity
   readonly head?: number
 }
 

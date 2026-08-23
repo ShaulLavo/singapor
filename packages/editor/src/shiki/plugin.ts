@@ -52,12 +52,11 @@ export function createShikiHighlighterPlugin(
   return {
     name: 'shiki-highlighter',
     activate(context) {
-      const owner = options.workerOwner ?? defaultShikiWorkerOwner()
-      let registration = context.registerHighlighter(createHighlighterProvider(options, owner))
+      let registration = context.registerHighlighter(createShikiHighlighterProvider(options))
 
       const reloadProvider = (): void => {
         registration.dispose()
-        registration = context.registerHighlighter(createHighlighterProvider(options, owner))
+        registration = context.registerHighlighter(createShikiHighlighterProvider(options))
       }
       const unsubscribeTheme = options.onThemeChanged?.(reloadProvider)
 
@@ -77,6 +76,20 @@ export function createShikiHighlighterPlugin(
   }
 }
 
+/**
+ * Builds the provider separately from its editor plugin so secondary views can share the exact
+ * highlighter, worker owner, language map and theme resolver used by regular editor documents.
+ */
+export function createShikiHighlighterProvider(
+  options: ShikiHighlighterPluginOptions = {},
+): EditorHighlighterProvider {
+  const owner = options.workerOwner ?? defaultShikiWorkerOwner()
+  return {
+    loadTheme: () => loadConfiguredTheme(options, owner),
+    createSession: (sessionOptions) => createSession(sessionOptions, options, owner),
+  }
+}
+
 const defaultShikiWorkerOwner = (): ShikiWorkerOwner => {
   const state = globalThis as Record<PropertyKey, unknown>
   const existing = state[DEFAULT_SHIKI_WORKER_OWNER_KEY] as ShikiWorkerOwner | undefined
@@ -85,16 +98,6 @@ const defaultShikiWorkerOwner = (): ShikiWorkerOwner => {
   const owner = createShikiWorkerOwner()
   state[DEFAULT_SHIKI_WORKER_OWNER_KEY] = owner
   return owner
-}
-
-const createHighlighterProvider = (
-  options: ShikiHighlighterPluginOptions,
-  owner: ShikiWorkerOwner,
-): EditorHighlighterProvider => {
-  return {
-    loadTheme: () => loadConfiguredTheme(options, owner),
-    createSession: (sessionOptions) => createSession(sessionOptions, options, owner),
-  }
 }
 
 const createSession = (

@@ -134,10 +134,10 @@ describe('cursor history', () => {
 
     editor.setSelection(4)
     editor.setSelection(11)
-    // Re-issuing the same selection, and a caret move that runs into the end of
-    // the document, both flush a pass without moving anything.
+    // Re-issuing the same selection, and a caret move that runs into the end with its canonical
+    // forward affinity already set, both flush a pass without moving anything.
     editor.setSelection(11)
-    editor.setSelection(15)
+    editor.setSelection(15, 15, { affinity: 'before' })
     editor.dispatchCommand('cursorRight')
 
     // Three moves happened — the initial caret to 4, 4 to 11, 11 to 15 — so

@@ -192,9 +192,12 @@ export const backspaceSelections = (
   const targets = normalized.selections
     .map((selection) => resolveSelection(snapshot, selection))
     .map((selection) => backspaceTargetForSelection(snapshot, selection, tabSize))
-    .filter((target): target is SelectionEditTarget => target !== null)
-  const mergedTargets = mergeOffsetRangeTargets(targets)
-  const edits = mergedTargets.map((target) => rangeToEdit(target.range, ''))
+  const deletionRanges: OffsetRange[] = []
+  for (const target of targets) {
+    if (target.range.start === target.range.end) continue
+    deletionRanges.push(target.range)
+  }
+  const edits = mergeOffsetRanges(deletionRanges).map((range) => rangeToEdit(range, ''))
   const nextSnapshot = applyBatchToPieceTable(snapshot, edits)
 
   if (edits.length === 0) {
@@ -207,9 +210,43 @@ export const backspaceSelections = (
 
   return {
     snapshot: nextSnapshot,
-    selections: collapseSelectionsAfterEdits(nextSnapshot, mergedTargets, ''),
+    selections: backspaceSelectionsAfterEdits(nextSnapshot, normalized, targets, edits),
     edits,
   }
+}
+
+const backspaceSelectionsAfterEdits = (
+  snapshot: PieceTableSnapshot,
+  source: SelectionSet<PieceTableAnchor>,
+  targets: readonly SelectionEditTarget[],
+  edits: readonly PieceTableEdit[],
+): SelectionSet<PieceTableAnchor> => {
+  const selections = targets.map((target) => {
+    const offset = backspaceOffsetAfterEdits(target.range.start, edits)
+    return createAnchorSelection(snapshot, offset, offset, {
+      affinity: target.affinity,
+      cursorBias: 'left',
+      goal: target.goal,
+      id: target.id,
+    })
+  })
+
+  return normalizeSelectionSet(snapshot, {
+    selections,
+    lastAddedIndex: source.lastAddedIndex,
+    normalized: false,
+  })
+}
+
+const backspaceOffsetAfterEdits = (offset: number, edits: readonly PieceTableEdit[]): number => {
+  let delta = 0
+  for (const edit of edits) {
+    if (offset < edit.from) break
+    if (offset <= edit.to) return edit.from + delta
+    delta -= edit.to - edit.from
+  }
+
+  return offset + delta
 }
 
 const emptySelectionEdit = (
@@ -378,9 +415,9 @@ const backspaceRangeForSelection = (
   snapshot: PieceTableSnapshot,
   selection: ResolvedSelection,
   tabSize: number | undefined,
-): OffsetRange | null => {
+): OffsetRange => {
   if (!selection.collapsed) return { start: selection.startOffset, end: selection.endOffset }
-  if (selection.startOffset === 0) return null
+  if (selection.startOffset === 0) return { start: 0, end: 0 }
 
   const end = selection.startOffset
   return {
@@ -393,10 +430,8 @@ const backspaceTargetForSelection = (
   snapshot: PieceTableSnapshot,
   selection: ResolvedSelection,
   tabSize: number | undefined,
-): SelectionEditTarget | null => {
+): SelectionEditTarget => {
   const range = backspaceRangeForSelection(snapshot, selection, tabSize)
-  if (!range) return null
-
   return {
     range,
     id: selection.id,
@@ -410,27 +445,20 @@ const lastItem = <T>(items: readonly T[]): T | null => {
   return items[items.length - 1] ?? null
 }
 
-const mergeOffsetRangeTargets = (
-  targets: readonly SelectionEditTarget[],
-): SelectionEditTarget[] => {
-  const sorted = targets.toSorted(
-    (left, right) => left.range.start - right.range.start || left.range.end - right.range.end,
-  )
-  const merged: SelectionEditTarget[] = []
+const mergeOffsetRanges = (ranges: readonly OffsetRange[]): OffsetRange[] => {
+  const sorted = ranges.toSorted((left, right) => left.start - right.start || left.end - right.end)
+  const merged: OffsetRange[] = []
 
-  for (const target of sorted) {
+  for (const range of sorted) {
     const previous = lastItem(merged)
-    if (!previous || target.range.start > previous.range.end) {
-      merged.push(target)
+    if (!previous || range.start > previous.end) {
+      merged.push(range)
       continue
     }
 
     merged[merged.length - 1] = {
-      ...previous,
-      range: {
-        start: previous.range.start,
-        end: Math.max(previous.range.end, target.range.end),
-      },
+      start: previous.start,
+      end: Math.max(previous.end, range.end),
     }
   }
 

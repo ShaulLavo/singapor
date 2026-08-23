@@ -17,7 +17,7 @@ import type { EditorCommandId } from './commands'
 export type NavigationTarget = {
   readonly offset: number
   readonly extend: boolean
-  readonly affinity?: SelectionAffinity
+  readonly affinity: SelectionAffinity
   readonly goal?: SelectionGoal
   readonly timingName: string
 }
@@ -142,13 +142,7 @@ function renderedRowTarget(
 }
 
 function targetAtLogicalOffset(target: NavigationTarget, offset: number): NavigationTarget {
-  const logical = {
-    offset,
-    extend: target.extend,
-    timingName: target.timingName,
-  }
-  if (!target.goal) return logical
-  return { ...logical, goal: target.goal }
+  return { ...target, offset }
 }
 
 function commandNavigationTarget(context: NavigationTargetContext): NavigationTarget | null {
@@ -184,7 +178,14 @@ function horizontalTarget(
   const timingName = extend
     ? `input.select${capitalize(direction)}`
     : `input.cursor${capitalize(direction)}`
-  if (!shouldMoveHead) return { offset: collapsedOffset, extend, timingName }
+  if (!shouldMoveHead) {
+    return {
+      offset: collapsedOffset,
+      affinity: logicalHorizontalAffinity(context, collapsedOffset, direction),
+      extend,
+      timingName,
+    }
+  }
 
   if (context.rtlMoveVisually) {
     const target = context.view.visualHorizontalTarget(
@@ -195,11 +196,23 @@ function horizontalTarget(
     if (target) return { ...target, extend, timingName }
   }
 
+  const offset = codePointOffset(context, resolved.headOffset, direction)
   return {
-    offset: codePointOffset(context, resolved.headOffset, direction),
+    offset,
+    affinity: logicalHorizontalAffinity(context, offset, direction),
     extend,
     timingName,
   }
+}
+
+function logicalHorizontalAffinity(
+  context: NavigationTargetContext,
+  offset: number,
+  direction: 'left' | 'right',
+): SelectionAffinity {
+  if (offset <= 0) return 'after'
+  if (offset >= context.documentLength) return 'before'
+  return direction === 'left' ? 'after' : 'before'
 }
 
 function wordTarget(
@@ -214,9 +227,11 @@ function wordTarget(
     direction === 'left'
       ? previousWordOffset(line.text, column, context.wordSeparators)
       : nextWordOffset(line.text, column, context.wordSeparators)
+  const target = line.start + offset
 
   return {
-    offset: line.start + offset,
+    offset: target,
+    affinity: logicalHorizontalAffinity(context, target, direction),
     extend,
     timingName: extend
       ? `input.selectWord${capitalize(direction)}`
@@ -231,10 +246,12 @@ function wordPartTarget(
 ): NavigationTarget {
   const line = context.readLine(context.resolved.headOffset)
   const column = context.resolved.headOffset - line.start
+  const offset = line.start + wordPartColumn(line.text, column, direction, context.wordSeparators)
 
   return {
     extend,
-    offset: line.start + wordPartColumn(line.text, column, direction, context.wordSeparators),
+    offset,
+    affinity: logicalHorizontalAffinity(context, offset, direction),
     timingName: extend
       ? `input.selectWordPart${capitalize(direction)}`
       : `input.cursorWordPart${capitalize(direction)}`,
@@ -366,6 +383,7 @@ function documentBoundaryTarget(
 ): NavigationTarget {
   return {
     offset: boundary === 'start' ? 0 : context.documentLength,
+    affinity: boundary === 'start' ? 'after' : 'before',
     extend,
     timingName: extend
       ? `input.selectDocument${capitalize(boundary)}`

@@ -4,8 +4,13 @@ import { Editor } from '../src/editor'
 import { InputSelectionController } from '../src/editor/inputSelectionController'
 import { VirtualizedTextView } from '../src/virtualization'
 import { resetEditorInstanceCount } from '../src/public/testing'
-import type { DocumentSessionChange } from '../src/public/document'
-import type { EditorPlugin, EditorViewContributionUpdateKind } from '../src/public/extensions'
+import { createDocumentSession, type DocumentSessionChange } from '../src/public/document'
+import type {
+  EditorPlugin,
+  EditorViewContributionContext,
+  EditorViewContributionUpdateKind,
+} from '../src/public/extensions'
+import { resolveSelection } from '../src/selections'
 
 // Non-ASCII forces the measured geometry path, where a row is measured one
 // grapheme at a time against its own rect.
@@ -24,6 +29,33 @@ function createViewContributionPlugin(kinds: EditorViewContributionUpdateKind[])
         }),
       }),
   }
+}
+
+type ViewContributionContextCapture = {
+  context: EditorViewContributionContext | null
+}
+
+const EMPTY_VIEW_CONTRIBUTION = { dispose: noop, update: noop }
+
+function noop(): void {}
+
+function captureViewContributionPlugin(capture: ViewContributionContextCapture): EditorPlugin {
+  return {
+    activate: (context) =>
+      context.registerViewContribution({
+        createContribution: (contributionContext) => {
+          capture.context = contributionContext
+          return EMPTY_VIEW_CONTRIBUTION
+        },
+      }),
+  }
+}
+
+function requireViewContributionContext(
+  context: EditorViewContributionContext | null,
+): EditorViewContributionContext {
+  if (!context) throw new Error('plugin received no contribution context')
+  return context
 }
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -188,6 +220,61 @@ describe('editor operations', () => {
 
     expect(reveal).toHaveBeenCalledTimes(1)
     expect(reveal).toHaveBeenCalledWith(5, undefined)
+  })
+
+  it('round-trips public selection affinity while retaining public reveal defaults', () => {
+    const session = createDocumentSession('abc')
+    editor = new Editor(container)
+    editor.attachSession(session)
+    const reveal = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+
+    editor.setSelection(1, 1, { affinity: 'before' })
+
+    const selection = session.getSelections().selections[0]
+    if (!selection) throw new Error('setSelection left no selection')
+    expect(resolveSelection(session.getSnapshot(), selection).affinity).toBe('before')
+    expect(reveal).toHaveBeenCalledWith(1, undefined)
+  })
+
+  it('round-trips affinity through an explicit post-edit selection', () => {
+    const session = createDocumentSession('abc')
+    editor = new Editor(container)
+    editor.attachSession(session)
+
+    editor.edit({ from: 1, text: 'B', to: 2 }, { selection: { affinity: 'before', anchor: 2 } })
+
+    const selection = session.getSelections().selections[0]
+    if (!selection) throw new Error('edit left no selection')
+    expect(resolveSelection(session.getSnapshot(), selection)).toMatchObject({
+      affinity: 'before',
+      headOffset: 2,
+    })
+  })
+
+  it('keeps contribution selection reveal opt-in and lets an explicit target win', () => {
+    const capture: ViewContributionContextCapture = { context: null }
+    const plugin = captureViewContributionPlugin(capture)
+    editor = new Editor(container, { defaultText: 'abc', plugins: [plugin] })
+    const reveal = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const context = requireViewContributionContext(capture.context)
+
+    context.setSelection(1, 1, 'test.affinity', { affinity: 'before' })
+
+    expect(context.getSnapshot().selections[0]).toMatchObject({
+      affinity: 'before',
+      headOffset: 1,
+    })
+    expect(reveal).not.toHaveBeenCalled()
+
+    context.setSelection(2, 2, 'test.reveal', { reveal: true })
+    expect(reveal).toHaveBeenLastCalledWith(2, undefined)
+
+    reveal.mockClear()
+    context.setSelection(0, 0, 'test.revealTarget', {
+      reveal: false,
+      revealOffset: 2,
+    })
+    expect(reveal).toHaveBeenLastCalledWith(2, undefined)
   })
 
   it('runs a nested pass inline rather than opening a second one', () => {

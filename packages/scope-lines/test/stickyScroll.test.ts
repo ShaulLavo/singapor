@@ -499,11 +499,13 @@ function tokens(): readonly EditorToken[] {
 
 /** Scopes nested past the number of rows the stack may ever hold, and a body long enough to hold. */
 const DEEP_DEPTH = 7
-const DEEP_LINES = [
-  ...Array.from({ length: DEEP_DEPTH }, (_, level) => `${'  '.repeat(level)}level${level}() {`),
-  ...Array.from({ length: 24 }, (_, index) => `${'  '.repeat(DEEP_DEPTH)}step(${index})`),
-  ...Array.from({ length: DEEP_DEPTH }, (_, index) => `${'  '.repeat(DEEP_DEPTH - 1 - index)}}`),
-]
+const DEEP_LINES = Array.from(
+  { length: DEEP_DEPTH },
+  (_, level) => `${'  '.repeat(level)}level${level}() {`,
+).concat(
+  Array.from({ length: 24 }, (_, index) => `${'  '.repeat(DEEP_DEPTH)}step(${index})`),
+  Array.from({ length: DEEP_DEPTH }, (_, index) => `${'  '.repeat(DEEP_DEPTH - 1 - index)}}`),
+)
 const DEEP_TEXT = DEEP_LINES.join('\n')
 
 /** Scrolled past every header row, so each of the scopes wants a slot in the stack. */

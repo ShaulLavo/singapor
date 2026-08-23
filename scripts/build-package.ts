@@ -138,11 +138,12 @@ function isWorkerImport(id: string, importer?: string): boolean {
 }
 
 function externalPackageNames(): ReadonlySet<string> {
-  return new Set([
-    ...Object.keys(manifest.dependencies ?? {}),
-    ...Object.keys(manifest.peerDependencies ?? {}),
-    ...Object.keys(manifest.optionalDependencies ?? {}),
-  ])
+  return new Set(
+    Object.keys(manifest.dependencies ?? {}).concat(
+      Object.keys(manifest.peerDependencies ?? {}),
+      Object.keys(manifest.optionalDependencies ?? {}),
+    ),
+  )
 }
 
 function packageNameFromSpecifier(specifier: string): string {
@@ -185,7 +186,9 @@ function isTypeScriptModule(id: string): boolean {
   return id.endsWith('.tsx')
 }
 
-function inlineModuleWorkerImports(code: string): { readonly code: string; readonly map: null } | null {
+function inlineModuleWorkerImports(
+  code: string,
+): { readonly code: string; readonly map: null } | null {
   const imports = new Map<string, string>()
   const transformed = code.replace(workerConstructorPattern(), (_match, workerPath: string) => {
     const identifier = workerIdentifier(imports.size)

@@ -41,6 +41,15 @@ Always creates a real anchor. Never returns sentinels. Callers wanting absolute 
 
 Convenience: `anchorBefore` = left bias, `anchorAfter` = right bias.
 
+### Anchor Bias Is Not Caret Affinity
+
+`AnchorBias` (`left`/`right`) controls how a durable storage position resolves when edits insert or
+delete text at its boundary. `SelectionAffinity` (`before`/`after`) controls which painted caret a
+selection head owns when one logical offset has multiple visual positions. They are orthogonal: an
+anchor can resolve to the same offset while the selection affinity changes, and normalization must
+not merge affinity-distinct carets merely because their anchors resolve together. See
+[Selections & Undo](../editing/selections-and-undo.md#caret-affinity).
+
 **Reference:** Treap walk and buffer structure in `packages/editor/src/pieceTable/pieceTable.ts`. Piece type in `packages/editor/src/pieceTable/pieceTableTypes.ts`.
 
 ---
@@ -118,10 +127,10 @@ Reverse index stores direct reference to treap node. O(1) bridging. Safe because
 
 Snapshot = `(treapRoot, reverseIndexRoot)` tuple. Both immutable. Undo/redo = O(1) root swap.
 
-| Structure | Per-edit cost | Memory per delta |
-|---|---|---|
-| Enriched treap | O(log n) nodes (already happening) | ~64 bytes/node |
-| Reverse index | O(log m) nodes via path copying | ~64 bytes/node |
+| Structure      | Per-edit cost                      | Memory per delta |
+| -------------- | ---------------------------------- | ---------------- |
+| Enriched treap | O(log n) nodes (already happening) | ~64 bytes/node   |
+| Reverse index  | O(log m) nodes via path copying    | ~64 bytes/node   |
 
 **GC safety:** Reverse index points to treap nodes reachable from the same snapshot's treap root. Dropping a snapshot drops both roots. **Invariant:** snapshots must be retained/discarded as complete tuples — never expose roots individually.
 
@@ -133,10 +142,10 @@ Snapshot = `(treapRoot, reverseIndexRoot)` tuple. Both immutable. Undo/redo = O(
 
 ## Consumer Direction (Locked)
 
-| Consumer | Uses anchors? |
-|---|---|
-| Selections, folds, widgets | Yes |
-| Layout | No (offsets/Points only) |
+| Consumer                         | Uses anchors?                                |
+| -------------------------------- | -------------------------------------------- |
+| Selections, folds, widgets       | Yes                                          |
+| Layout                           | No (offsets/Points only)                     |
 | Dense decorations (syntax, lint) | Coarse only (per-line/region, not per token) |
 
 ---

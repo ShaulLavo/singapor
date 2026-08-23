@@ -207,13 +207,8 @@ export class EditorFindWidget {
 
   private handleKeyDown(event: KeyboardEvent): void {
     event.stopPropagation()
-    if (isFindToggleKey(event)) {
-      event.preventDefault()
-      this.options.onClose()
-      return
-    }
-
-    if (event.key === 'Escape') {
+    const shouldClose = [isFindToggleKey(event), event.key === 'Escape'].some(Boolean)
+    if (shouldClose) {
       event.preventDefault()
       this.options.onClose()
       return

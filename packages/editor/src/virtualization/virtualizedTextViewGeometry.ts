@@ -850,7 +850,7 @@ function comparePositionedBidiRuns(left: PositionedBidiRun, right: PositionedBid
   )
 }
 
-function isBidiMeasurementRefusalRow(
+export function isBidiMeasurementRefusalRow(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): boolean {
@@ -1325,6 +1325,9 @@ function rowGeometryCacheKey(
 ): string {
   return [
     row.textRevision,
+    // Display text and source spans can stay equal while a fresh inline projection changes the
+    // rendered glyphs or turns a row into an endpoint-only refusal placeholder.
+    view.displayProjectionRevision,
     row.chunkKey,
     // Pins the key to a line: a row's element and its record are both recycled onto whatever line
     // scrolls into their place, and every other part of this key survives that move intact.

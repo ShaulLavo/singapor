@@ -2,7 +2,6 @@ import type { PieceTableSnapshot, TextOffsetRange } from '@singapor/core/documen
 import type { FoldRange } from '@singapor/core/syntax'
 import {
   createAnchorSelection,
-  createSelectionSet,
   normalizeSelectionSet,
   type PieceTableAnchor,
   resolveSelection,
@@ -36,6 +35,19 @@ export type TreeSitterSelectionCommandResult = {
   readonly status: 'ok' | 'stale'
 }
 
+type NormalizedSelectionInput = {
+  readonly selections: SelectionSet<PieceTableAnchor>
+  readonly sources: readonly ResolvedSelection[]
+  readonly ranges: readonly TreeSitterSelectionRange[]
+}
+
+type ResolvedSelection = ReturnType<typeof resolveSelection>
+
+type SettledSelectionResult = {
+  readonly selections: SelectionSet<PieceTableAnchor>
+  readonly stacks: readonly (readonly TreeSitterSelectionRange[])[]
+}
+
 /**
  * The nesting the grammar found, as one unordered bucket for the editor's selection ladder to rank.
  *
@@ -52,17 +64,18 @@ export const treeSitterSelectionRanges = (
 export const selectTreeSitterToken = async (
   options: TreeSitterSelectionCommandOptions,
 ): Promise<TreeSitterSelectionCommandResult> => {
-  const result = await requestSelectionRanges(options, 'selectToken')
-  return selectionCommandResult(options, result, (range) => [range])
+  const input = normalizedSelectionInput(options)
+  const result = await requestSelectionRanges(options, input.ranges, 'selectToken')
+  return selectionCommandResult(options, input, result, (range) => [range])
 }
 
 export const expandTreeSitterSelection = async (
   options: TreeSitterSelectionCommandOptions,
 ): Promise<TreeSitterSelectionCommandResult> => {
-  const result = await requestSelectionRanges(options, 'expand')
-  const selected = rangesFromSelectionSet(options.snapshot, options.selections)
-  return selectionCommandResult(options, result, (range, index) => {
-    const stack = stackForSelection(options, index, selected[index])
+  const input = normalizedSelectionInput(options)
+  const result = await requestSelectionRanges(options, input.ranges, 'expand')
+  return selectionCommandResult(options, input, result, (range, index) => {
+    const stack = stackForSelection(options, index, input.ranges[index])
     const previous = stack.at(-1)
     if (previous && rangesEqual(previous, range)) return stack
     return [...stack, range]
@@ -72,14 +85,18 @@ export const expandTreeSitterSelection = async (
 export const shrinkTreeSitterSelection = (
   options: TreeSitterSelectionCommandOptions,
 ): TreeSitterSelectionCommandResult => {
-  const ranges = rangesFromShrinkState(options)
-  if (!ranges) return noOpSelectionCommandResult(options, 'stale')
+  const input = normalizedSelectionInput(options)
+  const ranges = rangesFromShrinkState(options, input.ranges)
+  if (!ranges) return noOpSelectionCommandResult(options, input, 'stale')
+
+  const stacks = options.state!.stacks.map((stack) => stack.slice(0, -1))
+  const settled = settleSelectionRanges(options.snapshot, input, ranges, stacks)
 
   return {
-    selections: selectionSetFromRanges(options.snapshot, options.selections, ranges),
+    selections: settled.selections,
     state: {
       snapshotVersion: options.snapshotVersion,
-      stacks: options.state!.stacks.map((stack) => stack.slice(0, -1)),
+      stacks: settled.stacks,
     },
     status: 'ok',
   }
@@ -87,6 +104,7 @@ export const shrinkTreeSitterSelection = (
 
 const requestSelectionRanges = (
   options: TreeSitterSelectionCommandOptions,
+  ranges: readonly TreeSitterSelectionRange[],
   action: 'selectToken' | 'expand',
 ): Promise<TreeSitterSelectionResult | undefined> =>
   options.backend.select({
@@ -94,24 +112,33 @@ const requestSelectionRanges = (
     languageId: options.languageId,
     snapshotVersion: options.snapshotVersion,
     action,
-    ranges: rangesFromSelectionSet(options.snapshot, options.selections),
+    ranges,
   })
 
 const selectionCommandResult = (
   options: TreeSitterSelectionCommandOptions,
+  input: NormalizedSelectionInput,
   result: TreeSitterSelectionResult | undefined,
   nextStack: (
     range: TreeSitterSelectionRange,
     index: number,
   ) => readonly TreeSitterSelectionRange[],
 ): TreeSitterSelectionCommandResult => {
-  if (!result || result.status === 'stale') return noOpSelectionCommandResult(options, 'stale')
+  if (!result || result.status === 'stale') {
+    return noOpSelectionCommandResult(options, input, 'stale')
+  }
+  if (result.ranges.length !== input.sources.length) {
+    return noOpSelectionCommandResult(options, input, 'stale')
+  }
+
+  const stacks = result.ranges.map(nextStack)
+  const settled = settleSelectionRanges(options.snapshot, input, result.ranges, stacks)
 
   return {
-    selections: selectionSetFromRanges(options.snapshot, options.selections, result.ranges),
+    selections: settled.selections,
     state: {
       snapshotVersion: options.snapshotVersion,
-      stacks: result.ranges.map(nextStack),
+      stacks: settled.stacks,
     },
     status: 'ok',
   }
@@ -119,37 +146,39 @@ const selectionCommandResult = (
 
 const noOpSelectionCommandResult = (
   options: TreeSitterSelectionCommandOptions,
+  input: NormalizedSelectionInput,
   status: 'ok' | 'stale',
 ): TreeSitterSelectionCommandResult => ({
   selections: options.selections,
   state: options.state ?? {
     snapshotVersion: options.snapshotVersion,
-    stacks: rangesFromSelectionSet(options.snapshot, options.selections).map((range) => [range]),
+    stacks: input.ranges.map((range) => [range]),
   },
   status,
 })
 
-const rangesFromSelectionSet = (
-  snapshot: PieceTableSnapshot,
-  set: SelectionSet<PieceTableAnchor>,
-): TreeSitterSelectionRange[] => {
-  const normalized = normalizeSelectionSet(snapshot, set)
-  return normalized.selections.map((selection) => {
-    const resolved = resolveSelection(snapshot, selection)
-    return {
-      startIndex: resolved.startOffset,
-      endIndex: resolved.endOffset,
-    }
-  })
+const normalizedSelectionInput = (
+  options: TreeSitterSelectionCommandOptions,
+): NormalizedSelectionInput => {
+  const selections = normalizeSelectionSet(options.snapshot, options.selections)
+  const sources = selections.selections.map((selection) =>
+    resolveSelection(options.snapshot, selection),
+  )
+  return {
+    selections,
+    sources,
+    ranges: sources.map(selectionRange),
+  }
 }
 
-const selectionSetFromRanges = (
+const settleSelectionRanges = (
   snapshot: PieceTableSnapshot,
-  original: SelectionSet<PieceTableAnchor>,
+  input: NormalizedSelectionInput,
   ranges: readonly TreeSitterSelectionRange[],
-): SelectionSet<PieceTableAnchor> => {
+  stacks: readonly (readonly TreeSitterSelectionRange[])[],
+): SettledSelectionResult => {
   const selections = ranges.map((range, index) => {
-    const source = original.selections[index]
+    const source = input.sources[index]
     return createAnchorSelection(snapshot, range.startIndex, range.endIndex, {
       affinity: source?.affinity,
       id: source?.id,
@@ -159,16 +188,29 @@ const selectionSetFromRanges = (
     })
   })
 
-  return createSelectionSet(selections, true, snapshot)
+  const normalized = normalizeSelectionSet(snapshot, {
+    selections,
+    lastAddedIndex: input.selections.lastAddedIndex,
+    normalized: false,
+  })
+  const stackById = new Map(
+    input.sources.map((source, index) => [source.id, stacks[index] ?? []] as const),
+  )
+  const settledStacks = normalized.selections.map((selection) => {
+    const resolved = resolveSelection(snapshot, selection)
+    return stackWithTop(stackById.get(resolved.id) ?? [], selectionRange(resolved))
+  })
+
+  return { selections: normalized, stacks: settledStacks }
 }
 
 const rangesFromShrinkState = (
   options: TreeSitterSelectionCommandOptions,
+  selected: readonly TreeSitterSelectionRange[],
 ): readonly TreeSitterSelectionRange[] | null => {
   if (!options.state) return null
   if (options.state.snapshotVersion !== options.snapshotVersion) return null
 
-  const selected = rangesFromSelectionSet(options.snapshot, options.selections)
   if (options.state.stacks.length !== selected.length) return null
 
   const ranges = options.state.stacks.map((stack, index) => {
@@ -179,6 +221,21 @@ const rangesFromShrinkState = (
   })
   if (ranges.some((range) => !range)) return null
   return ranges as readonly TreeSitterSelectionRange[]
+}
+
+const selectionRange = (selection: ResolvedSelection): TreeSitterSelectionRange => ({
+  startIndex: selection.startOffset,
+  endIndex: selection.endOffset,
+})
+
+const stackWithTop = (
+  stack: readonly TreeSitterSelectionRange[],
+  range: TreeSitterSelectionRange,
+): readonly TreeSitterSelectionRange[] => {
+  const top = stack.at(-1)
+  if (top && rangesEqual(top, range)) return stack
+  if (stack.length === 0) return [range]
+  return [...stack.slice(0, -1), range]
 }
 
 const stackForSelection = (

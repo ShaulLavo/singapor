@@ -21,6 +21,7 @@ export type VirtualizedTextHitPosition = {
 /** The two logical anchors that share one visual caret at a BiDi boundary. */
 export type VirtualizedBidiSelectionAnchor = {
   readonly displayRow: number
+  readonly displayProjectionRevision: number
   readonly textRevision: number
   readonly rawOffset: number
   readonly rawAffinity: SelectionAffinity

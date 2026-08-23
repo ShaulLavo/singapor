@@ -83,7 +83,7 @@ export class SourceController {
     this.displayFile(file, 'auto')
     const start = offsetForPosition(file.text, target.range.start)
     const end = offsetForPosition(file.text, target.range.end)
-    this.editor.setSelection(start, end, start)
+    this.editor.setSelection(start, end, { revealOffset: start })
     void this.sidebar.renderSource(snapshot.files, this.displayFile, {
       selectedPath: file.path,
       preserveExpandedPaths: true,

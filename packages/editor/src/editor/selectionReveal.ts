@@ -1,16 +1,19 @@
-export type EditorSelectionRevealOptions = {
+import type { SelectionAffinity } from '../selections'
+
+export type EditorSetSelectionOptions = {
+  readonly affinity?: SelectionAffinity
   readonly reveal?: boolean
   readonly revealOffset?: number
 }
 
-export type EditorSelectionRevealTarget = number | EditorSelectionRevealOptions
-
 export function selectionRevealOffset(
-  reveal: EditorSelectionRevealTarget | undefined,
+  options: EditorSetSelectionOptions | undefined,
   fallback: number | undefined,
+  revealByDefault: boolean,
 ): number | undefined {
-  if (typeof reveal === 'number') return reveal
-  if (reveal?.reveal === false) return undefined
+  if (options?.revealOffset !== undefined) return options.revealOffset
+  if (options?.reveal === false) return undefined
+  if (!options?.reveal && !revealByDefault) return undefined
 
-  return reveal?.revealOffset ?? fallback
+  return fallback
 }

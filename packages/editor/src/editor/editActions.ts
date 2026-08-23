@@ -1,6 +1,11 @@
 import type { DocumentSessionEditSelection } from '../documentSession'
 import { normalizeTabSize } from '../displayTransforms'
-import type { ResolvedSelection } from '../selections'
+import {
+  selectionOffsetsWithAffinity,
+  selectionRangeWithAffinity,
+  type ResolvedSelection,
+  type SelectionAffinity,
+} from '../selections'
 import {
   nextCodePointOffset,
   nextWordOffset,
@@ -122,6 +127,7 @@ type RelativePoint = {
 type LineSelectionDescriptor = {
   readonly groupIndex: number
   readonly anchor: RelativePoint
+  readonly affinity: SelectionAffinity
   readonly head: RelativePoint
 }
 
@@ -1011,7 +1017,7 @@ function blockCommentSelectionsAfterRemove(
   return selections.map((selection, index) => {
     if (selection.collapsed) {
       const offset = offsetAfterEdits(selection.headOffset, edits)
-      return { anchor: offset, head: offset }
+      return selectionOffsetsWithAffinity(selection, offset, offset)
     }
 
     const range = ranges[index] ?? { start: selection.startOffset, end: selection.endOffset }
@@ -1026,8 +1032,7 @@ function selectionForRange(
   start: number,
   end: number,
 ): DocumentSessionEditSelection {
-  if (selection.reversed) return { anchor: end, head: start }
-  return { anchor: start, head: end }
+  return selectionRangeWithAffinity(selection, start, end)
 }
 
 function blockCommentRangeForSelection(map: LineMap, selection: ResolvedSelection): OffsetRange {
@@ -1206,7 +1211,7 @@ function insertedLineSelections(
         ? group.startRow + insertedRowsBefore
         : group.endRow + 1 + insertedRowsBefore
     const offset = lineStart(map, targetRow)
-    selections.push({ anchor: offset, head: offset })
+    selections.push({ anchor: offset, affinity: 'after', head: offset })
     insertedRowsBefore += 1
   }
 
@@ -1235,6 +1240,7 @@ function lineSelectionDescriptor(
   return {
     groupIndex,
     anchor: relativePointForOffset(map, selection.anchorOffset, group.startRow),
+    affinity: selection.affinity,
     head: relativePointForOffset(map, selection.headOffset, group.startRow),
   }
 }
@@ -1259,6 +1265,7 @@ function selectionsForTargetRows(
     const targetStartRow = targetRows[descriptor.groupIndex] ?? 0
     return {
       anchor: offsetForRelativePoint(map, targetStartRow, descriptor.anchor),
+      affinity: descriptor.affinity,
       head: offsetForRelativePoint(map, targetStartRow, descriptor.head),
     }
   })
@@ -1289,7 +1296,7 @@ function collapseSelectionsAfterRanges(
 
   for (const range of ranges) {
     const offset = range.start + delta
-    selections.push({ anchor: offset, head: offset })
+    selections.push({ anchor: offset, affinity: 'after', head: offset })
     delta -= range.end - range.start
   }
 
@@ -1350,10 +1357,13 @@ function selectionsAfterEdits(
   selections: readonly ResolvedSelection[],
   edits: readonly TextEdit[],
 ): readonly DocumentSessionEditSelection[] {
-  return selections.map((selection) => ({
-    anchor: offsetAfterEdits(selection.anchorOffset, edits),
-    head: offsetAfterEdits(selection.headOffset, edits),
-  }))
+  return selections.map((selection) =>
+    selectionOffsetsWithAffinity(
+      selection,
+      offsetAfterEdits(selection.anchorOffset, edits),
+      offsetAfterEdits(selection.headOffset, edits),
+    ),
+  )
 }
 
 function offsetAfterEdits(offset: number, edits: readonly TextEdit[]): number {

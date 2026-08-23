@@ -1,4 +1,5 @@
 import { createDocumentTextSnapshot, createPieceTableSnapshot } from '@singapor/core/document'
+import type { EditorHighlighterProvider } from '@singapor/core/extensions'
 import {
   createEmptySyntaxResult,
   createSyntaxLanguageConfiguration,
@@ -261,7 +262,28 @@ async function diffSyntaxService(
   file: DiffFile,
 ): Promise<DiffSyntaxService | null> {
   if (backend.kind === 'tree-sitter') return treeSitterDiffSyntaxService(backend.provider ?? null)
+  if (backend.kind === 'highlighter') return highlighterDiffSyntaxService(backend.provider ?? null)
   return shikiDiffSyntaxService(file, backend)
+}
+
+function highlighterDiffSyntaxService(
+  provider: EditorHighlighterProvider | null,
+): DiffSyntaxService | null {
+  if (!provider) return null
+
+  return {
+    createSession: async (document) => highlighterDiffSyntaxSession(provider, document),
+  }
+}
+
+function highlighterDiffSyntaxSession(
+  provider: EditorHighlighterProvider,
+  document: DiffSyntaxDocument,
+): DiffSyntaxServiceSession | null {
+  const session = provider.createSession(highlighterSessionOptions(document))
+  if (!session) return null
+
+  return tokenHighlighterDiffSyntaxSession(document, session)
 }
 
 function treeSitterDiffSyntaxService(
@@ -306,7 +328,7 @@ async function shikiDiffSyntaxService(
     },
     createSession: async (document) => {
       const session = owner.createSession({
-        ...syntaxHighlighterSessionOptions(document),
+        ...highlighterSessionOptions(document),
         lang,
         langs: [lang],
         theme: themeName,
@@ -314,7 +336,7 @@ async function shikiDiffSyntaxService(
       })
       if (!session) return null
 
-      return shikiDiffSyntaxSession(document, session)
+      return tokenHighlighterDiffSyntaxSession(document, session)
     },
   }
 }
@@ -330,7 +352,7 @@ function loadShikiModule(): Promise<typeof import('@singapor/core/shiki')> {
   return shikiModulePromise
 }
 
-function shikiDiffSyntaxSession(
+function tokenHighlighterDiffSyntaxSession(
   document: DiffSyntaxDocument,
   session: {
     refresh(
@@ -362,7 +384,7 @@ function syntaxSessionOptions(document: DiffSyntaxDocument): EditorSyntaxSession
   }
 }
 
-function syntaxHighlighterSessionOptions(
+function highlighterSessionOptions(
   document: DiffSyntaxDocument,
 ): Omit<EditorSyntaxSessionOptions, 'includeCaptures' | 'includeHighlights' | 'syntaxMode'> {
   return {
@@ -427,7 +449,7 @@ function syntaxSource(lines: readonly string[], side: DiffSyntaxSourceSide): Dif
 function syntaxDocument(file: DiffFile, source: DiffSyntaxSource): DiffSyntaxDocument {
   const snapshot = createPieceTableSnapshot(source.text)
   const textSnapshot = createDocumentTextSnapshot(snapshot, source.text)
-  const documentId = `${file.path}:${source.side}`
+  const documentId = `${file.path}#diff-${source.side}`
   const languageId = diffSyntaxLanguageId(file)
   const request: EditorSyntaxServiceRequest = {
     editSummary: null,

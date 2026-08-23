@@ -161,6 +161,7 @@ export function rebuildDisplayRows(
     tabSize: view.tabSize,
   })
   view.model = model
+  view.displayProjectionRevision += 1
 }
 
 export function refreshDisplayRowsForWrapWidth(

@@ -127,10 +127,9 @@ export class MinimapWorkerRenderer {
     this.state.document = {
       ...this.state.document,
       externalDecorations: decorations,
-      decorations: [
-        ...sectionHeaderDecorationsFrom(this.state.document.decorations),
-        ...decorations,
-      ],
+      decorations: sectionHeaderDecorationsFrom(this.state.document.decorations).concat(
+        decorations,
+      ),
     }
     this.state.decorationsDirty = true
   }
@@ -142,10 +141,12 @@ export class MinimapWorkerRenderer {
     selections: readonly MinimapSelection[],
   ): void {
     const state = this.requireState()
-    const decorations = [
-      ...updateSectionHeaderDecorations(previous, document, edits, state.options),
-      ...state.externalDecorations,
-    ]
+    const decorations = updateSectionHeaderDecorations(
+      previous,
+      document,
+      edits,
+      state.options,
+    ).concat(state.externalDecorations)
     state.document = {
       textLength: document.textLength,
       lineStarts: document.lineStarts,
@@ -770,11 +771,9 @@ function applyMinimapDocumentSummaryPatch(
   return {
     textLength: patch.textLength,
     lineStarts: patch.lineStarts ?? splicedLineStarts(document, patch, startLine, deleteCount),
-    lines: [
-      ...document.lines.slice(0, startLine),
-      ...patch.lines,
-      ...document.lines.slice(startLine + deleteCount),
-    ],
+    lines: document.lines
+      .slice(0, startLine)
+      .concat(patch.lines, document.lines.slice(startLine + deleteCount)),
   }
 }
 

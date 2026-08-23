@@ -57,6 +57,12 @@ export type ResolvedSelection = {
   readonly endLiveness: AnchorLiveness
 }
 
+export type SelectionOffsetsWithAffinity = {
+  readonly anchor: number
+  readonly head: number
+  readonly affinity: SelectionAffinity
+}
+
 export type CreateAnchorSelectionOptions = {
   readonly id?: string
   readonly idFactory?: SelectionIdFactory
@@ -131,11 +137,6 @@ const orderOffsets = (first: number, second: number): OffsetRange => ({
   start: Math.min(first, second),
   end: Math.max(first, second),
 })
-
-const lastItem = <T>(items: readonly T[]): T | null => {
-  if (items.length === 0) return null
-  return items[items.length - 1] ?? null
-}
 
 const isLiveSelection = (
   startLiveness: AnchorLiveness,
@@ -240,6 +241,23 @@ export const resolveSelection = (
   }
 }
 
+/** Rebuilds endpoint offsets without losing which visual side the head owns. */
+export const selectionOffsetsWithAffinity = (
+  selection: ResolvedSelection,
+  anchor: number,
+  head: number,
+): SelectionOffsetsWithAffinity => ({ anchor, head, affinity: selection.affinity })
+
+/** Relocates a selection to an ordered range while preserving its direction and affinity. */
+export const selectionRangeWithAffinity = (
+  selection: ResolvedSelection,
+  start: number,
+  end: number,
+): SelectionOffsetsWithAffinity => {
+  if (selection.reversed) return selectionOffsetsWithAffinity(selection, end, start)
+  return selectionOffsetsWithAffinity(selection, start, end)
+}
+
 const resolveSelectionWithSource = (
   snapshot: PieceTableSnapshot,
   selection: AnchorSelection,
@@ -324,6 +342,23 @@ const mergeResolvedSelections = (
   }
 }
 
+const appendNormalizedSelection = (
+  snapshot: PieceTableSnapshot,
+  normalized: ResolvedSelectionWithSource[],
+  selection: ResolvedSelectionWithSource,
+): void => {
+  let candidate = normalizeResolvedSelection(snapshot, selection)
+  while (normalized.length > 0) {
+    const previous = normalized[normalized.length - 1]!
+    if (!shouldMergeSelections(previous, candidate)) break
+
+    normalized.pop()
+    candidate = mergeResolvedSelections(snapshot, previous, candidate)
+  }
+
+  normalized.push(candidate)
+}
+
 const normalizeSelections = (
   snapshot: PieceTableSnapshot,
   selections: readonly AnchorSelection[],
@@ -335,20 +370,7 @@ const normalizeSelections = (
   const sorted = resolved.toSorted(compareResolvedSelections)
   const normalized: ResolvedSelectionWithSource[] = []
 
-  for (const selection of sorted) {
-    const previous = lastItem(normalized)
-    if (!previous) {
-      normalized.push(normalizeResolvedSelection(snapshot, selection))
-      continue
-    }
-
-    if (!shouldMergeSelections(previous, selection)) {
-      normalized.push(normalizeResolvedSelection(snapshot, selection))
-      continue
-    }
-
-    normalized[normalized.length - 1] = mergeResolvedSelections(snapshot, previous, selection)
-  }
+  for (const selection of sorted) appendNormalizedSelection(snapshot, normalized, selection)
 
   return {
     selections: normalized.map((selection) => selection.source),

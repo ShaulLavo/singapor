@@ -10,6 +10,8 @@ import { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from '@si
 import { EditorPluginHost } from '@singapor/core/testing'
 import {
   createTreeSitterLanguagePlugin,
+  createTreeSitterSyntaxPlugin,
+  createTreeSitterSyntaxProvider,
   resolveTreeSitterLanguageAlias,
   resolveTreeSitterLanguageContribution,
   TreeSitterLanguageRegistry,
@@ -143,6 +145,18 @@ describe('Tree-sitter syntax capture conversion', () => {
         snapshot,
       }),
     ).toBeNull()
+  })
+
+  it('registers a host-owned syntax provider without constructing another provider', () => {
+    const provider = createTreeSitterSyntaxProvider()
+    provider.registerLanguage(testLanguage('sql', ['.sql']))
+    const host = new EditorPluginHost([
+      createTreeSitterSyntaxPlugin(provider, { name: 'shared-tree-sitter' }),
+    ])
+
+    expect(createSqlSyntaxSession(host)).not.toBeNull()
+
+    host.dispose()
   })
 
   it('shares language plugin registrations across editor plugin hosts', () => {

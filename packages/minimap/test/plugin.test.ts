@@ -27,10 +27,9 @@ const DENSE_DOCUMENT_HEIGHT = 600
 const DENSE_RUN_STEP = 5
 const DENSE_RUN_END = 1 + MINIMAP_DECORATION_MERGE_LIMIT * DENSE_RUN_STEP
 const DENSE_STRAGGLERS = [DENSE_RUN_END + 100, DENSE_RUN_END + 200]
-const DENSE_BANDS = [
-  ...rowBands(1, MINIMAP_DECORATION_MERGE_LIMIT + 1, DENSE_RUN_STEP),
-  ...DENSE_STRAGGLERS.map((row) => rowBand(row)),
-]
+const DENSE_BANDS = rowBands(1, MINIMAP_DECORATION_MERGE_LIMIT + 1, DENSE_RUN_STEP).concat(
+  DENSE_STRAGGLERS.map((row) => rowBand(row)),
+)
 const DENSE_SPANS = [[1, DENSE_RUN_END], ...DENSE_STRAGGLERS.map((row) => [row, row])]
 
 describe('createMinimapPlugin', () => {

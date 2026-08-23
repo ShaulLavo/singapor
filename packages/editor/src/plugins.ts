@@ -20,6 +20,7 @@ import {
 import type { InlineReplacementSpec } from './inlineMap'
 import type { TextOffsetRange } from './textRanges'
 import type { SelectionAffinity } from './selections'
+import type { EditorSetSelectionOptions } from './editor/selectionReveal'
 import type { BrowserTextMetrics } from './virtualization/browserMetrics'
 import type { FixedRowVisibleRange } from './virtualization/fixedRowVirtualizer'
 import type {
@@ -290,7 +291,12 @@ export type EditorViewContributionContext = {
    * a host without one simply stays quiet, which is what it did before it could speak at all.
    */
   announce?(message: string): void
-  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    options?: EditorSetSelectionOptions,
+  ): void
   setSelections(
     selections: readonly EditorSelectionRange[],
     timingName: string,
@@ -372,7 +378,12 @@ export type EditorDocumentContributionContext = {
 export type EditorSelectionContributionContext = {
   getSelections(): readonly EditorResolvedSelection[]
   focusEditor(): void
-  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    options?: EditorSetSelectionOptions,
+  ): void
   setSelections(
     selections: readonly EditorSelectionRange[],
     timingName: string,

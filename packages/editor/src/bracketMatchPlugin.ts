@@ -99,7 +99,9 @@ class BracketMatchController implements EditorViewContribution {
     const target = bracketJumpTargetOffset(snapshot.brackets, caret)
     if (target === null) return false
 
-    this.context.setSelection(target, target, 'editor.jumpToBracket', target)
+    this.context.setSelection(target, target, 'editor.jumpToBracket', {
+      revealOffset: target,
+    })
     return true
   }
 

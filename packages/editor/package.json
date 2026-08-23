@@ -3,7 +3,9 @@
   "version": "0.1.1",
   "files": [
     "README.md",
-    "dist"
+    "dist",
+    "scripts/unicode/LICENSE.txt",
+    "scripts/unicode/README.md"
   ],
   "type": "module",
   "sideEffects": [
@@ -89,7 +91,9 @@
     "bench:piece-table": "bun bench/pieceTable-insertions.ts",
     "bench:virtualization": "bun bench/virtualization.ts",
     "bench:walker": "bun bench/pieceTable-walker.ts",
-    "test": "vitest run",
+    "bidi:check": "bun scripts/generateBidiClass.mjs --check",
+    "bidi:generate": "bun scripts/generateBidiClass.mjs",
+    "test": "bun run bidi:check && vitest run",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",
     "format": "oxfmt --write .",

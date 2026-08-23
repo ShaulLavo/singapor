@@ -170,7 +170,9 @@ describe('createLanguageServerAdapterPlugin', () => {
       expect.any(Object),
     )
     expect(command(commands, 'editor.action.marker.next')({})).toBe(true)
-    expect(context.setSelection).toHaveBeenCalledWith(0, 1, 'testLsp.marker.next', 0)
+    expect(context.setSelection).toHaveBeenCalledWith(0, 1, 'testLsp.marker.next', {
+      revealOffset: 0,
+    })
 
     const completionFeature = features.get(completionToken) as
       | LanguageServerCompletionEditFeature

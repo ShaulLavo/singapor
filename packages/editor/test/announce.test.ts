@@ -61,7 +61,7 @@ describe('the announcement channel', () => {
       'assertive',
     ])
     expect(statuses.map((region) => region.getAttribute('aria-live'))).toEqual(['polite', 'polite'])
-    for (const region of [...alerts, ...statuses]) {
+    for (const region of alerts.concat(statuses)) {
       expect(region.getAttribute('aria-atomic')).toBe('true')
     }
   })

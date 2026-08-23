@@ -1,7 +1,12 @@
 import { createRoot, createSignal } from 'solid-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Editor } from '@singapor/core/editor'
-import { createEditor, type SolidEditorController, type SolidEditorDocument } from '../src'
+import {
+  createEditor,
+  type SolidEditorController,
+  type SolidEditorDocument,
+  type SolidEditorSelection,
+} from '../src'
 
 class MockHighlight extends Set<Range> {}
 
@@ -86,14 +91,18 @@ describe('createEditor', () => {
       document: () => ({ text: 'alpha', documentId: 'a.ts', revision: 1 }),
     })
 
-    mounted.controller.commands.setSelection(1, 4)
+    mounted.controller.commands.setSelection(2, 2, {
+      affinity: 'before',
+      reveal: false,
+    })
 
     expect(mounted.controller.updateKind()).toBe('selection')
     expect(mounted.controller.snapshot()?.selections[0]).toMatchObject({
-      anchorOffset: 1,
-      headOffset: 4,
-      startOffset: 1,
-      endOffset: 4,
+      affinity: 'before',
+      anchorOffset: 2,
+      headOffset: 2,
+      startOffset: 2,
+      endOffset: 2,
     })
 
     mounted.dispose()
@@ -129,7 +138,7 @@ describe('createEditor', () => {
   it('applies targeted reactive options without recreating the editor', async () => {
     let setTheme!: (theme: { readonly backgroundColor: string }) => void
     let setHiddenCharacters!: (mode: 'hidden' | 'show') => void
-    let setSelection!: (selection: { readonly anchor: number; readonly head: number }) => void
+    let setSelection!: (selection: SolidEditorSelection) => void
     let setScrollPosition!: (scrollPosition: {
       readonly top: number
       readonly left: number
@@ -137,7 +146,10 @@ describe('createEditor', () => {
     const mounted = mountInRoot(() => {
       const [theme, nextTheme] = createSignal({ backgroundColor: '#111111' })
       const [hiddenCharacters, nextHiddenCharacters] = createSignal<'hidden' | 'show'>('hidden')
-      const [selection, nextSelection] = createSignal({ anchor: 0, head: 0 })
+      const [selection, nextSelection] = createSignal<SolidEditorSelection>({
+        anchor: 0,
+        head: 0,
+      })
       const [scrollPosition, nextScrollPosition] = createSignal({ top: 0, left: 0 })
       setTheme = nextTheme
       setHiddenCharacters = nextHiddenCharacters
@@ -157,7 +169,7 @@ describe('createEditor', () => {
 
     setTheme({ backgroundColor: '#222222' })
     setHiddenCharacters('show')
-    setSelection({ anchor: 1, head: 3 })
+    setSelection({ affinity: 'before', anchor: 1, head: 3 })
     setScrollPosition({ top: 12, left: 4 })
     await flushEffects()
 
@@ -167,6 +179,7 @@ describe('createEditor', () => {
     )
     expect(setHiddenSpy).toHaveBeenCalledWith('show')
     expect(mounted.controller.snapshot()?.selections[0]).toMatchObject({
+      affinity: 'before',
       anchorOffset: 1,
       headOffset: 3,
     })

@@ -15,7 +15,7 @@ import {
   type EditorOpenDocumentOptions,
   type EditorOptions,
   type EditorScrollPosition,
-  type EditorSelectionRevealTarget,
+  type EditorSetSelectionOptions,
   type EditorSetTextOptions,
   type EditorState,
 } from '@singapor/core/editor'
@@ -80,7 +80,7 @@ export type ReactEditorCommands = {
   openDocument(document: EditorOpenDocumentOptions): void
   setText(text: string, options?: EditorSetTextOptions): void
   edit(editOrEdits: EditorEditInput, options?: EditorEditOptions): void
-  setSelection(anchor: number, head?: number, reveal?: EditorSelectionRevealTarget): void
+  setSelection(anchor: number, head?: number, options?: EditorSetSelectionOptions): void
   setScrollPosition(scrollPosition: EditorScrollPosition): void
   dispatchCommand(command: EditorCommandId, context?: EditorCommandContext): boolean
   openFind(): boolean
@@ -658,7 +658,7 @@ function createCommands(
     },
     setText: (text, options) => editor()?.setText(text, options),
     edit: (editOrEdits, options) => editor()?.edit(editOrEdits, options),
-    setSelection: (anchor, head, reveal) => editor()?.setSelection(anchor, head, reveal),
+    setSelection: (anchor, head, options) => editor()?.setSelection(anchor, head, options),
     setScrollPosition: (scrollPosition) => editor()?.setScrollPosition(scrollPosition),
     dispatchCommand: (command, context) => editor()?.dispatchCommand(command, context) ?? false,
     openFind: () => editor()?.openFind() ?? false,

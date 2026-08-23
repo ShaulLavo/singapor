@@ -162,7 +162,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
     }
 
     this.code = newCode
-    this.lines = [...this.lines.slice(0, start.line), ...retokenized, ...this.lines.slice(stableAt)]
+    this.lines = this.lines.slice(0, start.line).concat(retokenized, this.lines.slice(stableAt))
 
     return {
       fromLine: start.line,
@@ -263,11 +263,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
           tokenLinesEqual(tokenizedLine.tokens, previousLine.tokens) &&
           this.statesEqual(tokenizedLine.endState, previousLine.endState)
         ) {
-          const nextDocument = [
-            ...nextPrefix,
-            ...rebuiltMiddle,
-            ...previousLines.slice(previousIndex),
-          ]
+          const nextDocument = nextPrefix.concat(rebuiltMiddle, previousLines.slice(previousIndex))
 
           this.code = code
           this.lines = nextDocument

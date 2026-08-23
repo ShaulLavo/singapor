@@ -115,14 +115,20 @@ describe('useEditor', () => {
       document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
     })
 
-    act(() => mounted.controller.commands.setSelection(1, 4))
+    act(() =>
+      mounted.controller.commands.setSelection(2, 2, {
+        affinity: 'before',
+        reveal: false,
+      }),
+    )
 
     expect(mounted.controller.getUpdateKind()).toBe('selection')
     expect(mounted.controller.getSnapshot()?.selections[0]).toMatchObject({
-      anchorOffset: 1,
-      headOffset: 4,
-      startOffset: 1,
-      endOffset: 4,
+      affinity: 'before',
+      anchorOffset: 2,
+      headOffset: 2,
+      startOffset: 2,
+      endOffset: 2,
     })
 
     mounted.dispose()
@@ -432,7 +438,7 @@ describe('useEditor', () => {
       document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
       hiddenCharacters: 'show',
       scrollPosition: { top: 12, left: 4 },
-      selection: { anchor: 1, head: 3 },
+      selection: { affinity: 'before', anchor: 1, head: 3 },
       theme: { backgroundColor: '#222222' },
     })
 
@@ -442,6 +448,7 @@ describe('useEditor', () => {
     )
     expect(setHiddenSpy).toHaveBeenCalledWith('show')
     expect(mounted.controller.getSnapshot()?.selections[0]).toMatchObject({
+      affinity: 'before',
       anchorOffset: 1,
       headOffset: 3,
     })

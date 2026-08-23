@@ -975,7 +975,9 @@ describe('createTypeScriptLspPlugin', () => {
     })
     await flushPromises()
 
-    expect(context.setSelection).toHaveBeenCalledWith(6, 11, 'typescriptLsp.goToDefinition', 6)
+    expect(context.setSelection).toHaveBeenCalledWith(6, 11, 'typescriptLsp.goToDefinition', {
+      revealOffset: 6,
+    })
   })
 
   it('underlines jumpable symbols while hovering with a navigation modifier', async () => {
@@ -1280,7 +1282,7 @@ describe('createTypeScriptLspPlugin', () => {
     expect(applyEdits).toHaveBeenCalledWith(
       [{ from: 6, to: 9, text: 'value' }],
       'typescriptLsp.completion.accept',
-      { anchor: 11, head: 11 },
+      { affinity: 'after', anchor: 11, head: 11 },
     )
     expect(completionElement().hidden).toBe(true)
   })
@@ -1318,7 +1320,9 @@ describe('createTypeScriptLspPlugin', () => {
     })
     await flushPromises()
 
-    expect(context.setSelection).toHaveBeenCalledWith(0, 5, 'typescriptLsp.goToImplementation', 0)
+    expect(context.setSelection).toHaveBeenCalledWith(0, 5, 'typescriptLsp.goToImplementation', {
+      revealOffset: 0,
+    })
   })
 
   it('routes references commands and jumps to the next same-file reference', async () => {
@@ -1368,7 +1372,9 @@ describe('createTypeScriptLspPlugin', () => {
     })
     await flushPromises()
 
-    expect(context.setSelection).toHaveBeenCalledWith(29, 34, 'typescriptLsp.goToReferences', 29)
+    expect(context.setSelection).toHaveBeenCalledWith(29, 34, 'typescriptLsp.goToReferences', {
+      revealOffset: 29,
+    })
   })
 
   it('moves next and previous marker commands across TypeScript diagnostics', async () => {
@@ -1416,10 +1422,14 @@ describe('createTypeScriptLspPlugin', () => {
     })
 
     expect(command(commands, 'editor.action.marker.next')({})).toBe(true)
-    expect(context.setSelection).toHaveBeenCalledWith(22, 23, 'typescriptLsp.marker.next', 22)
+    expect(context.setSelection).toHaveBeenCalledWith(22, 23, 'typescriptLsp.marker.next', {
+      revealOffset: 22,
+    })
 
     expect(command(commands, 'editor.action.marker.prev')({})).toBe(true)
-    expect(context.setSelection).toHaveBeenCalledWith(2, 3, 'typescriptLsp.marker.previous', 2)
+    expect(context.setSelection).toHaveBeenCalledWith(2, 3, 'typescriptLsp.marker.previous', {
+      revealOffset: 2,
+    })
   })
 })
 

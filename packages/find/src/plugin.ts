@@ -307,8 +307,8 @@ function createFindHost(
     getSelections: () => findSelections(getSnapshot().selections),
     focusEditor: () => context.focusEditor(),
     announce: (message) => context.announce?.(message),
-    setSelection: (anchor, head, timingName, revealOffset) =>
-      context.setSelection(anchor, head, timingName, revealOffset),
+    setSelection: (anchor, head, timingName, options) =>
+      context.setSelection(anchor, head, timingName, options),
     setSelections: (selections, timingName, revealOffset) =>
       context.setSelections(selections, timingName, revealOffset),
     setRangeHighlight: (name, ranges, style) => {

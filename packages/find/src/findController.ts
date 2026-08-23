@@ -3,6 +3,7 @@ import {
   type DocumentSessionChange,
   type TextEdit,
 } from '@singapor/core/document'
+import type { EditorSetSelectionOptions } from '@singapor/core/editor'
 import type { EditorDisposable, EditorViewContributionUpdateKind } from '@singapor/core/extensions'
 import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
 import { EditorSecondaryViewScheduler } from '@singapor/core/secondary-views'
@@ -113,7 +114,12 @@ export type EditorFindHost = {
   getSelections(): readonly EditorFindResolvedSelection[]
   focusEditor(): void
   announce?(message: string): void
-  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    options?: EditorSetSelectionOptions,
+  ): void
   setSelections(
     selections: readonly EditorFindSelectionRange[],
     timingName: string,
@@ -648,7 +654,7 @@ export class EditorFindController {
     if (!match || !host) return false
 
     this.currentMatch = match
-    host.setSelection(match.start, match.end, 'input.findNavigate', match.end)
+    host.setSelection(match.start, match.end, 'input.findNavigate', { revealOffset: match.end })
     this.updateHighlights()
     this.updateWidget()
     return true

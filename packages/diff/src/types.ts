@@ -1,4 +1,5 @@
 import type { EditorSyntaxLanguageId, EditorSyntaxProvider } from '@singapor/core/syntax'
+import type { EditorHighlighterProvider } from '@singapor/core/extensions'
 
 export type DiffFileChangeType = 'change' | 'add' | 'delete' | 'rename' | 'rename-change'
 
@@ -86,6 +87,10 @@ export type DiffRenderRow = {
 }
 
 export type DiffSyntaxBackend =
+  | {
+      readonly kind: 'highlighter'
+      readonly provider?: EditorHighlighterProvider | null
+    }
   | {
       readonly kind: 'shiki'
       readonly shikiTheme?: string | (() => string)

@@ -192,6 +192,15 @@ describe('snippet insertion', () => {
     expect(selectionAffinity()).toBe('before')
   })
 
+  it('keeps affinity while rewriting a mirrored stop', () => {
+    insertSnippet('${1:name} = $1', 'before')
+
+    type('x')
+
+    expect(editor.materializeFullText()).toBe('x = x')
+    expect(selectionAffinity()).toBe('before')
+  })
+
   // Every stop after the one being filled in is still exactly where the snippet put it, so a
   // placeholder that was replaced whole — taking a nested one down with it — is something to step
   // over rather than the end of the session.

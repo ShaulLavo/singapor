@@ -98,7 +98,9 @@ export class DiagnosticsPresenter {
     if (!range) return false
 
     const timingName = `${this.options.markerTimingNamePrefix}.${direction}`
-    this.context.setSelection(range.start, range.end, timingName, range.start)
+    this.context.setSelection(range.start, range.end, timingName, {
+      revealOffset: range.start,
+    })
     this.context.focusEditor()
     return true
   }

@@ -4,9 +4,8 @@ Backlog of larger ideas we want but are deliberately not doing right now.
 
 > This is an unordered product and technical-debt backlog, not an execution
 > index. Cross-project order is authoritative in
-> [Platform's `PLAN.md`](../platform/PLAN.md). The only active standalone Editor
-> executable plan is [BiDi geometry Tier B](docs/plan-bidi-geometry.md); promote
-> any other item into a bounded plan before implementation.
+> [Platform's `PLAN.md`](../platform/PLAN.md). No standalone Editor executable
+> plan is active; promote an item into a bounded plan before implementation.
 
 Inspired by [Text Editor Data Structures](https://cdacamar.github.io/data%20structures/algorithms/benchmarking/text%20editors/c++/editor-data-structures/)
 (the fredbuf write-up, [repo](https://github.com/cdacamar/fredbuf)) — see also the discussion of
@@ -72,7 +71,7 @@ push-free freshness.
 
 Constraints learned up front:
 
-- **SAB never crosses a process boundary** (agent cluster only), so SAB cannot be *the*
+- **SAB never crosses a process boundary** (agent cluster only), so SAB cannot be _the_
   foundation — it's a transport tier.
 - **Tiers compose per channel, not per deployment.** The Platform app
   (`/Users/shaul/Desktop/D/Platform`) already mixes them in one editor instance: LSP is tier 0
@@ -117,7 +116,7 @@ Evidence from the June 2026 typing-latency hunt (1M-line / 48MB fixture, Chromiu
 
 - The tree itself is not the main-thread cost: full treap edit (`editor.view.applyEdit`)
   held at ~0.6ms/keystroke through every profile and never appeared as a hot leaf. Every
-  real win was O(document) work *around* the tree (line-break scans, snapshot lineStarts
+  real win was O(document) work _around_ the tree (line-break scans, snapshot lineStarts
   rebuilds, full-text materialization, message payloads). Step 1 below is therefore
   justified as the tier-2 prerequisite, not as a standalone perf win.
 - Message-passing priced: one ±250k-char tree-sitter refresh ships ~193k tokens + 34k
@@ -155,7 +154,7 @@ Stepping stones (each independently justified):
    (workers advertise oldest held root; recycle nodes unreachable from anything older).
 3. SAB arena + atomic root publish — tier-2-only storage backend swap at the end.
 4. **Worker-parallel find-all (the payoff consumer).** Fred-style: chunk the document by line
-   ranges, fan the *same immutable snapshot* out to N workers (tier 1: chunk mirrors kept in
+   ranges, fan the _same immutable snapshot_ out to N workers (tier 1: chunk mirrors kept in
    sync via the now-existing `DocumentEditChain`; tier 2: read the SAB root directly), each worker searches its
    chunks and streams matches back through a results queue so the UI renders matches + a
    progress bar incrementally; cancellation via a shared flag/epoch workers poll between
@@ -171,7 +170,7 @@ Stepping stones (each independently justified):
 
 The fredbuf trick, condensed: with append-only text buffers and a path-copying (persistent)
 piece tree, every edit already produces a brand-new root while old roots stay valid forever —
-so keeping *all* history is just not dropping old root pointers. fredbuf's undo entry is
+so keeping _all_ history is just not dropping old root pointers. fredbuf's undo entry is
 literally `{ tree root, edit offset }` (`fredbuf.h:21` in the local clone), i.e. "every edit is
 two pointers big"; Fred builds its branching history graph in the editor layer on top of the
 buffer's `commit_head()/head()/snap_to()` primitives, and undo/redo just swap which root is
@@ -240,7 +239,7 @@ on the main thread.
   the matcher).
 - Incremental re-search on edit: the edit chain (incremental document sync work) yields exact
   dirty ranges — rescan only affected spans plus a match-length margin, not the whole buffer.
-- UX bar from Fred: *every* match found and highlighted instantly as you type the query (not
+- UX bar from Fred: _every_ match found and highlighted instantly as you type the query (not
   first-match-then-enter-enter), with a live match count.
 
 Scope note: single-threaded and single-buffer only. Worker-parallel and cross-file find-all
@@ -300,7 +299,7 @@ the clamp.
 
 ## Cursor position navigation history (alt+left / alt+right)
 
-Not covered by edit history: `history.ts` stores selections per *edit*, so undo restores
+Not covered by edit history: `history.ts` stores selections per _edit_, so undo restores
 cursors at edit boundaries — but pure navigation (a click somewhere far, goto-line, find jump,
 go-to-definition) creates no entry. Fred keeps a per-buffer trail of cursor positions you can
 walk back/forward through; cheap to build, used constantly.
@@ -330,7 +329,7 @@ since highlight tokens already exist.
 
 ## Dev instrumentation panel (ship the debug tooling)
 
-Fred ships its debug surface *to users*: a fuzzy-searchable config/debug-flag explorer, live
+Fred ships its debug surface _to users_: a fuzzy-searchable config/debug-flag explorer, live
 per-thread search timings, an FPS overlay, and an arena tracker showing each subsystem's peak
 memory with click-to-jump-to-the-allocating-line. The habit to copy: instrumentation is a
 first-class, always-one-keystroke-away widget, not scattered logs. We already do some of this —
@@ -367,7 +366,7 @@ backend; `packages/editor/src/syntax`); the inspector is mostly UI:
 ## Standing stress fixtures + interactive benchmarks
 
 Fred's habit: keep absurd files around (a 636k-line / ~20MB C file, a Unicode stress file) and
-routinely jump to line 500k, search, and edit — in debug builds — so regressions are *felt*
+routinely jump to line 500k, search, and edit — in debug builds — so regressions are _felt_
 immediately. We already work this way ad hoc; make it repeatable:
 
 - `scripts/` generator or fetcher for fixtures: huge real-code file (500k+ lines), a
@@ -392,7 +391,7 @@ fuzzy-list widget extracted here. Recorded here so it travels with the rest of t
 ## Plugin system: study Fred's runtime-compiled plugin model
 
 Background (self-contained, since Fred is closed-source): Fred is the editor built by the
-fredbuf author. A Fred plugin is a single C file that the *running editor* compiles with an
+fredbuf author. A Fred plugin is a single C file that the _running editor_ compiles with an
 embedded Tiny C Compiler (TCC) in ~1ms into an in-memory executable code page — no DLLs, no
 restart; you recompile and rebind from the command palette while the target buffer stays open.
 Plugins get the full editor C API, deliberately unsandboxed (local trusted code). The API
@@ -426,7 +425,7 @@ The TODO is a design doc, not code:
 
 ## Defer startup work off the first-paint path
 
-Fred starts about as fast as Notepad *in a debug build* by pushing every initialization it can
+Fred starts about as fast as Notepad _in a debug build_ by pushing every initialization it can
 onto background threads (a trick credited to File Pilot) — only window/GL setup stays on the
 critical path. Our translation: first paint needs only plain text + layout.
 
@@ -446,7 +445,7 @@ clone) that powers the in-editor command lister and the docs site. The author ca
 metadata systems the thing that wore him down — he built two or three of them — and the
 committed generated file still contains `C:\4ed\...` absolute paths from his machine, a fossil
 of exactly that maintenance pain. The rule worth keeping: a command's name, documentation, and
-default bindings live in *one* declaration next to its code; everything else is derived.
+default bindings live in _one_ declaration next to its code; everything else is derived.
 
 Our gap: `packages/editor/src/editor/commands.ts` is a bare string-union `EditorCommandId` — no
 titles, descriptions, or categories anywhere; handlers are wired separately (command router),
@@ -466,14 +465,14 @@ through the same declaration shape (see the "Plugin system" TODO).
 `set_custom_hook` in the local clone's `custom/` layer): layout, per-view render, whole-screen
 render, the per-view input handler itself, tick, scroll-animation delta rule, begin/end buffer,
 save, edit-range, new-file, buffer-name resolver, view-change. Two standouts:
-`HookID_ViewEventHandler` — the *entire per-view input loop* is replaceable customization code,
+`HookID_ViewEventHandler` — the _entire per-view input loop_ is replaceable customization code,
 which is what makes deep emulation (vim) possible at all — and `HookID_DeltaRule` — the
 scroll/cursor animation curve is a tiny pluggable strategy function (`fixed_time_cubic_delta`).
 A small, explicitly named, complete hook set is the backbone of a customization layer.
 
 The TODO (feeds the "Plugin system" design doc): inventory our actual extension points — plugin
 surface (`packages/editor/src/plugins.ts`, `pluginLifecycle`), command router, display
-projection registry, block providers, syntax provider sessions, save/load paths — name each
+projection registry, syntax provider sessions, save/load paths — name each
 one, and run a completeness check against the 4coder list: layout/display projection, render
 decoration, input/keymap pipeline, tick/frame, scroll animation curve, buffer lifecycle
 (open/close/save/edit-range), view lifecycle. Decide per hook: public plugin API vs
@@ -485,13 +484,13 @@ handler a plugin can decorate or replace) rather than hardcoded.
 4coder lesson. Substrate assumptions bake in silently: its customization layer was shaped by
 emacs-style habits, and vim-style emulation turned out much harder to build on it than
 emacs-style behavior. Fred avoided this by making vim motions + multicursor first-class from
-day one. Cheapest insurance: build a modal layer *early*, while assumptions are still cheap to
+day one. Cheapest insurance: build a modal layer _early_, while assumptions are still cheap to
 fix. The point is not shipping vim — a modal layer exercises everything a non-modal one never
 touches:
 
 - Mode state in the input pipeline (`packages/editor/src/editor/input.ts`, `inputState.ts`,
   `keymap.ts`) — can a binding set switch keymaps per mode?
-- Key *sequences* and operator-pending states (`d` → `i` → `w`), counts, and commands
+- Key _sequences_ and operator-pending states (`d` → `i` → `w`), counts, and commands
   parameterized by them — does our command shape allow arguments beyond "function over editor
   context", and can commands compose?
 - Per-mode cursor rendering (block vs bar) and selection semantics.
@@ -509,24 +508,24 @@ Display-only, cheap, surprisingly pleasant.
 
 Ours would be an opt-in display option rendering empty (or whitespace-only) lines at a fraction
 of the line height. Reality check first: text rows go through `fixedRowVirtualizer`
-(`packages/editor/src/virtualization/`), which implies uniform text-row heights — block rows
-are the existing variable-height path. So step 1 is feasibility: can the virtualizer take a
-per-row height exception cheaply, or is the compact look better faked (same logical row height,
-squashed visual line-box)? Then: point mapping through the display-transform stack (wrap/blocks
-already shift vertical mapping), cursor rendering on a compact line, and whether the minimap
-mirrors the compaction. Doubles as a proof that the display pipeline can handle per-row height
-variation — the same muscle future layout variants will need.
+(`packages/editor/src/virtualization/`), which defaults text rows to uniform heights. The retained
+row-height index has no live variable-height producer. So step 1 is feasibility: can the virtualizer
+take a per-row height exception cheaply, or is the compact look better faked (same logical row
+height, squashed visual line-box)? Then: point mapping through wrapping and the display-transform
+stack, cursor rendering on a compact line, and whether the minimap mirrors the compaction. Doubles
+as a proof that the display pipeline can handle per-row height variation — the same muscle future
+layout variants will need.
 
 ## Hot/cold data structure vocabulary
 
 Adopt Allen Webster's framing as project terminology (an ARCHITECTURE.md section; mostly
 writing, no code). **Cold** = serialized, position-independent encodings where the byte
 sequence alone carries the meaning — safe to copy, store, and hand across process boundaries.
-**Hot** = pointer-rich runtime encodings of the *same information*, tuned for fast
+**Hot** = pointer-rich runtime encodings of the _same information_, tuned for fast
 mutation/query, meaningless outside their process. Programs constantly translate between the
 two; being explicit about which side a structure lives on (and where the translations happen)
 sharpens design discussions — e.g. it cleanly explains why history persistence should serialize
-*transactions* (cold) and replay them into snapshots (hot) rather than dumping the tree.
+_transactions_ (cold) and replay them into snapshots (hot) rather than dumping the tree.
 
 The write-up: define the terms and inventory ours — cold: file text on disk, serialized
 session/workspace state, the planned history-persistence format (transactions + parent links),

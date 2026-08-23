@@ -69,7 +69,7 @@ import {
   rangeDecorationsWithProjectionStacking,
   sameEditorRangeDecorations,
 } from './rangeDecorations'
-import { selectionRevealOffset, type EditorSelectionRevealTarget } from './selectionReveal'
+import { selectionRevealOffset, type EditorSetSelectionOptions } from './selectionReveal'
 import { syncTextEdit } from './textEdits'
 import type {
   EditorDocumentMode,
@@ -1001,10 +1001,9 @@ export class Editor {
     this.view.focusInput()
   }
 
-  setSelection(anchor: number, head = anchor, reveal?: EditorSelectionRevealTarget): void {
+  setSelection(anchor: number, head = anchor, options?: EditorSetSelectionOptions): void {
     this.runInOperation(() => {
-      const revealOffset = selectionRevealOffset(reveal, head)
-      this.applyRequestedSelection(anchor, head, 'editor.setSelection', revealOffset)
+      this.applyRequestedSelection(anchor, head, 'editor.setSelection', options, true)
     })
   }
 
@@ -2273,8 +2272,8 @@ export class Editor {
       revealLine: (row) => this.view.scrollToRow(row),
       announce: (message) => this.announcer.status(message),
       focusEditor: () => this.focus(),
-      setSelection: (anchor, head, timingName, revealOffset) =>
-        this.applyRequestedSelection(anchor, head, timingName, revealOffset),
+      setSelection: (anchor, head, timingName, options) =>
+        this.applyRequestedSelection(anchor, head, timingName, options),
       setSelections: (selections, timingName, revealOffset) =>
         this.applyRequestedSelections(selections, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
@@ -2384,8 +2383,8 @@ export class Editor {
       getTextSnapshot: () => this.session?.getTextSnapshot() ?? null,
       getSelections: () => this.inputSelection.resolveViewSelections(),
       focusEditor: () => this.focus(),
-      setSelection: (anchor, head, timingName, revealOffset) =>
-        this.applyRequestedSelection(anchor, head, timingName, revealOffset),
+      setSelection: (anchor, head, timingName, options) =>
+        this.applyRequestedSelection(anchor, head, timingName, options),
       setSelections: (selections, timingName, revealOffset) =>
         this.applyRequestedSelections(selections, timingName, revealOffset),
       applyEdits: (edits, timingName, selection) =>
@@ -3174,10 +3173,14 @@ export class Editor {
     anchor: number,
     head: number,
     timingName: string,
-    revealOffset?: number,
+    options?: EditorSetSelectionOptions,
+    revealByDefault = false,
   ): void {
     this.revealFoldedOffset(head)
-    this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset)
+    this.inputSelection.applyFindSelection(anchor, head, timingName, {
+      affinity: options?.affinity,
+      revealOffset: selectionRevealOffset(options, head, revealByDefault),
+    })
   }
 
   /** The primary selection is the one reveal follows, so it is the one that has to end up on screen. */
@@ -3248,7 +3251,7 @@ export class Editor {
       'editor.fold.manual',
       carets[0],
     )
-    this.manualFolds = [...this.manualFolds, ...created]
+    this.manualFolds = this.manualFolds.concat(created)
     this.syncFoldStateFromProjections()
     for (const fold of created) this.foldState.fold(fold)
 
@@ -3442,12 +3445,7 @@ function projectRowDecorationMapThroughLineEdit(
 ): Map<number, VirtualizedTextRowDecoration> {
   const projected = new Map<number, VirtualizedTextRowDecoration>()
   for (const [row, decoration] of source) {
-    if (row < startRow) {
-      projected.set(row, decoration)
-      continue
-    }
-
-    if (row === startRow) {
+    if (row <= startRow) {
       projected.set(row, decoration)
       continue
     }

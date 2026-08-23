@@ -1,14 +1,15 @@
 # Progress
 
-Last reconciled: 2026-08-22 at Editor `42f07a7`
+Last reconciled: 2026-08-23
 
 ## Status
 
 The original storage, anchors, selection, Tree-sitter, display-transform, and
 browser-virtualization phases are implemented. The later Monaco/CodeMirror
 parity programme completed M1-M16 and both review passes; its executable plan
-was deleted under repository policy. The old instruction to start Phase 4
-Tree-sitter work was stale and has been removed.
+was deleted under repository policy. BiDi geometry Tiers A and B are also
+complete. The old instruction to start Phase 4 Tree-sitter work was stale and
+has been removed.
 
 Cross-project execution order is authoritative in
 [Platform's `PLAN.md`](../platform/PLAN.md). This file records Editor state; it
@@ -27,19 +28,21 @@ does not define another sequence.
   semantic tokens, word-part and line operations, column selection, cursor
   history, and clipboard behavior are live.
 - Editor documents support multiple views and explicit read-only editability.
-- BiDi geometry Tier A M1-M5 is complete and verified in
-  [`docs/plan-bidi-geometry.md`](docs/plan-bidi-geometry.md).
+- BiDi geometry Tiers A and B are complete: browser-derived run geometry,
+  affinity-aware caret placement and hit testing, visual character-step motion,
+  pixel-goal vertical movement, and RTL-safe selection paint are live. Permanent
+  behavior is documented in
+  [`docs/editing/selections-and-undo.md`](docs/editing/selections-and-undo.md) and
+  [`docs/display/browser-virtualization.md`](docs/display/browser-virtualization.md).
 - Broad block-surface APIs and temporary recovery bridges were deliberately
   removed. They are not compatibility targets.
 
 ## Active Executable Work
 
-1. Shared Platform/Editor LSP routing work in
-   [Platform plan 050](../platform/plans/050-multi-server-lsp.md). This changes
-   cross-project contracts and must be verified in both repositories in one
-   milestone.
-2. BiDi Tier B M6-M7: caret affinity and visual cursor motion. This can execute
-   independently of Platform and environment work.
+Shared Platform/Editor LSP routing work continues in the
+[Platform roadmap](../platform/PLAN.md). It changes cross-project contracts and
+must be verified in both repositories in one milestone. There is no active
+standalone Editor plan.
 
 No other item in [`TODO.md`](TODO.md) is executable merely because it appears in
 the backlog.

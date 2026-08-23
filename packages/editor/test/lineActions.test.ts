@@ -9,18 +9,25 @@ import {
 } from '../src/editor/editActions'
 import { defaultEditorKeyBindings, editorCommandPackForCommand } from '../src/editor/keymap'
 import { registerEditorLanguageConfiguration } from '../src/editor/languageConfiguration'
-import type { ResolvedSelection } from '../src/selections'
+import { SelectionGoal, type ResolvedSelection, type SelectionAffinity } from '../src/selections'
 import type { EditorSyntaxInjection } from '../src/syntax/session'
 
 /** A resolved selection over [start, end); collapsed when they match. */
-function selection(start: number, end = start): ResolvedSelection {
+function selection(
+  start: number,
+  end = start,
+  options: { readonly affinity?: SelectionAffinity; readonly reversed?: boolean } = {},
+): ResolvedSelection {
+  const reversed = options.reversed ?? false
   return {
-    anchorOffset: start,
+    affinity: options.affinity ?? 'after',
+    anchorOffset: reversed ? end : start,
     collapsed: start === end,
     endOffset: end,
-    headOffset: end,
+    goal: SelectionGoal.none(),
+    headOffset: reversed ? start : end,
     id: `sel:${start}:${end}`,
-    reversed: false,
+    reversed,
     startOffset: start,
   } as ResolvedSelection
 }
@@ -223,6 +230,53 @@ describe('line comments', () => {
     } finally {
       registration.dispose()
     }
+  })
+})
+
+describe('selection affinity after line actions', () => {
+  const preservedCases: readonly {
+    readonly command: EditorEditActionCommandId
+    readonly text: string
+    readonly start?: number
+    readonly end?: number
+  }[] = [
+    { command: 'editor.action.commentLine', text: 'alpha' },
+    { command: 'editor.action.indentLines', text: 'alpha' },
+    { command: 'editor.action.outdentLines', text: '\talpha', start: 1, end: 5 },
+    { command: 'editor.action.blockComment', text: 'alpha' },
+    { command: 'editor.action.copyLinesUpAction', text: 'zero\nalpha\nlast', start: 5, end: 10 },
+    { command: 'editor.action.copyLinesDownAction', text: 'zero\nalpha\nlast', start: 5, end: 10 },
+    { command: 'editor.action.moveLinesUpAction', text: 'zero\nalpha\nlast', start: 5, end: 10 },
+    { command: 'editor.action.moveLinesDownAction', text: 'zero\nalpha\nlast', start: 5, end: 10 },
+  ]
+
+  for (const testCase of preservedCases) {
+    it(`preserves a reversed endpoint through ${testCase.command}`, () => {
+      const start = testCase.start ?? 1
+      const end = testCase.end ?? 4
+      const source = selection(start, end, { affinity: 'before', reversed: true })
+      const action = editActionForCommand(testCase.command, testCase.text, [source])
+      const rebuilt = action.selections?.[0]
+
+      expect(rebuilt).toMatchObject({ affinity: 'before' })
+      expect(rebuilt?.anchor).toBeGreaterThan(rebuilt?.head ?? Number.POSITIVE_INFINITY)
+    })
+  }
+
+  it('assigns canonical affinity to a newly inserted-line caret', () => {
+    const source = selection(1, 1, { affinity: 'before' })
+
+    const action = editActionForCommand('editor.action.insertLineAfter', 'alpha', [source])
+
+    expect(action.selections).toEqual([{ anchor: 6, affinity: 'after', head: 6 }])
+  })
+
+  it('preserves a collapsed caret through block uncommenting', () => {
+    const source = selection(4, 4, { affinity: 'before' })
+
+    const action = editActionForCommand('editor.action.blockComment', '/* alpha */', [source])
+
+    expect(action.selections).toEqual([{ anchor: 1, affinity: 'before', head: 1 }])
   })
 })
 

@@ -191,7 +191,7 @@ const insertTextAt = (
   const insertionChanges = ordered.pieces.map((piece) => ({ add: piece }))
   const reverseIndexRoot = applyReverseIndexChanges(
     snapshot.reverseIndexRoot,
-    [...context.changes, ...insertionChanges],
+    context.changes.concat(insertionChanges),
     appended.buffers.prioritySeed,
   )
 

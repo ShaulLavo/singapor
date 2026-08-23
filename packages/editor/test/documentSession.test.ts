@@ -57,6 +57,28 @@ function resolvedAffinity(session: DocumentSession): 'before' | 'after' {
   return resolveSelection(session.getSnapshot(), selection).affinity
 }
 
+function resolvedSelectionState(session: DocumentSession) {
+  const set = session.getSelections()
+  return {
+    lastAddedId: set.selections[set.lastAddedIndex ?? 0]?.id,
+    selections: set.selections.map((selection) => {
+      const resolved = resolveSelection(session.getSnapshot(), selection)
+      return { affinity: resolved.affinity, id: resolved.id, offset: resolved.headOffset }
+    }),
+  }
+}
+
+function setAffinityCarets(
+  session: DocumentSession,
+  affinities: readonly ('before' | 'after')[],
+): void {
+  session.setSelections(affinities.map((affinity) => ({ affinity, anchor: 2 })))
+}
+
+function selectionIds(state: ReturnType<typeof resolvedSelectionState>): ReadonlySet<string> {
+  return new Set(state.selections.map((selection) => selection.id))
+}
+
 function resolvedSelectionOffsets(
   session: DocumentSession,
 ): readonly { start: number; end: number }[] {
@@ -202,6 +224,38 @@ describe('DocumentSession', () => {
 
     expect(session.materializeFullText()).toBe('ab')
     expect(resolvedOffsets(session)).toEqual({ start: 1, end: 1 })
+  })
+
+  it('restores affinity-distinct backspace carets through undo and redo in either order', () => {
+    const affinityOrders = [
+      ['before', 'after'],
+      ['after', 'before'],
+    ] as const
+
+    for (const affinities of affinityOrders) {
+      const session = createDocumentSession('abc')
+      setAffinityCarets(session, affinities)
+      const before = resolvedSelectionState(session)
+
+      session.backspace()
+      const after = resolvedSelectionState(session)
+
+      expect(session.materializeFullText()).toBe('ac')
+      expect(after.selections).toMatchObject([
+        { affinity: 'before', offset: 1 },
+        { affinity: 'after', offset: 1 },
+      ])
+      expect(selectionIds(after)).toEqual(selectionIds(before))
+      expect(after.lastAddedId).toBe(before.lastAddedId)
+
+      session.undo()
+      expect(session.materializeFullText()).toBe('abc')
+      expect(resolvedSelectionState(session)).toEqual(before)
+
+      session.redo()
+      expect(session.materializeFullText()).toBe('ac')
+      expect(resolvedSelectionState(session)).toEqual(after)
+    }
   })
 
   it('replaces selected ranges and collapses after inserted text', () => {

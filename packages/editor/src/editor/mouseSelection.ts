@@ -1,4 +1,5 @@
 import type { TextOffsetRange } from '../textRanges'
+import type { SelectionAffinity } from '../selections'
 import { clamp } from '../style-utils'
 import type { TextEdit } from '../tokens'
 import type {
@@ -53,11 +54,13 @@ export function mouseSelectionEnds(
  */
 export type MouseTextMoveDrag = {
   readonly source: TextOffsetRange
-  readonly pressOffset: number
+  readonly sourceAffinity: SelectionAffinity
+  readonly sourceReversed: boolean
+  readonly press: VirtualizedTextHitPosition
   // Null whenever the pointer is back over the run being carried, where there is nowhere to put it:
   // a release there has to leave the document alone rather than fall back on some earlier spot the
   // user has since moved away from.
-  dropOffset: number | null
+  drop: VirtualizedTextHitPosition | null
   moved: boolean
 }
 

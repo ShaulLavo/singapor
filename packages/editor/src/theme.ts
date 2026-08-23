@@ -436,7 +436,7 @@ function editorColorDefaultRules(registered: RegisteredEditorColor): string {
     )
   }
 
-  return [...fallbackRules, ...preferenceRules, ...attributeRules].join('\n')
+  return fallbackRules.concat(preferenceRules, attributeRules).join('\n')
 }
 
 // The shipped palette is dark, so dark is what an editor nobody has configured has to resolve to:

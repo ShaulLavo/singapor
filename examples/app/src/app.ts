@@ -80,13 +80,12 @@ export function mountApp(): void {
     createMinimapPlugin(),
     typeScriptLsp,
   ]
-  const editPlugins: readonly EditorPlugin[] = [
-    ...languagePlugins,
+  const editPlugins: readonly EditorPlugin[] = languagePlugins.concat(
     lineGutter,
     liveDiff,
-    ...sharedPlugins,
-  ]
-  const diffPlugins: readonly EditorPlugin[] = [...languagePlugins, liveDiff, ...sharedPlugins]
+    sharedPlugins,
+  )
+  const diffPlugins: readonly EditorPlugin[] = languagePlugins.concat(liveDiff, sharedPlugins)
   const editor = new Editor(editorPane.editorHost, {
     cursorLineHighlight: {
       gutterNumber: true,

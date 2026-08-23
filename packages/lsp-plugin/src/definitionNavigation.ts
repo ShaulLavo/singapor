@@ -1,4 +1,5 @@
 import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
+import type { EditorSetSelectionOptions } from '@singapor/core/editor'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { documentUriToFileName } from './paths'
@@ -52,7 +53,12 @@ export type DefinitionResult = {
  */
 export type NavigationEditor = {
   readonly text: string
-  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    options?: EditorSetSelectionOptions,
+  ): void
   focusEditor(): void
 }
 
@@ -133,7 +139,7 @@ export function navigateToTarget(
 ): void {
   const start = lspPositionToOffset(editor.text, target.range.start)
   const end = lspPositionToOffset(editor.text, target.range.end)
-  editor.setSelection(start, end, timingName, start)
+  editor.setSelection(start, end, timingName, { revealOffset: start })
   editor.focusEditor()
 }
 

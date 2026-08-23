@@ -1045,12 +1045,8 @@ function syncTokenGroupsToStyles(
   view: VirtualizedTextViewInternal,
   styles: ReadonlyMap<string, EditorTokenStyle>,
 ): void {
-  if (view.model.textLength === 0) {
-    clearTokenHighlights(view)
-    return
-  }
-
-  if (styles.size === 0) {
+  const requiresTokenHighlightClear = [view.model.textLength === 0, styles.size === 0].some(Boolean)
+  if (requiresTokenHighlightClear) {
     clearTokenHighlights(view)
     return
   }

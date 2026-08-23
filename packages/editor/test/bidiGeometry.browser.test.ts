@@ -21,6 +21,7 @@ import {
   boundaryPositionXs,
   domBoundaryForOffset,
   getRowGeometrySweepCount,
+  isBidiMeasurementRefusalRow,
   measureRowContentWidth,
   offsetToX,
   resetRowGeometrySweepCount,
@@ -763,6 +764,76 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     }
   })
 
+  it('bounds Range reads for a cold vertical move into a BiDi row', () => {
+    const lines = [BIDI_CORPUS.latin, 'aא'.repeat(80)]
+    const mounted = mountBidiEditor(
+      lines.join('\n'),
+      { offset: 4, affinity: 'after' },
+      { rtlMoveVisually: true },
+      { height: 48 },
+    )
+    try {
+      const rows = mounted.view.getState().mountedRows
+      const source = rows[0]!
+      const target = rows[1]!
+      const goalX =
+        primaryCaretLeft(mounted.container) - source.element.getBoundingClientRect().left
+      expect(target.geometryCache).toBeNull()
+      resetRowGeometrySweepCount()
+      const { moved, reads } = countEditorCommandRangeReads(mounted, 'cursorDown')
+
+      expect(moved).toBe(true)
+      expect(reads).toBeGreaterThan(0)
+      expect(reads).toBeLessThanOrEqual(24)
+      expect(getRowGeometrySweepCount()).toBe(0)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        goal: { kind: 'horizontal' },
+        headOffset: target.startOffset + 4,
+      })
+      assertVerticalCaretAtBrowserX(mounted, target, goalX)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('retires equal-length inline projection width and refusal caches', () => {
+    const text = 'x'
+    const mounted = mountStandaloneView(text)
+    const snapshot = createPieceTableSnapshot(text)
+    const measurable = 'א'.repeat(60)
+    const wider = `\t${'א'.repeat(59)}`
+    const oversized = `א${'ְ'.repeat(59)}`
+    const project = (replacement: string) =>
+      createInlineMap(snapshot, [
+        { id: 'equal-length-projection', startIndex: 0, endIndex: 1, text: replacement },
+      ])
+
+    try {
+      mounted.view.setInlineMap(project(measurable))
+      let row = mounted.view.getState().mountedRows[0]!
+      expect(isBidiMeasurementRefusalRow(mounted.internal, row)).toBe(false)
+      const measuredWidth = measureRowContentWidth(mounted.internal, row)
+
+      mounted.view.setInlineMap(project(wider))
+      row = mounted.view.getState().mountedRows[0]!
+      expect(row.text).toHaveLength(measurable.length)
+      expect(measureRowContentWidth(mounted.internal, row)).toBeGreaterThan(measuredWidth)
+
+      mounted.view.setInlineMap(project(oversized))
+      row = mounted.view.getState().mountedRows[0]!
+      expect(row.text).toHaveLength(measurable.length)
+      expect(row.element.querySelector('[data-editor-bidi-measurement-refusal]')).not.toBeNull()
+      expect(isBidiMeasurementRefusalRow(mounted.internal, row)).toBe(true)
+
+      mounted.view.setInlineMap(project(measurable))
+      row = mounted.view.getState().mountedRows[0]!
+      expect(row.element.querySelector('[data-editor-bidi-measurement-refusal]')).toBeNull()
+      expect(isBidiMeasurementRefusalRow(mounted.internal, row)).toBe(false)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
   it('uses a deterministic goal estimate for refused geometry, then recovers the pixel x', () => {
     const refusedText = 'א'.repeat(BIDI_LINE_MEASUREMENT_CEILING + 1)
     const lines = [BIDI_CORPUS.latin, refusedText, BIDI_CORPUS.latin]
@@ -963,13 +1034,13 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
 
   it('retains Tier A logical motion when the option is false and keeps Home and End logical', () => {
     const logical = mountBidiEditor(
-      BIDI_CORPUS.nested,
-      { offset: 0, affinity: 'after' },
+      BIDI_CORPUS.mixed,
+      { offset: 7, affinity: 'after' },
       { rtlMoveVisually: false },
     )
     try {
       expect(logical.editor.dispatchCommand('cursorRight')).toBe(true)
-      expect(resolvedPrimary(logical.session).headOffset).toBe(1)
+      assertMixedBoundaryCaret(logical, 'before')
     } finally {
       logical.dispose()
     }
@@ -992,6 +1063,38 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     }
   })
 
+  it('round-trips public setSelection affinity at an ambiguous BiDi boundary', () => {
+    const mounted = mountBidiEditor(BIDI_CORPUS.mixed)
+    try {
+      mounted.editor.setSelection(8, 8, { affinity: 'before', reveal: false })
+      assertMixedBoundaryCaret(mounted, 'before')
+
+      mounted.editor.setSelection(8, 8, { affinity: 'after', reveal: false })
+      assertMixedBoundaryCaret(mounted, 'after')
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('collapses a nonempty selection logically onto the adjacent side of a BiDi boundary', () => {
+    const mounted = mountBidiEditor(
+      BIDI_CORPUS.mixed,
+      { offset: 10, affinity: 'after' },
+      { rtlMoveVisually: true },
+    )
+    try {
+      mounted.session.setSelection(0, 8, { affinity: 'after' })
+      expect(mounted.editor.dispatchCommand('cursorRight')).toBe(true)
+      assertMixedBoundaryCaret(mounted, 'before')
+
+      mounted.session.setSelection(8, 12, { affinity: 'before' })
+      expect(mounted.editor.dispatchCommand('cursorLeft')).toBe(true)
+      assertMixedBoundaryCaret(mounted, 'after')
+    } finally {
+      mounted.dispose()
+    }
+  })
+
   it('keeps word cursor and selection motion in logical document order', () => {
     const mounted = mountBidiEditor(
       BIDI_CORPUS.mixed,
@@ -1000,17 +1103,12 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     )
     try {
       const row = mounted.view.getState().mountedRows[0]!
-
-      expect(mounted.editor.dispatchCommand('cursorWordLeft')).toBe(true)
-      expect(resolvedPrimary(mounted.session)).toMatchObject({ collapsed: true, headOffset: 8 })
-
-      mounted.session.setSelection(10, 10, { affinity: 'after' })
-      expect(mounted.editor.dispatchCommand('cursorWordRight')).toBe(true)
-      expect(resolvedPrimary(mounted.session)).toMatchObject({ collapsed: true, headOffset: 13 })
+      assertLogicalWordCursorMoves(mounted)
 
       mounted.session.setSelection(10, 10, { affinity: 'after' })
       expect(mounted.editor.dispatchCommand('selectWordLeft')).toBe(true)
       expect(resolvedPrimary(mounted.session)).toMatchObject({
+        affinity: 'after',
         anchorOffset: 10,
         headOffset: 8,
       })
@@ -1019,6 +1117,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       mounted.session.setSelection(10, 10, { affinity: 'after' })
       expect(mounted.editor.dispatchCommand('selectWordRight')).toBe(true)
       expect(resolvedPrimary(mounted.session)).toMatchObject({
+        affinity: 'before',
         anchorOffset: 10,
         headOffset: 13,
       })
@@ -1053,7 +1152,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       expect(mounted.editor.dispatchCommand('cursorRight')).toBe(true)
       expect(resolvedPrimary(mounted.session)).toMatchObject({
         headOffset: 2,
-        affinity: 'after',
+        affinity: 'before',
       })
     } finally {
       mounted.dispose()
@@ -1095,7 +1194,7 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
         {
           anchorOffset: farStart + 2,
           headOffset: farStart + 2,
-          affinity: 'after',
+          affinity: 'before',
           collapsed: true,
         },
       ])
@@ -1240,6 +1339,27 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
       assertBidiRunsAgainstBrowser(supplementary.controlRow, runs!)
     } finally {
       supplementary.dispose()
+    }
+  })
+
+  it('keeps Unicode 17 supplementary RTL boundaries aligned with the browser', () => {
+    const text = `a${String.fromCodePoint(0x10d50)}b`
+    const mounted = mountStandaloneView(text)
+    try {
+      const runs = bidiRunsForRow(mounted.internal, mounted.row)
+      expect(localBidiRuns(mounted.row, runs)).toEqual([
+        { start: 0, end: 1, direction: 'ltr' },
+        { start: 1, end: 3, direction: 'rtl' },
+        { start: 3, end: 4, direction: 'ltr' },
+      ])
+      assertBidiRunsAgainstBrowser(mounted.row, runs!)
+
+      const boundary = sortedCollapsedCaretXs(mounted.row, 1)
+      expect(boundary).toHaveLength(2)
+      assertCaretPositionOrder(mounted, 'before', boundary, [0, 1])
+      assertCaretPositionOrder(mounted, 'after', boundary, [1, 0])
+    } finally {
+      mounted.dispose()
     }
   })
 
@@ -1706,6 +1826,187 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     }
   })
 
+  it('keeps a completed ambiguous drag anchor after a projection revision', () => {
+    const mounted = mountBidiEditor(BIDI_CORPUS.mixed)
+    try {
+      const startRect = glyphRectOracle(mounted.row)[8]!.rects[0]!
+      const press = rowClientPoint(mounted.row, startRect.left + startRect.width * 0.75)
+      const position = mounted.view.textPositionFromPoint(press.x, press.y)
+      expect(position).toMatchObject({ affinity: 'after', offset: 12 })
+      const measuredAnchor = mounted.view.createBidiSelectionAnchor(position!)
+      expect(measuredAnchor).toMatchObject({ insideOffset: 8, rawOffset: 12 })
+
+      const inside = boundaryHitPoint(mounted, 9, 'after')
+      const down = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: press.x,
+        clientY: press.y,
+        detail: 1,
+      })
+      mounted.view.scrollElement.dispatchEvent(down)
+      dispatchDragMouse('mousemove', inside)
+      dispatchDragMouse('mouseup', inside)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        anchorOffset: 8,
+        headOffset: 9,
+      })
+
+      const internal = Reflect.get(mounted.view, 'view') as BidiGeometryFixture['internal']
+      const revision = internal.displayProjectionRevision
+      mounted.view.setInlineMap(
+        createInlineMap(createPieceTableSnapshot(BIDI_CORPUS.mixed), [
+          { id: 'same-text', startIndex: 0, endIndex: 1, text: 'l' },
+        ]),
+      )
+      expect(internal.displayProjectionRevision).toBeGreaterThan(revision)
+
+      const extend = boundaryHitPoint(mounted, 0, 'after')
+      const shiftDown = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: extend.x,
+        clientY: extend.y,
+        detail: 1,
+        shiftKey: true,
+      })
+      mounted.view.scrollElement.dispatchEvent(shiftDown)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        anchorOffset: 8,
+        headOffset: 0,
+      })
+      dispatchDragMouse('mouseup', extend)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('invalidates an RTL drag anchor when its press reveals inline source', () => {
+    const text = 'let x = **שלום** world'
+    const mounted = mountBidiEditor(text)
+    try {
+      mounted.view.setInlineMap(
+        createInlineMap(createPieceTableSnapshot(text), [
+          { id: 'open', startIndex: 8, endIndex: 10, text: '', groupId: 'strong' },
+          { id: 'close', startIndex: 14, endIndex: 16, text: '', groupId: 'strong' },
+        ]),
+      )
+      const hiddenRow = mounted.view.getState().mountedRows[0]!
+      expect(hiddenRow.text).toBe(BIDI_CORPUS.mixed)
+      const press = sourceBoundaryHitPoint(mounted, hiddenRow, 14, 'after')
+      const pressedPosition = mounted.view.textPositionFromPoint(press.x, press.y)
+      expect(pressedPosition).toMatchObject({ affinity: 'after', offset: 14 })
+      const measuredAnchor = mounted.view.createBidiSelectionAnchor(pressedPosition!)
+      expect(measuredAnchor).not.toBeNull()
+      expect(measuredAnchor!.insideOffset).not.toBe(measuredAnchor!.rawOffset)
+
+      const down = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: press.x,
+        clientY: press.y,
+        detail: 1,
+      })
+      mounted.view.scrollElement.dispatchEvent(down)
+
+      const revealedRow = mounted.view.getState().mountedRows[0]!
+      expect(revealedRow.text).toBe(text)
+      const revealedInternal = Reflect.get(mounted.view, 'view') as BidiGeometryFixture['internal']
+      expect(revealedInternal.textRevision).toBe(measuredAnchor!.textRevision)
+      expect(revealedInternal.displayProjectionRevision).toBeGreaterThan(
+        measuredAnchor!.displayProjectionRevision,
+      )
+      const target = sourceBoundaryHitPoint(mounted, revealedRow, 12, 'after')
+      dispatchDragMouse('mousemove', target)
+
+      expect(down.defaultPrevented).toBe(true)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        affinity: 'after',
+        anchorOffset: 14,
+        headOffset: 12,
+        reversed: true,
+      })
+      assertPaintedSelectionRects(revealedRow, mergedRangeOracle(revealedRow, 12, 14))
+
+      dispatchDragMouse('mouseup', target)
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        affinity: 'after',
+        anchorOffset: 14,
+        headOffset: 12,
+        reversed: true,
+      })
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('collapses selected text onto the affinity returned by a real ambiguous hit', () => {
+    const mounted = mountBidiEditor(BIDI_CORPUS.mixed)
+    try {
+      mounted.session.setSelection(7, 13, { affinity: 'after' })
+      const point = boundaryHitPoint(mounted, 8, 'before')
+      const down = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: point.x,
+        clientY: point.y,
+        detail: 1,
+      })
+
+      mounted.view.scrollElement.dispatchEvent(down)
+      dispatchDragMouse('mouseup', point)
+
+      expect(down.defaultPrevented).toBe(true)
+      assertMixedBoundaryCaret(mounted, 'before')
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('preserves selected-text affinity through a real move and paints its new range', () => {
+    const mounted = mountBidiEditor(BIDI_CORPUS.mixed)
+    try {
+      mounted.session.setSelection(8, 12, { affinity: 'before' })
+      const press = boundaryHitPoint(mounted, 10, 'after')
+      const drop = boundaryHitPoint(mounted, 0, 'after')
+      const down = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: press.x,
+        clientY: press.y,
+        detail: 1,
+      })
+
+      mounted.view.scrollElement.dispatchEvent(down)
+      dispatchDragMouse('mousemove', drop)
+      dispatchDragMouse('mouseup', drop)
+
+      expect(down.defaultPrevented).toBe(true)
+      expect(mounted.session.materializeFullText()).toBe('שלוםlet x =  world')
+      expect(resolvedPrimary(mounted.session)).toMatchObject({
+        affinity: 'before',
+        anchorOffset: 0,
+        headOffset: 4,
+        reversed: false,
+      })
+      const row = mounted.view.getState().mountedRows[0]!
+      assertPaintedSelectionRects(row, mergedRangeOracle(row, 0, 4))
+      assertBoundaryCaret(mounted, row, 4, 'before')
+    } finally {
+      mounted.dispose()
+    }
+  })
+
   it('distinguishes embedded RTL and nested LTR drag intervals', () => {
     const mixedRow = fixture!.rows.mixed
     const nestedRow = fixture!.rows.nested
@@ -1792,6 +2093,56 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
 
   it('uses measured geometry for both visual edges when caret APIs are unavailable', () => {
     withCaretHitTestingDisabled(() => assertRtlEdgeClicks(fixture!, 'pureHebrew'))
+  })
+
+  it('maps disabled-caret hit testing through an RTL inline insertion', () => {
+    const text = 'אבגדהוז'
+    const mounted = mountStandaloneView(text)
+    try {
+      mounted.view.setInlineMap(
+        createInlineMap(createPieceTableSnapshot(text), [
+          {
+            id: 'rtl-insertion',
+            startIndex: 3,
+            endIndex: 3,
+            text: 'רמז',
+            insertion: true,
+          },
+        ]),
+      )
+      const row = mounted.view.getState().mountedRows[0]!
+      expect(row.text).toBe('אבגרמזדהוז')
+      const points = [renderedGlyphPoint(row, 4, 0.75), renderedGlyphPoint(row, 9, 0.75)]
+      const expected = nativeTextOffsets(mounted.view, points)
+      expect(expected).toEqual([3, 6])
+
+      expect(textOffsetsWithCaretHitTestingDisabled(mounted.view, points)).toEqual(expected)
+    } finally {
+      mounted.dispose()
+    }
+  })
+
+  it('clamps disabled-caret RTL replacement hits to the source span edges', () => {
+    const text = 'אבגדהוזחט'
+    const mounted = mountStandaloneView(text)
+    try {
+      mounted.view.setInlineMap(
+        createInlineMap(createPieceTableSnapshot(text), [
+          { id: 'rtl-replacement', startIndex: 3, endIndex: 6, text: 'לם' },
+        ]),
+      )
+      const row = mounted.view.getState().mountedRows[0]!
+      expect(row.text).toBe('אבגלםזחט')
+      const points = [renderedGlyphPoint(row, 3, 0.25), renderedGlyphPoint(row, 4, 0.25)]
+      const expected = nativeTextOffsets(mounted.view, points)
+      expect(expected).toEqual([3, 6])
+
+      resetRowGeometrySweepCount()
+      expect(textOffsetsWithCaretHitTestingDisabled(mounted.view, points)).toEqual(expected)
+      expect(getRowGeometrySweepCount()).toBe(0)
+    } finally {
+      mounted.dispose()
+    }
   })
 
   it('does not reuse extremal offsets when a row element is recycled', () => {
@@ -2279,6 +2630,42 @@ function countRangeReads(run: () => void): number {
   return reads
 }
 
+function countEditorCommandRangeReads(
+  mounted: ReturnType<typeof mountBidiEditor>,
+  command: Parameters<Editor['dispatchCommand']>[0],
+): { readonly moved: boolean; readonly reads: number } {
+  let moved = false
+  const reads = countRangeReads(() => {
+    moved = mounted.editor.dispatchCommand(command)
+  })
+  return { moved, reads }
+}
+
+function assertLogicalWordCursorMoves(mounted: ReturnType<typeof mountBidiEditor>): void {
+  const cursorCases = [
+    { command: 'cursorWordRight' as const, source: 6, affinity: 'before' as const },
+    { command: 'cursorWordPartRight' as const, source: 6, affinity: 'before' as const },
+    { command: 'cursorWordLeft' as const, source: 10, affinity: 'after' as const },
+    { command: 'cursorWordPartLeft' as const, source: 10, affinity: 'after' as const },
+  ]
+
+  for (const testCase of cursorCases) {
+    const sourceAffinity = testCase.affinity === 'before' ? 'after' : 'before'
+    mounted.session.setSelection(testCase.source, testCase.source, { affinity: sourceAffinity })
+    expect(mounted.editor.dispatchCommand(testCase.command)).toBe(true)
+    assertMixedBoundaryCaret(mounted, testCase.affinity)
+  }
+}
+
+function sortedCollapsedCaretXs(
+  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
+  localOffset: number,
+): readonly number[] {
+  return collapsedRangeOracle(row, localOffset)
+    .map((rect) => rect.left)
+    .toSorted((left, right) => left - right)
+}
+
 const BOUNDARY_TWINS = new Map<string, ReadonlyMap<number, number>>([
   [
     'mixed',
@@ -2451,6 +2838,49 @@ function rowClientPoint(
   return { x: rect.left + localX * scale, y: rect.top + rect.height / 2 }
 }
 
+function renderedGlyphPoint(
+  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
+  localIndex: number,
+  fraction: number,
+): { readonly x: number; readonly y: number } {
+  const part = row.chunks
+    .flatMap((chunk) => chunk.parts)
+    .find(
+      (candidate) =>
+        candidate.kind === 'text' &&
+        candidate.localStart <= localIndex &&
+        candidate.localEnd >= localIndex + 1,
+    )
+  if (!part || part.kind !== 'text') throw new Error(`glyph ${localIndex} has no text part`)
+
+  const range = row.element.ownerDocument.createRange()
+  range.setStart(part.node, localIndex - part.localStart)
+  range.setEnd(part.node, localIndex + 1 - part.localStart)
+  const rect = range.getBoundingClientRect()
+  return {
+    x: rect.left + rect.width * fraction,
+    y: rect.top + rect.height / 2,
+  }
+}
+
+function nativeTextOffsets(
+  view: VirtualizedTextView,
+  points: readonly { readonly x: number; readonly y: number }[],
+): readonly (number | null)[] {
+  return points.map((point) => {
+    const position = document.caretPositionFromPoint(point.x, point.y)
+    if (!position) return null
+    return view.textOffsetFromDomBoundary(position.offsetNode, position.offset)
+  })
+}
+
+function textOffsetsAtPoints(
+  view: VirtualizedTextView,
+  points: readonly { readonly x: number; readonly y: number }[],
+): readonly (number | null)[] {
+  return points.map((point) => view.textOffsetFromPoint(point.x, point.y))
+}
+
 function caretStates(
   values: readonly (readonly [number, 'before' | 'after'])[],
 ): readonly CaretState[] {
@@ -2564,6 +2994,79 @@ function primaryCaretLeft(container: HTMLElement): number {
 
 function primaryCaretTop(container: HTMLElement): number {
   return new DOMMatrix(primaryCaretElement(container).style.transform).m42
+}
+
+function assertMixedBoundaryCaret(
+  mounted: ReturnType<typeof mountBidiEditor>,
+  affinity: 'before' | 'after',
+): void {
+  const positions = collapsedRangeOracle(mounted.row, 8)
+    .map((rect) => rect.left)
+    .toSorted((left, right) => left - right)
+  expect(positions).toHaveLength(2)
+  const expectedX = affinity === 'before' ? positions[0]! : positions[1]!
+  expect(resolvedPrimary(mounted.session)).toMatchObject({
+    collapsed: true,
+    headOffset: mounted.row.startOffset + 8,
+    affinity,
+  })
+
+  const rowLeft = mounted.row.element.getBoundingClientRect().left
+  expect(primaryCaretLeft(mounted.container) - rowLeft).toBeCloseTo(expectedX, 0)
+}
+
+function boundaryHitPoint(
+  mounted: ReturnType<typeof mountBidiEditor>,
+  localOffset: number,
+  affinity: 'before' | 'after',
+): { readonly x: number; readonly y: number } {
+  const row = mounted.view.getState().mountedRows[0]!
+  const localXs = collapsedRangeOracle(row, localOffset).flatMap((rect) =>
+    [-0.5, -0.25, 0, 0.25, 0.5].map((delta) => rect.left + delta),
+  )
+  for (const localX of localXs) {
+    const point = rowClientPoint(row, localX)
+    const position = mounted.view.textPositionFromPoint(point.x, point.y)
+    if (position?.offset !== row.startOffset + localOffset) continue
+    if (position.affinity !== affinity) continue
+    return point
+  }
+  throw new Error(`no ${affinity} hit for local offset ${localOffset}`)
+}
+
+function sourceBoundaryHitPoint(
+  mounted: ReturnType<typeof mountBidiEditor>,
+  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
+  offset: number,
+  affinity: 'before' | 'after',
+): { readonly x: number; readonly y: number } {
+  const internal = Reflect.get(mounted.view, 'view') as BidiGeometryFixture['internal']
+  const localXs = boundaryPositionXs(internal, row, offset).flatMap((x) =>
+    [-0.5, -0.25, 0, 0.25, 0.5].map((delta) => x + delta),
+  )
+  for (const localX of localXs) {
+    const point = rowClientPoint(row, localX)
+    const position = mounted.view.textPositionFromPoint(point.x, point.y)
+    if (position?.offset !== offset) continue
+    if (position.affinity !== affinity) continue
+    return point
+  }
+  throw new Error(`no ${affinity} hit for source offset ${offset}`)
+}
+
+function assertBoundaryCaret(
+  mounted: ReturnType<typeof mountBidiEditor>,
+  row: BidiGeometryFixture['rows'][keyof BidiGeometryFixture['rows']],
+  localOffset: number,
+  affinity: 'before' | 'after',
+): void {
+  const positions = collapsedRangeOracle(row, localOffset)
+    .map((rect) => rect.left)
+    .toSorted((left, right) => left - right)
+  expect(positions).toHaveLength(2)
+  const expectedX = affinity === 'before' ? positions[0]! : positions[1]!
+  const rowLeft = row.element.getBoundingClientRect().left
+  expect(primaryCaretLeft(mounted.container) - rowLeft).toBeCloseTo(expectedX, 0)
 }
 
 function assertVerticalCaretAtBrowserX(
@@ -2760,7 +3263,7 @@ function withCaretPositionFromPointDisabled(run: () => void): void {
   }
 }
 
-function withCaretHitTestingDisabled(run: () => void): void {
+function withCaretHitTestingDisabled<T>(run: () => T): T {
   const position = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint')
   const range = Object.getOwnPropertyDescriptor(document, 'caretRangeFromPoint')
   Object.defineProperty(document, 'caretPositionFromPoint', {
@@ -2772,11 +3275,18 @@ function withCaretHitTestingDisabled(run: () => void): void {
     value: undefined,
   })
   try {
-    run()
+    return run()
   } finally {
     restoreDocumentProperty('caretPositionFromPoint', position)
     restoreDocumentProperty('caretRangeFromPoint', range)
   }
+}
+
+function textOffsetsWithCaretHitTestingDisabled(
+  view: VirtualizedTextView,
+  points: Parameters<typeof textOffsetsAtPoints>[1],
+): ReturnType<typeof textOffsetsAtPoints> {
+  return withCaretHitTestingDisabled(() => textOffsetsAtPoints(view, points))
 }
 
 function restoreDocumentProperty(name: string, descriptor: PropertyDescriptor | undefined): void {

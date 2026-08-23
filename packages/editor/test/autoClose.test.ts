@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { DocumentSessionChange } from '../src/documentSession'
 import { Editor } from '../src/editor/Editor'
+import { createDocumentSession } from '../src/public/document'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import { resolveSelection } from '../src/selections'
 import { editorElement } from './editorElement'
@@ -89,11 +90,31 @@ describe('auto-closing pairs', () => {
     return { anchor: resolved.anchorOffset, head: resolved.headOffset }
   }
 
+  const selectionAffinity = () => {
+    const change = lastChange
+    if (!change) throw new Error('the keystroke produced no change')
+
+    const selection = change.selections.selections[0]
+    if (!selection) throw new Error('the keystroke left no selection')
+    return resolveSelection(change.snapshot, selection).affinity
+  }
+
   it('inserts the closer and leaves the caret between the halves', () => {
     type('(')
 
     expect(editor.materializeFullText()).toBe('()')
     expect(editor.getState().cursor).toMatchObject({ column: 1, row: 0 })
+  })
+
+  it('preserves affinity when inserting an auto-closing pair', () => {
+    const session = createDocumentSession('')
+    session.setSelection(0, 0, { affinity: 'before' })
+    editor.attachSession(session, { languageId: 'typescript' })
+    editor.focus()
+
+    type('(')
+
+    expect(selectionAffinity()).toBe('before')
   })
 
   // Text with no beforeinput to carry it — an autocorrection, a dictated phrase, a soft keyboard's
@@ -125,6 +146,17 @@ describe('auto-closing pairs', () => {
     expect(editor.getState().cursor).toMatchObject({ column: 2, row: 0 })
   })
 
+  it('uses forward affinity when typing over its own closer', () => {
+    const session = createDocumentSession('')
+    editor.attachSession(session, { languageId: 'typescript' })
+    type('(')
+    session.setSelection(1, 1, { affinity: 'after' })
+
+    type(')')
+
+    expect(selectionAffinity()).toBe('before')
+  })
+
   it('types over the closer even after editing inside the pair', () => {
     type('(', 'a', 'b', ')')
 
@@ -146,6 +178,18 @@ describe('auto-closing pairs', () => {
     editor.dispatchCommand('deleteBackward')
 
     expect(editor.materializeFullText()).toBe('')
+  })
+
+  it('preserves affinity when removing an auto-closing pair', () => {
+    const session = createDocumentSession('')
+    session.setSelection(0, 0, { affinity: 'before' })
+    editor.attachSession(session, { languageId: 'typescript' })
+    editor.focus()
+    type('(')
+
+    editor.dispatchCommand('deleteBackward')
+
+    expect(selectionAffinity()).toBe('before')
   })
 
   it('backspacing a hand-typed pair removes only one character', () => {
@@ -201,6 +245,17 @@ describe('auto-closing pairs', () => {
     expect(editor.materializeFullText()).toBe('    foo\n    ')
   })
 
+  it('preserves affinity through an indented line break', () => {
+    const session = createDocumentSession('    foo')
+    session.setSelection(7, 7, { affinity: 'before' })
+    editor.attachSession(session, { languageId: 'typescript' })
+    editor.focus()
+
+    editorElement(editor).dispatchEvent(lineBreak())
+
+    expect(selectionAffinity()).toBe('before')
+  })
+
   it('indents one level deeper after an opener with no closer following', () => {
     editor.setText('  if (x) {', { languageId: 'typescript' })
     editor.setSelection(10, 10)
@@ -237,6 +292,18 @@ describe('auto-closing pairs', () => {
     expect(editor.materializeFullText()).toBe('(foo) bar')
     // Stopping short of the closer is what lets the next wrap nest inside this one.
     expect(selectionEnds()).toEqual({ anchor: 1, head: 4 })
+  })
+
+  it('preserves direction and affinity when wrapping a selection', () => {
+    const session = createDocumentSession('foo bar')
+    session.setSelection(3, 0, { affinity: 'before' })
+    editor.attachSession(session, { languageId: 'typescript' })
+    editor.focus()
+
+    type('(')
+
+    expect(selectionEnds()).toEqual({ anchor: 4, head: 1 })
+    expect(selectionAffinity()).toBe('before')
   })
 
   it('wraps with quotes too', () => {

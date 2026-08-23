@@ -89,11 +89,11 @@ import {
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
 import {
-  bidiRunsForRow,
   boundaryAffinityForX,
   boundaryPositionXs,
   boundaryPositionXsForAffinity,
   clearRowGeometryCaches,
+  isBidiMeasurementRefusalRow,
   knownRowContentWidth,
   measureRowContentWidth,
   offsetFromDomBoundary,
@@ -307,6 +307,7 @@ export class VirtualizedTextView {
       model: initialModel,
       text: '',
       textRevision: 0,
+      displayProjectionRevision: 0,
       tokens: [],
       tokenRenderEntries: [],
       tokenRenderEntryMaxEnds: [],
@@ -888,6 +889,7 @@ export class VirtualizedTextView {
     const mappings = bidiTwinAnchorMappings(intervalStart, intervalEnd, direction, anchorAtLeft)
     return {
       displayRow: position.displayRow,
+      displayProjectionRevision: view.displayProjectionRevision,
       textRevision: view.textRevision,
       rawOffset: position.offset,
       rawAffinity: position.affinity,
@@ -902,6 +904,9 @@ export class VirtualizedTextView {
     head: VirtualizedTextHitPosition,
   ): number {
     if (anchor.textRevision !== this.view.textRevision) return anchor.rawOffset
+    if (anchor.displayProjectionRevision !== this.view.displayProjectionRevision) {
+      return anchor.rawOffset
+    }
     if (head.displayRow < anchor.displayRow) return anchor.rightOffset
     if (head.displayRow > anchor.displayRow) return anchor.leftOffset
     if (head.offset === anchor.rawOffset && head.affinity === anchor.rawAffinity) {
@@ -1523,7 +1528,7 @@ function interpolatedBidiOffset(
   let closest: number | null = null
   let closestDistance = Number.POSITIVE_INFINITY
   for (const local of candidateGraphemeOffsets(row.text, localGuess)) {
-    const candidate = row.startOffset + local
+    const candidate = fallbackBidiOffsetForLocalIndex(row, local)
     const distance = closestBoundaryDistance(view, row, candidate, x)
     if (distance >= closestDistance) continue
 
@@ -1531,6 +1536,15 @@ function interpolatedBidiOffset(
     closestDistance = distance
   }
   return closestDistance <= advance ? closest : null
+}
+
+function fallbackBidiOffsetForLocalIndex(
+  row: MountedVirtualizedTextRow,
+  localIndex: number,
+): number {
+  const local = clampNumber(localIndex, 0, row.text.length)
+  const mapped = rowOffsetForLocalIndex(row, local, 'nearest')
+  return clampNumber(mapped, row.startOffset, row.endOffset)
 }
 
 function rowStartsOnVisualLeft(
@@ -1701,7 +1715,7 @@ function rowSupportsVerticalGeometry(
   row: MountedVirtualizedTextRow,
 ): boolean {
   if (!rowMightContainRTL(view, row)) return true
-  return bidiRunsForRow(view, row) !== null
+  return !isBidiMeasurementRefusalRow(view, row)
 }
 
 function fallbackVerticalCaretTarget(
@@ -1869,12 +1883,7 @@ function projectRowDecorationsThroughMultiLineEdit(
 
   const decorations = new Map<number, VirtualizedTextRowDecoration>()
   for (const [row, decoration] of view.rowDecorations) {
-    if (row < patch.startRow) {
-      decorations.set(row, decoration)
-      continue
-    }
-
-    if (row === patch.startRow) {
+    if (row <= patch.startRow) {
       decorations.set(row, decoration)
       continue
     }

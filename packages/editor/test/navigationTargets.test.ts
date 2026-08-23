@@ -190,15 +190,18 @@ describe('word navigation', () => {
   it('still steps over the line break one character at a time', () => {
     const move = targets(text)
 
-    expect(move('cursorRight', selection(10))?.offset).toBe(11)
-    expect(move('cursorLeft', selection(11))?.offset).toBe(10)
+    expect(move('cursorRight', selection(10))).toMatchObject({ offset: 11, affinity: 'before' })
+    expect(move('cursorLeft', selection(11))).toMatchObject({ offset: 10, affinity: 'after' })
   })
 
   it('stays put at either end of the document rather than stepping past it', () => {
     const move = targets(text)
 
-    expect(move('cursorLeft', selection(0))?.offset).toBe(0)
-    expect(move('cursorRight', selection(text.length))?.offset).toBe(text.length)
+    expect(move('cursorLeft', selection(0))).toMatchObject({ offset: 0, affinity: 'after' })
+    expect(move('cursorRight', selection(text.length))).toMatchObject({
+      offset: text.length,
+      affinity: 'before',
+    })
   })
 
   it('follows the separator set the language declares', () => {
@@ -217,24 +220,36 @@ describe('word navigation', () => {
     }
     const move = targets(bidiText, view, true)
     const logicalMove = targets(bidiText)
-    const origin = selection(10, 10, SelectionGoal.none(), 'before')
     const cases = [
-      { command: 'cursorWordLeft' as const, extend: false, offset: 8 },
-      { command: 'cursorWordRight' as const, extend: false, offset: 13 },
-      { command: 'selectWordLeft' as const, extend: true, offset: 8 },
-      { command: 'selectWordRight' as const, extend: true, offset: 13 },
-      { command: 'cursorWordPartLeft' as const, extend: false, offset: 8 },
-      { command: 'cursorWordPartRight' as const, extend: false, offset: 12 },
-      { command: 'cursorWordPartLeftSelect' as const, extend: true, offset: 8 },
-      { command: 'cursorWordPartRightSelect' as const, extend: true, offset: 12 },
+      { command: 'cursorWordLeft' as const, extend: false, source: 10, affinity: 'after' },
+      { command: 'cursorWordRight' as const, extend: false, source: 6, affinity: 'before' },
+      { command: 'selectWordLeft' as const, extend: true, source: 10, affinity: 'after' },
+      { command: 'selectWordRight' as const, extend: true, source: 6, affinity: 'before' },
+      { command: 'cursorWordPartLeft' as const, extend: false, source: 10, affinity: 'after' },
+      { command: 'cursorWordPartRight' as const, extend: false, source: 6, affinity: 'before' },
+      { command: 'cursorWordPartLeftSelect' as const, extend: true, source: 10, affinity: 'after' },
+      {
+        command: 'cursorWordPartRightSelect' as const,
+        extend: true,
+        source: 6,
+        affinity: 'before',
+      },
     ]
 
     for (const testCase of cases) {
+      const sourceAffinity = testCase.affinity === 'before' ? 'after' : 'before'
+      const origin = selection(
+        testCase.source,
+        testCase.source,
+        SelectionGoal.none(),
+        sourceAffinity,
+      )
       const target = move(testCase.command, origin)
       expect(target).toEqual(logicalMove(testCase.command, origin))
       expect(target).toMatchObject({
+        affinity: testCase.affinity,
         extend: testCase.extend,
-        offset: testCase.offset,
+        offset: 8,
       })
     }
     expect(visualHorizontalTarget).not.toHaveBeenCalled()
@@ -296,6 +311,7 @@ describe('visual horizontal navigation', () => {
     const disabled = targets('אבג', disabledView, false)
     expect(disabled('cursorRight', selection(1))).toEqual({
       offset: 2,
+      affinity: 'before',
       extend: false,
       timingName: 'input.cursorRight',
     })
@@ -303,6 +319,7 @@ describe('visual horizontal navigation', () => {
     const unavailable = targets('אבג', createTestView('אבג'), true)
     expect(unavailable('cursorLeft', selection(2))).toEqual({
       offset: 1,
+      affinity: 'after',
       extend: false,
       timingName: 'input.cursorLeft',
     })
@@ -319,11 +336,31 @@ describe('visual horizontal navigation', () => {
     }
     const move = targets('אבגדה', view, true)
 
-    expect(move('cursorLeft', selection(1, 3))?.offset).toBe(1)
-    expect(move('cursorRight', selection(1, 3))?.offset).toBe(3)
+    expect(move('cursorLeft', selection(1, 3))).toMatchObject({ offset: 1, affinity: 'after' })
+    expect(move('cursorRight', selection(1, 3))).toMatchObject({ offset: 3, affinity: 'before' })
     expect(move('cursorLineStart', selection(2))?.offset).toBe(0)
     expect(move('cursorLineEnd', selection(2))?.offset).toBe(5)
     expect(calls).toBe(0)
+  })
+
+  it('preserves directional affinity when a fold remaps a logical target', () => {
+    const text = 'abc'
+    const base = createTestView(text)
+    const view = {
+      ...base,
+      offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => {
+        if (offset === 1 && boundary === 'end') return 0
+        return base.offsetAtLineBoundary(offset, boundary)
+      },
+      offsetByDisplayRows: () => text.length,
+    }
+    const move = targets(text, view)
+
+    expect(move('cursorRight', selection(0))).toMatchObject({
+      offset: text.length,
+      affinity: 'before',
+    })
+    expect(move('cursorLeft', selection(2))).toMatchObject({ offset: 0, affinity: 'after' })
   })
 })
 
@@ -441,6 +478,17 @@ describe('vertical navigation', () => {
 })
 
 describe('line boundary navigation', () => {
+  it('uses the inside affinity at each document boundary', () => {
+    const move = targets('plain')
+
+    for (const command of ['cursorDocumentStart', 'selectDocumentStart'] as const) {
+      expect(move(command, selection(3))).toMatchObject({ offset: 0, affinity: 'after' })
+    }
+    for (const command of ['cursorDocumentEnd', 'selectDocumentEnd'] as const) {
+      expect(move(command, selection(3))).toMatchObject({ offset: 5, affinity: 'before' })
+    }
+  })
+
   it('escalates Home from the first non-blank character to the margin', () => {
     const move = targets('    indented')
 

@@ -13,7 +13,7 @@ import {
   type TextEdit,
   type TextOffsetRange,
 } from '@singapor/core/document'
-import { Editor } from '@singapor/core/editor'
+import { Editor, type EditorSetSelectionOptions } from '@singapor/core/editor'
 import {
   createEditorCapabilityToken,
   createEditorLanguageFeatureToken,
@@ -249,6 +249,26 @@ describe('public API facade', () => {
       expect(descriptor.name).toBeTypeOf('string')
       expect(descriptor.applyTo).toBeTypeOf('function')
     }
+  })
+
+  it('exports affinity through public selection, edit, and contribution contracts', () => {
+    const rootOptions: core.EditorSetSelectionOptions = {
+      affinity: 'before',
+      reveal: false,
+      revealOffset: 12,
+    }
+    const categoryOptions: EditorSetSelectionOptions = rootOptions
+    const editSelection: core.EditorEditSelection = {
+      affinity: 'after',
+      anchor: 3,
+      head: 7,
+    }
+    const contributionOptions: Parameters<EditorViewContributionContext['setSelection']>[3] =
+      rootOptions
+
+    expect(categoryOptions.affinity).toBe('before')
+    expect(editSelection.affinity).toBe('after')
+    expect(contributionOptions?.revealOffset).toBe(12)
   })
 
   it('exports the whitespace modes a host can select', () => {

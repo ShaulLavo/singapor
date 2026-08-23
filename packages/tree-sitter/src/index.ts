@@ -86,6 +86,10 @@ export type TreeSitterLanguagePluginOptions = TreeSitterLanguageRegistrationOpti
   readonly name?: string
 }
 
+export type TreeSitterSyntaxPluginOptions = {
+  readonly name?: string
+}
+
 type TreeSitterProviderRegistration = {
   readonly provider: TreeSitterSyntaxProvider
   readonly contextReferences: WeakMap<EditorPluginContext, TreeSitterContextReference>
@@ -138,6 +142,15 @@ export const createTreeSitterLanguagePlugin = (
       ...contributions.map((contribution) => retainLanguage(registration, contribution)),
     ]
   },
+})
+
+/** Registers an already-configured provider with an editor without constructing another backend. */
+export const createTreeSitterSyntaxPlugin = (
+  provider: TreeSitterSyntaxProvider,
+  options: TreeSitterSyntaxPluginOptions = {},
+): EditorPlugin => ({
+  name: options.name ?? 'tree-sitter-syntax',
+  activate: (context) => contributeToEditor(context, provider),
 })
 
 const defaultProviderRegistration = (): TreeSitterProviderRegistration => {

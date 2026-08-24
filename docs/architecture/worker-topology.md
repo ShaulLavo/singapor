@@ -134,6 +134,12 @@ Caches:
 - Worker `documentTasks` serializes operations per document.
 - Worker `highlighterPromises` stores Shiki highlighters by sorted language/theme key.
 
+Transport:
+
+- Token results use the same `PackedEditorTokens` structure-of-arrays transport as Tree-sitter:
+  three transferable `Uint32Array` buffers plus a value-interned style palette. The owner unpacks
+  the buffers immediately into the editor-facing indexed token array.
+
 Limits:
 
 - Owner theme-request cache has no numeric cap. Failed theme requests delete their key; owner

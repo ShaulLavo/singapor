@@ -18,7 +18,18 @@ describe('Shiki worker message types', () => {
     const response: ShikiWorkerResponse = {
       id: request.id,
       ok: true,
-      result: { documentId: 'doc', tokens: [] },
+      result: {
+        documentId: 'doc',
+        tokensPacked: {
+          starts: new Uint32Array(),
+          ends: new Uint32Array(),
+          styleIds: new Uint32Array(),
+          styles: [],
+          monotonicEnd: true,
+          nonOverlapping: true,
+          sortedByStart: true,
+        },
+      },
     }
 
     expect(request.payload.type).toBe('open')

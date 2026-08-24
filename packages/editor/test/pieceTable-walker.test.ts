@@ -25,6 +25,23 @@ const walkAll = (snapshot: PieceTableTreeSnapshot): string => {
 }
 
 describe('piece table walker', () => {
+  it('shares method implementations between walker instances', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const first = createPieceTableWalker(snapshot)
+    const second = createPieceTableWalker(snapshot, 1)
+
+    expect(first.offset).toBe(second.offset)
+    expect(first.exhausted).toBe(second.exhausted)
+    expect(first.remaining).toBe(second.remaining)
+    expect(first.charCode).toBe(second.charCode)
+    expect(first.next).toBe(second.next)
+    expect(first.codePoint).toBe(second.codePoint)
+    expect(first.skip).toBe(second.skip)
+    expect(first.seek).toBe(second.seek)
+    expect(first.chunk).toBe(second.chunk)
+    expect(first.nextChunk).toBe(second.nextChunk)
+  })
+
   it('is exhausted immediately on an empty document', () => {
     const walker = createPieceTableWalker(createPieceTableSnapshot(''))
 

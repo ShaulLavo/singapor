@@ -1,4 +1,11 @@
 import type { EditorToken, EditorTokenStyle } from '../tokens'
+import {
+  createPackedEditorTokenWriter,
+  finishPackedEditorTokenWriter,
+  writePackedEditorToken,
+  type PackedEditorTokens,
+  type PackedEditorTokenWriter,
+} from '../syntax/packedTokens'
 
 import type { IncrementalTokenizerSnapshot, TokenLineSnapshot } from './tokenizer'
 
@@ -6,12 +13,22 @@ const FONT_STYLE_ITALIC = 1
 const FONT_STYLE_BOLD = 2
 const FONT_STYLE_UNDERLINE = 4
 const FONT_STYLE_STRIKETHROUGH = 8
+const EDITOR_FONT_STYLE_MASK =
+  FONT_STYLE_ITALIC | FONT_STYLE_BOLD | FONT_STYLE_UNDERLINE | FONT_STYLE_STRIKETHROUGH
 
-function toEditorTokenStyle(token: {
-  bgColor?: string
-  color?: string
-  fontStyle?: number
-}): EditorTokenStyle | null {
+type ShikiToken = TokenLineSnapshot['tokens'][number]
+
+type InternedEditorTokenStyle = {
+  readonly id: number
+  readonly style: EditorTokenStyle
+}
+
+type EditorTokenStylePalette = {
+  readonly entriesByKey: Map<string, InternedEditorTokenStyle | null>
+  readonly styles: EditorTokenStyle[]
+}
+
+function toEditorTokenStyle(token: ShikiToken): EditorTokenStyle | null {
   const style: EditorTokenStyle = {}
   const fontStyle = token.fontStyle ?? 0
 
@@ -31,34 +48,137 @@ function toEditorTokenStyle(token: {
   return Object.keys(style).length > 0 ? style : null
 }
 
+function createEditorTokenStylePalette(): EditorTokenStylePalette {
+  return { entriesByKey: new Map(), styles: [] }
+}
+
+function internEditorTokenStyle(
+  token: ShikiToken,
+  palette: EditorTokenStylePalette,
+): InternedEditorTokenStyle | null {
+  const key = editorTokenStyleKey(token)
+  const existing = palette.entriesByKey.get(key)
+  if (existing !== undefined) return existing
+
+  const style = toEditorTokenStyle(token)
+  if (!style) {
+    palette.entriesByKey.set(key, null)
+    return null
+  }
+
+  const entry = { id: palette.styles.length, style }
+  palette.entriesByKey.set(key, entry)
+  palette.styles.push(style)
+  return entry
+}
+
+function editorTokenStyleKey(token: ShikiToken): string {
+  const fontStyle = (token.fontStyle ?? 0) & EDITOR_FONT_STYLE_MASK
+  return `${token.color ?? ''}\u0000${token.bgColor ?? ''}\u0000${fontStyle}`
+}
+
+function hasEditorTokenStyle(token: ShikiToken): boolean {
+  if (token.color) return true
+  if (token.bgColor) return true
+  return Boolean((token.fontStyle ?? 0) & EDITOR_FONT_STYLE_MASK)
+}
+
 export function tokenLinesToEditorTokens(lines: readonly TokenLineSnapshot[]): EditorToken[] {
   const tokens: EditorToken[] = []
+  const palette = createEditorTokenStylePalette()
   let lineStart = 0
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex]
     if (!line) continue
 
-    for (const token of line.tokens) {
-      const style = toEditorTokenStyle(token)
-      if (!style) continue
-
-      const start = lineStart + token.offset
-      const end = start + token.content.length
-      if (start === end) continue
-
-      tokens.push({ end, start, style })
-    }
-
-    lineStart += line.text.length
-    if (lineIndex < lines.length - 1) lineStart += 1
+    appendEditorTokensFromLine(tokens, line, lineStart, palette)
+    lineStart = nextLineStart(lineStart, line.text.length, lineIndex, lines.length)
   }
 
   return tokens
+}
+
+function appendEditorTokensFromLine(
+  tokens: EditorToken[],
+  line: TokenLineSnapshot,
+  lineStart: number,
+  palette: EditorTokenStylePalette,
+): void {
+  for (const token of line.tokens) {
+    if (token.content.length === 0) continue
+
+    const entry = internEditorTokenStyle(token, palette)
+    if (!entry) continue
+
+    const start = lineStart + token.offset
+    tokens.push({ end: start + token.content.length, start, style: entry.style })
+  }
+}
+
+function nextLineStart(
+  lineStart: number,
+  lineLength: number,
+  lineIndex: number,
+  lineCount: number,
+): number {
+  return lineStart + lineLength + (lineIndex < lineCount - 1 ? 1 : 0)
 }
 
 export function snapshotToEditorTokens(
   snapshot: Pick<IncrementalTokenizerSnapshot, 'lines'>,
 ): EditorToken[] {
   return tokenLinesToEditorTokens(snapshot.lines)
+}
+
+export function snapshotToPackedEditorTokens(
+  snapshot: Pick<IncrementalTokenizerSnapshot, 'lines'>,
+): PackedEditorTokens {
+  const tokenCount = countEditorTokens(snapshot.lines)
+  const writer = createPackedEditorTokenWriter(tokenCount)
+  const palette = createEditorTokenStylePalette()
+  let lineStart = 0
+
+  for (let lineIndex = 0; lineIndex < snapshot.lines.length; lineIndex += 1) {
+    const line = snapshot.lines[lineIndex]
+    if (!line) continue
+
+    writePackedTokenLine(writer, palette, line, lineStart)
+    lineStart = nextLineStart(lineStart, line.text.length, lineIndex, snapshot.lines.length)
+  }
+
+  return finishPackedEditorTokenWriter(writer, palette.styles)
+}
+
+function countEditorTokens(lines: readonly TokenLineSnapshot[]): number {
+  let count = 0
+  for (const line of lines) count += countEditorTokensInLine(line)
+  return count
+}
+
+function countEditorTokensInLine(line: TokenLineSnapshot): number {
+  let count = 0
+  for (const token of line.tokens) {
+    if (token.content.length === 0) continue
+    if (!hasEditorTokenStyle(token)) continue
+    count += 1
+  }
+  return count
+}
+
+function writePackedTokenLine(
+  writer: PackedEditorTokenWriter,
+  palette: EditorTokenStylePalette,
+  line: TokenLineSnapshot,
+  lineStart: number,
+): void {
+  for (const token of line.tokens) {
+    if (token.content.length === 0) continue
+
+    const entry = internEditorTokenStyle(token, palette)
+    if (!entry) continue
+
+    const start = lineStart + token.offset
+    writePackedEditorToken(writer, start, start + token.content.length, entry.id)
+  }
 }

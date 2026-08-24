@@ -1,7 +1,8 @@
 import { createHighlighter, type HighlighterGeneric, type ThemeRegistrationAny } from 'shiki'
 import { createIncrementalTokenizer, type IncrementalTokenizer } from './tokenizer'
-import { snapshotToEditorTokens } from './editor-tokens'
+import { snapshotToPackedEditorTokens } from './editor-tokens'
 import type { EditorTheme } from '../theme'
+import { packedEditorTokenTransfers } from '../syntax/packedTokens'
 import { editorThemeFromShikiTheme, type ShikiThemeLike } from './theme-extract'
 import type {
   ShikiWorkerDocumentOptions,
@@ -9,7 +10,7 @@ import type {
   ShikiWorkerOpenRequest,
   ShikiWorkerRequest,
   ShikiWorkerResponse,
-  ShikiWorkerResult,
+  ShikiWorkerTransportResult,
   ShikiWorkerThemeRegistration,
   ShikiWorkerThemeRequest,
 } from './workerTypes'
@@ -24,7 +25,7 @@ type DocumentState = {
 }
 
 const documents = new Map<string, DocumentState>()
-const documentTasks = new Map<string, Promise<ShikiWorkerResult | undefined>>()
+const documentTasks = new Map<string, Promise<ShikiWorkerTransportResult | undefined>>()
 const highlighterPromises = new Map<string, Promise<HighlighterGeneric<string, string>>>()
 const backgroundLoaded = new WeakSet<HighlighterGeneric<string, string>>()
 
@@ -43,7 +44,7 @@ const handleRequest = async (request: ShikiWorkerRequest): Promise<void> => {
 
 const runRequest = (
   payload: ShikiWorkerRequest['payload'],
-): Promise<ShikiWorkerResult | undefined> => {
+): Promise<ShikiWorkerTransportResult | undefined> => {
   if (payload.type === 'open') {
     return runDocumentTask(payload.documentId, () => openDocument(payload))
   }
@@ -64,8 +65,8 @@ const runRequest = (
 
 const runDocumentTask = (
   documentId: string,
-  task: () => Promise<ShikiWorkerResult>,
-): Promise<ShikiWorkerResult> => {
+  task: () => Promise<ShikiWorkerTransportResult>,
+): Promise<ShikiWorkerTransportResult> => {
   const previous = documentTasks.get(documentId) ?? Promise.resolve(undefined)
   const next = previous.catch(() => undefined).then(task)
   documentTasks.set(documentId, next)
@@ -75,13 +76,15 @@ const runDocumentTask = (
 
 const clearDocumentTask = (
   documentId: string,
-  task: Promise<ShikiWorkerResult | undefined>,
+  task: Promise<ShikiWorkerTransportResult | undefined>,
 ): void => {
   if (documentTasks.get(documentId) !== task) return
   documentTasks.delete(documentId)
 }
 
-const openDocument = async (payload: ShikiWorkerOpenRequest): Promise<ShikiWorkerResult> => {
+const openDocument = async (
+  payload: ShikiWorkerOpenRequest,
+): Promise<ShikiWorkerTransportResult> => {
   const highlighter = await ensureHighlighter(payload)
   const { tokenizer } = await createIncrementalTokenizer({
     lang: payload.lang,
@@ -105,7 +108,9 @@ const openDocument = async (payload: ShikiWorkerOpenRequest): Promise<ShikiWorke
   return result
 }
 
-const editDocument = async (payload: ShikiWorkerEditRequest): Promise<ShikiWorkerResult> => {
+const editDocument = async (
+  payload: ShikiWorkerEditRequest,
+): Promise<ShikiWorkerTransportResult> => {
   const existing = documents.get(payload.documentId)
   if (!existing && payload.text !== undefined)
     return openDocument(openRequestFromEdit(payload, payload.text))
@@ -209,7 +214,7 @@ const highlighterThemes = (
   return [registration, ...names]
 }
 
-const loadTheme = async (payload: ShikiWorkerThemeRequest): Promise<ShikiWorkerResult> => {
+const loadTheme = async (payload: ShikiWorkerThemeRequest): Promise<ShikiWorkerTransportResult> => {
   const themes = highlighterThemes([payload.theme, ...payload.themes], payload.themeRegistration)
   const highlighter = await ensureHighlighterFor([], themes)
   return {
@@ -217,9 +222,9 @@ const loadTheme = async (payload: ShikiWorkerThemeRequest): Promise<ShikiWorkerR
   }
 }
 
-const resultFromState = (state: DocumentState): ShikiWorkerResult => ({
+const resultFromState = (state: DocumentState): ShikiWorkerTransportResult => ({
   documentId: state.documentId,
-  tokens: snapshotToEditorTokens(state.tokenizer.getSnapshot()),
+  tokensPacked: snapshotToPackedEditorTokens(state.tokenizer.getSnapshot()),
   theme: editorThemeFromHighlighter(state.highlighter, state.theme, state.themeRegistration),
 })
 
@@ -241,7 +246,21 @@ const disposeAll = (): void => {
 }
 
 const postResponse = (response: ShikiWorkerResponse): void => {
-  self.postMessage(response)
+  const transfers = responseTransfers(response)
+  const workerScope = self as unknown as {
+    postMessage(response: ShikiWorkerResponse, transfer?: Transferable[]): void
+  }
+  if (transfers.length === 0) {
+    workerScope.postMessage(response)
+    return
+  }
+  workerScope.postMessage(response, transfers)
+}
+
+function responseTransfers(response: ShikiWorkerResponse): Transferable[] {
+  if (!response.ok) return []
+  if (!response.result?.tokensPacked) return []
+  return packedEditorTokenTransfers(response.result.tokensPacked)
 }
 
 /**

@@ -3,6 +3,7 @@ import { createDocumentTextSnapshot, type DocumentTextSnapshot } from '../docume
 import { applyBatchToPieceTable } from '../pieceTable/edits'
 import { pieceTableSnapshotsHaveSameText } from '../pieceTable/reads'
 import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
+import { unpackEditorTokens } from '../syntax/packedTokens'
 import type {
   EditorHighlightResult,
   EditorHighlighterSession,
@@ -16,6 +17,7 @@ import type {
   ShikiWorkerResponse,
   ShikiWorkerResult,
   ShikiWorkerThemeRegistration,
+  ShikiWorkerTransportResult,
 } from './workerTypes'
 
 export type ShikiHighlighterSessionOptions = Omit<
@@ -192,7 +194,7 @@ export class ShikiWorkerOwner {
 
     this.pendingRequests.delete(response.id)
     if (response.ok) {
-      pending.resolve(response.result)
+      pending.resolve(unpackShikiWorkerResult(response.result))
       return
     }
 
@@ -220,6 +222,18 @@ export class ShikiWorkerOwner {
   private clearRetainedState(lifecycle: ShikiWorkerLifecycleState): void {
     this.lifecycle = lifecycle
     this.themeRequests.clear()
+  }
+}
+
+function unpackShikiWorkerResult(
+  result: ShikiWorkerTransportResult | undefined,
+): ShikiWorkerResult | undefined {
+  if (!result?.tokensPacked) return result
+
+  return {
+    documentId: result.documentId,
+    tokens: unpackEditorTokens(result.tokensPacked),
+    theme: result.theme,
   }
 }
 

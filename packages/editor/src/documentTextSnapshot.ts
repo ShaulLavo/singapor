@@ -39,59 +39,87 @@ export function createDocumentTextSnapshot(
   snapshot: PieceTableSnapshot,
   materializedText?: string,
 ): DocumentTextSnapshot {
-  const retainedText = materializedText?.length === snapshot.length ? materializedText : undefined
-  const materializeFullText = (): string => {
+  return new PieceTableDocumentTextSnapshot(snapshot, materializedText)
+}
+
+export function createStringTextSnapshot(text: string): TextSnapshot {
+  return new StringTextSnapshot(text)
+}
+
+class PieceTableDocumentTextSnapshot implements DocumentTextSnapshot {
+  readonly length: number
+  readonly #retainedText: string | undefined
+
+  constructor(
+    readonly snapshot: PieceTableSnapshot,
+    materializedText?: string,
+  ) {
+    this.length = snapshot.length
+    this.#retainedText = materializedText?.length === snapshot.length ? materializedText : undefined
+  }
+
+  materializeFullText(): string {
+    const retainedText = this.#retainedText
     if (retainedText !== undefined) {
-      recordFullTextSnapshotRead('textSnapshot.materializeFullText', snapshot.length, true)
+      recordFullTextSnapshotRead('textSnapshot.materializeFullText', this.length, true)
       return retainedText
     }
 
     return measureEditorPerformance(
       'textSnapshot.materializeFullText',
-      () => materializePieceTableFullText(snapshot),
-      () => fullTextSnapshotDetail(snapshot.length, false),
+      () => materializePieceTableFullText(this.snapshot),
+      () => fullTextSnapshotDetail(this.length, false),
     )
   }
 
-  return {
-    snapshot,
-    length: snapshot.length,
-    materializeFullText,
-    readRange: (start, end) => {
-      if (retainedText !== undefined && start === 0 && end === snapshot.length) {
-        recordFullTextSnapshotRead('textSnapshot.readRange', snapshot.length, true)
-        return retainedText
-      }
+  readRange(start: number, end: number): string {
+    const retainedText = this.#retainedText
+    const readsFullText = start === 0 && end === this.length
+    if (retainedText !== undefined && readsFullText) {
+      recordFullTextSnapshotRead('textSnapshot.readRange', this.length, true)
+      return retainedText
+    }
 
-      if (start === 0 && end === snapshot.length) {
-        return measureEditorPerformance(
-          'textSnapshot.readRange',
-          () => readPieceTableTextRange(snapshot, start, end),
-          () => fullTextSnapshotDetail(snapshot.length, false),
-        )
-      }
+    if (!readsFullText) return readPieceTableTextRange(this.snapshot, start, end)
+    return measureEditorPerformance(
+      'textSnapshot.readRange',
+      () => readPieceTableTextRange(this.snapshot, start, end),
+      () => fullTextSnapshotDetail(this.length, false),
+    )
+  }
 
-      return readPieceTableTextRange(snapshot, start, end)
-    },
-    forEachTextChunk: (visit) => {
-      if (retainedText !== undefined) {
-        if (retainedText.length > 0) visit(retainedText, 0, retainedText.length)
-        return
-      }
+  forEachTextChunk(visit: (text: string, start: number, end: number) => void): void {
+    const retainedText = this.#retainedText
+    if (retainedText === undefined) {
+      forEachPieceTableTextChunk(this.snapshot, visit)
+      return
+    }
 
-      forEachPieceTableTextChunk(snapshot, visit)
-    },
+    if (retainedText.length > 0) visit(retainedText, 0, retainedText.length)
   }
 }
 
-export function createStringTextSnapshot(text: string): TextSnapshot {
-  return {
-    length: text.length,
-    materializeFullText: () => text,
-    readRange: (start, end) => text.slice(start, end),
-    forEachTextChunk: (visit) => {
-      if (text.length > 0) visit(text, 0, text.length)
-    },
+class StringTextSnapshot implements TextSnapshot {
+  readonly #text: string
+
+  constructor(text: string) {
+    this.#text = text
+  }
+
+  get length(): number {
+    return this.#text.length
+  }
+
+  materializeFullText(): string {
+    return this.#text
+  }
+
+  readRange(start: number, end: number): string {
+    return this.#text.slice(start, end)
+  }
+
+  forEachTextChunk(visit: (text: string, start: number, end: number) => void): void {
+    if (this.#text.length > 0) visit(this.#text, 0, this.#text.length)
   }
 }
 

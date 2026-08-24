@@ -138,6 +138,51 @@ describe('Shiki worker client theme cache', () => {
     expect(fakeWorkers).toHaveLength(2)
   }, 20_000)
 
+  it('unpacks worker token buffers into indexed EditorToken arrays', async () => {
+    FakeWorker.autoResolve = false
+    const owner = await loadWorkerOwner()
+    const snapshot = createPieceTableSnapshot('const value = 1;')
+    const session = owner.createSession({
+      documentId: 'file.ts',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      snapshot,
+      fullText: 'const value = 1;',
+    })
+    if (!session) throw new Error('missing Shiki highlighter session')
+
+    const highlight = session.refresh(snapshot, 'const value = 1;')
+    await flushMicrotasks()
+
+    fakeWorkerAt(0).resolveRequest(requestOfType('open'), {
+      documentId: 'file.ts',
+      tokensPacked: {
+        starts: Uint32Array.of(0, 6),
+        ends: Uint32Array.of(5, 11),
+        styleIds: Uint32Array.of(0, 0),
+        styles: [{ color: '#ff0000' }],
+        monotonicEnd: true,
+        nonOverlapping: true,
+        sortedByStart: true,
+      },
+    })
+
+    const result = await highlight
+    expect(result.tokens).toEqual([
+      { start: 0, end: 5, style: { color: '#ff0000' } },
+      { start: 6, end: 11, style: { color: '#ff0000' } },
+    ])
+    expect(result.tokens[0]?.style).toBe(result.tokens[1]?.style)
+    const { getEditorTokenIndex } = await import('../../src/editor/tokenIndex')
+    expect(getEditorTokenIndex(result.tokens)).toMatchObject({
+      maxEnds: [5, 11],
+      monotonicEnd: true,
+      nonOverlapping: true,
+      sortedByStart: true,
+    })
+  }, 20_000)
+
   it('ignores tokenizer results that arrive after highlighter session disposal', async () => {
     FakeWorker.autoResolve = false
     const owner = await loadWorkerOwner()
@@ -166,7 +211,15 @@ describe('Shiki worker client theme cache', () => {
     })
 
     worker.resolveRequest(openRequest, {
-      tokens: [{ start: 0, end: 5, style: { color: '#ff0000' } }],
+      tokensPacked: {
+        starts: Uint32Array.of(0),
+        ends: Uint32Array.of(5),
+        styleIds: Uint32Array.of(0),
+        styles: [{ color: '#ff0000' }],
+        monotonicEnd: true,
+        nonOverlapping: true,
+        sortedByStart: true,
+      },
     })
 
     await expect(highlight).resolves.toEqual({ tokens: [] })

@@ -1,5 +1,6 @@
 import type { EditorTheme } from '../theme'
 import type { EditorToken, TextEdit } from '../tokens'
+import type { PackedEditorTokens } from '../syntax/packedTokens'
 import type { EditorShikiThemeSettingLike } from './theme'
 
 export type ShikiWorkerThemeRegistration = {
@@ -60,6 +61,12 @@ export type ShikiWorkerResult = {
   readonly theme?: EditorTheme
 }
 
+export type ShikiWorkerTransportResult = {
+  readonly documentId?: string
+  readonly tokensPacked?: PackedEditorTokens
+  readonly theme?: EditorTheme
+}
+
 export type ShikiWorkerRequest = {
   readonly id: number
   readonly payload: ShikiWorkerRequestPayload
@@ -69,7 +76,7 @@ export type ShikiWorkerResponse =
   | {
       readonly id: number
       readonly ok: true
-      readonly result?: ShikiWorkerResult
+      readonly result?: ShikiWorkerTransportResult
     }
   | {
       readonly id: number

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ShikiWorkerRequest, ShikiWorkerResponse } from '../../src/shiki/workerTypes'
+import { unpackEditorTokens } from '../../src/syntax/packedTokens'
 
 const createHighlighter = vi.hoisted(() => vi.fn())
 
@@ -102,7 +103,19 @@ describe('shiki worker', () => {
     ;(globalThis as { self?: unknown }).self = { postMessage }
     createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
     createIncrementalTokenizer.mockResolvedValue({
-      tokenizer: { getSnapshot: () => ({ lines: [] }) },
+      tokenizer: {
+        getSnapshot: () => ({
+          lines: [
+            {
+              text: 'const value',
+              tokens: [
+                { color: '#f00', content: 'const', fontStyle: 0, offset: 0 },
+                { color: '#f00', content: 'value', fontStyle: 0, offset: 6 },
+              ],
+            },
+          ],
+        }),
+      },
     })
     await import('../../src/shiki/shiki.worker')
 
@@ -122,12 +135,12 @@ describe('shiki worker', () => {
     )
     await waitFor(() => postMessage.mock.calls.length > 0)
 
-    expect(postMessage).toHaveBeenCalledWith({
+    const response = postMessage.mock.calls[0]?.[0] as ShikiWorkerResponse | undefined
+    expect(response).toMatchObject({
       id: 1,
       ok: true,
       result: {
         documentId: 'doc',
-        tokens: [],
         theme: {
           backgroundColor: '#ffffff',
           foregroundColor: '#24292e',
@@ -135,12 +148,26 @@ describe('shiki worker', () => {
           gutterForegroundColor: '#6e7781',
           caretColor: '#044289',
           minimapBackgroundColor: '#ffffff',
-          syntax: {
-            bracket: '#24292e',
-          },
+          syntax: { bracket: '#24292e' },
         },
       },
-    } satisfies ShikiWorkerResponse)
+    })
+    if (!response?.ok || !response.result?.tokensPacked) {
+      throw new Error('Expected a packed Shiki token response')
+    }
+
+    const packed = response.result.tokensPacked
+    expect(packed.styles).toEqual([{ color: '#f00' }])
+    expect(Array.from(packed.styleIds)).toEqual([0, 0])
+    expect(unpackEditorTokens(packed)).toEqual([
+      { end: 5, start: 0, style: { color: '#f00' } },
+      { end: 11, start: 6, style: { color: '#f00' } },
+    ])
+    expect(postMessage.mock.calls[0]?.[1]).toEqual([
+      packed.starts.buffer,
+      packed.ends.buffer,
+      packed.styleIds.buffer,
+    ])
   })
 
   it('returns editor theme colors without opening a document', async () => {

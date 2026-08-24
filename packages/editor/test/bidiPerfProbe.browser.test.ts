@@ -182,46 +182,59 @@ function measureLength(length: number): OperationRatios {
   mountMeasured(latinText).dispose()
   mountMeasured(rtlText).dispose()
 
-  const latinMounts: number[] = []
-  const rtlMounts: number[] = []
-  for (let sample = 0; sample < 7; sample += 1) {
-    // Average repeated full mount operations within each sample. A single mount is sub-millisecond
-    // on fast runners, where scheduler jitter can otherwise dominate the same-run control ratio.
-    if (sample % 2 === 0) {
-      latinMounts.push(timeMounts(latinText, 5))
-      rtlMounts.push(timeMounts(rtlText, 5))
-      continue
-    }
-
-    rtlMounts.push(timeMounts(rtlText, 5))
-    latinMounts.push(timeMounts(latinText, 5))
-  }
+  // Average repeated full mount operations within each sample. A single mount is sub-millisecond
+  // on fast runners, where scheduler jitter can otherwise dominate the same-run control ratio.
+  const mounts = measurePairedSamples(
+    () => timeMounts(latinText, 5),
+    () => timeMounts(rtlText, 5),
+  )
 
   const latin = mountMeasured(latinText)
   const rtl = mountMeasured(rtlText)
-  // Batch independent single-click operations so sub-millisecond timer noise cannot dominate the
-  // ratio. The drag timer covers the complete hit-test, selection-update, and paint path.
-  const latinClick = timeClicks(latin, 100)
-  const rtlClick = timeClicks(rtl, 100)
-  const latinDrag = timeDrag(latin, 200)
-  const rtlDrag = timeDrag(rtl, 200)
-  const latinMount = median(latinMounts)
-  const rtlMount = median(rtlMounts)
+  // Batch each operation, alternate control/candidate order, and compare medians. Browser projects
+  // share the CI runner, so a single fixed-order batch can otherwise measure scheduler load.
+  const clicks = measurePairedSamples(
+    () => timeClicks(latin, 100),
+    () => timeClicks(rtl, 100),
+  )
+  const drags = measurePairedSamples(
+    () => timeDrag(latin, 200),
+    () => timeDrag(rtl, 200),
+  )
   const result = {
     length,
-    mountLatinMs: round(latinMount),
-    mountRtlMs: round(rtlMount),
-    mountRatio: round(rtlMount / latinMount),
-    clickLatinMs: round(latinClick),
-    clickRtlMs: round(rtlClick),
-    clickRatio: round(rtlClick / latinClick),
-    dragLatinMs: round(latinDrag),
-    dragRtlMs: round(rtlDrag),
-    dragRatio: round(rtlDrag / latinDrag),
+    mountLatinMs: round(mounts.latin),
+    mountRtlMs: round(mounts.rtl),
+    mountRatio: round(mounts.rtl / mounts.latin),
+    clickLatinMs: round(clicks.latin),
+    clickRtlMs: round(clicks.rtl),
+    clickRatio: round(clicks.rtl / clicks.latin),
+    dragLatinMs: round(drags.latin),
+    dragRtlMs: round(drags.rtl),
+    dragRatio: round(drags.rtl / drags.latin),
   }
   latin.dispose()
   rtl.dispose()
   return result
+}
+
+function measurePairedSamples(
+  measureLatin: () => number,
+  measureRtl: () => number,
+): { readonly latin: number; readonly rtl: number } {
+  const latin: number[] = []
+  const rtl: number[] = []
+  for (let sample = 0; sample < 7; sample += 1) {
+    if (sample % 2 === 0) {
+      latin.push(measureLatin())
+      rtl.push(measureRtl())
+      continue
+    }
+
+    rtl.push(measureRtl())
+    latin.push(measureLatin())
+  }
+  return { latin: median(latin), rtl: median(rtl) }
 }
 
 function timeMounts(text: string, count: number): number {

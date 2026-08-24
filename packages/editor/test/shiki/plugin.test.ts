@@ -7,7 +7,11 @@ import type {
   EditorPlugin,
   EditorPluginContext,
 } from '../../src/plugins'
-import { createShikiHighlighterPlugin, type ShikiWorkerOwner } from '../../src/shiki'
+import {
+  createShikiHighlighterPlugin,
+  createShikiHighlighterProvider,
+  type ShikiWorkerOwner,
+} from '../../src/shiki'
 
 const workerOwner = vi.hoisted(() => ({
   canUseWorker: vi.fn(() => true),
@@ -49,6 +53,34 @@ describe('createShikiHighlighterPlugin', () => {
         lang: 'tsx',
       }),
     )
+  })
+
+  it('keeps the source extension when a secondary view adds a document fragment', () => {
+    const provider = createShikiHighlighterProvider()
+    const text = 'const el = <div />'
+
+    provider.createSession({
+      documentId: 'App.tsx#diff-old',
+      languageId: 'typescript',
+      fullText: text,
+      snapshot: createPieceTableSnapshot(text),
+    })
+
+    expect(workerOwner.createSession).toHaveBeenCalledWith(expect.objectContaining({ lang: 'tsx' }))
+  })
+
+  it('creates a provider that can be shared without activating an editor plugin', () => {
+    const provider = createShikiHighlighterProvider()
+    const text = 'const value = 1'
+
+    provider.createSession({
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      fullText: text,
+      snapshot: createPieceTableSnapshot(text),
+    })
+
+    expect(workerOwner.createSession).toHaveBeenCalledTimes(1)
   })
 
   it('maps .jsx JavaScript documents to Shiki JSX', () => {

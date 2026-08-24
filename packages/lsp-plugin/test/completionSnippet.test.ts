@@ -1,4 +1,5 @@
 import { Editor } from '@singapor/core/editor'
+import type { SelectionAffinity } from '@singapor/core/document'
 import type { EditorEditContributionContext, EditorPlugin } from '@singapor/core/extensions'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
@@ -28,8 +29,11 @@ const typedWordRange: lsp.Range = {
   end: { line: 2, character: 6 },
 }
 
-async function acceptSnippet(newText: string): Promise<ReturnType<typeof connectedEditor>> {
-  const editor = await connectedEditor(TWO_SPACE_FILE, CARET)
+async function acceptSnippet(
+  newText: string,
+  affinity: SelectionAffinity = 'after',
+): Promise<ReturnType<typeof connectedEditor>> {
+  const editor = await connectedEditor(TWO_SPACE_FILE, CARET, { affinity })
 
   editor.type('o')
   await vi.advanceTimersByTimeAsync(90)
@@ -121,14 +125,14 @@ describe('accepting a snippet completion', () => {
     )
   })
 
-  it('reports the stops at the offsets the re-indented text put them at', async () => {
+  it('reports re-indented stops without losing a before-affinity caret', async () => {
     vi.useFakeTimers()
-    const editor = await acceptSnippet('for (const ${1:item} of ${2:items}) {\n\t$0\n}')
+    const editor = await acceptSnippet('for (const ${1:item} of ${2:items}) {\n\t$0\n}', 'before')
 
     expect(editor.applyEdits).toHaveBeenCalledWith(
       expect.anything(),
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 49, head: 53 },
+      { anchor: 49, head: 53, affinity: 'before' },
     )
     // `$0` sits past the six spaces its line now opens with, not at the column the server wrote it.
     expect(editor.startedSnippetSessions()).toEqual([
@@ -149,7 +153,7 @@ describe('accepting a snippet completion', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 38, to: 40, text: 'NAME = name' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 45, head: 49 },
+      { anchor: 45, head: 49, affinity: 'after' },
     )
     // The mirror travels with the stop it copies rather than being dropped, so the host can keep
     // the two reading the same while the placeholder is typed into.
@@ -182,7 +186,7 @@ describe('accepting a snippet completion', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 38, to: 40, text: 'for$1' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: TYPED_CARET + 3, head: TYPED_CARET + 3 },
+      { anchor: TYPED_CARET + 3, head: TYPED_CARET + 3, affinity: 'after' },
     )
     expect(editor.startedSnippetSessions()).toEqual([])
   })

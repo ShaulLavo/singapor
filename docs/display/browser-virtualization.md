@@ -1,7 +1,7 @@
-# Browser Layout + 2D Virtualizer Plan
+# Browser Layout + 2D Virtualizer
 
-The editor should use browser layout carefully instead of owning a parallel text layout engine.
-The renderer should virtualize what it asks the browser to lay out, then use native DOM ranges,
+The editor uses browser layout carefully instead of owning a parallel text layout engine. The
+renderer virtualizes what it asks the browser to lay out, then uses native DOM ranges,
 CSS Highlight API, selection APIs, and measured browser boxes for geometry.
 
 ## Direction
@@ -10,7 +10,7 @@ CSS Highlight API, selection APIs, and measured browser boxes for geometry.
 - CSS Highlight API remains the selection and syntax paint path until a better paint path exists.
 - Virtualization owns visibility, mounting, and scroll-space management, not glyph measurement.
 - Geometry queries should be local to mounted DOM. Avoid full-document `Range` walks.
-- The first implementation should be a custom 2D virtualizer inspired by `/Users/shaul/vibe2`.
+- The implementation uses a custom 2D virtualizer inspired by `/Users/shaul/vibe2`.
 
 ## Architecture
 
@@ -27,14 +27,15 @@ Inside it:
 
 ### Vertical Virtualization
 
-Start with fixed-height rows:
+Text rows normally use fixed heights:
 
 - `totalHeight = lineCount * rowHeight`
 - `visibleStart = floor(scrollTop / rowHeight)`
 - `visibleEnd = ceil((scrollTop + viewportHeight) / rowHeight)`
 - render visible rows plus overscan
 
-Later, support variable-height rows for wrapping:
+The retained row-size index supports variable-height projections when a live producer supplies
+them:
 
 - maintain measured row heights
 - store prefix sums / Fenwick tree for row -> y and y -> row
@@ -46,8 +47,8 @@ Do not build a full x-position model.
 
 Use browser layout and mounted DOM:
 
-- no-wrap mode may mount the full visible row text initially
-- long-line mode can split a logical line into horizontal text chunks
+- no-wrap mode mounts ordinary visible rows directly
+- long-line mode splits a logical line into horizontal text chunks when geometry permits
 - chunks are mounted only around the horizontal viewport plus overscan
 - chunk boundaries are chosen conservatively by UTF-16 offsets, not by measured glyphs
 - browser layout determines actual glyph positions inside mounted chunks
@@ -63,6 +64,44 @@ Geometry comes from mounted DOM:
 
 If a query targets an unmounted region, scroll/mount it first or return a stale-safe miss.
 
+### BiDi Geometry and Caret Affinity
+
+The browser remains the layout oracle for BiDi text. The row classifier uses generated Unicode
+17.0.0 `R`/`AL` BiDi-class ranges from the pinned `DerivedBidiClass.txt` source, plus explicit BiDi
+controls. This gate keeps ASCII and non-RTL rows off the measured run path without pretending to
+implement the Unicode BiDi algorithm in editor code.
+
+For mounted RTL rows, collapsed DOM ranges expose one or two painted x positions at each grapheme
+boundary. The virtualizer derives half-open logical runs ordered visual-left to visual-right from
+those measurements. A selection's `before`/`after` affinity chooses which legitimate caret belongs
+to its head; the chosen position is primary and the other boundary position may be painted as the
+secondary caret. Selection ranges use the browser's visual rectangle list rather than spanning
+disjoint runs with one logical box.
+
+Run and boundary geometry is cached by row identity and retired on text, inline projection, width,
+font metrics, and row recycling changes. A drag anchor records both text and display-projection
+revisions, because revealing inline source can change the BiDi mapping without editing the buffer.
+
+Hit testing asks `caretPositionFromPoint` or `caretRangeFromPoint` first and ignores editor overlay
+descendants. If those APIs are absent or unusable, measured geometry supplies the fallback. Its
+display-local index is mapped through the inline projection with `nearest` bias and clamped to the
+row's source span, so inline insertions and replacements cannot shift an RTL hit into the wrong
+buffer offset.
+
+`rtlMoveVisually` governs character-step Left/Right and Shift+Left/Right. It defaults on for macOS
+and Linux and off for Windows. Word and subword commands remain in logical document order; Home and
+End remain logical. Unmounted rows and rows that refuse BiDi measurement retain the deterministic
+logical fallback.
+
+Vertical arrows and page movement are independent of `rtlMoveVisually`. `SelectionGoal.horizontal`
+stores the affinity-selected row-local CSS pixel x and reuses it across rows; `lineEnd` retains a
+separate logical aim. Eligibility for a cold target row uses the cheap measurement-refusal
+predicate, so deciding whether vertical geometry is available does not derive every BiDi run or
+sweep the row with DOM ranges.
+
+Long RTL rows are not horizontally windowed across a BiDi run. Rows above the safe geometry ceiling
+use an endpoint-only fallback, keeping work bounded while preserving deterministic edge behavior.
+
 ## Inspired By vibe2
 
 Useful patterns from `/Users/shaul/vibe2/packages/code-editor`:
@@ -72,16 +111,15 @@ Useful patterns from `/Users/shaul/vibe2/packages/code-editor`:
 - `TextFileEditorInner.tsx`: one scroll element, spacer height, absolute overlay layers, visible row rendering
 - `useSelectionRects.ts`: selection work is limited to virtual rows
 
-For this codebase, translate those ideas to framework-free TypeScript.
+These ideas are implemented in framework-free TypeScript.
 
-## First Milestone
+## Implemented Baseline
 
-1. Introduce a small framework-free fixed-row virtualizer module.
-2. Keep the current `<pre>`/text-node editor path as the baseline.
-3. Add a prototype virtualized view behind an internal option or test harness.
-4. Use native browser selection and CSS Highlight API for selection paint.
-5. Render only visible line DOM nodes plus overscan.
-6. Validate scrolling, hit testing, selection, syntax highlights, and typing.
+1. A framework-free fixed-row virtualizer owns the viewport math.
+2. Native browser selection and CSS Highlight APIs provide geometry and paint.
+3. Only visible line DOM nodes plus overscan are mounted.
+4. Real-browser suites cover scrolling, hit testing, selection, syntax highlights, typing, BiDi
+   boundaries, visual movement, and fallback geometry.
 
 ## Acceptance Criteria
 

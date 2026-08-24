@@ -10,8 +10,12 @@ import {
   SelectionGoal,
   lastAddedSelectionIndex,
   resolveSelection,
+  selectionOffsetsWithAffinity,
+  selectionRangeWithAffinity,
   type ResolvedSelection,
+  type SelectionAffinity,
   type SelectionGoal as SelectionGoalValue,
+  type SelectionOffsetsWithAffinity,
   type SelectionSet,
 } from '../selections'
 import { clamp } from '../style-utils'
@@ -64,11 +68,13 @@ import {
   mouseSelectionEnds,
   mouseTextMove,
   requestFrame,
+  type MouseSelectionAnchor,
   type MouseSelectionDrag,
   type MouseSelectionEnds,
   type MouseSelectionGranularity,
   type MouseTextMoveDrag,
 } from './mouseSelection'
+import type { VirtualizedTextHitPosition } from '../virtualization/virtualizedTextViewTypes'
 import {
   createNavigationLineReader,
   navigationTargetForCommand,
@@ -139,6 +145,7 @@ export type InputSelectionControllerOptions = {
   readonly el: HTMLDivElement
   readonly announcer: EditorAnnouncer
   readonly selectionSyncMode: EditorSelectionSyncMode
+  readonly rtlMoveVisually: boolean
   readonly tabSize: number
   /** Whether Tab is the page's key for leaving the editor rather than the editor's for indenting. */
   readonly tabMovesFocus: boolean
@@ -174,6 +181,11 @@ export type InputSelectionControllerOptions = {
 type OccurrenceRun = {
   readonly selections: SelectionSet<PieceTableAnchor>
   readonly wholeWord: boolean
+}
+
+type OccurrenceQueryWithSources = OccurrenceQuery & {
+  readonly source: ResolvedSelection
+  readonly sourcesByRange: ReadonlyMap<string, ResolvedSelection>
 }
 
 /** What a copy or a cut hands to the clipboard: the text, plus how it was assembled. */
@@ -235,7 +247,7 @@ export class InputSelectionController {
   private occurrenceRun: OccurrenceRun | null = null
   private mouseSelectionDrag: MouseSelectionDrag | null = null
   private mouseTextMoveDrag: MouseTextMoveDrag | null = null
-  private mouseSelectionAnchor: TextOffsetRange | null = null
+  private mouseSelectionAnchor: MouseSelectionAnchor | null = null
   private columnSelection: ColumnSelectionRun | null = null
   private mouseSelectionAutoScrollFrame = 0
   private inputState: EditorInputState = createEditorInputState()
@@ -356,11 +368,12 @@ export class InputSelectionController {
   ): DocumentSessionChange | null {
     // One cursor, because a mirror is written somewhere the reader is not looking: with several of
     // them there is no one range whose text the copies are supposed to be reading.
-    if (!this.singleSelection(session, session.getSnapshot())) return null
+    const source = this.singleSelection(session, session.getSnapshot())
+    if (!source) return null
 
     return (
-      this.mirrorSnippetEdit(session, from, to, text) ??
-      this.mirrorNameEdit(session, from, to, text)
+      this.mirrorSnippetEdit(session, source, from, to, text) ??
+      this.mirrorNameEdit(session, source, from, to, text)
     )
   }
 
@@ -441,6 +454,7 @@ export class InputSelectionController {
    */
   private mirrorSnippetEdit(
     session: DocumentSession,
+    source: ResolvedSelection,
     start: number,
     end: number,
     text: string,
@@ -504,7 +518,7 @@ export class InputSelectionController {
     // it, and the caret is handed back in the coordinates the batch produces.
     const caret = start + text.length + shift(start, -1)
     const change = session.applyEdits(edits, {
-      selections: [{ anchor: caret, head: caret }],
+      selections: [selectionOffsetsWithAffinity(source, caret, caret)],
     })
     this.snippet.reanchor(change.snapshot, {
       mirrors,
@@ -518,6 +532,7 @@ export class InputSelectionController {
 
   private mirrorNameEdit(
     session: DocumentSession,
+    source: ResolvedSelection,
     start: number,
     end: number,
     text: string,
@@ -551,7 +566,9 @@ export class InputSelectionController {
     if (mirrored.edits.length === 1) return null
 
     const change = session.applyEdits(mirrored.edits, {
-      selections: [{ anchor: mirrored.caretOffset, head: mirrored.caretOffset }],
+      selections: [
+        selectionOffsetsWithAffinity(source, mirrored.caretOffset, mirrored.caretOffset),
+      ],
     })
     this.linkedEditing.advance(change.snapshot)
     this.autoClose.advance(change.snapshot)
@@ -590,8 +607,10 @@ export class InputSelectionController {
     if (text !== '\n') return session.applyText(text)
 
     const snapshot = session.getSnapshot()
-    const caret = this.collapsedCaretOffset(session, snapshot)
-    if (caret === null) return session.applyText(text)
+    const source = this.singleSelection(session, snapshot)
+    if (!source?.collapsed) return session.applyText(text)
+
+    const caret = source.headOffset
 
     const point = offsetToPoint(snapshot, caret)
     // A list item's marker is a construct the indentation rules cannot see: they read the whitespace
@@ -603,7 +622,7 @@ export class InputSelectionController {
       readLine: (row) => this.documentLine(snapshot, row),
     })
     if (listBreak) {
-      return this.applyLineBreakEdits(session, listBreak.edits, listBreak.caretOffset)
+      return this.applyLineBreakEdits(session, source, listBreak.edits, listBreak.caretOffset)
     }
 
     const indent = lineBreakIndent({
@@ -620,6 +639,7 @@ export class InputSelectionController {
 
     return this.applyLineBreakEdits(
       session,
+      source,
       [{ from: caret, text: indent.insert + indent.trailing, to: caret }],
       caret + indent.insert.length,
     )
@@ -628,11 +648,12 @@ export class InputSelectionController {
   /** Commits a line break's edits, leaving the caret where the break decided it belongs. */
   private applyLineBreakEdits(
     session: DocumentSession,
+    source: ResolvedSelection,
     edits: readonly TextEdit[],
     caretOffset: number,
   ): DocumentSessionChange {
     const change = session.applyEdits(edits, {
-      selections: [{ anchor: caretOffset, head: caretOffset }],
+      selections: [selectionOffsetsWithAffinity(source, caretOffset, caretOffset)],
     })
     // The pair the caret was inside has been split across lines; its closer is no longer adjacent.
     this.autoClose.clear()
@@ -674,8 +695,10 @@ export class InputSelectionController {
     if (surrounded) return surrounded
 
     const snapshot = session.getSnapshot()
-    const caret = this.collapsedCaretOffset(session, snapshot)
-    if (caret === null) return null
+    const source = this.singleSelection(session, snapshot)
+    if (!source?.collapsed) return null
+
+    const caret = source.headOffset
 
     const languageId = this.options.getLanguageId()
     const closing = autoClosingPairForClose(languageId, text)
@@ -698,7 +721,13 @@ export class InputSelectionController {
     const change = session.applyEdits(
       [{ from: caret, text: opening.open + opening.close, to: caret }],
       {
-        selections: [{ anchor: caret + opening.open.length, head: caret + opening.open.length }],
+        selections: [
+          selectionOffsetsWithAffinity(
+            source,
+            caret + opening.open.length,
+            caret + opening.open.length,
+          ),
+        ],
       },
     )
     this.autoClose.track(change.snapshot, caret + opening.open.length, opening.close)
@@ -726,7 +755,7 @@ export class InputSelectionController {
     caret: number,
   ): DocumentSessionChange {
     this.autoClose.forget(snapshot, caret)
-    const change = session.setSelection(caret + 1, caret + 1)
+    const change = session.setSelection(caret + 1, caret + 1, { affinity: 'before' })
     this.autoClose.advance(change.snapshot)
     this.markSessionSelectionForNextInput()
     return change
@@ -735,8 +764,10 @@ export class InputSelectionController {
   /** Backspace between the halves of a pair this editor inserted removes both, or null. */
   private deleteAutoClosedPair(session: DocumentSession): DocumentSessionChange | null {
     const snapshot = session.getSnapshot()
-    const caret = this.collapsedCaretOffset(session, snapshot)
-    if (caret === null) return null
+    const source = this.singleSelection(session, snapshot)
+    if (!source?.collapsed) return null
+
+    const caret = source.headOffset
 
     const charBefore = characterBefore(snapshot, caret)
     const pair =
@@ -754,7 +785,7 @@ export class InputSelectionController {
 
     this.autoClose.forget(snapshot, caret)
     const change = session.applyEdits([{ from: caret - 1, text: '', to: caret + 1 }], {
-      selections: [{ anchor: caret - 1, head: caret - 1 }],
+      selections: [selectionOffsetsWithAffinity(source, caret - 1, caret - 1)],
     })
     this.autoClose.advance(change.snapshot)
     this.markSessionSelectionForNextInput()
@@ -844,10 +875,11 @@ export class InputSelectionController {
   private moveSnippetStop(session: DocumentSession, direction: 1 | -1): boolean {
     if (!this.snippet.active) return false
 
+    const affinity = this.primaryResolvedSelection()?.affinity ?? 'after'
     const range = this.snippet.move(session.getSnapshot(), direction)
     if (!range) return false
 
-    const change = session.setSelection(range.start, range.end)
+    const change = session.setSelection(range.start, range.end, { affinity })
     this.autoClose.advance(change.snapshot)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.snippetStop')
@@ -922,6 +954,9 @@ export class InputSelectionController {
     scope: 'all' | 'word',
   ): boolean {
     const snapshot = session.getSnapshot()
+    const source = this.singleSelection(session, snapshot)
+    if (!source?.collapsed) return false
+
     const shownAt = this.inlineSuggestionCaret(snapshot)
     const accepted =
       scope === 'all'
@@ -944,7 +979,7 @@ export class InputSelectionController {
     const change =
       mirrored ??
       session.applyEdits([edit], {
-        selections: [{ anchor: acceptedCaret, head: acceptedCaret }],
+        selections: [selectionOffsetsWithAffinity(source, acceptedCaret, acceptedCaret)],
       })
     if (!mirrored) this.autoClose.advance(change.snapshot)
     // Read back off the batch, which may have moved the whole document under the caret by rewriting
@@ -1074,8 +1109,8 @@ export class InputSelectionController {
     if (!session) return false
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
-    const change = session.setSelection(0, session.getSnapshot().length)
-    this.syncCustomSelectionHighlight(0, session.getSnapshot().length)
+    const change = session.setSelection(0, session.getSnapshot().length, { affinity: 'after' })
+    this.syncCustomSelectionHighlight(0, session.getSnapshot().length, 'after')
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.selectAll', start, { syncDomSelection: false })
     return true
@@ -1096,7 +1131,10 @@ export class InputSelectionController {
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const change = session.setSelections([
-      { anchor: kept.anchorOffset, goal: kept.goal, head: kept.headOffset },
+      {
+        ...selectionOffsetsWithAffinity(kept, kept.anchorOffset, kept.headOffset),
+        goal: kept.goal,
+      },
     ])
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
@@ -1115,28 +1153,35 @@ export class InputSelectionController {
     const rowDelta = direction === 'above' ? -1 : 1
     const inserted = resolved
       .map((selection) => this.cursorSelectionByDisplayRows(selection, rowDelta))
-      .filter((selection) => selection.anchor !== selection.sourceHead)
+      .filter(
+        (selection) =>
+          selection.anchor !== selection.sourceHead ||
+          selection.affinity !== selection.sourceAffinity,
+      )
     const firstInserted = inserted[0]
     if (!firstInserted) return false
 
-    const selections = [
-      ...resolved.map((selection) => ({
+    const selections = resolved
+      .map((selection) => ({
         anchor: selection.anchorOffset,
+        affinity: selection.affinity,
         head: selection.headOffset,
         goal: selection.goal,
-      })),
-      ...inserted.map((selection) => ({
-        anchor: selection.anchor,
-        head: selection.anchor,
-        goal: selection.goal,
-      })),
-    ]
+      }))
+      .concat(
+        inserted.map((selection) => ({
+          anchor: selection.anchor,
+          affinity: selection.affinity,
+          head: selection.anchor,
+          goal: selection.goal,
+        })),
+      )
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
+    this.options.view.revealCaret(firstInserted.anchor, firstInserted.affinity)
     this.applyChange(change, `input.insertCursor${capitalize(direction)}`, start, {
-      revealOffset: firstInserted.anchor,
       syncDomSelection: false,
     })
     // Counted off the session after the change rather than off the cursors the press asked for, the
@@ -1174,13 +1219,15 @@ export class InputSelectionController {
     const ranges = findAllExactOccurrences(text, query.query)
     if (ranges.length === 0) return false
 
-    const selections = ranges.map((range) => ({ anchor: range.start, head: range.end }))
+    const selections = ranges.map((range) => occurrenceSelectionForRange(query, range))
+    const primary = occurrenceSelectionForRange(query, query.range)
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, occurrenceSelectTimingName(command), start, {
-      revealOffset: query.range.end,
+      revealAffinity: survivingPrimarySelectionAffinity(change, primary, primary.head),
+      revealOffset: primary.head,
       syncDomSelection: false,
     })
     this.announceOccurrenceSelection(ranges.length)
@@ -1192,14 +1239,17 @@ export class InputSelectionController {
     if (!session) return false
 
     const text = session.materializeFullText()
+    const selectionSet = session.getSelections()
     const resolved = this.resolvedSelections()
-    const source = resolved.at(-1)
+    const preferredIndex = lastAddedSelectionIndex(selectionSet)
+    const sourceIndex = resolved[preferredIndex] ? preferredIndex : resolved.length - 1
+    const source = resolved[sourceIndex]
     if (!source) return false
 
     const query = occurrenceQueryForSelection(text, source)
     if (!query) return false
 
-    const keptSelections = resolved.slice(0, -1)
+    const keptSelections = resolved.filter((_selection, index) => index !== sourceIndex)
     const selected = keptSelections.map((selection) => ({
       start: selection.startOffset,
       end: selection.endOffset,
@@ -1208,20 +1258,25 @@ export class InputSelectionController {
     if (!next) return false
     if (next.start === query.range.start && next.end === query.range.end) return false
 
+    const movedSelection = selectionRangeWithAffinity(source, next.start, next.end)
     const selections = [
       ...keptSelections.map((selection) => ({
-        anchor: selection.anchorOffset,
-        head: selection.headOffset,
+        ...selectionOffsetsWithAffinity(selection, selection.anchorOffset, selection.headOffset),
         goal: selection.goal,
       })),
-      { anchor: next.start, head: next.end },
+      movedSelection,
     ]
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const change = session.setSelections(selections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.moveSelectionToNextFindMatch', start, {
-      revealOffset: next.end,
+      revealAffinity: survivingPrimarySelectionAffinity(
+        change,
+        movedSelection,
+        movedSelection.head,
+      ),
+      revealOffset: movedSelection.head,
       syncDomSelection: false,
     })
     return true
@@ -1282,6 +1337,7 @@ export class InputSelectionController {
         resolved,
         readLine,
         documentLength: snapshot.length,
+        rtlMoveVisually: this.options.rtlMoveVisually,
         wordSeparators,
         view: this.options.view,
       }),
@@ -1290,18 +1346,19 @@ export class InputSelectionController {
     if (!primary?.target) return false
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
-    const selections = []
+    const selections: DocumentSessionSelectionRange[] = []
     for (const { resolved, target } of navigation) {
       if (!target) return false
       selections.push({
         anchor: target.extend ? resolved.anchorOffset : target.offset,
+        affinity: target.affinity,
         head: target.offset,
         goal: target.goal ?? SelectionGoal.none(),
       })
     }
     const change = session.setSelections(selections)
     this.markSessionSelectionForNextInput()
-    this.options.view.revealOffset(primary.target.offset)
+    this.options.view.revealCaret(primary.target.offset, primary.target.affinity)
     this.applyChange(change, primary.target.timingName, start)
     return true
   }
@@ -1310,7 +1367,10 @@ export class InputSelectionController {
     anchorOffset: number,
     headOffset: number,
     timingName: string,
-    revealOffset?: number,
+    options: {
+      readonly affinity?: SelectionAffinity
+      readonly revealOffset?: number
+    } = {},
   ): void {
     const session = this.session
     if (!session) return
@@ -1322,11 +1382,14 @@ export class InputSelectionController {
     // recognizes the match it is sitting on by the selection it left behind.
     const caret =
       anchorOffset === headOffset ? renderedRowCaretOffset(this.options.view, headOffset) : null
-    const change = session.setSelection(caret ?? anchorOffset, caret ?? headOffset)
+    const affinity = options.affinity ?? 'after'
+    const change = session.setSelection(caret ?? anchorOffset, caret ?? headOffset, {
+      affinity,
+    })
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, {
-      revealOffset,
+      revealOffset: options.revealOffset,
       syncDomSelection: false,
     })
   }
@@ -1335,16 +1398,19 @@ export class InputSelectionController {
     selections: readonly EditorSelectionRange[],
     timingName: string,
     revealOffset?: number,
+    lastAddedIndex?: number,
   ): void {
     const session = this.session
     if (!session) return
     if (selections.length === 0) return
 
     const start = nowMs()
-    const change = session.setSelections(selections)
+    const orderedSelections = selectionsWithLastAddedAtEnd(selections, lastAddedIndex)
+    const change = session.setSelections(orderedSelections)
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, {
+      revealAffinity: survivingPrimarySelectionAffinity(change, selections[0], revealOffset),
       revealOffset,
       syncDomSelection: false,
     })
@@ -1382,6 +1448,7 @@ export class InputSelectionController {
         headOffset: resolved.headOffset,
         startOffset: resolved.startOffset,
         endOffset: resolved.endOffset,
+        affinity: resolved.affinity,
       }
     })
   }
@@ -1434,6 +1501,7 @@ export class InputSelectionController {
       return {
         anchorOffset: resolved.anchorOffset,
         headOffset: resolved.headOffset,
+        affinity: resolved.affinity,
       }
     })
     this.options.view.setSelections(selections)
@@ -1495,7 +1563,12 @@ export class InputSelectionController {
       this.snippet.advance(change.snapshot, change.edits)
     }
 
-    this.options.applySessionChange(change, totalName, totalStart, options)
+    this.options.applySessionChange(
+      change,
+      totalName,
+      totalStart,
+      selectionRevealOptions(change, options),
+    )
   }
 
   clearSelectionHighlight(): void {
@@ -1633,36 +1706,36 @@ export class InputSelectionController {
       return
     }
 
-    const offset = this.textOffsetFromMouseEvent(event)
-    if (offset === null) return
+    const position = this.textPositionFromMouseEvent(event)
+    if (!position) return
 
     // Alt on its own already means "another cursor here", so the rectangle takes the pair.
     if (event.altKey && event.shiftKey) {
-      this.startMouseSelectionDrag(event, offset, 'column')
+      this.startMouseSelectionDrag(event, position, 'column')
       return
     }
 
     if (event.detail === 3) {
-      this.startMouseSelectionDrag(event, offset, 'line')
+      this.startMouseSelectionDrag(event, position, 'line')
       return
     }
 
     if (event.detail === 2) {
-      this.startMouseSelectionDrag(event, offset, 'word')
+      this.startMouseSelectionDrag(event, position, 'word')
       return
     }
 
     if (event.altKey) {
-      this.addCursorAtOffset(event, offset)
+      this.addCursorAtPosition(event, position)
       return
     }
 
-    if (this.startMouseTextMoveDrag(event, offset)) return
+    if (this.startMouseTextMoveDrag(event, position)) return
 
-    this.startMouseSelectionDrag(event, offset, 'char')
+    this.startMouseSelectionDrag(event, position, 'char')
   }
 
-  private addCursorAtOffset(event: MouseEvent, offset: number): void {
+  private addCursorAtPosition(event: MouseEvent, position: VirtualizedTextHitPosition): void {
     const session = this.session
     if (!session) return
     if (event.button !== 0) return
@@ -1670,7 +1743,9 @@ export class InputSelectionController {
 
     const start = eventStartMs(event)
     event.preventDefault()
-    const change = session.addSelection(offset)
+    const change = session.addSelection(position.offset, position.offset, {
+      affinity: position.affinity,
+    })
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.addCursor', start, {
@@ -1687,28 +1762,32 @@ export class InputSelectionController {
    */
   private startMouseSelectionDrag(
     event: MouseEvent,
-    offset: number,
+    position: VirtualizedTextHitPosition,
     granularity: MouseSelectionGranularity,
   ): void {
     const session = this.session
     if (!session) return
     if (event.button !== 0) return
 
+    const { offset } = position
     const head = this.offsetRangeAt(offset, granularity)
-    const anchor = event.shiftKey ? this.mouseSelectionExtendAnchor() : head
+    const anchor = event.shiftKey
+      ? this.mouseSelectionExtendAnchor()
+      : this.mouseSelectionAnchorAt(position, head, granularity)
     if (!anchor) return
 
     const start = eventStartMs(event)
     event.preventDefault()
     this.options.view.focusInput()
     this.mouseSelectionAnchor = anchor
-    this.mouseSelectionDrag = {
+    const drag: MouseSelectionDrag = {
       anchor,
       granularity,
-      headOffset: offset,
+      head: position,
       clientX: event.clientX,
       clientY: event.clientY,
     }
+    this.mouseSelectionDrag = drag
     this.transitionInputState({ type: 'mouse-selection-start' })
     this.options.el.ownerDocument.addEventListener('mousemove', this.updateMouseSelectionDrag)
     this.options.el.ownerDocument.addEventListener('mouseup', this.finishMouseSelectionDrag)
@@ -1720,16 +1799,28 @@ export class InputSelectionController {
     // A press that only drops the caret somewhere has nothing to show until it moves or lifts, and
     // committing here would spend a selection change on every click.
     if (granularity === 'char' && !event.shiftKey) {
-      this.syncCustomSelectionHighlight(offset, offset)
+      this.syncCustomSelectionHighlight(offset, offset, position.affinity)
       return
     }
 
+    const ends = this.mouseSelectionEndsForDrag(drag)
     this.applyMouseSelection(
       session,
-      mouseSelectionEnds(anchor, head),
+      ends,
       mouseSelectionTimingName(granularity),
       start,
+      this.mouseSelectionAffinity(drag, ends),
     )
+  }
+
+  private mouseSelectionAnchorAt(
+    position: VirtualizedTextHitPosition,
+    range: TextOffsetRange,
+    granularity: MouseSelectionGranularity,
+  ): MouseSelectionAnchor {
+    const bidi =
+      granularity === 'char' ? this.options.view.createBidiSelectionAnchor(position) : null
+    return { range, bidi }
   }
 
   private offsetRangeAt(offset: number, granularity: MouseSelectionGranularity): TextOffsetRange {
@@ -1749,19 +1840,23 @@ export class InputSelectionController {
    * owes that press nothing, so extending falls back to the end the selection is anchored by —
    * never the end the caret happens to sit at.
    */
-  private mouseSelectionExtendAnchor(): TextOffsetRange | null {
+  private mouseSelectionExtendAnchor(): MouseSelectionAnchor | null {
     const primary = this.primaryResolvedSelection()
     if (!primary) return null
 
     const remembered = this.mouseSelectionAnchor
     if (
       remembered &&
-      (primary.anchorOffset === remembered.start || primary.anchorOffset === remembered.end)
+      (primary.anchorOffset === remembered.range.start ||
+        primary.anchorOffset === remembered.range.end)
     ) {
       return remembered
     }
 
-    return { start: primary.anchorOffset, end: primary.anchorOffset }
+    return {
+      range: { start: primary.anchorOffset, end: primary.anchorOffset },
+      bidi: null,
+    }
   }
 
   private applyMouseSelection(
@@ -1769,11 +1864,22 @@ export class InputSelectionController {
     ends: MouseSelectionEnds,
     timingName: string,
     start: number,
+    affinity: SelectionAffinity,
   ): void {
-    const change = session.setSelection(ends.anchorOffset, ends.headOffset)
-    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
+    const change = session.setSelection(ends.anchorOffset, ends.headOffset, { affinity })
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, { syncDomSelection: false })
+  }
+
+  private mouseSelectionAffinity(
+    drag: MouseSelectionDrag,
+    ends: MouseSelectionEnds,
+  ): SelectionAffinity {
+    if (drag.granularity === 'char') return drag.head.affinity
+    if (ends.headOffset < ends.anchorOffset) return 'after'
+    if (ends.headOffset > ends.anchorOffset) return 'before'
+    return drag.head.affinity
   }
 
   private startColumnSelection(session: DocumentSession, offset: number, start: number): void {
@@ -1910,7 +2016,11 @@ export class InputSelectionController {
       // end instead would put a caret outside the rectangle, editing text it never covered.
       if (!covers) continue
 
-      ranges.push({ anchor: line.start + fromColumn, head: line.start + toColumn })
+      ranges.push({
+        anchor: line.start + fromColumn,
+        affinity: 'after',
+        head: line.start + toColumn,
+      })
     }
 
     return { ranges, widestColumn }
@@ -1994,20 +2104,24 @@ export class InputSelectionController {
 
     // A release can arrive from over the gutter, a scrollbar, or past the last line, where a hit
     // test answers with an offset the pointer never visited.
-    const { anchor, granularity, headOffset } = drag
+    const { granularity, head } = drag
     event.preventDefault()
     this.stopMouseSelectionDrag('finish')
 
     const start = nowMs()
     if (granularity === 'column') {
-      this.commitColumnSelection(session, headOffset, start)
+      this.commitColumnSelection(session, head.offset, start)
       return
     }
 
-    const ends = mouseSelectionEnds(anchor, this.offsetRangeAt(headOffset, granularity))
-    const change = session.setSelection(ends.anchorOffset, ends.headOffset)
+    const ends = this.mouseSelectionEndsForDrag(drag)
+    const affinity = this.mouseSelectionAffinity(drag, ends)
+    this.rememberMouseSelectionAnchor(drag, ends.anchorOffset)
+    const change = session.setSelection(ends.anchorOffset, ends.headOffset, {
+      affinity,
+    })
     const syncDomSelection = ends.anchorOffset === ends.headOffset
-    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.selection', start, { syncDomSelection })
   }
@@ -2020,7 +2134,7 @@ export class InputSelectionController {
    * text that is only one character wide has no interior to grab. Several cursors have no one run to
    * carry, and a read-only document cannot take the text back out again.
    */
-  private startMouseTextMoveDrag(event: MouseEvent, offset: number): boolean {
+  private startMouseTextMoveDrag(event: MouseEvent, position: VirtualizedTextHitPosition): boolean {
     if (event.button !== 0) return false
     if (event.detail !== 1) return false
     if (event.shiftKey) return false
@@ -2029,15 +2143,18 @@ export class InputSelectionController {
     const resolved = this.resolvedSelections()
     const primary = resolved.length === 1 ? resolved[0] : undefined
     if (!primary) return false
+    const { offset } = position
     if (offset <= primary.startOffset || offset >= primary.endOffset) return false
 
     event.preventDefault()
     this.options.view.focusInput()
     this.mouseTextMoveDrag = {
-      dropOffset: null,
+      drop: null,
       moved: false,
-      pressOffset: offset,
+      press: position,
       source: { start: primary.startOffset, end: primary.endOffset },
+      sourceAffinity: primary.affinity,
+      sourceReversed: primary.reversed,
     }
     this.transitionInputState({ type: 'mouse-selection-start' })
     this.options.el.ownerDocument.addEventListener('mousemove', this.updateMouseTextMoveDrag)
@@ -2050,11 +2167,15 @@ export class InputSelectionController {
     if (!drag) return
 
     event.preventDefault()
-    const offset = this.textOffsetFromPoint(event.clientX, event.clientY)
-    if (offset === null) return
+    const position = this.textPositionFromMouseEvent(event)
+    if (!position) return
 
-    drag.moved = drag.moved || offset !== drag.pressOffset
-    drag.dropOffset = offset > drag.source.start && offset < drag.source.end ? null : offset
+    drag.moved =
+      drag.moved ||
+      position.offset !== drag.press.offset ||
+      position.affinity !== drag.press.affinity
+    drag.drop =
+      position.offset > drag.source.start && position.offset < drag.source.end ? null : position
     this.showTextMoveDropCaret(drag)
   }
 
@@ -2070,19 +2191,19 @@ export class InputSelectionController {
     this.stopMouseTextMoveDrag()
     const start = eventStartMs(event)
     if (!drag.moved) {
-      this.collapseSelectionToOffset(session, drag.pressOffset, start)
+      this.collapseSelectionToPosition(session, drag.press, start)
       return
     }
 
     // The modifier is read here rather than at the press, because it can be taken up or let go at
     // any point while the text is in flight and what it says at the release is the user's answer.
     const move =
-      drag.dropOffset === null
+      drag.drop === null
         ? null
         : mouseTextMove(
             drag.source,
             readPieceTableTextRange(session.getSnapshot(), drag.source.start, drag.source.end),
-            drag.dropOffset,
+            drag.drop.offset,
             event.altKey || event.ctrlKey,
           )
     if (!move) {
@@ -2090,13 +2211,12 @@ export class InputSelectionController {
       return
     }
 
-    const change = session.applyEdits(move.edits, {
-      selections: [{ anchor: move.selection.start, head: move.selection.end }],
-    })
-    this.syncCustomSelectionHighlight(move.selection.start, move.selection.end)
+    const selection = mouseTextMoveSelection(drag, move.selection)
+    const change = session.applyEdits(move.edits, { selections: [selection] })
+    this.syncCustomSelectionHighlight(selection.anchor, selection.head, selection.affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.dragText', start, {
-      revealOffset: move.selection.end,
+      revealOffset: selection.head,
       syncDomSelection: false,
     })
   }
@@ -2104,17 +2224,23 @@ export class InputSelectionController {
   private showTextMoveDropCaret(drag: MouseTextMoveDrag): void {
     // With nowhere to drop, the selection comes back: the run is still where it was, and a caret
     // sitting inside it would claim otherwise.
-    if (drag.dropOffset === null) {
+    if (drag.drop === null) {
       this.syncSessionSelectionHighlight()
       return
     }
 
-    this.syncCustomSelectionHighlight(drag.dropOffset, drag.dropOffset)
+    this.syncCustomSelectionHighlight(drag.drop.offset, drag.drop.offset, drag.drop.affinity)
   }
 
-  private collapseSelectionToOffset(session: DocumentSession, offset: number, start: number): void {
-    const change = session.setSelection(offset)
-    this.syncCustomSelectionHighlight(offset, offset)
+  private collapseSelectionToPosition(
+    session: DocumentSession,
+    position: VirtualizedTextHitPosition,
+    start: number,
+  ): void {
+    const change = session.setSelection(position.offset, position.offset, {
+      affinity: position.affinity,
+    })
+    this.syncCustomSelectionHighlight(position.offset, position.offset, position.affinity)
     this.markSessionSelectionForNextInput()
     this.applyChange(change, 'input.selection', start, { syncDomSelection: true })
   }
@@ -2147,16 +2273,18 @@ export class InputSelectionController {
     const session = this.session
     if (!drag || !session) return
 
-    const offset = this.mouseSelectionOffsetFromPoint(drag.clientX, drag.clientY)
-    drag.headOffset = offset
+    const position = this.mouseSelectionPositionFromPoint(drag.clientX, drag.clientY, drag.head)
+    drag.head = position
+    const { offset } = position
     if (drag.granularity === 'column') {
       this.updateColumnSelection(session, offset)
       return
     }
 
-    const ends = mouseSelectionEnds(drag.anchor, this.offsetRangeAt(offset, drag.granularity))
-    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset)
-    session.setSelection(ends.anchorOffset, ends.headOffset)
+    const ends = this.mouseSelectionEndsForDrag(drag)
+    const affinity = this.mouseSelectionAffinity(drag, ends)
+    this.syncCustomSelectionHighlight(ends.anchorOffset, ends.headOffset, affinity)
+    session.setSelection(ends.anchorOffset, ends.headOffset, { affinity })
     this.options.notifyViewContributions('selection', null)
     if (ends.anchorOffset === ends.headOffset) {
       this.markDomSelectionForNextInput()
@@ -2166,13 +2294,36 @@ export class InputSelectionController {
     this.markSessionSelectionForNextInput()
   }
 
-  private mouseSelectionOffsetFromPoint(clientX: number, clientY: number): number {
-    const offset =
-      this.options.view.textOffsetFromPoint(clientX, clientY) ??
-      this.options.view.textOffsetFromViewportPoint(clientX, clientY)
-    if (offset !== null) return offset
+  private mouseSelectionEndsForDrag(drag: MouseSelectionDrag): MouseSelectionEnds {
+    const head = this.offsetRangeAt(drag.head.offset, drag.granularity)
+    const bidi = drag.granularity === 'char' ? drag.anchor.bidi : null
+    if (!bidi) return mouseSelectionEnds(drag.anchor.range, head)
 
-    return this.mouseSelectionDrag?.headOffset ?? 0
+    const anchorOffset = this.options.view.resolveBidiSelectionAnchor(bidi, drag.head)
+    return mouseSelectionEnds({ start: anchorOffset, end: anchorOffset }, head)
+  }
+
+  private rememberMouseSelectionAnchor(drag: MouseSelectionDrag, anchorOffset: number): void {
+    if (drag.granularity !== 'char') return
+    const bidi = drag.anchor.bidi
+    // A committed alternate twin must not fall back to the raw press after geometry changes.
+    const reusableBidi = bidi?.rawOffset === anchorOffset ? bidi : null
+    this.mouseSelectionAnchor = {
+      range: { start: anchorOffset, end: anchorOffset },
+      bidi: reusableBidi,
+    }
+  }
+
+  private mouseSelectionPositionFromPoint(
+    clientX: number,
+    clientY: number,
+    fallback: VirtualizedTextHitPosition,
+  ): VirtualizedTextHitPosition {
+    const position =
+      this.options.view.textPositionFromPoint(clientX, clientY) ??
+      this.options.view.textPositionFromViewportPoint(clientX, clientY)
+    if (position) return position
+    return fallback
   }
 
   private updateMouseSelectionAutoScroll(): void {
@@ -2234,8 +2385,8 @@ export class InputSelectionController {
 
     const start = eventStartMs(event)
     event.preventDefault()
-    const change = session.setSelection(0, session.getSnapshot().length)
-    this.syncCustomSelectionHighlight(0, session.getSnapshot().length)
+    const change = session.setSelection(0, session.getSnapshot().length, { affinity: 'after' })
+    this.syncCustomSelectionHighlight(0, session.getSnapshot().length, 'after')
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, { syncDomSelection: false })
   }
@@ -2402,8 +2553,10 @@ export class InputSelectionController {
     event.preventDefault()
     // Text arriving from outside brings no cursor of its own, so the editor lends it one: without a
     // mark on the spot the pointer has picked out, a drop is aimed by guesswork.
-    const offset = this.textOffsetFromPoint(event.clientX, event.clientY)
-    if (offset !== null) this.syncCustomSelectionHighlight(offset, offset)
+    const position = this.textPositionFromMouseEvent(event)
+    if (position) {
+      this.syncCustomSelectionHighlight(position.offset, position.offset, position.affinity)
+    }
     // Never `move`: the text belongs to whatever the drag came from, and telling that source to take
     // it away is a deletion in a document this editor does not own.
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
@@ -2438,15 +2591,16 @@ export class InputSelectionController {
       return
     }
 
-    const offset = this.textOffsetFromPoint(event.clientX, event.clientY)
-    if (offset === null) {
+    const position = this.textPositionFromMouseEvent(event)
+    if (!position) {
       this.syncSessionSelectionHighlight()
       return
     }
 
+    const { offset } = position
     this.transitionInputState({ text, type: 'drop-pending' })
     const start = eventStartMs(event)
-    const selectionChange = session.setSelection(offset)
+    const selectionChange = session.setSelection(offset, offset, { affinity: position.affinity })
     this.markSessionSelectionForNextInput()
     // After the caret has been put where the text landed, which is the range this insertion runs
     // over: text dropped into a placeholder or a tag name is that name changing like any other.
@@ -2593,7 +2747,7 @@ export class InputSelectionController {
     const edits = starts.map((start) => ({ from: start, text, to: start }))
     const selections = starts.map((start, index) => {
       const caret = start + text.length * (index + 1)
-      return { anchor: caret, head: caret }
+      return { anchor: caret, affinity: 'after' as const, head: caret }
     })
     return applyPasteEdits(session, edits, selections)
   }
@@ -2611,13 +2765,13 @@ export class InputSelectionController {
     lines: readonly NavigationLine[],
   ): DocumentSessionChange {
     const edits: TextEdit[] = []
-    const selections: { readonly anchor: number; readonly head: number }[] = []
+    const selections: DocumentSessionSelectionRange[] = []
     let shift = 0
     for (const [index, line] of lines.entries()) {
       const fragment = texts[index] ?? ''
       edits.push({ from: line.start, text: fragment, to: line.start })
       const caret = line.start + shift + fragment.length
-      selections.push({ anchor: caret, head: caret })
+      selections.push({ anchor: caret, affinity: 'after', head: caret })
       shift += fragment.length
     }
 
@@ -2630,7 +2784,7 @@ export class InputSelectionController {
     resolved: readonly ResolvedSelection[],
   ): DocumentSessionChange {
     const edits: TextEdit[] = []
-    const selections: { readonly anchor: number; readonly head: number }[] = []
+    const selections: DocumentSessionSelectionRange[] = []
     // Every edit is expressed against the document as it stands now, but the carets left behind are
     // read back off the document the batch produces, so they carry what the earlier ones shifted.
     let shift = 0
@@ -2638,7 +2792,7 @@ export class InputSelectionController {
       const fragment = texts[index] ?? ''
       edits.push({ from: selection.startOffset, text: fragment, to: selection.endOffset })
       const caret = selection.startOffset + shift + fragment.length
-      selections.push({ anchor: caret, head: caret })
+      selections.push(selectionOffsetsWithAffinity(selection, caret, caret))
       shift += fragment.length - (selection.endOffset - selection.startOffset)
     }
 
@@ -2747,7 +2901,7 @@ export class InputSelectionController {
       .selections.map((selection) => resolveSelection(snapshot, selection))
       .toSorted((left, right) => left.startOffset - right.startOffset)
     const edits: TextEdit[] = []
-    const selections: { readonly anchor: number; readonly head: number }[] = []
+    const selections: DocumentSessionSelectionRange[] = []
     // Same accounting as a multi-caret paste: every range is expressed against the document as it
     // stands, and every caret against the one the batch produces.
     let shift = 0
@@ -2765,7 +2919,7 @@ export class InputSelectionController {
       const to = clamp(selection.endOffset + deduced.replaceNextCharCnt, from, snapshot.length)
       edits.push({ from, text: deduced.text, to })
       const caret = from + shift + deduced.text.length
-      selections.push({ anchor: caret, head: caret })
+      selections.push(selectionOffsetsWithAffinity(selection, caret, caret))
       shift += deduced.text.length - (to - from)
       replacedThrough = to
     }
@@ -2809,17 +2963,28 @@ export class InputSelectionController {
     rowDelta: -1 | 1,
   ): {
     readonly anchor: number
+    readonly affinity: SelectionAffinity
     readonly goal: SelectionGoalValue
+    readonly sourceAffinity: SelectionAffinity
     readonly sourceHead: number
   } {
-    const { goal, column } = verticalMoveGoal(
+    const goal = verticalMoveGoal(
       selection.goal,
       selection.headOffset,
+      selection.affinity,
       this.options.view,
     )
-    return {
-      anchor: this.options.view.offsetByDisplayRows(selection.headOffset, rowDelta, column),
+    const target = this.options.view.verticalCaretTarget(
+      selection.headOffset,
+      selection.affinity,
+      rowDelta,
       goal,
+    )
+    return {
+      anchor: target.offset,
+      affinity: target.affinity,
+      goal,
+      sourceAffinity: selection.affinity,
       sourceHead: selection.headOffset,
     }
   }
@@ -2899,10 +3064,10 @@ export class InputSelectionController {
 
     const selections = [
       ...resolved.map((selection) => ({
-        anchor: selection.anchorOffset,
-        head: selection.headOffset,
+        ...selectionOffsetsWithAffinity(selection, selection.anchorOffset, selection.headOffset),
+        goal: selection.goal,
       })),
-      { anchor: range.start, head: range.end },
+      generatedSelectionForRange(range),
     ]
     return {
       change: session.setSelections(selections),
@@ -2910,14 +3075,20 @@ export class InputSelectionController {
     }
   }
 
-  private occurrenceQueryForCurrentSelection(text: string): OccurrenceQuery | null {
+  private occurrenceQueryForCurrentSelection(text: string): OccurrenceQueryWithSources | null {
     const resolved = this.resolvedSelections()
-    const selected = resolved.find((selection) => !selection.collapsed)
-    if (selected) return occurrenceQueryForSelection(text, selected)
+    const source = resolved.find((selection) => !selection.collapsed) ?? resolved[0]
+    if (!source) return null
 
-    const primary = resolved[0]
-    if (!primary) return null
-    return occurrenceQueryForSelection(text, primary)
+    const query = occurrenceQueryForSelection(text, source)
+    if (!query) return null
+    const sourcesByRange = new Map(
+      resolved.map(
+        (selection) =>
+          [occurrenceRangeKey(selection.startOffset, selection.endOffset), selection] as const,
+      ),
+    )
+    return { ...query, source, sourcesByRange }
   }
 
   private selectCurrentWordForOccurrence(
@@ -2931,7 +3102,9 @@ export class InputSelectionController {
     if (range.start === range.end) return null
 
     return {
-      change: session.setSelection(range.start, range.end),
+      change: session.setSelections([
+        selectionRangeWithAffinity(selection, range.start, range.end),
+      ]),
       revealOffset: range.end,
     }
   }
@@ -3044,8 +3217,12 @@ export class InputSelectionController {
     this.syncCustomSelectionHighlight(offsets.anchorOffset, offsets.headOffset)
   }
 
-  private syncCustomSelectionHighlight(anchorOffset: number, headOffset: number): void {
-    this.options.view.setSelection(anchorOffset, headOffset)
+  private syncCustomSelectionHighlight(
+    anchorOffset: number,
+    headOffset: number,
+    affinity: SelectionAffinity = 'after',
+  ): void {
+    this.options.view.setSelection(anchorOffset, headOffset, affinity)
     this.transitionInputState({ owner: 'dom', type: 'selection-reconciled' })
     // A drag paints from offsets it worked out for itself and never reaches
     // syncSessionSelectionHighlight, so without this the window would go stale for exactly the
@@ -3080,8 +3257,11 @@ export class InputSelectionController {
     return this.externalBoundaryToTextOffset(node, offset)
   }
 
-  private textOffsetFromMouseEvent(event: MouseEvent): number | null {
-    return this.textOffsetFromPoint(event.clientX, event.clientY)
+  private textPositionFromMouseEvent(event: MouseEvent): VirtualizedTextHitPosition | null {
+    return (
+      this.options.view.textPositionFromPoint(event.clientX, event.clientY) ??
+      this.options.view.textPositionFromViewportPoint(event.clientX, event.clientY)
+    )
   }
 
   private externalBoundaryToTextOffset(node: Node, offset: number): number | null {
@@ -3115,12 +3295,66 @@ function surroundedSelection(
   const start = selection.startOffset + shift
   const end = selection.endOffset + shift
 
-  return selection.reversed ? { anchor: end, head: start } : { anchor: start, head: end }
+  return selectionRangeWithAffinity(selection, start, end)
+}
+
+function generatedSelectionForRange(range: TextOffsetRange): DocumentSessionSelectionRange {
+  return { anchor: range.start, affinity: 'after', head: range.end }
+}
+
+function selectionsWithLastAddedAtEnd(
+  selections: readonly EditorSelectionRange[],
+  lastAddedIndex: number | undefined,
+): readonly EditorSelectionRange[] {
+  // Session selection ids encode creation order. Replaying the saved last-added range last restores
+  // that identity; callers still use the untouched array's first item for primary reveal semantics.
+  if (lastAddedIndex === undefined || lastAddedIndex === selections.length - 1) return selections
+  if (lastAddedIndex < 0 || lastAddedIndex >= selections.length) return selections
+
+  const lastAdded = selections[lastAddedIndex]
+  if (!lastAdded) return selections
+  return selections.filter((_selection, index) => index !== lastAddedIndex).concat(lastAdded)
+}
+
+function occurrenceSelectionForRange(
+  query: OccurrenceQueryWithSources,
+  range: TextOffsetRange,
+): DocumentSessionSelectionRange {
+  const exactSource = query.sourcesByRange.get(occurrenceRangeKey(range.start, range.end))
+  if (exactSource) {
+    return {
+      ...selectionRangeWithAffinity(exactSource, range.start, range.end),
+      goal: exactSource.goal,
+    }
+  }
+  if (range.start === query.range.start && range.end === query.range.end) {
+    return {
+      ...selectionRangeWithAffinity(query.source, range.start, range.end),
+      goal: query.source.goal,
+    }
+  }
+
+  return generatedSelectionForRange(range)
+}
+
+function occurrenceRangeKey(start: number, end: number): string {
+  return `${start}:${end}`
+}
+
+function mouseTextMoveSelection(
+  drag: MouseTextMoveDrag,
+  range: TextOffsetRange,
+): SelectionOffsetsWithAffinity {
+  if (drag.sourceReversed) {
+    return { anchor: range.end, affinity: drag.sourceAffinity, head: range.start }
+  }
+
+  return { anchor: range.start, affinity: drag.sourceAffinity, head: range.end }
 }
 
 /** What tells one cursor from another when a set of them is compared across a change. */
 function selectionKey(selection: ResolvedSelection): string {
-  return `${selection.anchorOffset}:${selection.headOffset}`
+  return `${selection.anchorOffset}:${selection.headOffset}:${selection.affinity}`
 }
 
 /** An empty range is asked for often enough here — a stop with no default — to answer for one. */
@@ -3161,6 +3395,47 @@ function columnSelectionRowDelta(command: EditorCommandId, pageRows: number): nu
   return pageRows
 }
 
+function selectionRevealOptions(
+  change: DocumentSessionChange,
+  options: SessionChangeOptions | undefined,
+): SessionChangeOptions | undefined {
+  if (!options) return undefined
+  if (options.revealAffinity !== undefined) return options
+
+  const revealOffset = options.revealOffset
+  if (revealOffset === undefined) return options
+
+  let affinity: SelectionAffinity | undefined
+  for (const selection of change.selections.selections) {
+    const resolved = resolveSelection(change.snapshot, selection)
+    if (resolved.headOffset !== revealOffset) continue
+    if (affinity && affinity !== resolved.affinity) return options
+    affinity = resolved.affinity
+  }
+  if (!affinity) return options
+  return { ...options, revealAffinity: affinity }
+}
+
+function survivingPrimarySelectionAffinity(
+  change: DocumentSessionChange,
+  primary: DocumentSessionSelectionRange | undefined,
+  revealOffset: number | undefined,
+): SelectionAffinity | undefined {
+  if (!primary) return undefined
+
+  const head = primary.head ?? primary.anchor
+  if (head !== revealOffset) return undefined
+
+  const affinity = primary.affinity ?? 'after'
+  for (const selection of change.selections.selections) {
+    const resolved = resolveSelection(change.snapshot, selection)
+    if (resolved.anchorOffset !== primary.anchor) continue
+    if (resolved.headOffset !== head) continue
+    if (resolved.affinity === affinity) return affinity
+  }
+  return undefined
+}
+
 function pasteRevealBlock(text: string): SessionChangeOptions['revealBlock'] {
   if (text.includes('\n') || text.includes('\r')) return 'end'
   return 'nearest'
@@ -3176,7 +3451,7 @@ function applyPasteText(session: DocumentSession, text: string): DocumentSession
 function applyPasteEdits(
   session: DocumentSession,
   edits: readonly TextEdit[],
-  selections: readonly { readonly anchor: number; readonly head: number }[],
+  selections: readonly DocumentSessionSelectionRange[],
 ): DocumentSessionChange {
   session.breakTypingRun()
   const change = session.applyEdits(edits, { selections })

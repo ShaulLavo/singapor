@@ -70,6 +70,35 @@ describe('editor option sync', () => {
 
     expect(applied).toEqual([{ enabled: true }, undefined])
   })
+
+  it('validates, compares, and applies controlled selection affinity', () => {
+    const applied: unknown[][] = []
+    const editor = {
+      setSelection: (...args: unknown[]) => applied.push(args),
+    } as unknown as Editor
+    const descriptor = descriptorNamed('selection')
+    const sync = createEditorOptionSync()
+
+    const before = {
+      affinity: 'before',
+      anchor: 4,
+      head: 2,
+      reveal: false,
+      revealOffset: 9,
+    }
+    sync.apply(editor, descriptor, before)
+    sync.apply(editor, descriptor, { ...before })
+    sync.apply(editor, descriptor, { ...before, affinity: 'after' })
+
+    expect(applied).toEqual([
+      [4, 2, { affinity: 'before', reveal: false, revealOffset: 9 }],
+      [4, 2, { affinity: 'after', reveal: false, revealOffset: 9 }],
+    ])
+    expect(descriptor.validate({ affinity: 'sideways', anchor: 1 })).toMatchObject({
+      affinity: undefined,
+      anchor: 1,
+    })
+  })
 })
 
 function descriptorNamed(name: string): EditorOptionDescriptor {

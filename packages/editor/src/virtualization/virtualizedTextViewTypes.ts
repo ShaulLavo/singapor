@@ -1,4 +1,5 @@
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
+import type { SelectionAffinity } from '../selections'
 import type { EditorTokenStyle } from '../tokens'
 import type { DisplayTextRowSource, InjectedTextRow } from '../displayTransforms'
 import type { BrowserTextMetrics } from './browserMetrics'
@@ -9,6 +10,45 @@ type CaretPositionResult = {
   readonly offsetNode: Node
   readonly offset: number
 }
+
+export type VirtualizedTextHitPosition = {
+  readonly offset: number
+  readonly affinity: SelectionAffinity
+  readonly displayRow: number
+  readonly rowX: number
+}
+
+/** The two logical anchors that share one visual caret at a BiDi boundary. */
+export type VirtualizedBidiSelectionAnchor = {
+  readonly displayRow: number
+  readonly displayProjectionRevision: number
+  readonly textRevision: number
+  readonly rawOffset: number
+  readonly rawAffinity: SelectionAffinity
+  readonly intervalStart: number
+  readonly intervalEnd: number
+  readonly insideOffset: number
+  readonly outsideOffset: number
+  readonly leftOffset: number
+  readonly rightOffset: number
+}
+
+/** A half-open logical range; run arrays are ordered from visual left to visual right. */
+export type VirtualizedBidiRun = {
+  readonly startOffset: number
+  readonly endOffset: number
+  readonly direction: 'ltr' | 'rtl'
+}
+
+export type VirtualizedCaretPosition = {
+  readonly left: number
+  readonly top: number
+  readonly height: number
+}
+
+export type VirtualizedCaretPositions =
+  | readonly [VirtualizedCaretPosition]
+  | readonly [VirtualizedCaretPosition, VirtualizedCaretPosition]
 
 export type DocumentWithCaretHitTesting = Document & {
   readonly caretPositionFromPoint?: (x: number, y: number) => CaretPositionResult | null

@@ -118,7 +118,7 @@ function directoryChildren(directory: MutableDirectory): readonly SourceTreeEntr
     .toSorted(([left], [right]) => left.localeCompare(right))
     .map(([name, file]) => fileEntry(name, file))
 
-  return [...directories, ...files]
+  return directories.concat(files)
 }
 
 function directoryEntry(directory: MutableDirectory): SourceTreeEntry {

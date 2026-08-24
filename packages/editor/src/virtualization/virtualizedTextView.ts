@@ -10,6 +10,7 @@ import {
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
 import type { EditorTheme } from '../theme'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
+import type { SelectionAffinity, SelectionGoal } from '../selections'
 import type { EditorToken, TextEdit } from '../tokens'
 import { applyEditorTheme } from '../theme'
 import { measureBrowserTextMetrics, type BrowserTextMetrics } from './browserMetrics'
@@ -71,6 +72,7 @@ import {
   offsetForViewportColumn,
   rebuildDisplayRows,
   refreshDisplayRowsForWrapWidth,
+  rowForCaretPosition,
   rowForOffset,
   rowForViewportY,
   sameLineEditPatch,
@@ -87,16 +89,29 @@ import {
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
 import {
+  boundaryAffinityForX,
   boundaryPositionXs,
+  boundaryPositionXsForAffinity,
   clearRowGeometryCaches,
+  homogeneousRtlCaretAtRowEdge,
+  homogeneousRtlCaretMoveInRow,
+  isBidiMeasurementRefusalRow,
   knownRowContentWidth,
   measureRowContentWidth,
   offsetFromDomBoundary,
   rowLocalXFromClientPoint,
+  rowHasOnlyBidiControls,
   rowMightContainRTL,
   rowTextExtent,
+  unitRectForOffset,
+  visualCaretAtRowEdge,
+  visualCaretMoveInRow,
   xToOffset,
+  type VisualCaretTarget,
+  type VisualRowCaretMove,
 } from './virtualizedTextViewGeometry'
+import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
+import { BIDI_CONTROL_CODE_POINTS, isSimpleRowText } from './virtualizedTextViewBidi'
 import {
   applyRowHeight,
   disposeGutterCells,
@@ -145,7 +160,11 @@ import type {
   VirtualizedTextViewState,
   DocumentWithCaretHitTesting,
   MountedVirtualizedTextRow,
+  VirtualizedBidiSelectionAnchor,
+  VirtualizedTextHitPosition,
 } from './virtualizedTextViewTypes'
+
+type VerticalSelectionGoal = Exclude<SelectionGoal, { readonly kind: 'none' }>
 
 type BidiExtremalBoundaryCache = {
   readonly geometry: unknown
@@ -160,6 +179,12 @@ type BidiVisualOrientationCache = {
 
 const bidiExtremalBoundaryCaches = new WeakMap<HTMLElement, BidiExtremalBoundaryCache>()
 const bidiVisualOrientationCaches = new WeakMap<HTMLElement, BidiVisualOrientationCache>()
+const BIDI_WINDOWED_VISUAL_MOVE_MIN_TEXT_LENGTH = 64
+const BIDI_VISUAL_MOVE_EPSILON = 0.9
+const BIDI_VISUAL_PROBE_INITIAL_DELTA = 0.5
+const BIDI_VISUAL_PROBE_MAX_STEPS = 24
+const BIDI_VISUAL_PROBE_REFINEMENTS = 4
+const BIDI_VISUAL_PROBE_VIEWPORT_INSET = 2
 const AUXILIARY_CARET_HIT_SELECTOR = [
   '.editor-virtualized-caret',
   '.editor-virtualized-caret-layer',
@@ -171,6 +196,20 @@ const AUXILIARY_CARET_HIT_SELECTOR = [
 type HiddenCaretHitElement = {
   readonly element: HTMLElement
   readonly visibility: string
+}
+
+type BidiVisualProbeContext = {
+  readonly view: VirtualizedTextViewInternal
+  readonly row: MountedVirtualizedTextRow
+  readonly positionsByOffset: Map<number, readonly number[]>
+  readonly originOffset: number
+  readonly originX: number
+  readonly direction: 'left' | 'right'
+}
+
+type BidiVisualProbe = {
+  readonly target: VisualCaretTarget
+  readonly x: number
 }
 
 export type {
@@ -293,6 +332,7 @@ export class VirtualizedTextView {
       model: initialModel,
       text: '',
       textRevision: 0,
+      displayProjectionRevision: 0,
       tokens: [],
       tokenRenderEntries: [],
       tokenRenderEntryMaxEnds: [],
@@ -665,6 +705,43 @@ export class VirtualizedTextView {
     scrollOffsetIntoView(view, offset)
   }
 
+  public revealCaret(
+    offset: number,
+    affinity: SelectionAffinity,
+    block: RevealBlock = 'nearest',
+  ): void {
+    const view = this.view
+    if (block === 'end') {
+      scrollOffsetToViewportEnd(view, offset, affinity)
+      ensureOffsetMounted(view, offset, affinity)
+      return
+    }
+
+    ensureOffsetMounted(view, offset, affinity)
+    scrollOffsetIntoView(view, offset, affinity)
+  }
+
+  public visualHorizontalTarget(
+    offset: number,
+    affinity: SelectionAffinity,
+    direction: 'left' | 'right',
+  ): VisualCaretTarget | null {
+    return visualHorizontalTarget(this.view, offset, affinity, direction)
+  }
+
+  public caretXForOffset(offset: number, affinity: SelectionAffinity): number {
+    return caretXForOffset(this.view, offset, affinity)
+  }
+
+  public verticalCaretTarget(
+    offset: number,
+    affinity: SelectionAffinity,
+    rowDelta: number,
+    goal: VerticalSelectionGoal,
+  ): VisualCaretTarget {
+    return verticalCaretTarget(this.view, offset, affinity, rowDelta, goal)
+  }
+
   public visualColumnForOffset(offset: number): number {
     return visualColumnForOffset(this.view, offset)
   }
@@ -779,35 +856,111 @@ export class VirtualizedTextView {
   }
 
   public textOffsetFromPoint(clientX: number, clientY: number): number | null {
-    return this.textOffsetFromViewportPoint(clientX, clientY)
+    return this.textPositionFromPoint(clientX, clientY)?.offset ?? null
   }
 
   public textOffsetFromViewportPoint(clientX: number, clientY: number): number | null {
+    return this.textPositionFromViewportPoint(clientX, clientY)?.offset ?? null
+  }
+
+  public textPositionFromPoint(
+    clientX: number,
+    clientY: number,
+  ): VirtualizedTextHitPosition | null {
+    return this.textPositionFromViewportPoint(clientX, clientY)
+  }
+
+  public textPositionFromViewportPoint(
+    clientX: number,
+    clientY: number,
+  ): VirtualizedTextHitPosition | null {
     const view = this.view
     const metrics = viewportPointMetrics(view, clientX, clientY)
-    if (metrics.verticalDirection < 0)
-      return lineStartOffset(view, rowForViewportY(view, metrics.y))
-    if (metrics.verticalDirection > 0) return lineEndOffset(view, rowForViewportY(view, metrics.y))
-
     const row = rowForViewportY(view, metrics.y)
+    if (metrics.verticalDirection < 0) {
+      return textHitPosition(lineStartOffset(view, row), 'after', row, metrics.x)
+    }
+    if (metrics.verticalDirection > 0) {
+      return textHitPosition(lineEndOffset(view, row), 'before', row, metrics.x)
+    }
     if (!isDocumentTextDisplayRow(view.model.rows[row])) return null
 
     const mounted = view.rowElements.get(row)
     if (mounted?.kind === 'text' && rowMightContainRTL(view, mounted)) {
-      return bidiOffsetFromViewportPoint(view, mounted, metrics)
+      return bidiTextHitPosition(view, mounted, metrics)
     }
-    if (mounted?.kind === 'text') return xToOffset(view, mounted, metrics.x)
+    if (mounted?.kind === 'text') {
+      const offset = xToOffset(view, mounted, metrics.x)
+      return textHitPosition(offset, endpointAffinity(mounted, offset), row, metrics.x)
+    }
 
     const column = Math.floor(metrics.x / Math.max(1, view.metrics.characterWidth))
-    return offsetForViewportColumn(view, row, column)
+    const offset = offsetForViewportColumn(view, row, column)
+    const affinity = offset === lineEndOffset(view, row) ? 'before' : 'after'
+    return textHitPosition(offset, affinity, row, metrics.x)
+  }
+
+  public createBidiSelectionAnchor(
+    position: VirtualizedTextHitPosition,
+  ): VirtualizedBidiSelectionAnchor | null {
+    const view = this.view
+    const row = view.rowElements.get(position.displayRow)
+    if (row?.kind !== 'text') return null
+    if (!rowMightContainRTL(view, row)) return null
+
+    const positions = boundaryPositionXs(view, row, position.offset)
+    if (positions.length !== 2) return null
+    if (positions[1]! - positions[0]! <= 1) return null
+
+    const alternate = alternateBoundaryOffset(view, row, position.offset, positions)
+    if (alternate === null) return null
+
+    const intervalStart = Math.min(position.offset, alternate)
+    const intervalEnd = Math.max(position.offset, alternate)
+    const direction = bidiTwinIntervalDirection(view, row, intervalStart, intervalEnd)
+    if (!direction) return null
+
+    const anchorAtLeft = closestPositionX(positions, position.rowX) === positions[0]
+    const mappings = bidiTwinAnchorMappings(intervalStart, intervalEnd, direction, anchorAtLeft)
+    return {
+      displayRow: position.displayRow,
+      displayProjectionRevision: view.displayProjectionRevision,
+      textRevision: view.textRevision,
+      rawOffset: position.offset,
+      rawAffinity: position.affinity,
+      intervalStart,
+      intervalEnd,
+      ...mappings,
+    }
+  }
+
+  public resolveBidiSelectionAnchor(
+    anchor: VirtualizedBidiSelectionAnchor,
+    head: VirtualizedTextHitPosition,
+  ): number {
+    if (anchor.textRevision !== this.view.textRevision) return anchor.rawOffset
+    if (anchor.displayProjectionRevision !== this.view.displayProjectionRevision) {
+      return anchor.rawOffset
+    }
+    if (head.displayRow < anchor.displayRow) return anchor.rightOffset
+    if (head.displayRow > anchor.displayRow) return anchor.leftOffset
+    if (head.offset === anchor.rawOffset && head.affinity === anchor.rawAffinity) {
+      return anchor.rawOffset
+    }
+    if (bidiHeadInsideTwinInterval(anchor, head)) return anchor.insideOffset
+    return anchor.outsideOffset
   }
 
   public textOffsetFromDomBoundary(node: Node, offset: number): number | null {
     return textOffsetFromDomBoundary(this.view, node, offset)
   }
 
-  public setSelection(anchorOffset: number, headOffset: number): void {
-    setSelection(this.view, anchorOffset, headOffset)
+  public setSelection(
+    anchorOffset: number,
+    headOffset: number,
+    affinity: SelectionAffinity = 'after',
+  ): void {
+    setSelection(this.view, anchorOffset, headOffset, affinity)
     this.refreshInlineReveal()
   }
 
@@ -1013,20 +1166,304 @@ export class VirtualizedTextView {
 
 type ViewportPointMetrics = ReturnType<typeof viewportPointMetrics>
 
+function textHitPosition(
+  offset: number,
+  affinity: SelectionAffinity,
+  displayRow: number,
+  rowX: number,
+): VirtualizedTextHitPosition {
+  return { offset, affinity, displayRow, rowX }
+}
+
+function textHitPositionAtRowX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  rowX: number,
+): VirtualizedTextHitPosition | null {
+  if (rowMightContainRTL(view, row)) return bidiTextHitPositionAtRowX(view, row, rowX)
+
+  const hit = initialTextOffsetAtRowX(view, row, rowX)
+  if (hit === null) return null
+
+  const offset = closestTextOffsetNearHit(view, row, hit, rowX)
+  return textHitPosition(offset, endpointAffinity(row, offset), row.index, rowX)
+}
+
+function initialTextOffsetAtRowX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  rowX: number,
+): number | null {
+  // Calculated rows answer without touching layout. Measured rows must not fall through to xToOffset:
+  // resolving that inverse reads every boundary in the row, while the browser already has the hit.
+  if (!row.inlineMapping && isSimpleRowText(row.text)) return xToOffset(view, row, rowX)
+  return hitTestBidiVisualProbeAtLocalX(view, row, rowX)
+}
+
+function closestTextOffsetNearHit(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  hit: number,
+  rowX: number,
+): number {
+  const localHit = rowLocalIndexForOffset(row, hit)
+  let closest = hit
+  let distance = Number.POSITIVE_INFINITY
+  for (const local of candidateGraphemeOffsets(row.text, localHit)) {
+    const candidate = rowOffsetForLocalIndex(row, local)
+    const candidateDistance = closestBoundaryDistance(view, row, candidate, rowX)
+    if (candidateDistance >= distance) continue
+
+    closest = candidate
+    distance = candidateDistance
+  }
+  return closest
+}
+
+function bidiTextHitPosition(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  point: ViewportPointMetrics,
+): VirtualizedTextHitPosition | null {
+  const offset = bidiOffsetFromViewportPoint(view, row, point)
+  const rowX = rowLocalXFromClientPoint(row, point.clientX)
+  return bidiTextHitPositionForOffset(view, row, offset, rowX)
+}
+
+function bidiTextHitPositionAtRowX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  rowX: number,
+): VirtualizedTextHitPosition | null {
+  const offset = bidiOffsetFromRowX(view, row, rowX)
+  return bidiTextHitPositionForOffset(view, row, offset, rowX)
+}
+
+function bidiTextHitPositionForOffset(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number | null,
+  rowX: number,
+): VirtualizedTextHitPosition | null {
+  if (offset === null) return null
+
+  const affinity = bidiPointAffinity(view, row, offset, rowX)
+  return textHitPosition(offset, affinity, row.index, rowX)
+}
+
+function bidiPointAffinity(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  rowX: number,
+): SelectionAffinity {
+  const positions = boundaryPositionXs(view, row, offset)
+  return bidiPointAffinityForPositions(view, row, offset, rowX, positions)
+}
+
+function bidiPointAffinityForPositions(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  rowX: number,
+  positions: readonly number[],
+): SelectionAffinity {
+  const boundaryX = closestPositionX(positions, rowX)
+  return boundaryAffinityForX(view, row, offset, boundaryX, positions)
+}
+
+function endpointAffinity(row: MountedVirtualizedTextRow, offset: number): SelectionAffinity {
+  return offset >= row.endOffset ? 'before' : 'after'
+}
+
+function closestPositionX(positions: readonly number[], target: number): number {
+  let closest = positions[0] ?? target
+  let distance = Math.abs(closest - target)
+  for (const position of positions.slice(1)) {
+    const candidateDistance = Math.abs(position - target)
+    if (candidateDistance >= distance) continue
+
+    closest = position
+    distance = candidateDistance
+  }
+  return closest
+}
+
+function alternateBoundaryOffset(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  positions: readonly number[],
+): number | null {
+  for (const position of positions) {
+    const candidate = hitTestRowOffsetAtLocalX(row, position)
+    if (candidate === null || candidate === offset) continue
+    if (!boundarySharesPositions(view, row, candidate, positions)) continue
+    return candidate
+  }
+  return null
+}
+
+function boundarySharesPositions(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  expected: readonly number[],
+): boolean {
+  const actual = boundaryPositionXs(view, row, offset)
+  if (actual.length !== expected.length) return false
+  return expected.every((position) =>
+    actual.some((candidate) => Math.abs(candidate - position) <= 1),
+  )
+}
+
+type BidiTwinIntervalDirection = 'ltr' | 'rtl'
+
+function bidiTwinIntervalDirection(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  intervalStart: number,
+  intervalEnd: number,
+): BidiTwinIntervalDirection | null {
+  const next = nextRowUnitOffset(row, intervalStart)
+  if (next <= intervalStart || next > intervalEnd) return null
+
+  const rect = unitRectForOffset(view, row, intervalStart)
+  if (!rect || rect.width <= 1) return null
+
+  const left = hitTestRowOffsetAtLocalX(row, rect.left + rect.width * 0.25)
+  const right = hitTestRowOffsetAtLocalX(row, rect.left + rect.width * 0.75)
+  const leftAtStart = hitRepresentsBoundary(view, row, left, intervalStart)
+  const leftAtNext = hitRepresentsBoundary(view, row, left, next)
+  const rightAtStart = hitRepresentsBoundary(view, row, right, intervalStart)
+  const rightAtNext = hitRepresentsBoundary(view, row, right, next)
+  if (leftAtStart && rightAtNext) return 'ltr'
+  if (leftAtNext && rightAtStart) return 'rtl'
+  return null
+}
+
+function hitRepresentsBoundary(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  hit: number | null,
+  expected: number,
+): boolean {
+  if (hit === expected) return true
+  if (hit === null) return false
+  return boundarySharesPositions(view, row, hit, boundaryPositionXs(view, row, expected))
+}
+
+function previousRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
+  let local = rowLocalIndexForOffset(row, offset, 'before')
+  while (local > 0) {
+    const previous = previousGraphemeBoundary(row.text, local)
+    if (previous === local) return offset
+
+    // An insertion or replacement can paint several graphemes at one source point. Keep walking until
+    // motion reaches a distinct document offset instead of reporting the same caret as its neighbor.
+    const target = rowOffsetForLocalIndex(row, previous, 'before')
+    if (target !== offset) return target
+    local = previous
+  }
+  return offset
+}
+
+function nextRowUnitOffset(row: MountedVirtualizedTextRow, offset: number): number {
+  let local = rowLocalIndexForOffset(row, offset, 'after')
+  while (local < row.text.length) {
+    const next = nextGraphemeBoundary(row.text, local)
+    if (next === local) return offset
+
+    // See previousRowUnitOffset: projected display units sharing one source point are atomic to motion.
+    const target = rowOffsetForLocalIndex(row, next, 'after')
+    if (target !== offset) return target
+    local = next
+  }
+  return offset
+}
+
+function bidiTwinAnchorMappings(
+  intervalStart: number,
+  intervalEnd: number,
+  direction: BidiTwinIntervalDirection,
+  anchorAtLeft: boolean,
+): Pick<
+  VirtualizedBidiSelectionAnchor,
+  'insideOffset' | 'outsideOffset' | 'leftOffset' | 'rightOffset'
+> {
+  if (direction === 'ltr') {
+    return anchorAtLeft
+      ? {
+          insideOffset: intervalStart,
+          outsideOffset: intervalEnd,
+          leftOffset: intervalEnd,
+          rightOffset: intervalStart,
+        }
+      : {
+          insideOffset: intervalEnd,
+          outsideOffset: intervalStart,
+          leftOffset: intervalEnd,
+          rightOffset: intervalStart,
+        }
+  }
+
+  return anchorAtLeft
+    ? {
+        insideOffset: intervalEnd,
+        outsideOffset: intervalStart,
+        leftOffset: intervalStart,
+        rightOffset: intervalEnd,
+      }
+    : {
+        insideOffset: intervalStart,
+        outsideOffset: intervalEnd,
+        leftOffset: intervalStart,
+        rightOffset: intervalEnd,
+      }
+}
+
+function bidiHeadInsideTwinInterval(
+  anchor: VirtualizedBidiSelectionAnchor,
+  head: VirtualizedTextHitPosition,
+): boolean {
+  if (head.offset > anchor.intervalStart && head.offset < anchor.intervalEnd) return true
+  if (head.offset === anchor.intervalStart) return head.affinity === 'after'
+  if (head.offset === anchor.intervalEnd) return head.affinity === 'before'
+  return false
+}
+
 function bidiOffsetFromViewportPoint(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   point: ViewportPointMetrics,
 ): number | null {
   const offset = hitTestRowOffset(row, point.clientX, point.clientY)
-  const advance = rowCharacterAdvance(view, row)
   const localX = rowLocalXFromClientPoint(row, point.clientX)
-  const edgeOffset = bidiEdgeOffset(view, row, localX, advance)
+  return bidiOffsetAtRowX(view, row, localX, offset)
+}
+
+function bidiOffsetFromRowX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  rowX: number,
+): number | null {
+  const offset = hitTestRowOffsetAtLocalX(row, rowX)
+  return bidiOffsetAtRowX(view, row, rowX, offset)
+}
+
+function bidiOffsetAtRowX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  rowX: number,
+  offset: number | null,
+): number | null {
+  const advance = rowCharacterAdvance(view, row)
+  const edgeOffset = bidiEdgeOffset(view, row, rowX, advance)
   if (edgeOffset !== null) return edgeOffset
   if (offset !== null) return offset
 
-  const interpolated = interpolatedBidiOffset(view, row, localX, advance)
-  return interpolated ?? xToOffset(view, row, localX)
+  const interpolated = interpolatedBidiOffset(view, row, rowX, advance)
+  return interpolated ?? xToOffset(view, row, rowX)
 }
 
 function bidiEdgeOffset(
@@ -1040,8 +1477,38 @@ function bidiEdgeOffset(
   if (x > extent.left + halfAdvance && x < extent.right - halfAdvance) return null
 
   const extremal = bidiExtremalBoundaries(view, row, advance)
-  if (x <= extent.left + halfAdvance) return extremal.left
-  return extremal.right
+  const leftBand = bidiEdgeBoundaryHalfWidth(view, row, extremal.left, extent.left, halfAdvance)
+  if (x <= extent.left + leftBand) return extremal.left
+
+  const rightBand = bidiEdgeBoundaryHalfWidth(view, row, extremal.right, extent.right, halfAdvance)
+  if (x >= extent.right - rightBand) return extremal.right
+  return null
+}
+
+function bidiEdgeBoundaryHalfWidth(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  boundary: number,
+  edge: number,
+  fallback: number,
+): number {
+  const minimum = fallback / 2
+  const local = rowLocalIndexForOffset(row, boundary)
+  const previous = previousGraphemeBoundary(row.text, local)
+  const candidates = new Set([local, previous])
+  for (const candidateLocal of candidates) {
+    const candidate = rowOffsetForLocalIndex(row, candidateLocal)
+    const rect = unitRectForOffset(view, row, candidate)
+    if (!rect) continue
+
+    const touchesEdge =
+      Math.abs(rect.left - edge) <= 1 || Math.abs(rect.left + rect.width - edge) <= 1
+    if (!touchesEdge) continue
+    // RTL fallback glyphs are not guaranteed to fill the editor's Latin monospace advance. Keep
+    // the outer quarter-advance in the repair band even when that glyph's own box is narrower.
+    return Math.max(minimum, Math.min(fallback, rect.width / 2))
+  }
+  return fallback
 }
 
 function bidiExtremalBoundaries(
@@ -1066,7 +1533,7 @@ function resolveExtremalBoundary(
   edge: number,
   sampleX: number,
 ): number {
-  const offset = hitTestRowOffsetAtLocalX(row, sampleX)
+  const offset = hitTestBidiVisualProbeAtLocalX(view, row, sampleX)
   if (offset === null) return closestRowEndpointToX(view, row, edge)
 
   const candidates = [offset, offset - 1, offset + 1]
@@ -1099,9 +1566,118 @@ function closestBoundaryDistance(
 }
 
 function hitTestRowOffsetAtLocalX(row: MountedVirtualizedTextRow, localX: number): number | null {
+  const point = rowClientPointAtLocalX(row, localX)
+  return hitTestRowOffset(row, point.x, point.y)
+}
+
+function rowClientPointAtLocalX(
+  row: MountedVirtualizedTextRow,
+  localX: number,
+): { readonly x: number; readonly y: number; readonly scale: number } {
   const rect = row.element.getBoundingClientRect()
   const scale = row.element.offsetWidth > 0 ? rect.width / row.element.offsetWidth : 1
-  return hitTestRowOffset(row, rect.left + localX * scale, rect.top + rect.height / 2)
+  return { x: rect.left + localX * scale, y: rect.top + rect.height / 2, scale }
+}
+
+function hitTestBidiVisualProbeAtLocalX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  localX: number,
+): number | null {
+  const point = rowClientPointAtLocalX(row, localX)
+  const hit = hitTestRowOffset(row, point.x, point.y)
+  if (hit !== null) return hit
+
+  const viewportX = bidiVisualProbeViewportX(view, point.y)
+  if (viewportX === null) return null
+  return hitTestBidiVisualProbeWithTranslatedRow(row, point, viewportX)
+}
+
+function bidiVisualProbeViewportX(
+  view: VirtualizedTextViewInternal,
+  clientY: number,
+): number | null {
+  const element = view.scrollElement
+  const rect = element.getBoundingClientRect()
+  const scale = element.offsetWidth > 0 ? rect.width / element.offsetWidth : 1
+  const viewportLeft = rect.left + element.clientLeft * scale
+  const viewportTop = rect.top + element.clientTop * scale
+  const viewportRight = viewportLeft + element.clientWidth * scale
+  const viewportBottom = viewportTop + element.clientHeight * scale
+  const documentViewport = bidiVisualProbeDocumentViewport(element.ownerDocument)
+  const top = Math.max(viewportTop, documentViewport.top)
+  const bottom = Math.min(viewportBottom, documentViewport.bottom)
+  if (clientY < top || clientY > bottom) return null
+
+  const gutterRight = gutterWidth(view) > 0 ? view.gutterElement.getBoundingClientRect().right : 0
+  const left =
+    Math.max(viewportLeft, documentViewport.left, gutterRight) + BIDI_VISUAL_PROBE_VIEWPORT_INSET
+  const right = Math.min(viewportRight, documentViewport.right) - BIDI_VISUAL_PROBE_VIEWPORT_INSET
+  if (right <= left) return null
+  return (left + right) / 2
+}
+
+function bidiVisualProbeDocumentViewport(document: Document): {
+  readonly left: number
+  readonly top: number
+  readonly right: number
+  readonly bottom: number
+} {
+  const window = document.defaultView
+  if (!window) {
+    return { left: 0, top: 0, right: Number.POSITIVE_INFINITY, bottom: Number.POSITIVE_INFINITY }
+  }
+
+  const visual = window.visualViewport
+  const left = visual?.offsetLeft ?? 0
+  const top = visual?.offsetTop ?? 0
+  const width = visual?.width ?? window.innerWidth
+  const height = visual?.height ?? window.innerHeight
+  return { left, top, right: left + width, bottom: top + height }
+}
+
+function hitTestBidiVisualProbeWithTranslatedRow(
+  row: MountedVirtualizedTextRow,
+  point: { readonly x: number; readonly y: number; readonly scale: number },
+  clientX: number,
+): number | null {
+  if (!Number.isFinite(point.scale) || point.scale <= 0) return null
+
+  const translate = row.element.style.getPropertyValue('translate')
+  const priority = row.element.style.getPropertyPriority('translate')
+  const delta = (clientX - point.x) / point.scale
+  const probeTranslate = translatedBidiProbeStyle(row.element, delta)
+  row.element.style.setProperty('translate', probeTranslate, 'important')
+  try {
+    return hitTestRowOffset(row, clientX, point.y)
+  } finally {
+    restoreInlineStyleProperty(row.element.style, 'translate', translate, priority)
+  }
+}
+
+function translatedBidiProbeStyle(element: HTMLElement, delta: number): string {
+  const computed = element.ownerDocument.defaultView
+    ?.getComputedStyle(element)
+    .getPropertyValue('translate')
+    .trim()
+  if (!computed || computed === 'none') return `${delta}px 0px`
+
+  const [x = '0px', y = '0px', z] = computed.split(/\s+/)
+  const translatedX = `calc(${x} + ${delta}px)`
+  return z ? `${translatedX} ${y} ${z}` : `${translatedX} ${y}`
+}
+
+function restoreInlineStyleProperty(
+  style: CSSStyleDeclaration,
+  name: string,
+  value: string,
+  priority: string,
+): void {
+  if (value) {
+    style.setProperty(name, value, priority)
+    return
+  }
+  style.removeProperty(name)
 }
 
 function hitTestRowOffset(
@@ -1173,7 +1749,7 @@ function interpolatedBidiOffset(
   let closest: number | null = null
   let closestDistance = Number.POSITIVE_INFINITY
   for (const local of candidateGraphemeOffsets(row.text, localGuess)) {
-    const candidate = row.startOffset + local
+    const candidate = fallbackBidiOffsetForLocalIndex(row, local)
     const distance = closestBoundaryDistance(view, row, candidate, x)
     if (distance >= closestDistance) continue
 
@@ -1181,6 +1757,15 @@ function interpolatedBidiOffset(
     closestDistance = distance
   }
   return closestDistance <= advance ? closest : null
+}
+
+function fallbackBidiOffsetForLocalIndex(
+  row: MountedVirtualizedTextRow,
+  localIndex: number,
+): number {
+  const local = clampNumber(localIndex, 0, row.text.length)
+  const mapped = rowOffsetForLocalIndex(row, local, 'nearest')
+  return clampNumber(mapped, row.startOffset, row.endOffset)
 }
 
 function rowStartsOnVisualLeft(
@@ -1299,6 +1884,467 @@ function documentTextRowByDisplayDelta(
   return current
 }
 
+function caretXForOffset(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity: SelectionAffinity,
+): number {
+  const rowIndex = rowForCaretPosition(view, offset, affinity)
+  const row = view.rowElements.get(rowIndex)
+  const measured = row?.source === 'document' ? mountedCaretX(view, row, offset, affinity) : null
+  if (measured !== null) return measured
+
+  const column = visualColumnForOffset(view, offset, affinity)
+  return column * Math.max(1, view.metrics.characterWidth)
+}
+
+function mountedCaretX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  affinity: SelectionAffinity,
+): number | null {
+  if (!rowSupportsVerticalGeometry(view, row)) return null
+  return boundaryPositionXsForAffinity(view, row, offset, affinity)[0] ?? null
+}
+
+function verticalCaretTarget(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity: SelectionAffinity,
+  rowDelta: number,
+  goal: VerticalSelectionGoal,
+): VisualCaretTarget {
+  const sourceRow = rowForCaretPosition(view, offset, affinity)
+  const targetRowIndex = documentTextRowByDisplayDelta(view, sourceRow, rowDelta)
+  if (targetRowIndex === sourceRow) return { offset, affinity }
+  if (goal.kind === 'lineEnd') {
+    return { offset: lineEndOffset(view, targetRowIndex), affinity: 'before' }
+  }
+
+  const row = view.rowElements.get(targetRowIndex)
+  if (row?.source === 'document' && rowSupportsVerticalGeometry(view, row)) {
+    const measured = textHitPositionAtRowX(view, row, goal.x)
+    if (measured) return { offset: measured.offset, affinity: measured.affinity }
+  }
+
+  return fallbackVerticalCaretTarget(view, targetRowIndex, goal.x)
+}
+
+function rowSupportsVerticalGeometry(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+): boolean {
+  if (!rowMightContainRTL(view, row)) return true
+  return !isBidiMeasurementRefusalRow(view, row)
+}
+
+function fallbackVerticalCaretTarget(
+  view: VirtualizedTextViewInternal,
+  row: number,
+  x: number,
+): VisualCaretTarget {
+  const column = x / Math.max(1, view.metrics.characterWidth)
+  const offset = offsetForViewportColumn(view, row, column)
+  const affinity = offset >= lineEndOffset(view, row) ? 'before' : 'after'
+  return { offset, affinity }
+}
+
+function visualHorizontalTarget(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity: SelectionAffinity,
+  direction: 'left' | 'right',
+): VisualCaretTarget | null {
+  const rowIndex = rowForCaretPosition(view, offset, affinity)
+  const row = view.rowElements.get(rowIndex)
+  if (!row || row.source !== 'document') return null
+
+  const move = horizontalCaretMoveInRow(view, row, offset, affinity, direction)
+  if (!move) return null
+  if (!('kind' in move)) return move
+
+  return visualTargetAcrossDisplayRows(view, rowIndex, { offset, affinity }, direction)
+}
+
+function horizontalCaretMoveInRow(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  affinity: SelectionAffinity,
+  direction: 'left' | 'right',
+): VisualRowCaretMove | null {
+  const homogeneous = homogeneousRtlCaretMoveInRow(view, row, offset, direction)
+  if (homogeneous) return homogeneous
+  if (row.text.length <= BIDI_WINDOWED_VISUAL_MOVE_MIN_TEXT_LENGTH) {
+    return visualCaretMoveInRow(view, row, offset, affinity, direction)
+  }
+  if (!rowMightContainRTL(view, row)) {
+    return visualCaretMoveInRow(view, row, offset, affinity, direction)
+  }
+  if (rowHasOnlyBidiControls(row)) return null
+  if (isBidiMeasurementRefusalRow(view, row)) return null
+  return windowedBidiVisualCaretMove(view, row, offset, affinity, direction)
+}
+
+function windowedBidiVisualCaretMove(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  affinity: SelectionAffinity,
+  direction: 'left' | 'right',
+): VisualRowCaretMove | null {
+  if (!hasCaretHitTesting(row)) return null
+
+  const origin = normalizedRowCaretTarget(row, offset, affinity)
+  const originPositions = boundaryPositionXs(view, row, origin.offset)
+  const originX = boundaryPositionXsForAffinity(
+    view,
+    row,
+    origin.offset,
+    origin.affinity,
+    originPositions,
+  )[0]
+  if (originX === undefined || !Number.isFinite(originX)) return null
+
+  const affinityTarget = adjacentOriginAffinityTarget(
+    view,
+    row,
+    origin,
+    originPositions,
+    originX,
+    direction,
+  )
+  if (affinityTarget) return affinityTarget
+
+  const extent = rowTextExtent(view, row)
+  const edge = direction === 'left' ? extent.left : extent.right
+  const edgeDistance = Math.abs(edge - originX)
+  if (edgeDistance <= BIDI_VISUAL_MOVE_EPSILON) return { kind: 'row-edge' }
+
+  const positionsByOffset = new Map([[origin.offset, originPositions]])
+  const context = { view, row, positionsByOffset, originOffset: origin.offset, originX, direction }
+  return probeBidiVisualCaretMove(context, edgeDistance)
+}
+
+function adjacentOriginAffinityTarget(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  origin: VisualCaretTarget,
+  originPositions: readonly number[],
+  originX: number,
+  direction: 'left' | 'right',
+): VisualCaretTarget | null {
+  if (originPositions.length !== 2) return null
+
+  const affinity = origin.affinity === 'before' ? 'after' : 'before'
+  const targetX = boundaryPositionXsForAffinity(
+    view,
+    row,
+    origin.offset,
+    affinity,
+    originPositions,
+  )[0]
+  if (targetX === undefined || !xAdvancesInDirection(originX, targetX, direction)) return null
+
+  const unitOffset =
+    origin.affinity === 'before' ? origin.offset : previousRowUnitOffset(row, origin.offset)
+  const rect = unitRectForOffset(view, row, unitOffset)
+  if (!rect || !rectHasEdgesAtXs(rect, originX, targetX)) return null
+  return { offset: origin.offset, affinity }
+}
+
+function xAdvancesInDirection(
+  originX: number,
+  targetX: number,
+  direction: 'left' | 'right',
+): boolean {
+  const delta = targetX - originX
+  if (direction === 'left') return delta < -BIDI_VISUAL_MOVE_EPSILON
+  return delta > BIDI_VISUAL_MOVE_EPSILON
+}
+
+function rectHasEdgesAtXs(
+  rect: { readonly left: number; readonly width: number },
+  firstX: number,
+  secondX: number,
+): boolean {
+  const right = rect.left + rect.width
+  const firstMatches =
+    Math.abs(rect.left - firstX) <= BIDI_VISUAL_MOVE_EPSILON ||
+    Math.abs(right - firstX) <= BIDI_VISUAL_MOVE_EPSILON
+  if (!firstMatches) return false
+  return (
+    Math.abs(rect.left - secondX) <= BIDI_VISUAL_MOVE_EPSILON ||
+    Math.abs(right - secondX) <= BIDI_VISUAL_MOVE_EPSILON
+  )
+}
+
+function probeBidiVisualCaretMove(
+  context: BidiVisualProbeContext,
+  edgeDistance: number,
+): VisualRowCaretMove | null {
+  const sign = context.direction === 'left' ? -1 : 1
+  let stationaryX = context.originX
+  let delta = BIDI_VISUAL_PROBE_INITIAL_DELTA
+  for (let step = 0; step < BIDI_VISUAL_PROBE_MAX_STEPS; step += 1) {
+    const distance = Math.min(delta, edgeDistance)
+    const sampleX = context.originX + sign * distance
+    const probe = bidiVisualProbeAtX(context, sampleX)
+    if (!probe) return null
+    if (bidiVisualProbeAdvances(context, probe)) {
+      return refineBidiVisualProbe(context, stationaryX, sampleX, probe)
+    }
+
+    stationaryX = sampleX
+    if (distance >= edgeDistance) return { kind: 'row-edge' }
+    delta *= 2
+  }
+  return null
+}
+
+function refineBidiVisualProbe(
+  context: BidiVisualProbeContext,
+  stationaryX: number,
+  advancedX: number,
+  initial: BidiVisualProbe,
+): VisualCaretTarget {
+  let stationary = stationaryX
+  let advanced = advancedX
+  let best = initial
+  for (let step = 0; step < BIDI_VISUAL_PROBE_REFINEMENTS; step += 1) {
+    const middle = (stationary + advanced) / 2
+    const probe = bidiVisualProbeAtX(context, middle)
+    if (!probe) return canonicalBidiVisualProbeTarget(context, best)
+    if (!bidiVisualProbeAdvances(context, probe)) {
+      stationary = middle
+      continue
+    }
+
+    advanced = middle
+    best = probe
+  }
+  return canonicalBidiVisualProbeTarget(context, best)
+}
+
+function canonicalBidiVisualProbeTarget(
+  context: BidiVisualProbeContext,
+  probe: BidiVisualProbe,
+): VisualCaretTarget {
+  return originAdjacentBidiVisualTarget(context, probe.x) ?? probe.target
+}
+
+function originAdjacentBidiVisualTarget(
+  context: BidiVisualProbeContext,
+  targetX: number,
+): VisualCaretTarget | null {
+  const midpoint = (context.originX + targetX) / 2
+  const previousOffset = previousRowUnitOffset(context.row, context.originOffset)
+  const nextOffset = nextRowUnitOffset(context.row, context.originOffset)
+  const previous = unitRectForOffset(context.view, context.row, previousOffset)
+  const current = unitRectForOffset(context.view, context.row, context.originOffset)
+  const crossesPrevious =
+    previousOffset !== context.originOffset && rectContainsX(previous, midpoint)
+  const crossesCurrent = nextOffset !== context.originOffset && rectContainsX(current, midpoint)
+  if (crossesPrevious === crossesCurrent) return null
+
+  const target = crossesPrevious
+    ? { offset: previousOffset, affinity: 'after' as const }
+    : { offset: nextOffset, affinity: 'before' as const }
+  const canonicalX = boundaryPositionXsForAffinity(
+    context.view,
+    context.row,
+    target.offset,
+    target.affinity,
+  )[0]
+  if (canonicalX === undefined || Math.abs(canonicalX - targetX) > BIDI_VISUAL_MOVE_EPSILON) {
+    return null
+  }
+  return target
+}
+
+function bidiVisualProbeAtX(context: BidiVisualProbeContext, rowX: number): BidiVisualProbe | null {
+  const { view, row, positionsByOffset } = context
+  const offset = hitTestBidiVisualProbeAtLocalX(view, row, rowX)
+  if (offset === null) return null
+
+  let positions = positionsByOffset.get(offset)
+  if (!positions) {
+    positions = boundaryPositionXs(view, row, offset)
+    positionsByOffset.set(offset, positions)
+  }
+  const affinity = bidiVisualProbeAffinity(context, offset, rowX, positions)
+  const target = { offset, affinity }
+  const x = boundaryPositionXsForAffinity(view, row, offset, affinity, positions)[0]
+  if (x === undefined || !Number.isFinite(x)) return null
+  return { target, x }
+}
+
+function bidiVisualProbeAffinity(
+  context: BidiVisualProbeContext,
+  offset: number,
+  rowX: number,
+  positions: readonly number[],
+): SelectionAffinity {
+  if (positions.length !== 1 || offset === context.originOffset) {
+    return bidiPointAffinityForPositions(context.view, context.row, offset, rowX, positions)
+  }
+
+  const unitAffinity = bidiVisualUnitAffinity(context, offset, positions[0]!)
+  if (unitAffinity) return unitAffinity
+  return bidiPointAffinityForPositions(context.view, context.row, offset, rowX, positions)
+}
+
+function bidiVisualUnitAffinity(
+  context: BidiVisualProbeContext,
+  offset: number,
+  targetX: number,
+): SelectionAffinity | null {
+  const midpoint = (context.originX + targetX) / 2
+  const previousOffset = previousRowUnitOffset(context.row, offset)
+  const previous = unitRectForOffset(context.view, context.row, previousOffset)
+  const current = unitRectForOffset(context.view, context.row, offset)
+  const crossesPrevious = previousOffset !== offset && rectContainsX(previous, midpoint)
+  const crossesCurrent = rectContainsX(current, midpoint)
+  if (crossesPrevious === crossesCurrent) return null
+  return crossesPrevious ? 'before' : 'after'
+}
+
+function rectContainsX(
+  rect: { readonly left: number; readonly width: number } | null,
+  x: number,
+): boolean {
+  if (!rect) return false
+  return (
+    x >= rect.left - BIDI_VISUAL_MOVE_EPSILON &&
+    x <= rect.left + rect.width + BIDI_VISUAL_MOVE_EPSILON
+  )
+}
+
+function bidiVisualProbeAdvances(context: BidiVisualProbeContext, probe: BidiVisualProbe): boolean {
+  const delta = probe.x - context.originX
+  if (context.direction === 'left') return delta < -BIDI_VISUAL_MOVE_EPSILON
+  return delta > BIDI_VISUAL_MOVE_EPSILON
+}
+
+function hasCaretHitTesting(row: MountedVirtualizedTextRow): boolean {
+  const documentWithCaret = row.element.ownerDocument as DocumentWithCaretHitTesting
+  if (typeof documentWithCaret.caretPositionFromPoint === 'function') return true
+  return typeof documentWithCaret.caretRangeFromPoint === 'function'
+}
+
+function normalizedRowCaretTarget(
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  affinity: SelectionAffinity,
+): VisualCaretTarget {
+  const clamped = clampNumber(offset, row.startOffset, row.endOffset)
+  if (clamped <= row.startOffset) return { offset: clamped, affinity: 'after' }
+  if (clamped >= row.endOffset) return { offset: clamped, affinity: 'before' }
+  return { offset: clamped, affinity }
+}
+
+function visualTargetAcrossDisplayRows(
+  view: VirtualizedTextViewInternal,
+  sourceRow: number,
+  origin: VisualCaretTarget,
+  direction: 'left' | 'right',
+): VisualCaretTarget | null {
+  const rowDelta = direction === 'left' ? -1 : 1
+  const targetRowIndex = documentTextRowByDisplayDelta(view, sourceRow, rowDelta)
+  if (targetRowIndex === sourceRow) return origin
+
+  const targetRow = view.rowElements.get(targetRowIndex)
+  if (!targetRow || targetRow.source !== 'document') return null
+
+  const edge = direction === 'left' ? 'right' : 'left'
+  const edgeTarget = horizontalCaretAtRowEdge(view, targetRow, edge)
+  if (!edgeTarget) return null
+  if (!displayRowsShareBoundary(view, sourceRow, targetRowIndex, direction)) return edgeTarget
+
+  const move = horizontalCaretMoveInRow(
+    view,
+    targetRow,
+    edgeTarget.offset,
+    edgeTarget.affinity,
+    direction,
+  )
+  if (!move) return null
+  return 'kind' in move ? edgeTarget : move
+}
+
+function horizontalCaretAtRowEdge(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  edge: 'left' | 'right',
+): VisualCaretTarget | null {
+  const homogeneous = homogeneousRtlCaretAtRowEdge(view, row, edge)
+  if (homogeneous) return homogeneous
+  if (row.text.length <= BIDI_WINDOWED_VISUAL_MOVE_MIN_TEXT_LENGTH) {
+    return visualCaretAtRowEdge(view, row, edge)
+  }
+  if (!rowMightContainRTL(view, row)) return visualCaretAtRowEdge(view, row, edge)
+  if (rowHasOnlyBidiControls(row)) return null
+  if (isBidiMeasurementRefusalRow(view, row)) return null
+  if (!hasCaretHitTesting(row)) return null
+
+  const extent = rowTextExtent(view, row)
+  const width = Math.max(0, extent.right - extent.left)
+  const inset = Math.min(BIDI_VISUAL_PROBE_INITIAL_DELTA, width / 4)
+  const rowX = edge === 'left' ? extent.left + inset : extent.right - inset
+  return nativeBidiCaretTargetAtRowX(view, row, rowX)
+}
+
+function nativeBidiCaretTargetAtRowX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  rowX: number,
+): VisualCaretTarget | null {
+  const advance = rowCharacterAdvance(view, row)
+  const offset =
+    bidiEdgeOffset(view, row, rowX, advance) ?? hitTestBidiVisualProbeAtLocalX(view, row, rowX)
+  if (offset === null) return null
+
+  const controlTarget = precedingBidiControlTargetAtRowX(view, row, offset, rowX)
+  if (controlTarget) return controlTarget
+
+  const positions = boundaryPositionXs(view, row, offset)
+  const affinity = bidiPointAffinityForPositions(view, row, offset, rowX, positions)
+  return { offset, affinity }
+}
+
+function precedingBidiControlTargetAtRowX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  offset: number,
+  rowX: number,
+): VisualCaretTarget | null {
+  const previous = previousRowUnitOffset(row, offset)
+  if (previous === offset || !rowUnitIsBidiControl(row, previous)) return null
+
+  const x = boundaryPositionXsForAffinity(view, row, previous, 'after')[0]
+  if (x === undefined || Math.abs(x - rowX) > BIDI_VISUAL_MOVE_EPSILON) return null
+  return { offset: previous, affinity: 'after' }
+}
+
+function rowUnitIsBidiControl(row: MountedVirtualizedTextRow, offset: number): boolean {
+  const local = rowLocalIndexForOffset(row, offset, 'after')
+  const codePoint = row.text.codePointAt(local)
+  return BIDI_CONTROL_CODE_POINTS.some((candidate) => candidate === codePoint)
+}
+
+function displayRowsShareBoundary(
+  view: VirtualizedTextViewInternal,
+  sourceRow: number,
+  targetRow: number,
+  direction: 'left' | 'right',
+): boolean {
+  if (direction === 'right') {
+    return lineEndOffset(view, sourceRow) === lineStartOffset(view, targetRow)
+  }
+  return lineStartOffset(view, sourceRow) === lineEndOffset(view, targetRow)
+}
+
 function nextDocumentTextRow(view: VirtualizedTextViewInternal, row: number, step: 1 | -1): number {
   const end = step > 0 ? visibleLineCount(view) - 1 : 0
   let current = row
@@ -1395,12 +2441,7 @@ function projectRowDecorationsThroughMultiLineEdit(
 
   const decorations = new Map<number, VirtualizedTextRowDecoration>()
   for (const [row, decoration] of view.rowDecorations) {
-    if (row < patch.startRow) {
-      decorations.set(row, decoration)
-      continue
-    }
-
-    if (row === patch.startRow) {
+    if (row <= patch.startRow) {
       decorations.set(row, decoration)
       continue
     }

@@ -1,14 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createDocumentTextSnapshot, type TextSnapshot } from '../src/documentTextSnapshot'
 import type { EditorCommandId } from '../src/editor/commands'
 import {
   createNavigationLineReader,
+  defaultRtlMoveVisually,
   navigationTargetForCommand,
+  verticalMoveGoal,
   type NavigationTarget,
 } from '../src/editor/navigationTargets'
 import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
-import { SelectionGoal, type ResolvedSelection } from '../src/selections'
+import { SelectionGoal, type ResolvedSelection, type SelectionAffinity } from '../src/selections'
 import { lineRangeAtOffset, wordSeparatorsForLanguage } from '../src/textRanges'
 
 /** A resolved selection over [anchor, head]; collapsed when they match. */
@@ -16,6 +18,7 @@ function selection(
   anchor: number,
   head = anchor,
   goal: SelectionGoal = SelectionGoal.none(),
+  affinity: SelectionAffinity = 'after',
 ): ResolvedSelection {
   return {
     id: `sel:${anchor}:${head}`,
@@ -26,6 +29,7 @@ function selection(
     reversed: head < anchor,
     collapsed: anchor === head,
     goal,
+    affinity,
     liveness: 'live',
     startLiveness: 'live',
     endLiveness: 'live',
@@ -34,21 +38,40 @@ function selection(
 
 /** A view over unwrapped rows, where a display row and a buffer line are the same thing. */
 function createTestView(text: string) {
+  const characterWidth = 10
   const lineStarts = [0, ...[...text].flatMap((char, index) => (char === '\n' ? [index + 1] : []))]
   const rowForOffset = (offset: number) => lineStarts.findLastIndex((start) => start <= offset)
+  const offsetByDisplayRows = (offset: number, rowDelta: number, goalColumn: number) => {
+    const row = Math.min(Math.max(rowForOffset(offset) + rowDelta, 0), lineStarts.length - 1)
+    const start = lineStarts[row] ?? 0
+    return start + Math.min(goalColumn, lineRangeAtOffset(text, start).end - start)
+  }
 
   return {
     offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => {
       const range = lineRangeAtOffset(text, offset)
       return boundary === 'start' ? range.start : range.end
     },
-    offsetByDisplayRows: (offset: number, rowDelta: number, goalColumn: number) => {
-      const row = Math.min(Math.max(rowForOffset(offset) + rowDelta, 0), lineStarts.length - 1)
-      const start = lineStarts[row] ?? 0
-      return start + Math.min(goalColumn, lineRangeAtOffset(text, start).end - start)
-    },
+    caretXForOffset: (offset: number) =>
+      (offset - lineRangeAtOffset(text, offset).start) * characterWidth,
+    offsetByDisplayRows,
     pageRowDelta: () => 10,
-    visualColumnForOffset: (offset: number) => offset - lineRangeAtOffset(text, offset).start,
+    verticalCaretTarget: (
+      offset: number,
+      _affinity: SelectionAffinity,
+      rowDelta: number,
+      goal: Exclude<SelectionGoal, { readonly kind: 'none' }>,
+    ) => {
+      const column = goal.kind === 'lineEnd' ? Number.MAX_SAFE_INTEGER : goal.x / characterWidth
+      const target = offsetByDisplayRows(offset, rowDelta, column)
+      const end = lineRangeAtOffset(text, target).end
+      return { offset: target, affinity: target >= end ? ('before' as const) : ('after' as const) }
+    },
+    visualHorizontalTarget: (
+      _offset: number,
+      _affinity: SelectionAffinity,
+      _direction: 'left' | 'right',
+    ): { readonly offset: number; readonly affinity: SelectionAffinity } | null => null,
   }
 }
 
@@ -64,7 +87,7 @@ function createWrappedTestView(text: string, rowWidth: number) {
   }
 }
 
-function targets(text: string, view = createTestView(text)) {
+function targets(text: string, view = createTestView(text), rtlMoveVisually = false) {
   const snapshot = createPieceTableSnapshot(text)
 
   return (
@@ -77,6 +100,7 @@ function targets(text: string, view = createTestView(text)) {
       resolved,
       readLine: createNavigationLineReader(snapshot, createDocumentTextSnapshot(snapshot)),
       documentLength: snapshot.length,
+      rtlMoveVisually,
       wordSeparators,
       view,
     })
@@ -96,6 +120,7 @@ function targetsForSelections(text: string) {
           resolved,
           readLine,
           documentLength: snapshot.length,
+          rtlMoveVisually: false,
           view,
         })?.offset ?? null,
     )
@@ -129,6 +154,7 @@ function charactersReadForCaretMove(lineCount: number): number {
     resolved: selection(Math.floor(text.length / 2)),
     readLine: createNavigationLineReader(snapshot, counted),
     documentLength: snapshot.length,
+    rtlMoveVisually: false,
     view: createTestView(text),
   })
 
@@ -164,15 +190,18 @@ describe('word navigation', () => {
   it('still steps over the line break one character at a time', () => {
     const move = targets(text)
 
-    expect(move('cursorRight', selection(10))?.offset).toBe(11)
-    expect(move('cursorLeft', selection(11))?.offset).toBe(10)
+    expect(move('cursorRight', selection(10))).toMatchObject({ offset: 11, affinity: 'before' })
+    expect(move('cursorLeft', selection(11))).toMatchObject({ offset: 10, affinity: 'after' })
   })
 
   it('stays put at either end of the document rather than stepping past it', () => {
     const move = targets(text)
 
-    expect(move('cursorLeft', selection(0))?.offset).toBe(0)
-    expect(move('cursorRight', selection(text.length))?.offset).toBe(text.length)
+    expect(move('cursorLeft', selection(0))).toMatchObject({ offset: 0, affinity: 'after' })
+    expect(move('cursorRight', selection(text.length))).toMatchObject({
+      offset: text.length,
+      affinity: 'before',
+    })
   })
 
   it('follows the separator set the language declares', () => {
@@ -180,6 +209,158 @@ describe('word navigation', () => {
 
     expect(move('cursorWordRight', selection(0))?.offset).toBe(2)
     expect(move('cursorWordRight', selection(0), wordSeparatorsForLanguage('css'))?.offset).toBe(13)
+  })
+
+  it('stays in logical document order when character-step motion is visual', () => {
+    const bidiText = 'let x = שלום world'
+    const visualHorizontalTarget = vi.fn(() => ({ offset: 0, affinity: 'after' as const }))
+    const view = {
+      ...createTestView(bidiText),
+      visualHorizontalTarget,
+    }
+    const move = targets(bidiText, view, true)
+    const logicalMove = targets(bidiText)
+    const cases = [
+      { command: 'cursorWordLeft' as const, extend: false, source: 10, affinity: 'after' },
+      { command: 'cursorWordRight' as const, extend: false, source: 6, affinity: 'before' },
+      { command: 'selectWordLeft' as const, extend: true, source: 10, affinity: 'after' },
+      { command: 'selectWordRight' as const, extend: true, source: 6, affinity: 'before' },
+      { command: 'cursorWordPartLeft' as const, extend: false, source: 10, affinity: 'after' },
+      { command: 'cursorWordPartRight' as const, extend: false, source: 6, affinity: 'before' },
+      { command: 'cursorWordPartLeftSelect' as const, extend: true, source: 10, affinity: 'after' },
+      {
+        command: 'cursorWordPartRightSelect' as const,
+        extend: true,
+        source: 6,
+        affinity: 'before',
+      },
+    ]
+
+    for (const testCase of cases) {
+      const sourceAffinity = testCase.affinity === 'before' ? 'after' : 'before'
+      const origin = selection(
+        testCase.source,
+        testCase.source,
+        SelectionGoal.none(),
+        sourceAffinity,
+      )
+      const target = move(testCase.command, origin)
+      expect(target).toEqual(logicalMove(testCase.command, origin))
+      expect(target).toMatchObject({
+        affinity: testCase.affinity,
+        extend: testCase.extend,
+        offset: 8,
+      })
+    }
+    expect(visualHorizontalTarget).not.toHaveBeenCalled()
+  })
+})
+
+describe('visual horizontal navigation', () => {
+  it('defaults to visual motion on macOS and Linux but not Windows', () => {
+    expect(defaultRtlMoveVisually('mac')).toBe(true)
+    expect(defaultRtlMoveVisually('linux')).toBe(true)
+    expect(defaultRtlMoveVisually('windows')).toBe(false)
+  })
+
+  it('carries the view target and affinity for cursor and selection commands', () => {
+    const calls: { offset: number; affinity: SelectionAffinity; direction: string }[] = []
+    const view = {
+      ...createTestView('אבג'),
+      visualHorizontalTarget: (
+        offset: number,
+        affinity: SelectionAffinity,
+        direction: 'left' | 'right',
+      ) => {
+        calls.push({ offset, affinity, direction })
+        return { offset: 2, affinity: 'before' as const }
+      },
+    }
+    const move = targets('אבג', view, true)
+
+    for (const command of ['cursorLeft', 'selectLeft'] as const) {
+      expect(move(command, selection(1, 1, SelectionGoal.none(), 'before'))).toMatchObject({
+        offset: 2,
+        affinity: 'before',
+        extend: command === 'selectLeft',
+      })
+    }
+    for (const command of ['cursorRight', 'selectRight'] as const) {
+      expect(move(command, selection(1, 1, SelectionGoal.none(), 'before'))).toMatchObject({
+        offset: 2,
+        affinity: 'before',
+        extend: command === 'selectRight',
+      })
+    }
+
+    expect(calls).toEqual([
+      { offset: 1, affinity: 'before', direction: 'left' },
+      { offset: 1, affinity: 'before', direction: 'left' },
+      { offset: 1, affinity: 'before', direction: 'right' },
+      { offset: 1, affinity: 'before', direction: 'right' },
+    ])
+  })
+
+  it('keeps the logical path exact when visual motion is disabled or unavailable', () => {
+    const disabledView = {
+      ...createTestView('אבג'),
+      visualHorizontalTarget: () => {
+        throw new TypeError('visual motion must stay disabled')
+      },
+    }
+    const disabled = targets('אבג', disabledView, false)
+    expect(disabled('cursorRight', selection(1))).toEqual({
+      offset: 2,
+      affinity: 'before',
+      extend: false,
+      timingName: 'input.cursorRight',
+    })
+
+    const unavailable = targets('אבג', createTestView('אבג'), true)
+    expect(unavailable('cursorLeft', selection(2))).toEqual({
+      offset: 1,
+      affinity: 'after',
+      extend: false,
+      timingName: 'input.cursorLeft',
+    })
+  })
+
+  it('collapses a nonempty selection logically and leaves Home and End unchanged', () => {
+    let calls = 0
+    const view = {
+      ...createTestView('אבגדה'),
+      visualHorizontalTarget: () => {
+        calls += 1
+        return { offset: 4, affinity: 'before' as const }
+      },
+    }
+    const move = targets('אבגדה', view, true)
+
+    expect(move('cursorLeft', selection(1, 3))).toMatchObject({ offset: 1, affinity: 'after' })
+    expect(move('cursorRight', selection(1, 3))).toMatchObject({ offset: 3, affinity: 'before' })
+    expect(move('cursorLineStart', selection(2))?.offset).toBe(0)
+    expect(move('cursorLineEnd', selection(2))?.offset).toBe(5)
+    expect(calls).toBe(0)
+  })
+
+  it('preserves directional affinity when a fold remaps a logical target', () => {
+    const text = 'abc'
+    const base = createTestView(text)
+    const view = {
+      ...base,
+      offsetAtLineBoundary: (offset: number, boundary: 'start' | 'end') => {
+        if (offset === 1 && boundary === 'end') return 0
+        return base.offsetAtLineBoundary(offset, boundary)
+      },
+      offsetByDisplayRows: () => text.length,
+    }
+    const move = targets(text, view)
+
+    expect(move('cursorRight', selection(0))).toMatchObject({
+      offset: text.length,
+      affinity: 'before',
+    })
+    expect(move('cursorLeft', selection(2))).toMatchObject({ offset: 0, affinity: 'after' })
   })
 })
 
@@ -215,6 +396,72 @@ describe('word-part navigation', () => {
 describe('vertical navigation', () => {
   const text = 'one\ntwo\nthree\nfour'
 
+  it('measures one fractional pixel goal and reuses it for arrows and pages', () => {
+    const caretXForOffset = vi.fn(() => 37.25)
+    const verticalCaretTarget = vi.fn(
+      (
+        _offset: number,
+        _affinity: SelectionAffinity,
+        _rowDelta: number,
+        _goal: Exclude<SelectionGoal, { readonly kind: 'none' }>,
+      ) => ({ offset: 8, affinity: 'before' as const }),
+    )
+    const view = { ...createTestView(text), caretXForOffset, verticalCaretTarget }
+    const move = targets(text, view)
+
+    const first = move('cursorDown', selection(1, 1, SelectionGoal.none(), 'before'))
+    expect(first).toMatchObject({
+      offset: 8,
+      affinity: 'before',
+      goal: { kind: 'horizontal', x: 37.25 },
+    })
+    const second = move(
+      'cursorPageDown',
+      selection(first!.offset, first!.offset, first!.goal, first!.affinity),
+    )
+    expect(second).toMatchObject({
+      offset: 8,
+      affinity: 'before',
+      goal: { kind: 'horizontal', x: 37.25 },
+    })
+    expect(caretXForOffset).toHaveBeenCalledOnce()
+    expect(caretXForOffset).toHaveBeenCalledWith(1, 'before')
+    expect(verticalCaretTarget.mock.calls.map((call) => call[3])).toEqual([
+      { kind: 'horizontal', x: 37.25 },
+      { kind: 'horizontal', x: 37.25 },
+    ])
+  })
+
+  it('keeps line-end distinct from a pixel aim', () => {
+    const view = createTestView(text)
+    const goal = verticalMoveGoal(SelectionGoal.lineEnd(), 3, 'before', view)
+    expect(goal).toEqual({ kind: 'lineEnd' })
+  })
+
+  it('uses inside affinities when a vertical move leaves a nonempty selection', () => {
+    const origins: { readonly affinity: SelectionAffinity; readonly offset: number }[] = []
+    const view = {
+      ...createTestView(text),
+      verticalCaretTarget: (
+        offset: number,
+        affinity: SelectionAffinity,
+        _rowDelta: number,
+        _goal: Exclude<SelectionGoal, { readonly kind: 'none' }>,
+      ) => {
+        origins.push({ affinity, offset })
+        return { offset, affinity }
+      },
+    }
+    const move = targets(text, view)
+
+    move('cursorDown', selection(9, 4, SelectionGoal.none(), 'after'))
+    move('cursorUp', selection(4, 9, SelectionGoal.none(), 'before'))
+    expect(origins).toEqual([
+      { offset: 9, affinity: 'before' },
+      { offset: 4, affinity: 'after' },
+    ])
+  })
+
   it('leaves a selection from the edge it is heading towards', () => {
     const move = targets(text)
 
@@ -231,6 +478,17 @@ describe('vertical navigation', () => {
 })
 
 describe('line boundary navigation', () => {
+  it('uses the inside affinity at each document boundary', () => {
+    const move = targets('plain')
+
+    for (const command of ['cursorDocumentStart', 'selectDocumentStart'] as const) {
+      expect(move(command, selection(3))).toMatchObject({ offset: 0, affinity: 'after' })
+    }
+    for (const command of ['cursorDocumentEnd', 'selectDocumentEnd'] as const) {
+      expect(move(command, selection(3))).toMatchObject({ offset: 5, affinity: 'before' })
+    }
+  })
+
   it('escalates Home from the first non-blank character to the margin', () => {
     const move = targets('    indented')
 
@@ -254,11 +512,28 @@ describe('line boundary navigation', () => {
   it('holds the line end as the caret moves down past a shorter line', () => {
     const move = targets('longer line here\nab\nanother long line')
     const end = move('cursorLineEnd', selection(0))
-    expect(end).toMatchObject({ offset: 16, goal: { kind: 'lineEnd' } })
+    expect(end).toMatchObject({
+      affinity: 'before',
+      offset: 16,
+      goal: { kind: 'lineEnd' },
+    })
 
     const short = move('cursorDown', selection(16, 16, end?.goal))
     expect(short).toMatchObject({ offset: 19, goal: { kind: 'lineEnd' } })
 
     expect(move('cursorDown', selection(19, 19, short?.goal))?.offset).toBe(37)
+  })
+
+  it('uses the inside affinity at each line boundary', () => {
+    const move = targets('plain')
+
+    expect(move('cursorLineStart', selection(3))).toMatchObject({
+      affinity: 'after',
+      offset: 0,
+    })
+    expect(move('cursorLineEnd', selection(3))).toMatchObject({
+      affinity: 'before',
+      offset: 5,
+    })
   })
 })

@@ -4,8 +4,14 @@ import { Editor } from '../src/editor'
 import { InputSelectionController } from '../src/editor/inputSelectionController'
 import { VirtualizedTextView } from '../src/virtualization'
 import { resetEditorInstanceCount } from '../src/public/testing'
-import type { DocumentSessionChange } from '../src/public/document'
-import type { EditorPlugin, EditorViewContributionUpdateKind } from '../src/public/extensions'
+import { createDocumentSession, type DocumentSessionChange } from '../src/public/document'
+import type {
+  EditorEditContributionContext,
+  EditorPlugin,
+  EditorViewContributionContext,
+  EditorViewContributionUpdateKind,
+} from '../src/public/extensions'
+import { resolveSelection } from '../src/selections'
 
 // Non-ASCII forces the measured geometry path, where a row is measured one
 // grapheme at a time against its own rect.
@@ -24,6 +30,56 @@ function createViewContributionPlugin(kinds: EditorViewContributionUpdateKind[])
         }),
       }),
   }
+}
+
+type ViewContributionContextCapture = {
+  context: EditorViewContributionContext | null
+}
+
+type EditContributionContextCapture = {
+  context: EditorEditContributionContext | null
+}
+
+const EMPTY_VIEW_CONTRIBUTION = { dispose: noop, update: noop }
+
+function noop(): void {}
+
+function captureViewContributionPlugin(capture: ViewContributionContextCapture): EditorPlugin {
+  return {
+    activate: (context) =>
+      context.registerViewContribution({
+        createContribution: (contributionContext) => {
+          capture.context = contributionContext
+          return EMPTY_VIEW_CONTRIBUTION
+        },
+      }),
+  }
+}
+
+function captureEditContributionPlugin(capture: EditContributionContextCapture): EditorPlugin {
+  return {
+    activate: (context) =>
+      context.registerEditContribution({
+        createContribution: (contributionContext) => {
+          capture.context = contributionContext
+          return EMPTY_VIEW_CONTRIBUTION
+        },
+      }),
+  }
+}
+
+function requireViewContributionContext(
+  context: EditorViewContributionContext | null,
+): EditorViewContributionContext {
+  if (!context) throw new Error('plugin received no contribution context')
+  return context
+}
+
+function requireEditContributionContext(
+  context: EditorEditContributionContext | null,
+): EditorEditContributionContext {
+  if (!context) throw new Error('plugin received no edit contribution context')
+  return context
 }
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -126,7 +182,7 @@ describe('editor operations', () => {
       },
       plugins: [createViewContributionPlugin(kinds)],
     })
-    const reveal = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const reveal = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
     const sync = vi.spyOn(InputSelectionController.prototype, 'syncDomSelection')
     kinds.length = 0
 
@@ -179,7 +235,7 @@ describe('editor operations', () => {
 
   it('keeps the reveal an earlier change asked for when a later one asks for none', () => {
     editor = new Editor(container, { defaultText: 'abcdefgh' })
-    const reveal = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const reveal = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
 
     editor.runInOperation(() => {
       editor.setSelection(5, 5)
@@ -187,7 +243,221 @@ describe('editor operations', () => {
     })
 
     expect(reveal).toHaveBeenCalledTimes(1)
-    expect(reveal).toHaveBeenCalledWith(5, undefined)
+    expect(reveal).toHaveBeenCalledWith(5, 'after', undefined)
+  })
+
+  it('round-trips public selection affinity while retaining public reveal defaults', () => {
+    const session = createDocumentSession('abc')
+    editor = new Editor(container)
+    editor.attachSession(session)
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+
+    editor.setSelection(1, 1, { affinity: 'before' })
+
+    const selection = session.getSelections().selections[0]
+    if (!selection) throw new Error('setSelection left no selection')
+    expect(resolveSelection(session.getSnapshot(), selection).affinity).toBe('before')
+    expect(revealCaret).toHaveBeenCalledWith(1, 'before', undefined)
+    expect(revealOffset).not.toHaveBeenCalled()
+  })
+
+  it('keeps the deprecated numeric public reveal target working', () => {
+    editor = new Editor(container, { defaultText: 'abc' })
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+
+    editor.setSelection(0, 0, 2)
+
+    expect(revealCaret).not.toHaveBeenCalled()
+    expect(revealOffset).toHaveBeenLastCalledWith(2, undefined)
+  })
+
+  it('round-trips affinity through an explicit post-edit selection', () => {
+    const session = createDocumentSession('abc')
+    editor = new Editor(container)
+    editor.attachSession(session)
+
+    editor.edit({ from: 1, text: 'B', to: 2 }, { selection: { affinity: 'before', anchor: 2 } })
+
+    const selection = session.getSelections().selections[0]
+    if (!selection) throw new Error('edit left no selection')
+    expect(resolveSelection(session.getSnapshot(), selection)).toMatchObject({
+      affinity: 'before',
+      headOffset: 2,
+    })
+  })
+
+  it('keeps contribution selection reveal opt-in and lets an explicit target win', () => {
+    const capture: ViewContributionContextCapture = { context: null }
+    const plugin = captureViewContributionPlugin(capture)
+    editor = new Editor(container, { defaultText: 'abc', plugins: [plugin] })
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const context = requireViewContributionContext(capture.context)
+
+    context.setSelection(1, 1, 'test.affinity', { affinity: 'before' })
+
+    expect(context.getSnapshot().selections[0]).toMatchObject({
+      affinity: 'before',
+      headOffset: 1,
+    })
+    expect(revealCaret).not.toHaveBeenCalled()
+    expect(revealOffset).not.toHaveBeenCalled()
+
+    context.setSelection(2, 2, 'test.reveal', { reveal: true })
+    expect(revealCaret).toHaveBeenLastCalledWith(2, 'after', undefined)
+    expect(revealOffset).not.toHaveBeenCalled()
+
+    revealCaret.mockClear()
+    context.setSelection(1, 1, 'test.explicitHeadReveal', {
+      affinity: 'before',
+      revealOffset: 1,
+    })
+    expect(revealCaret).toHaveBeenLastCalledWith(1, 'before', undefined)
+    expect(revealOffset).not.toHaveBeenCalled()
+
+    revealCaret.mockClear()
+    context.setSelections([{ affinity: 'before', anchor: 0, head: 2 }], 'test.bulkHeadReveal', 2)
+    expect(revealCaret).toHaveBeenLastCalledWith(2, 'before', undefined)
+    expect(revealOffset).not.toHaveBeenCalled()
+
+    revealCaret.mockClear()
+    context.setSelection(0, 0, 'test.revealTarget', {
+      reveal: false,
+      revealOffset: 2,
+    })
+    expect(revealCaret).not.toHaveBeenCalled()
+    expect(revealOffset).toHaveBeenLastCalledWith(2, undefined)
+
+    revealOffset.mockClear()
+    context.setSelection(1, 1, 'test.legacyRevealTarget', 2)
+    expect(revealCaret).not.toHaveBeenCalled()
+    expect(revealOffset).toHaveBeenLastCalledWith(2, undefined)
+  })
+
+  it('reveals an explicit post-edit selection through its affinity', () => {
+    const capture: EditContributionContextCapture = { context: null }
+    editor = new Editor(container, {
+      defaultText: 'abc',
+      plugins: [captureEditContributionPlugin(capture)],
+    })
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const context = requireEditContributionContext(capture.context)
+
+    context.applyEdits([{ from: 1, text: 'B', to: 2 }], 'test.edit', {
+      affinity: 'before',
+      anchor: 2,
+      head: 2,
+    })
+
+    expect(revealCaret).toHaveBeenLastCalledWith(2, 'before', undefined)
+    expect(revealOffset).not.toHaveBeenCalled()
+  })
+
+  it('infers selection-head affinity while retaining viewport-end reveal placement', () => {
+    const session = createDocumentSession('abc')
+    editor = new Editor(container)
+    editor.attachSession(session)
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const controller = Reflect.get(editor, 'inputSelection') as InputSelectionController
+    const applyChange = Reflect.get(controller, 'applyChange') as (
+      change: DocumentSessionChange,
+      totalName: string,
+      totalStart: number,
+      options: { readonly revealBlock: 'end'; readonly revealOffset: number },
+    ) => void
+    const change = session.setSelection(1, 1, { affinity: 'before' })
+
+    applyChange.call(controller, change, 'test.headReveal', 0, {
+      revealBlock: 'end',
+      revealOffset: 1,
+    })
+
+    expect(revealCaret).toHaveBeenLastCalledWith(1, 'before', 'end')
+    expect(revealOffset).not.toHaveBeenCalled()
+  })
+
+  it('reveals the requested primary selection after normalization reorders the ranges', () => {
+    const capture: ViewContributionContextCapture = { context: null }
+    editor = new Editor(container, {
+      defaultText: 'alpha bravo charlie',
+      plugins: [captureViewContributionPlugin(capture)],
+    })
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const context = requireViewContributionContext(capture.context)
+
+    context.setSelections(
+      [
+        { affinity: 'before', anchor: 11, head: 6 },
+        { affinity: 'after', anchor: 0, head: 5 },
+      ],
+      'test.reorderedBulkHeadReveal',
+      6,
+    )
+
+    expect(context.getSnapshot().selections).toMatchObject([
+      { anchorOffset: 0, headOffset: 5 },
+      { affinity: 'before', anchorOffset: 11, headOffset: 6 },
+    ])
+    expect(revealCaret).toHaveBeenLastCalledWith(6, 'before', undefined)
+    expect(revealOffset).not.toHaveBeenCalled()
+  })
+
+  it('reveals the surviving primary side when adjacent ranges share a head', () => {
+    const capture: ViewContributionContextCapture = { context: null }
+    editor = new Editor(container, {
+      defaultText: 'foofoo',
+      plugins: [captureViewContributionPlugin(capture)],
+    })
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const context = requireViewContributionContext(capture.context)
+
+    context.setSelections(
+      [
+        { affinity: 'before', anchor: 6, head: 3 },
+        { affinity: 'after', anchor: 0, head: 3 },
+      ],
+      'test.adjacentSharedHeadReveal',
+      3,
+    )
+
+    expect(context.getSnapshot().selections).toMatchObject([
+      { affinity: 'after', anchorOffset: 0, headOffset: 3 },
+      { affinity: 'before', anchorOffset: 6, headOffset: 3 },
+    ])
+    expect(revealCaret).toHaveBeenLastCalledWith(3, 'before', undefined)
+    expect(revealOffset).not.toHaveBeenCalled()
+  })
+
+  it('does not reuse raw-primary affinity after normalization merges its head away', () => {
+    const capture: ViewContributionContextCapture = { context: null }
+    editor = new Editor(container, {
+      defaultText: 'alpha bravo charlie',
+      plugins: [captureViewContributionPlugin(capture)],
+    })
+    const revealCaret = vi.spyOn(VirtualizedTextView.prototype, 'revealCaret')
+    const revealOffset = vi.spyOn(VirtualizedTextView.prototype, 'revealOffset')
+    const context = requireViewContributionContext(capture.context)
+
+    context.setSelections(
+      [
+        { affinity: 'before', anchor: 0, head: 6 },
+        { affinity: 'after', anchor: 3, head: 8 },
+      ],
+      'test.mergedBulkReveal',
+      6,
+    )
+
+    expect(context.getSnapshot().selections).toMatchObject([
+      { affinity: 'after', anchorOffset: 0, headOffset: 8 },
+    ])
+    expect(revealCaret).not.toHaveBeenCalled()
+    expect(revealOffset).toHaveBeenLastCalledWith(6, undefined)
   })
 
   it('runs a nested pass inline rather than opening a second one', () => {

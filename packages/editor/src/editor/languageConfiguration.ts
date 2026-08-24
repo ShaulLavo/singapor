@@ -311,7 +311,7 @@ const CODE: EditorLanguageConfiguration = {
 
 const CODE_WITH_TAGS: EditorLanguageConfiguration = {
   ...CODE,
-  onEnterRules: [...BLOCK_COMMENT_ON_ENTER_RULES, ...TAG_ON_ENTER_RULES],
+  onEnterRules: BLOCK_COMMENT_ON_ENTER_RULES.concat(TAG_ON_ENTER_RULES),
   wordPattern: TAG_NAME_PATTERN,
 }
 

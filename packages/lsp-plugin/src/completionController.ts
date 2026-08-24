@@ -1,4 +1,4 @@
-import type { DocumentSessionChange } from '@singapor/core/document'
+import type { DocumentSessionChange, SelectionAffinity } from '@singapor/core/document'
 import type {
   EditorCapabilityToken,
   EditorViewContributionContext,
@@ -63,6 +63,7 @@ type CompletionCaret = {
   // text extends, and reading the text itself would put a copy of the document on every keystroke.
   readonly length: number
   readonly offset: number
+  readonly affinity: SelectionAffinity
   readonly wordStart: number
   readonly prefix: string
 }
@@ -72,6 +73,7 @@ type CompletionAcceptance = {
   readonly session: CompletionSession
   readonly document: ActiveDocument
   readonly caretOffset: number
+  readonly caretAffinity: SelectionAffinity
 }
 
 export type CompletionControllerOptions = {
@@ -424,7 +426,12 @@ export class CompletionController {
     if (!document || document.uri !== session.active.uri) return null
     if (!this.caret) return null
 
-    return { session, document, caretOffset: this.caret.offset }
+    return {
+      session,
+      document,
+      caretOffset: this.caret.offset,
+      caretAffinity: this.caret.affinity,
+    }
   }
 
   private async applyResolvedCompletion(
@@ -459,6 +466,7 @@ export class CompletionController {
         text: acceptance.session.active.fullText,
         offset: acceptance.session.offset,
         caretOffset: acceptance.caretOffset,
+        caretAffinity: acceptance.caretAffinity,
       },
       item,
     )
@@ -586,7 +594,13 @@ function completionCaret(snapshot: EditorViewSnapshot): CompletionCaret | null {
     : snapshot.fullText.slice(windowStart, offset)
   const length = source ? source.length : snapshot.fullText.length
   const prefix = completionPrefix(before, before.length)
-  return { length, offset, wordStart: offset - prefix.length, prefix }
+  return {
+    length,
+    offset,
+    affinity: selection.affinity,
+    wordStart: offset - prefix.length,
+    prefix,
+  }
 }
 
 /**

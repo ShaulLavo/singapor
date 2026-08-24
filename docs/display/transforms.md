@@ -2,7 +2,9 @@
 
 ## Problem
 
-Buffer coordinates (row/column in actual text) differ from screen coordinates. Folded code, expanded tabs, wrapped lines, and block decorations create divergence. The editor must convert between these spaces.
+Buffer coordinates (row/column in actual text) differ from screen coordinates. Folded code, inline
+replacements, expanded tabs, and wrapped lines create divergence. The editor must convert between
+these spaces.
 
 ## Decision: Proceed With Layered Transforms
 
@@ -65,12 +67,12 @@ Sorted array of fold ranges (start/end Anchors). Converts between buffer Points 
 
 ### FoldMap Invalidation Analysis
 
-| Edit location | Output invalidation |
-|---|---|
-| Inside fold (not touching boundaries) | None; anchors refresh against the next snapshot |
-| Touching fold boundary | Placeholder if fold survives; placeholder expands if fold is destroyed |
-| Outside any fold | Coordinate-shifted pass-through in `FoldPoint` space |
-| Fold toggled | Fold's output range |
+| Edit location                         | Output invalidation                                                    |
+| ------------------------------------- | ---------------------------------------------------------------------- |
+| Inside fold (not touching boundaries) | None; anchors refresh against the next snapshot                        |
+| Touching fold boundary                | Placeholder if fold survives; placeholder expands if fold is destroyed |
+| Outside any fold                      | Coordinate-shifted pass-through in `FoldPoint` space                   |
+| Fold toggled                          | Fold's output range                                                    |
 
 Smallest recomputable unit: a single fold region.
 
@@ -87,14 +89,15 @@ second validation layer instead of collapsing immediately to a monolithic mapper
 
 - Tab expansion uses configurable `tabSize` math shared with the renderer.
 - Wrapping is represented as transform-produced display rows using monospace measured columns.
-- Block rows are internal transform primitives that occupy row units without creating buffer text.
-- The virtualizer consumes transform-produced rows and supports variable row sizes for block rows.
+
+The removed block-row and block-surface APIs are not part of the transform architecture and are not
+compatibility targets.
 
 ---
 
 ## InlineMap (Second Validation Layer)
 
-FoldMap hides whole rows. InlineMap hides and substitutes *within* a row: the primitive a markdown
+FoldMap hides whole rows. InlineMap hides and substitutes _within_ a row: the primitive a markdown
 live-preview view needs to paint `**bold**` as bold, `# Title` as a heading, and `![](img.png)` as an
 image, while the buffer keeps holding plain markdown text.
 
@@ -109,6 +112,7 @@ non-empty text stands in for it. Per buffer line, `createInlineRow` produces the
 contiguous segment list covering the whole line, so column conversion in either direction is total.
 
 **Locked:**
+
 - Replacements are intra-line. A span crossing a newline is a fold, not a replacement, and is dropped.
 - Replacement text may not contain a newline, so **the layer never adds or removes rows**. Its own
   invalidations always carry `lineCountDelta: 0`; row deltas ride on the external-edit invalidation.
@@ -135,12 +139,12 @@ map, they cannot disagree about what is currently hidden.
 
 ### InlineMap Invalidation Analysis
 
-| Edit location | Output invalidation |
-|---|---|
-| Inside a hidden span, no newline | None; nothing visible changed |
-| Touching a replacement that survives | That row, `replacement-changed` |
-| Touching a replacement that dies | That row, `replacement-dropped` |
-| Outside every replacement | Edited rows, `external-edit`, carrying the row delta |
+| Edit location                        | Output invalidation                                  |
+| ------------------------------------ | ---------------------------------------------------- |
+| Inside a hidden span, no newline     | None; nothing visible changed                        |
+| Touching a replacement that survives | That row, `replacement-changed`                      |
+| Touching a replacement that dies     | That row, `replacement-dropped`                      |
+| Outside every replacement            | Edited rows, `external-edit`, carrying the row delta |
 
 Smallest recomputable unit: one buffer row. Merging keeps the most specific reason so a coincident
 external edit cannot bury the fact that a replacement was dropped.
@@ -158,6 +162,12 @@ used to be mixed by plain addition now goes through `rowLocalIndexForOffset` /
 arithmetic when a row has no mapping. That covers caret DOM boundaries, hit testing, visual-column
 motion, chunk construction, hidden-character markers, selection signatures, and token/range
 highlight painting.
+
+Native caret APIs also return display-local DOM indices. When they are unavailable or report an
+overlay, measured BiDi hit testing maps its fallback local index through
+`rowOffsetForLocalIndex(..., 'nearest')` and clamps the result to the row's buffer span. Raw
+`row.startOffset + localIndex` is invalid for both inline insertions and replacements because their
+display and source lengths differ.
 
 The same-line and plain-row edit fast paths patch row text using buffer-space offsets, so an active
 inline map routes edits to a full rebuild via `hasModelRowProjections`.
@@ -186,8 +196,6 @@ spans, by adjacency for links and images.
   replacements as unbreakable units.
 - Edits drop the map and wait for the next parse to supply a fresh one, matching how FoldMap behaves.
   `updateInlineMapForEdit` can carry it across an edit once the host drives that.
-- Block-level markdown — tables, images as real images, checkboxes — wants block rows or block
-  surfaces rather than inline replacements.
 
 ---
 
@@ -206,6 +214,7 @@ Constraints defined, design deferred until anchors and selections validated.
 ### Key question: how dense decorations reference positions
 
 Candidates:
+
 - **Offset-based with Patch rebase:** No anchor overhead. CodeMirror approach.
 - **Line-anchored + intra-line offsets:** O(lines) anchors not O(tokens).
 - **Interval tree:** Query-efficient but maintenance overhead.

@@ -61,6 +61,7 @@ function caret(offset: number): ResolvedSelection {
     reversed: false,
     collapsed: true,
     goal: { kind: 'none' },
+    affinity: 'after',
     liveness: 'live',
     startLiveness: 'live',
     endLiveness: 'live',
@@ -75,11 +76,14 @@ function move(text: string, command: EditorCommandId, offset: number): number {
     resolved: caret(offset),
     readLine: createNavigationLineReader(snapshot, createDocumentTextSnapshot(snapshot)),
     documentLength: snapshot.length,
+    rtlMoveVisually: false,
     view: {
+      caretXForOffset: (value) => value,
       offsetAtLineBoundary: (value) => value,
       offsetByDisplayRows: (value) => value,
       pageRowDelta: () => 1,
-      visualColumnForOffset: (value) => value,
+      verticalCaretTarget: (value, affinity) => ({ offset: value, affinity }),
+      visualHorizontalTarget: () => null,
     },
   })
 

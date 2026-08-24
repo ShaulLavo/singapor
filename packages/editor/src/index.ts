@@ -178,6 +178,7 @@ export type {
   PieceTableWalkerChunk,
   Point,
   ResolvedAnchor,
+  SelectionAffinity,
   TextEdit,
   TextSnapshot,
 } from './public/document'
@@ -199,6 +200,7 @@ export type {
   EditorSelectionRevealOptions,
   EditorSelectionRevealTarget,
   EditorSelectionSyncMode,
+  EditorSetSelectionOptions,
   EditorSetTextOptions,
   EditorState,
   EditorSyntaxSessionFactory,

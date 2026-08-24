@@ -1,5 +1,5 @@
 export { createIncrementalTokenizer } from './tokenizer'
-export { createShikiHighlighterPlugin } from './plugin'
+export { createShikiHighlighterPlugin, createShikiHighlighterProvider } from './plugin'
 export {
   EDITOR_SHIKI_SYNTAX_SCOPE_MAPPINGS,
   editorThemeToShikiTheme,

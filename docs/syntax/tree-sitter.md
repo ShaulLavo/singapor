@@ -83,7 +83,15 @@ Examples:
 - select sibling node or list item
 - select Tree-sitter leaf/token range
 
-The selection model still stores `Selection<Anchor>[]`. Tree-sitter nodes are transient helpers for computing the next selection range.
+The selection model stores `SelectionSet<Anchor>`. Tree-sitter nodes are transient helpers for
+computing the next selection range.
+
+Structural-selection commands normalize the set before sending ranges to the backend, then derive
+both request order and source metadata from that same normalized sequence. Returned ranges retain
+the source selection's id, direction, and affinity. The result is normalized honestly rather than
+being marked normalized by construction; when backend ranges converge, expansion stacks are rebound
+to the surviving selection ids and their tops are aligned with the normalized ranges. A result-count
+mismatch is stale rather than a partially paired response.
 
 ## Folds
 
@@ -99,16 +107,16 @@ Injected parse trees must retain parent snapshot identity and produce highlights
 
 ## Acceptance Criteria
 
-| Deliverable | Acceptance Criteria |
-|---|---|
-| Worker-owned runtime | Parser creation, parsing, query execution, tree traversal, and injections all run off the main thread |
-| Language registry | Loads parser + queries from registered language plugins by explicit language id inside workers |
-| Piece-table input adapter | Tree-sitter can read document text without flattening whole files on every parse |
-| Incremental edit bridge | Batched edits update the previous parse tree correctly |
-| Parse snapshots | Parse results are tagged with document snapshot/version and stale results are rejected |
-| Highlight queries | Tree-sitter query captures produce editor decorations compatible with CSS Highlight rendering |
-| Structural selection | Expand/shrink/select-token produce anchor-backed selections |
-| Fold queries | Syntax folds feed FoldMap as anchor-backed ranges |
-| Injection support | Embedded languages produce correct ranges in parent buffer coordinates |
-| Benchmarks | 10K, 50K, 100K-line parse/update/query timings and memory |
-| Fallback behavior | Unknown language or failed parse leaves plain editing, selections, and rendering functional |
+| Deliverable               | Acceptance Criteria                                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Worker-owned runtime      | Parser creation, parsing, query execution, tree traversal, and injections all run off the main thread |
+| Language registry         | Loads parser + queries from registered language plugins by explicit language id inside workers        |
+| Piece-table input adapter | Tree-sitter can read document text without flattening whole files on every parse                      |
+| Incremental edit bridge   | Batched edits update the previous parse tree correctly                                                |
+| Parse snapshots           | Parse results are tagged with document snapshot/version and stale results are rejected                |
+| Highlight queries         | Tree-sitter query captures produce editor decorations compatible with CSS Highlight rendering         |
+| Structural selection      | Expand/shrink/select-token produce anchor-backed selections                                           |
+| Fold queries              | Syntax folds feed FoldMap as anchor-backed ranges                                                     |
+| Injection support         | Embedded languages produce correct ranges in parent buffer coordinates                                |
+| Benchmarks                | 10K, 50K, 100K-line parse/update/query timings and memory                                             |
+| Fallback behavior         | Unknown language or failed parse leaves plain editing, selections, and rendering functional           |

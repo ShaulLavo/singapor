@@ -174,7 +174,7 @@ describe('what a document votes for', () => {
     const head = ['x', '  y', ...Array.from({ length: 9_998 }, () => 'z')]
     const tail = Array.from({ length: 50 }, () => 'p\n        q')
 
-    expect(guessedTabSize([...head, ...tail].join('\n'), 4)).toBe(2)
+    expect(guessedTabSize(head.concat(tail).join('\n'), 4)).toBe(2)
   })
 
   it('reads a step under a line that does not end mid-list as nesting', () => {

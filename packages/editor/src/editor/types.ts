@@ -16,6 +16,7 @@ import type { BrowserTextMetrics } from '../virtualization/browserMetrics'
 import type { EditorKeymapOptions } from './keymap'
 import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'
 import type { TextEdit } from '../tokens'
+import type { SelectionAffinity } from '../selections'
 
 /** Minimal interface for the CSS Custom Highlight API registry. */
 export interface HighlightRegistry {
@@ -94,6 +95,11 @@ export type EditorOptions = {
   readonly rangeDecorations?: readonly EditorRangeDecoration[]
   readonly rowGap?: number
   readonly rowPositioning?: EditorRowPositioning
+  /**
+   * Moves character-step carets by screen direction; word and subword motion stay logical.
+   * Defaults off on Windows and on elsewhere.
+   */
+  readonly rtlMoveVisually?: boolean
   readonly scrollMode?: EditorScrollMode
   readonly selectionSyncMode?: EditorSelectionSyncMode
   /** Confusable and invisible characters to point out; both families report unless turned off. */
@@ -124,6 +130,7 @@ export type EditorEditHistoryMode = 'record' | 'skip'
 
 export type EditorEditSelection = {
   readonly anchor: number
+  readonly affinity?: SelectionAffinity
   readonly head?: number
 }
 

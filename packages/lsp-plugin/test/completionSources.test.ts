@@ -145,7 +145,7 @@ describe('a completion list built from several sources', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 9, to: 9, text: 'snippetForEach' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 23, head: 23 },
+      { anchor: 23, head: 23, affinity: 'after' },
     )
     expect(editor.requests('completionItem/resolve')).toHaveLength(0)
   })
@@ -378,6 +378,7 @@ function editorSnapshot(
         headOffset: caretOffset,
         startOffset: caretOffset,
         endOffset: caretOffset,
+        affinity: 'after',
       },
     ],
     metrics: {} as EditorViewSnapshot['metrics'],

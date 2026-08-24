@@ -20,7 +20,7 @@ import {
   type EditorRangeDecoration,
   type EditorScrollMode,
   type EditorScrollPosition,
-  type EditorSelectionRevealTarget,
+  type EditorSetSelectionOptions,
   type EditorSetTextOptions,
   type EditorState,
   type EditorSuspiciousCharactersOptions,
@@ -87,7 +87,14 @@ export type SolidEditorCommands = {
   openDocument(document: EditorOpenDocumentOptions): void
   setText(text: string, options?: EditorSetTextOptions): void
   edit(editOrEdits: EditorEditInput, options?: EditorEditOptions): void
-  setSelection(anchor: number, head?: number, reveal?: EditorSelectionRevealTarget): void
+  setSelection(anchor: number, head?: number, options?: EditorSetSelectionOptions): void
+  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
+  setSelection(anchor: number, head?: number, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head?: number,
+    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
+  ): void
   setScrollPosition(scrollPosition: EditorScrollPosition): void
   dispatchCommand(command: EditorCommandId, context?: EditorCommandContext): boolean
   openFind(): boolean
@@ -384,7 +391,7 @@ function createCommands(
     },
     setText: (text, options) => editor()?.setText(text, options),
     edit: (editOrEdits, options) => editor()?.edit(editOrEdits, options),
-    setSelection: (anchor, head, reveal) => editor()?.setSelection(anchor, head, reveal),
+    setSelection: (anchor, head, options) => editor()?.setSelection(anchor, head, options),
     setScrollPosition: (scrollPosition) => editor()?.setScrollPosition(scrollPosition),
     dispatchCommand: (command, context) => editor()?.dispatchCommand(command, context) ?? false,
     openFind: () => editor()?.openFind() ?? false,

@@ -8,6 +8,7 @@ import { anchorAt, resolveAnchor } from './pieceTable/anchors'
 
 export type SelectionGoal =
   | { readonly kind: 'none' }
+  // Row-local text x in CSS pixels; gutter and scroll coordinates do not survive vertical runs.
   | { readonly kind: 'horizontal'; readonly x: number }
   // The end of the line is not a column, it is wherever the line happens to stop. A caret sent
   // there by End has to remember that rather than the width of the line it left.
@@ -19,12 +20,15 @@ export const SelectionGoal = {
   lineEnd: (): SelectionGoal => ({ kind: 'lineEnd' }),
 } as const
 
+export type SelectionAffinity = 'before' | 'after'
+
 export type Selection<T> = {
   readonly id: string
   readonly start: T
   readonly end: T
   readonly reversed: boolean
   readonly goal: SelectionGoal
+  readonly affinity: SelectionAffinity
 }
 
 export type AnchorSelection = Selection<PieceTableAnchor>
@@ -47,9 +51,16 @@ export type ResolvedSelection = {
   readonly reversed: boolean
   readonly collapsed: boolean
   readonly goal: SelectionGoal
+  readonly affinity: SelectionAffinity
   readonly liveness: AnchorLiveness
   readonly startLiveness: AnchorLiveness
   readonly endLiveness: AnchorLiveness
+}
+
+export type SelectionOffsetsWithAffinity = {
+  readonly anchor: number
+  readonly head: number
+  readonly affinity: SelectionAffinity
 }
 
 export type CreateAnchorSelectionOptions = {
@@ -58,6 +69,7 @@ export type CreateAnchorSelectionOptions = {
   readonly goal?: SelectionGoal
   readonly cursorBias?: AnchorBias
   readonly reversed?: boolean
+  readonly affinity?: SelectionAffinity
 }
 
 export type SelectionIdFactory = () => string
@@ -86,9 +98,10 @@ const createFallbackSelectionId = (
   anchorOffset: number,
   headOffset: number,
   reversed: boolean,
+  affinity: SelectionAffinity,
 ): string => {
   const direction = reversed ? 'reversed' : 'forward'
-  return `selection:${anchorOffset}:${headOffset}:${direction}`
+  return `selection:${anchorOffset}:${headOffset}:${direction}:${affinity}`
 }
 
 /** Where in the run of ids above this one was handed out, or -1 for an id from anywhere else. */
@@ -125,11 +138,6 @@ const orderOffsets = (first: number, second: number): OffsetRange => ({
   end: Math.max(first, second),
 })
 
-const lastItem = <T>(items: readonly T[]): T | null => {
-  if (items.length === 0) return null
-  return items[items.length - 1] ?? null
-}
-
 const isLiveSelection = (
   startLiveness: AnchorLiveness,
   endLiveness: AnchorLiveness,
@@ -165,10 +173,11 @@ export const createAnchorSelection = (
   const endpoints = createEndpointAnchors(snapshot, range, cursorBias)
   const collapsed = range.start === range.end
   const reversed = collapsed ? false : (options.reversed ?? headOffset < anchorOffset)
+  const affinity = options.affinity ?? 'after'
   const id =
     options.id ??
     options.idFactory?.() ??
-    createFallbackSelectionId(anchorOffset, headOffset, reversed)
+    createFallbackSelectionId(anchorOffset, headOffset, reversed, affinity)
 
   return {
     id,
@@ -176,6 +185,7 @@ export const createAnchorSelection = (
     end: endpoints.end,
     reversed,
     goal: options.goal ?? SelectionGoal.none(),
+    affinity,
   }
 }
 
@@ -224,10 +234,28 @@ export const resolveSelection = (
     reversed,
     collapsed,
     goal: selection.goal,
+    affinity: selection.affinity,
     liveness: isLiveSelection(start.liveness, end.liveness),
     startLiveness: start.liveness,
     endLiveness: end.liveness,
   }
+}
+
+/** Rebuilds endpoint offsets without losing which visual side the head owns. */
+export const selectionOffsetsWithAffinity = (
+  selection: ResolvedSelection,
+  anchor: number,
+  head: number,
+): SelectionOffsetsWithAffinity => ({ anchor, head, affinity: selection.affinity })
+
+/** Relocates a selection to an ordered range while preserving its direction and affinity. */
+export const selectionRangeWithAffinity = (
+  selection: ResolvedSelection,
+  start: number,
+  end: number,
+): SelectionOffsetsWithAffinity => {
+  if (selection.reversed) return selectionOffsetsWithAffinity(selection, end, start)
+  return selectionOffsetsWithAffinity(selection, start, end)
 }
 
 const resolveSelectionWithSource = (
@@ -246,6 +274,9 @@ const compareResolvedSelections = (
 ): number => {
   if (left.startOffset !== right.startOffset) return left.startOffset - right.startOffset
   if (left.endOffset !== right.endOffset) return left.endOffset - right.endOffset
+  if (left.collapsed && right.collapsed && left.affinity !== right.affinity) {
+    return left.affinity === 'before' ? -1 : 1
+  }
   return left.id.localeCompare(right.id)
 }
 
@@ -254,6 +285,7 @@ const compareResolvedSelections = (
 // where they genuinely overlap. A collapsed cursor has no text of its own to lose, so a neighbour
 // that reaches its offset absorbs it.
 const shouldMergeSelections = (left: ResolvedSelection, right: ResolvedSelection): boolean => {
+  if (left.collapsed && right.collapsed && left.affinity !== right.affinity) return false
   if (left.collapsed || right.collapsed) return right.startOffset <= left.endOffset
   return right.startOffset < left.endOffset
 }
@@ -263,10 +295,19 @@ const selectionFromResolved = (
   resolved: ResolvedSelectionWithSource,
 ): AnchorSelection =>
   createAnchorSelection(snapshot, resolved.anchorOffset, resolved.headOffset, {
+    cursorBias: cursorBiasFromResolved(resolved),
     id: resolved.id,
     goal: resolved.goal,
     reversed: resolved.reversed,
+    affinity: resolved.affinity,
   })
+
+const cursorBiasFromResolved = (resolved: ResolvedSelectionWithSource): AnchorBias | undefined => {
+  if (!resolved.collapsed) return undefined
+  if (resolved.source.start !== resolved.source.end) return undefined
+  if (resolved.source.start.kind !== 'anchor') return undefined
+  return resolved.source.start.bias
+}
 
 const normalizeResolvedSelection = (
   snapshot: PieceTableSnapshot,
@@ -296,8 +337,10 @@ const mergeResolvedSelections = (
     steering.reversed ? endOffset : startOffset,
     steering.reversed ? startOffset : endOffset,
     {
+      cursorBias: cursorBiasFromResolved(steering),
       id: steering.id,
       goal: steering.goal,
+      affinity: steering.affinity,
     },
   )
 
@@ -306,6 +349,23 @@ const mergeResolvedSelections = (
     source,
     lastAdded: left.lastAdded || right.lastAdded,
   }
+}
+
+const appendNormalizedSelection = (
+  snapshot: PieceTableSnapshot,
+  normalized: ResolvedSelectionWithSource[],
+  selection: ResolvedSelectionWithSource,
+): void => {
+  let candidate = normalizeResolvedSelection(snapshot, selection)
+  while (normalized.length > 0) {
+    const previous = normalized[normalized.length - 1]!
+    if (!shouldMergeSelections(previous, candidate)) break
+
+    normalized.pop()
+    candidate = mergeResolvedSelections(snapshot, previous, candidate)
+  }
+
+  normalized.push(candidate)
 }
 
 const normalizeSelections = (
@@ -319,20 +379,7 @@ const normalizeSelections = (
   const sorted = resolved.toSorted(compareResolvedSelections)
   const normalized: ResolvedSelectionWithSource[] = []
 
-  for (const selection of sorted) {
-    const previous = lastItem(normalized)
-    if (!previous) {
-      normalized.push(normalizeResolvedSelection(snapshot, selection))
-      continue
-    }
-
-    if (!shouldMergeSelections(previous, selection)) {
-      normalized.push(normalizeResolvedSelection(snapshot, selection))
-      continue
-    }
-
-    normalized[normalized.length - 1] = mergeResolvedSelections(snapshot, previous, selection)
-  }
+  for (const selection of sorted) appendNormalizedSelection(snapshot, normalized, selection)
 
   return {
     selections: normalized.map((selection) => selection.source),

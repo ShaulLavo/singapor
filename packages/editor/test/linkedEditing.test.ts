@@ -4,7 +4,9 @@ import type { DocumentSessionChange } from '../src/documentSession'
 import { Editor } from '../src/editor/Editor'
 import { registerEditorLanguageConfiguration } from '../src/editor/languageConfiguration'
 import type { EditorDisposable } from '../src/plugins'
+import { createDocumentSession } from '../src/public/document'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import { resolveSelection } from '../src/selections'
 import { editorElement } from './editorElement'
 
 /**
@@ -82,6 +84,19 @@ describe('linked editing', () => {
 
     expect(editor.materializeFullText()).toBe('<divx>hi</divx>')
     expect(editor.getState().cursor).toMatchObject({ column: 5, row: 0 })
+  })
+
+  it('keeps affinity while carrying a typed character into the closing tag', () => {
+    const session = createDocumentSession('<div>hi</div>')
+    editor.attachSession(session, { languageId: 'tsx' })
+    session.setSelection(4, 4, { affinity: 'before' })
+    editor.focus()
+
+    type('x')
+
+    const selection = session.getSelections().selections[0]
+    expect(selection).toBeDefined()
+    expect(resolveSelection(session.getSnapshot(), selection!).affinity).toBe('before')
   })
 
   it('keeps mirroring across a run of keystrokes', () => {

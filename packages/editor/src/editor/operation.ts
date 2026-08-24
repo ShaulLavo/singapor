@@ -13,6 +13,7 @@ export type EditorOperationFlush = {
   readonly latest: EditorOperationChange
   readonly contributionKind: EditorViewContributionUpdateKind
   readonly revealOffset: number | null
+  readonly revealAffinity: SessionChangeOptions['revealAffinity']
   readonly revealBlock: SessionChangeOptions['revealBlock']
   readonly syncDomSelection: boolean
 }
@@ -29,6 +30,7 @@ export class EditorOperation {
   private readonly changes: EditorOperationChange[] = []
   private contributionKind: EditorViewContributionUpdateKind = 'selection'
   private revealOffset: number | null = null
+  private revealAffinity: SessionChangeOptions['revealAffinity']
   private revealBlock: SessionChangeOptions['revealBlock']
   private syncDomSelection = false
 
@@ -41,6 +43,7 @@ export class EditorOperation {
     this.changes.push({ change, totalName, totalStart })
     if (options.revealOffset !== undefined) {
       this.revealOffset = options.revealOffset
+      this.revealAffinity = options.revealAffinity
       this.revealBlock = options.revealBlock
     }
     // Opting out is how a change protects selection state the browser is still
@@ -63,6 +66,7 @@ export class EditorOperation {
       changes: this.changes,
       contributionKind: this.contributionKind,
       latest,
+      revealAffinity: this.revealAffinity,
       revealBlock: this.revealBlock,
       revealOffset: this.revealOffset,
       syncDomSelection: this.syncDomSelection,

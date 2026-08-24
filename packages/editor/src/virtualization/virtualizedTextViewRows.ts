@@ -11,6 +11,7 @@ import {
 } from '../displayTransforms'
 import { clamp } from '../style-utils'
 import type { InlineMap } from '../inlineMap'
+import type { SelectionAffinity } from '../selections'
 import type {
   EditorGutterContribution,
   EditorGutterRowContext,
@@ -42,6 +43,7 @@ import {
   lineEndOffset,
   lineStartOffset,
   lineText,
+  rowForCaretPosition,
   rowForOffset,
   rowTop,
   scrollableHeight,
@@ -57,6 +59,8 @@ import type {
   VirtualizedTextChunkPart,
   VirtualizedTextRowDecoration,
   VirtualizedTextRenderMode,
+  VirtualizedCaretPosition,
+  VirtualizedCaretPositions,
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
 import {
@@ -67,6 +71,7 @@ import {
 import {
   type InlineWidgetPlacement,
   type RenderedChunkParts,
+  boundaryPositionXsForAffinity,
   clearRowGeometryCaches,
   createRenderedChunkParts,
   createTextChunkParts,
@@ -1722,9 +1727,10 @@ export function cursorLineBufferRow(view: VirtualizedTextViewInternal): number |
 }
 
 export function cursorLineVirtualRow(view: VirtualizedTextViewInternal): number | null {
-  if (!hasCollapsedSelection(view)) return null
+  const selection = view.selections[0]
+  if (!selection || selection.start !== selection.end) return null
 
-  return rowForOffset(view, view.selectionHead!)
+  return rowForCaretPosition(view, selection.head, selection.affinity)
 }
 
 function hasCollapsedSelection(view: VirtualizedTextViewInternal): boolean {
@@ -2327,14 +2333,18 @@ function rowFromDomBoundary(
   return view.rowElements.get(rowIndex) ?? null
 }
 
-export function ensureOffsetMounted(view: VirtualizedTextViewInternal, offset: number): void {
-  if (resolveMountedOffset(view, offset)) return
+export function ensureOffsetMounted(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity?: SelectionAffinity,
+): void {
+  if (resolveMountedOffset(view, offset, affinity)) return
 
-  const row = rowForOffset(view, offset)
+  const row = rowForOptionalAffinity(view, offset, affinity)
   scrollToRow(view, row)
-  if (resolveMountedOffset(view, offset)) return
+  if (resolveMountedOffset(view, offset, affinity)) return
 
-  scrollHorizontallyToOffset(view, row, offset)
+  scrollHorizontallyToOffset(view, row, offset, affinity)
   syncVirtualizerMetricsFromScrollElement(view)
 }
 
@@ -2342,12 +2352,13 @@ function scrollHorizontallyToOffset(
   view: VirtualizedTextViewInternal,
   row: number,
   offset: number,
+  affinity?: SelectionAffinity,
 ): void {
   const text = lineText(view, row)
   if (!shouldChunkLine(view, text)) return
 
   const snapshot = view.virtualizer.getSnapshot()
-  const targetLeft = gutterWidth(view) + rowTextLeftForOffset(view, row, offset)
+  const targetLeft = gutterWidth(view) + rowTextLeftForOffset(view, row, offset, affinity)
   const viewportRight = snapshot.scrollLeft + snapshot.viewportWidth
   if (targetLeft >= snapshot.scrollLeft && targetLeft <= viewportRight) return
 
@@ -2363,11 +2374,14 @@ function scrollHorizontallyToOffset(
  * composition event at all. A caret nobody can see has no box worth pointing at, and an input moved
  * outside the viewport invites the browser to scroll it back into view, so the corner stands in.
  */
-export function positionInputAtCaret(view: VirtualizedTextViewInternal): void {
+export function positionInputAtCaret(
+  view: VirtualizedTextViewInternal,
+  knownPosition?: VirtualizedCaretPosition | null,
+): void {
   // The virtualizer's copy of the scroll offsets, never the element's: this runs inside the render
   // pass, where reading scroll back off the DOM is what forces the layout it has just written.
   const snapshot = view.virtualizer.getSnapshot()
-  const caret = visibleCaretPosition(view, snapshot)
+  const caret = visibleCaretPosition(view, snapshot, knownPosition)
   // The input hangs off the scroll element rather than the spacer, so it does not come with the
   // offset the spacer is translated by on a document taller than the browser will scroll.
   const spacerOffset = snapshot.nativeScrollTop - snapshot.scrollTop
@@ -2384,16 +2398,20 @@ export function positionInputAtCaret(view: VirtualizedTextViewInternal): void {
 function visibleCaretPosition(
   view: VirtualizedTextViewInternal,
   snapshot: FixedRowVirtualizerSnapshot,
+  knownPosition?: VirtualizedCaretPosition | null,
 ): { readonly left: number; readonly top: number } | null {
-  const selection = view.selections[0]
-  if (!selection) return null
-
-  const position = caretPosition(view, selection.head)
+  const position = knownPosition === undefined ? primaryCaretPosition(view) : knownPosition
   if (!position) return null
   if (position.left < snapshot.scrollLeft + gutterWidth(view)) return null
   if (position.left > snapshot.scrollLeft + snapshot.viewportWidth) return null
 
   return position
+}
+
+function primaryCaretPosition(view: VirtualizedTextViewInternal): VirtualizedCaretPosition | null {
+  const selection = view.selections[0]
+  if (!selection) return null
+  return caretPosition(view, selection.head, selection.affinity)?.[0] ?? null
 }
 
 export function restoreScrollPosition(
@@ -2421,13 +2439,17 @@ function syncVirtualizerMetricsFromScrollElement(view: VirtualizedTextViewIntern
   })
 }
 
-export function scrollOffsetIntoView(view: VirtualizedTextViewInternal, offset: number): void {
+export function scrollOffsetIntoView(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity?: SelectionAffinity,
+): void {
   const snapshot = view.virtualizer.getSnapshot()
-  const row = rowForOffset(view, offset)
+  const row = rowForOptionalAffinity(view, offset, affinity)
   const top = rowTop(view, row)
   const bottom = top + getRowHeight(view)
   const scrollTop = scrollTopForVisibleRow(view, top, bottom, snapshot)
-  const scrollLeft = scrollLeftForVisibleOffset(view, row, offset, snapshot)
+  const scrollLeft = scrollLeftForVisibleOffset(view, row, offset, snapshot, affinity)
   if (scrollTop === snapshot.scrollTop && scrollLeft === snapshot.scrollLeft) return
 
   view.scrollElement.scrollTop = scrollTop
@@ -2435,15 +2457,23 @@ export function scrollOffsetIntoView(view: VirtualizedTextViewInternal, offset: 
   syncVirtualizerMetricsFromScrollElement(view)
 }
 
-export function scrollOffsetToViewportEnd(view: VirtualizedTextViewInternal, offset: number): void {
-  const snapshot = view.virtualizer.getSnapshot()
-  const row = rowForOffset(view, offset)
+export function scrollOffsetToViewportEnd(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity?: SelectionAffinity,
+): void {
+  const row = rowForOptionalAffinity(view, offset, affinity)
+  let snapshot = view.virtualizer.getSnapshot()
   const bottom = rowTop(view, row) + getRowHeight(view)
   const scrollTop = scrollTopForRowBottom(bottom, snapshot)
-  const scrollLeft = scrollLeftForVisibleOffset(view, row, offset, snapshot)
-  if (scrollTop === snapshot.scrollTop && scrollLeft === snapshot.scrollLeft) return
+  if (scrollTop !== snapshot.scrollTop) {
+    view.scrollElement.scrollTop = scrollTop
+    syncVirtualizerMetricsFromScrollElement(view)
+    snapshot = view.virtualizer.getSnapshot()
+  }
 
-  view.scrollElement.scrollTop = scrollTop
+  const scrollLeft = scrollLeftForVisibleOffset(view, row, offset, snapshot, affinity)
+  if (scrollLeft === snapshot.scrollLeft) return
   view.scrollElement.scrollLeft = scrollLeft
   syncVirtualizerMetricsFromScrollElement(view)
 }
@@ -2473,8 +2503,9 @@ function scrollLeftForVisibleOffset(
   row: number,
   offset: number,
   snapshot: FixedRowVirtualizerSnapshot,
+  affinity?: SelectionAffinity,
 ): number {
-  const caretLeft = gutterWidth(view) + rowTextLeftForOffset(view, row, offset)
+  const caretLeft = gutterWidth(view) + rowTextLeftForOffset(view, row, offset, affinity)
   const viewportLeft = snapshot.scrollLeft + gutterWidth(view)
   const viewportRight = snapshot.scrollLeft + snapshot.viewportWidth
   if (caretLeft < viewportLeft) return Math.max(0, caretLeft - gutterWidth(view))
@@ -2486,8 +2517,12 @@ function rowTextLeftForOffset(
   view: VirtualizedTextViewInternal,
   rowIndex: number,
   offset: number,
+  affinity?: SelectionAffinity,
 ): number {
   const mounted = view.rowElements.get(rowIndex)
+  if (mounted?.kind === 'text' && affinity) {
+    return boundaryPositionXsForAffinity(view, mounted, offset, affinity)[0]!
+  }
   if (mounted?.kind === 'text') return offsetToX(view, mounted, offset)
 
   const text = lineText(view, rowIndex)
@@ -2501,9 +2536,10 @@ function rowTextLeftForOffset(
 export function resolveMountedOffset(
   view: VirtualizedTextViewInternal,
   offset: number,
+  affinity?: SelectionAffinity,
 ): { readonly node: Node; readonly offset: number } | null {
   const clamped = clamp(offset, 0, view.model.textLength)
-  const targetRow = rowForOffset(view, clamped)
+  const targetRow = rowForOptionalAffinity(view, clamped, affinity)
   for (const row of getMountedRows(view)) {
     if (row.index !== targetRow) continue
     const rowOffset = clamp(clamped, row.startOffset, row.endOffset)
@@ -2511,6 +2547,15 @@ export function resolveMountedOffset(
   }
 
   return null
+}
+
+function rowForOptionalAffinity(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity: SelectionAffinity | undefined,
+): number {
+  if (!affinity) return rowForOffset(view, offset)
+  return rowForCaretPosition(view, offset, affinity)
 }
 
 export function viewportPointMetrics(
@@ -2575,17 +2620,26 @@ export function gutterWidth(view: VirtualizedTextViewInternal): number {
 export function caretPosition(
   view: VirtualizedTextViewInternal,
   offset: number,
-): {
-  readonly left: number
-  readonly top: number
-  readonly height: number
-} | null {
-  const rowIndex = rowForOffset(view, offset)
+  affinity: SelectionAffinity,
+): VirtualizedCaretPositions | null {
+  const rowIndex = rowForCaretPosition(view, offset, affinity)
   const row = view.rowElements.get(rowIndex)
   if (!row) return null
 
+  const xs = boundaryPositionXsForAffinity(view, row, offset, affinity)
+  const primary = caretPositionAtX(view, row, xs[0] ?? offsetToX(view, row, offset))
+  const secondaryX = xs[1]
+  if (secondaryX === undefined) return [primary]
+  return [primary, caretPositionAtX(view, row, secondaryX)]
+}
+
+function caretPositionAtX(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  x: number,
+): VirtualizedCaretPosition {
   return {
-    left: gutterWidth(view) + offsetToX(view, row, offset),
+    left: gutterWidth(view) + x,
     top: row.top,
     height: row.height,
   }

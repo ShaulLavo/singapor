@@ -382,7 +382,7 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
 
     expect(sessionOptions).toContainEqual(
       expect.objectContaining({
-        documentId: 'note.ts:old',
+        documentId: 'note.ts#diff-old',
         fullText: 'keep\nold\nskip\n',
         includeCaptures: true,
         includeHighlights: true,
@@ -391,6 +391,32 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
       }),
     )
     expect(sessionOptions[0]?.textSnapshot?.readRange(0, 4)).toBe('keep')
+  })
+
+  it('uses a host-owned highlighter provider instead of constructing a diff worker', async () => {
+    const createSession = vi.fn(() => ({
+      applyChange: vi.fn(async () => ({ tokens: [] })),
+      dispose: vi.fn(),
+      refresh: vi.fn(async () => ({
+        tokens: [{ start: 0, end: 4, style: { color: 'gold' } }],
+      })),
+    }))
+    mountDiff({
+      file: typescriptDiff(),
+      syntaxBackend: { kind: 'highlighter', provider: { createSession } },
+      syntaxHighlight: true,
+    })
+
+    await flushUntil(() => createSession.mock.calls.length >= 2)
+
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentId: 'note.ts#diff-old',
+        fullText: 'keep\nold\nskip\n',
+        languageId: 'typescript',
+      }),
+    )
+    expect(shikiMock.createShikiWorkerOwner).not.toHaveBeenCalled()
   })
 
   it('routes shiki highlighting through full-file syntax service documents', async () => {
@@ -404,7 +430,7 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
 
     expect(shikiMock.owner.createSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        documentId: 'note.ts:old',
+        documentId: 'note.ts#diff-old',
         fullText: 'keep\nold\nskip\n',
         lang: 'typescript',
         languageId: 'typescript',
@@ -733,7 +759,7 @@ function createTokenSyntaxBackend(): DiffSyntaxBackend {
 }
 
 function syntaxResultForOptions(options: EditorSyntaxSessionOptions) {
-  const target = options.documentId.endsWith(':old') ? 'old' : 'new'
+  const target = options.documentId.endsWith('#diff-old') ? 'old' : 'new'
   const start = options.fullText.indexOf(target)
   const tokens: EditorToken[] =
     start === -1 ? [] : [{ end: start + target.length, start, style: { color: 'rgb(1, 2, 3)' } }]

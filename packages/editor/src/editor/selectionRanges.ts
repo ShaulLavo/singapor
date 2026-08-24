@@ -103,9 +103,7 @@ export class SelectionRangeStore {
     const moved = ladders.map((ladder) => movedLadder(ladder, step))
     if (moved.every((ladder, index) => ladder === ladders[index])) return false
 
-    const selections = moved.map((ladder, index) =>
-      selectionRangeFrom(ladder, resolved[index]?.reversed ?? false),
-    )
+    const selections = moved.map((ladder, index) => selectionRangeFrom(ladder, resolved[index]))
     this.state = { snapshot, ladders: moved, selections }
     this.options.setSelections(
       selections,
@@ -273,12 +271,15 @@ function movedLadder(ladder: SelectionRangeLadder, step: number): SelectionRange
   return { ranges: ladder.ranges, index }
 }
 
-function selectionRangeFrom(ladder: SelectionRangeLadder, reversed: boolean): EditorSelectionRange {
+function selectionRangeFrom(
+  ladder: SelectionRangeLadder,
+  selection: ResolvedSelection | undefined,
+): EditorSelectionRange {
   const range = ladder.ranges[ladder.index] ?? { start: 0, end: 0 }
+  const affinity = selection?.affinity ?? 'after'
 
-  return reversed
-    ? { anchor: range.end, head: range.start }
-    : { anchor: range.start, head: range.end }
+  if (selection?.reversed) return { anchor: range.end, head: range.start, affinity }
+  return { anchor: range.start, head: range.end, affinity }
 }
 
 function sameSelections(
@@ -290,6 +291,7 @@ function sameSelections(
   return written.every(
     (selection, index) =>
       selection.anchor === resolved[index]?.anchorOffset &&
-      selection.head === resolved[index]?.headOffset,
+      selection.head === resolved[index]?.headOffset &&
+      (selection.affinity ?? 'after') === resolved[index]?.affinity,
   )
 }

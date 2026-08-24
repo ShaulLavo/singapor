@@ -40,6 +40,6 @@ export type {
   EditorWorkTags,
   EditorWorkTaskClass,
 } from './editor/workScheduler'
-export type { AnchorSelection, SelectionSet } from './selections'
+export type { AnchorSelection, SelectionAffinity, SelectionSet } from './selections'
 export type { PieceTableAnchor } from './pieceTable'
 export type { VirtualizedTextViewState } from './virtualization'

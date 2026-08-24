@@ -17,6 +17,7 @@ import {
   bufferLineStartOffset,
   getRowHeight,
   materializeLineStarts,
+  rowForCaretPosition,
   rowForOffset,
   rowTop,
   scrollableHeight,
@@ -59,6 +60,8 @@ describe('virtualized text view layout', () => {
 
     expect(rowForOffset(view, 5)).toBe(0)
     expect(rowForOffset(view, 6)).toBe(1)
+    expect(rowForCaretPosition(view, 5, 'before')).toBe(0)
+    expect(rowForCaretPosition(view, 5, 'after')).toBe(1)
   })
 
   it('positions fixed rows with row gaps', () => {

@@ -2,11 +2,11 @@
 
 ## Position Hierarchy
 
-| Type | Purpose | Durability |
-|---|---|---|
-| **Offset** | UTF-16 code unit index into document | Ephemeral — invalid after any edit |
-| **Point** | `{ row, column }` display coordinate | Ephemeral — valid only for one snapshot |
-| **Anchor** | `{ buffer, offset, bias }` into immutable buffers | Durable — survives arbitrary edits |
+| Type       | Purpose                                           | Durability                              |
+| ---------- | ------------------------------------------------- | --------------------------------------- |
+| **Offset** | UTF-16 code unit index into document              | Ephemeral — invalid after any edit      |
+| **Point**  | `{ row, column }` logical document coordinate     | Ephemeral — valid only for one snapshot |
+| **Anchor** | `{ buffer, offset, bias }` into immutable buffers | Durable — survives arbitrary edits      |
 
 ### Offset
 
@@ -16,7 +16,11 @@ Not every valid offset is a valid anchor point. Offsets can address any code uni
 
 ### Point
 
-Display-oriented coordinate: `row` (zero-indexed line number) + `column` (zero-indexed UTF-16 code unit offset from line start). Points are ephemeral — valid only for the snapshot that produced them.
+Logical document coordinate: `row` is the zero-indexed buffer line and `column` is the zero-indexed
+UTF-16 code-unit offset from that line's start. A Point contains no display x, wrap-row identity, or
+BiDi caret affinity. It is ephemeral and valid only for the snapshot that produced it; display
+geometry is derived separately from mounted rows. Wrapping, inline projection, and BiDi layout can
+map one Point to another display row or to more than one valid x position selected by affinity.
 
 ### Anchor
 
@@ -62,14 +66,14 @@ Seeks to target row via `subtreeLineBreaks`, adds column. Clamps column to line 
 
 ## Conversion Functions
 
-| Function | Input | Output | Complexity |
-|---|---|---|---|
-| offsetToPoint | Offset | Point | O(log n) |
-| pointToOffset | Point | Offset | O(log n) |
-| anchorAt | Offset + Bias | Anchor | O(log n) |
-| resolveAnchor | Anchor | ResolvedAnchor | O(log n) |
-| anchorToPoint | Anchor | Point | resolveAnchor + offsetToPoint |
-| pointToAnchor | Point + Bias | Anchor | pointToOffset + anchorAt |
+| Function      | Input         | Output         | Complexity                    |
+| ------------- | ------------- | -------------- | ----------------------------- |
+| offsetToPoint | Offset        | Point          | O(log n)                      |
+| pointToOffset | Point         | Offset         | O(log n)                      |
+| anchorAt      | Offset + Bias | Anchor         | O(log n)                      |
+| resolveAnchor | Anchor        | ResolvedAnchor | O(log n)                      |
+| anchorToPoint | Anchor        | Point          | resolveAnchor + offsetToPoint |
+| pointToAnchor | Point + Bias  | Anchor         | pointToOffset + anchorAt      |
 
 All conversions funnel through Offset. N types = 2N functions, not N^2.
 

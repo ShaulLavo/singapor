@@ -248,10 +248,9 @@ describe('hidden character markers', () => {
   })
 
   it('marks a recycled row for the line it lands on, not the one it left', () => {
-    const lines = [
-      ...Array.from({ length: 20 }, () => 'abcd'),
-      ...Array.from({ length: 20 }, () => '  ab'),
-    ]
+    const lines = Array.from({ length: 20 }, () => 'abcd').concat(
+      Array.from({ length: 20 }, () => '  ab'),
+    )
     const view = mountView({ hiddenCharacters: 'show' }, lines.join('\n'))
 
     const unmarked = markers().length

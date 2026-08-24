@@ -33,7 +33,9 @@ describe('createScopeLinesPlugin', () => {
     const registration = registeredProvider(createScopeLinesPlugin())
     const testContext = context(
       snapshot({
-        selections: [{ anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29 }],
+        selections: [
+          { anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29, affinity: 'after' },
+        ],
       }),
     )
 
@@ -187,7 +189,9 @@ describe('createScopeLinesPlugin', () => {
   it('updates active scope after selection changes', () => {
     const registration = registeredProvider(createScopeLinesPlugin())
     const inactive = snapshot({
-      selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+      selections: [
+        { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },
+      ],
     })
     const testContext = context(inactive)
     const contribution = registration?.createContribution(testContext)
@@ -196,7 +200,9 @@ describe('createScopeLinesPlugin', () => {
 
     contribution?.update(
       snapshot({
-        selections: [{ anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29 }],
+        selections: [
+          { anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29, affinity: 'after' },
+        ],
       }),
       'selection',
     )
@@ -208,7 +214,9 @@ describe('createScopeLinesPlugin', () => {
     const registration = registeredProvider(createScopeLinesPlugin())
     const testContext = context(
       snapshot({
-        selections: [{ anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29 }],
+        selections: [
+          { anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29, affinity: 'after' },
+        ],
       }),
     )
     const contribution = registration?.createContribution(testContext)
@@ -220,7 +228,9 @@ describe('createScopeLinesPlugin', () => {
       snapshot({
         textVersion: 2,
         foldMarkers: shiftedFoldMarkers(1),
-        selections: [{ anchorOffset: 30, headOffset: 30, startOffset: 30, endOffset: 30 }],
+        selections: [
+          { anchorOffset: 30, headOffset: 30, startOffset: 30, endOffset: 30, affinity: 'after' },
+        ],
       }),
       'content',
     )
@@ -236,7 +246,9 @@ describe('createScopeLinesPlugin', () => {
     const registration = registeredProvider(createScopeLinesPlugin({ mode: 'current' }))
     const testContext = context(
       snapshot({
-        selections: [{ anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29 }],
+        selections: [
+          { anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29, affinity: 'after' },
+        ],
       }),
     )
 
@@ -253,7 +265,9 @@ describe('createScopeLinesPlugin', () => {
     const registration = registeredProvider(createScopeLinesPlugin({ mode: 'current' }))
     const testContext = context(
       snapshot({
-        selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+        selections: [
+          { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },
+        ],
       }),
     )
 
@@ -268,7 +282,9 @@ describe('createScopeLinesPlugin', () => {
     )
     const testContext = context(
       snapshot({
-        selections: [{ anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29 }],
+        selections: [
+          { anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29, affinity: 'after' },
+        ],
       }),
     )
 

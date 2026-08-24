@@ -39,14 +39,30 @@ const backend = {
 }
 
 describe('tree-sitter structural selection', () => {
-  it('keeps the direction the selection was made in', async () => {
+  it('keeps the direction and affinity the selection was made with', async () => {
     const snapshot = createPieceTableSnapshot(TEXT)
-    const selections = createSelectionSet([createAnchorSelection(snapshot, 12, 6)])
+    const selections = createSelectionSet([
+      createAnchorSelection(snapshot, 12, 6, { affinity: 'before' }),
+    ])
 
     const expanded = await expandTreeSitterSelection({ ...request(snapshot), selections })
 
     expect(resolveSelection(snapshot, expanded.selections.selections[0]!)).toMatchObject({
+      affinity: 'before',
       anchorOffset: 16,
+      headOffset: 6,
+      reversed: true,
+    })
+
+    const shrunk = shrinkTreeSitterSelection({
+      ...request(snapshot),
+      selections: expanded.selections,
+      state: expanded.state,
+    })
+
+    expect(resolveSelection(snapshot, shrunk.selections.selections[0]!)).toMatchObject({
+      affinity: 'before',
+      anchorOffset: 12,
       headOffset: 6,
       reversed: true,
     })
@@ -106,6 +122,129 @@ describe('tree-sitter structural selection', () => {
     expect(resolveSelection(snapshot, shrunk.selections.selections[0]!)).toMatchObject({
       startOffset: 2,
       endOffset: 2,
+    })
+  })
+
+  it('normalizes request order before pairing worker ranges with source metadata', async () => {
+    const snapshot = createPieceTableSnapshot(TEXT)
+    const later = createAnchorSelection(snapshot, 16, 14, {
+      affinity: 'before',
+      goal: { kind: 'horizontal', x: 31 },
+      id: 'later',
+    })
+    const earlier = createAnchorSelection(snapshot, 2, 4, { id: 'earlier' })
+    const selections = {
+      selections: [later, earlier],
+      lastAddedIndex: 0,
+      normalized: false as const,
+    }
+    const payloads: TreeSitterSelectionPayload[] = []
+    const orderedBackend = selectionBackend(
+      [
+        { startIndex: 0, endIndex: 5 },
+        { startIndex: 12, endIndex: 17 },
+      ],
+      payloads,
+    )
+
+    const selected = await selectTreeSitterToken({
+      ...request(snapshot),
+      backend: orderedBackend,
+      selections,
+    })
+
+    expect(payloads[0]?.ranges).toEqual([
+      { startIndex: 2, endIndex: 4 },
+      { startIndex: 14, endIndex: 16 },
+    ])
+    expect(
+      selected.selections.selections.map((selection) => resolveSelection(snapshot, selection)),
+    ).toMatchObject([
+      {
+        affinity: 'after',
+        anchorOffset: 0,
+        goal: { kind: 'none' },
+        headOffset: 5,
+        id: 'earlier',
+      },
+      {
+        affinity: 'before',
+        anchorOffset: 17,
+        goal: { kind: 'none' },
+        headOffset: 12,
+        id: 'later',
+      },
+    ])
+    expect(lastAddedId(selected.selections)).toBe('later')
+  })
+
+  it('treats a worker result count mismatch as stale', async () => {
+    const snapshot = createPieceTableSnapshot(TEXT)
+    const selections = createSelectionSet([
+      createAnchorSelection(snapshot, 2, 4),
+      createAnchorSelection(snapshot, 14, 16),
+    ])
+    const mismatchedBackend = selectionBackend([{ startIndex: 0, endIndex: 5 }])
+
+    const selected = await selectTreeSitterToken({
+      ...request(snapshot),
+      backend: mismatchedBackend,
+      selections,
+    })
+
+    expect(selected.status).toBe('stale')
+    expect(selected.selections).toBe(selections)
+    expect(selected.state.stacks).toHaveLength(2)
+  })
+
+  it('aligns one survivor stack when backend ranges converge', async () => {
+    const snapshot = createPieceTableSnapshot(TEXT)
+    const selections = createSelectionSet([
+      createAnchorSelection(snapshot, 7, 8, { id: 'first' }),
+      createAnchorSelection(snapshot, 16, 14, {
+        affinity: 'before',
+        id: 'last',
+      }),
+    ])
+    const convergingBackend = selectionBackend([
+      { startIndex: 0, endIndex: 12 },
+      { startIndex: 6, endIndex: 17 },
+    ])
+
+    const expanded = await expandTreeSitterSelection({
+      ...request(snapshot),
+      backend: convergingBackend,
+      selections,
+    })
+
+    expect(expanded.selections.selections).toHaveLength(1)
+    expect(resolveSelection(snapshot, expanded.selections.selections[0]!)).toMatchObject({
+      affinity: 'before',
+      anchorOffset: 17,
+      headOffset: 0,
+      id: 'last',
+    })
+    expect(expanded.state.stacks).toEqual([
+      [
+        { startIndex: 14, endIndex: 16 },
+        { startIndex: 0, endIndex: 17 },
+      ],
+    ])
+
+    const shrunk = shrinkTreeSitterSelection({
+      ...request(snapshot),
+      backend: convergingBackend,
+      selections: expanded.selections,
+      state: expanded.state,
+    })
+
+    expect(shrunk.status).toBe('ok')
+    expect(shrunk.state.stacks).toEqual([[{ startIndex: 14, endIndex: 16 }]])
+    expect(resolveSelection(snapshot, shrunk.selections.selections[0]!)).toMatchObject({
+      affinity: 'before',
+      anchorOffset: 16,
+      headOffset: 14,
+      id: 'last',
     })
   })
 })
@@ -217,4 +356,26 @@ function enclosingNode(range: TreeSitterSelectionRange): TreeSitterSelectionRang
   )
 
   return enclosing ?? NODES[NODES.length - 1]!
+}
+
+function selectionBackend(
+  ranges: readonly TreeSitterSelectionRange[],
+  payloads: TreeSitterSelectionPayload[] = [],
+) {
+  return {
+    select: (payload: TreeSitterSelectionPayload): Promise<TreeSitterSelectionResult> => {
+      payloads.push(payload)
+      return Promise.resolve({
+        documentId: payload.documentId,
+        languageId: payload.languageId,
+        ranges,
+        snapshotVersion: payload.snapshotVersion,
+        status: 'ok',
+      })
+    },
+  }
+}
+
+function lastAddedId(selections: ReturnType<typeof createSelectionSet>): string | undefined {
+  return selections.selections[selections.lastAddedIndex ?? 0]?.id
 }

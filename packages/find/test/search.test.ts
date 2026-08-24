@@ -585,6 +585,23 @@ describe('editor find controller', () => {
   )
 
   findTest(
+    'keeps the current match reversed and on its chosen visual side when selecting all matches',
+    {
+      text: 'foo foo',
+      selection: { anchor: 7, head: 4, affinity: 'before' },
+    },
+    (harness) => {
+      harness.openFind()
+
+      expect(harness.selectAllMatches()).toBe(true)
+      expect(harness.state().selectionDetails).toEqual([
+        { anchor: 7, head: 4, affinity: 'before' },
+        { anchor: 0, head: 3, affinity: 'after' },
+      ])
+    },
+  )
+
+  findTest(
     'selects every match, not just the painted ones',
     {
       text: 'a'.repeat(FIND_MATCHES_LIMIT + 2),

@@ -1,5 +1,6 @@
 import type { InlineMap } from '../inlineMap'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
+import type { SelectionAffinity } from '../selections'
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 import type { BrowserTextMetrics } from './browserMetrics'
 import type { FixedRowVirtualizer } from './fixedRowVirtualizer'
@@ -28,11 +29,13 @@ export type VirtualizedStoredSelection = {
   readonly start: number
   readonly end: number
   readonly head: number
+  readonly affinity: SelectionAffinity
 }
 
 export type VirtualizedTextSelection = {
   readonly anchorOffset: number
   readonly headOffset: number
+  readonly affinity?: SelectionAffinity
 }
 
 export type VirtualizedTextHighlightRange = {
@@ -111,6 +114,7 @@ export interface VirtualizedTextViewInternal {
   model: VirtualizedTextViewModelState
   text: string
   textRevision: number
+  displayProjectionRevision: number
   tokens: readonly EditorToken[]
   tokenRenderEntries: readonly TokenRenderEntry[]
   tokenRenderEntryMaxEnds: readonly number[]

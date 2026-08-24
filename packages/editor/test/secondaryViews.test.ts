@@ -31,7 +31,7 @@ describe('secondary view projections', () => {
       { start: 0, end: 5, style: { color: '#ff0000' } },
     ])
     expect(projection.selections).toEqual([
-      { anchorOffset: 1, headOffset: 3, startOffset: 1, endOffset: 3 },
+      { anchorOffset: 1, headOffset: 3, startOffset: 1, endOffset: 3, affinity: 'after' },
     ])
     expect(projection.foldSummaries).toEqual([
       {
@@ -63,7 +63,9 @@ function editorViewSnapshot(text: string): EditorViewSnapshot {
     tokens: [{ start: 0, end: 5, style: { color: '#ff0000' } }],
     // 'alpha\nbeta' carries no bracket pairs, so the parse this stands in for published none.
     brackets: [],
-    selections: [{ anchorOffset: 1, headOffset: 3, startOffset: 1, endOffset: 3 }],
+    selections: [
+      { anchorOffset: 1, headOffset: 3, startOffset: 1, endOffset: 3, affinity: 'after' },
+    ],
     metrics: { rowHeight: 20, characterWidth: 8 },
     lineCount: 2,
     contentWidth: 80,

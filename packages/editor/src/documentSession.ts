@@ -5,6 +5,7 @@ import {
   markSelectionSetDirty,
   normalizeSelectionSet,
   type AnchorSelection,
+  type SelectionAffinity,
   type SelectionIdFactory,
   type SelectionGoal,
   type SelectionSet,
@@ -194,12 +195,14 @@ export type EditorBufferSession = DocumentSession & {
 
 export type DocumentSessionSelectionOptions = {
   readonly goal?: SelectionGoal
+  readonly affinity?: SelectionAffinity
 }
 
 export type DocumentSessionSelectionRange = {
   readonly anchor: number
   readonly head?: number
   readonly goal?: SelectionGoal
+  readonly affinity?: SelectionAffinity
 }
 
 export type DocumentSessionEditHistoryMode = 'record' | 'skip'
@@ -798,6 +801,7 @@ class PieceTableEditorViewSession implements EditorViewSession {
   ): AnchorSelection {
     return createAnchorSelection(this.buffer.getSnapshot(), anchorOffset, headOffset, {
       goal: options.goal,
+      affinity: options.affinity,
       idFactory: this.createSelectionId,
     })
   }
@@ -1113,6 +1117,7 @@ class StaticDocumentSession implements DocumentSession {
       const head = selection.head ?? selection.anchor
       return this.createSelection(selection.anchor, head, {
         goal: selection.goal ?? options.goal,
+        affinity: selection.affinity ?? options.affinity,
       })
     })
     return normalizeSelectionSet(this.snapshot, createSelectionSet(anchorSelections))
@@ -1125,6 +1130,7 @@ class StaticDocumentSession implements DocumentSession {
   ): AnchorSelection {
     return createAnchorSelection(this.snapshot, anchorOffset, headOffset, {
       goal: options.goal,
+      affinity: options.affinity,
       idFactory: this.createSelectionId,
     })
   }
@@ -1152,6 +1158,7 @@ class StaticDocumentSession implements DocumentSession {
       const head = selection.head ?? selection.anchor
       return createAnchorSelection(snapshot, selection.anchor, head, {
         goal: selection.goal ?? options.goal,
+        affinity: selection.affinity ?? options.affinity,
         idFactory: this.createSelectionId,
       })
     })
@@ -1435,6 +1442,7 @@ function createNormalizedSelectionSetForSnapshot(
     const head = selection.head ?? selection.anchor
     return createAnchorSelection(snapshot, selection.anchor, head, {
       goal: selection.goal ?? options.goal,
+      affinity: selection.affinity ?? options.affinity,
       idFactory,
     })
   })

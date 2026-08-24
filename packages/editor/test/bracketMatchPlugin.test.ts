@@ -98,7 +98,9 @@ describe('createBracketMatchPlugin', () => {
     const harness = activate({ caret: 3 })
 
     expect(harness.runCommand('editor.action.jumpToBracket')).toBe(true)
-    expect(harness.view.setSelection).toHaveBeenCalledWith(5, 5, 'editor.jumpToBracket', 5)
+    expect(harness.view.setSelection).toHaveBeenCalledWith(5, 5, 'editor.jumpToBracket', {
+      revealOffset: 5,
+    })
   })
 
   it('reports the jump as unhandled when there is no match', () => {
@@ -134,6 +136,7 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
         endOffset: options.selectionEnd ?? caret,
         headOffset: caret,
         startOffset: options.selectionStart ?? caret,
+        affinity: 'after',
       },
     ],
     tabSize: 2,

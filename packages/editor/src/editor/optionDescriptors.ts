@@ -12,7 +12,7 @@ import {
 } from '../unicodeHighlight'
 import type { Editor } from './Editor'
 import type { EditorKeymapOptions } from './keymap'
-import type { EditorSelectionRevealTarget } from './selectionReveal'
+import type { EditorSetSelectionOptions } from './selectionReveal'
 import type {
   EditorEditability,
   EditorRangeDecoration,
@@ -23,11 +23,9 @@ import type { EditorTheme } from '../theme'
 import type { HiddenCharactersMode } from '../virtualization/virtualizedTextViewTypes'
 
 /** Selection driven from outside the editor, in the shape `setSelection` consumes. */
-export type EditorControlledSelection = {
+export type EditorControlledSelection = EditorSetSelectionOptions & {
   readonly anchor: number
   readonly head?: number
-  readonly reveal?: boolean
-  readonly revealOffset?: number
 }
 
 type EditorControlledOptions = {
@@ -199,7 +197,11 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
     applyTo: (editor, selection) => {
       if (!selection) return false
 
-      editor.setSelection(selection.anchor, selection.head, selectionRevealTarget(selection))
+      editor.setSelection(selection.anchor, selection.head, {
+        affinity: selection.affinity,
+        reveal: selection.reveal,
+        revealOffset: selection.revealOffset,
+      })
       return true
     },
   }),
@@ -305,19 +307,12 @@ function validateSelection(input: unknown): EditorControlledSelection | null {
   if (anchor === undefined) return null
 
   return {
+    affinity: validateSelectionAffinity(input.affinity),
     anchor,
     head: validateOffset(input.head),
     reveal: typeof input.reveal === 'boolean' ? input.reveal : undefined,
     revealOffset: validateOffset(input.revealOffset),
   }
-}
-
-function selectionRevealTarget(
-  selection: EditorControlledSelection,
-): EditorSelectionRevealTarget | undefined {
-  if (selection.reveal === false) return { reveal: false }
-
-  return selection.revealOffset
 }
 
 function selectionsEqual(
@@ -327,11 +322,17 @@ function selectionsEqual(
   if (!left || !right) return left === right
 
   return (
+    left.affinity === right.affinity &&
     left.anchor === right.anchor &&
     left.head === right.head &&
     left.reveal === right.reveal &&
     left.revealOffset === right.revealOffset
   )
+}
+
+function validateSelectionAffinity(input: unknown): EditorControlledSelection['affinity'] {
+  if (input === 'before' || input === 'after') return input
+  return undefined
 }
 
 function validateScrollPosition(input: unknown): EditorScrollPosition | null {

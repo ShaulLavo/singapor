@@ -170,7 +170,9 @@ describe('createLanguageServerAdapterPlugin', () => {
       expect.any(Object),
     )
     expect(command(commands, 'editor.action.marker.next')({})).toBe(true)
-    expect(context.setSelection).toHaveBeenCalledWith(0, 1, 'testLsp.marker.next', 0)
+    expect(context.setSelection).toHaveBeenCalledWith(0, 1, 'testLsp.marker.next', {
+      revealOffset: 0,
+    })
 
     const completionFeature = features.get(completionToken) as
       | LanguageServerCompletionEditFeature
@@ -550,7 +552,9 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
     textSnapshot: stringTextSnapshot(fullText),
     tokens: [],
     brackets: [],
-    selections: [{ anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0 }],
+    selections: [
+      { anchorOffset: 0, headOffset: 0, startOffset: 0, endOffset: 0, affinity: 'after' },
+    ],
     metrics: {} as EditorViewSnapshot['metrics'],
     lineCount: lineStarts.length,
     contentWidth: 0,

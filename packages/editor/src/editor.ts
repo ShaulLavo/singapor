@@ -47,6 +47,7 @@ export {
 export type {
   EditorSelectionRevealOptions,
   EditorSelectionRevealTarget,
+  EditorSetSelectionOptions,
 } from './editor/selectionReveal'
 export type {
   EditorChangeHandler,

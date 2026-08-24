@@ -1,5 +1,6 @@
 import type { DocumentSessionChange } from '../documentSession'
 import type { EditorViewContributionUpdateKind } from '../plugins'
+import type { SelectionAffinity } from '../selections'
 
 const SYNTAX_EDIT_DEBOUNCE_MS = 75
 
@@ -13,6 +14,8 @@ export const SYNTAX_REFRESH_MAX_DELAY_MS = 400
 export type SessionChangeOptions = {
   readonly syncDomSelection?: boolean
   readonly revealOffset?: number
+  /** Present only when revealOffset names the active caret rather than an arbitrary document point. */
+  readonly revealAffinity?: SelectionAffinity
   readonly revealBlock?: 'nearest' | 'end'
 }
 

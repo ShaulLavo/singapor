@@ -2,9 +2,27 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Editor } from '../src/editor'
 import { defaultEditorKeyBindings, editorCommandPackForCommand } from '../src/editor/keymap'
+import { createDocumentSession, type DocumentSession } from '../src/public/document'
 import { resetEditorInstanceCount } from '../src/public/testing'
+import { resolveSelection } from '../src/selections'
 
 const LONG_TEXT = Array.from({ length: 500 }, (_value, index) => `line ${index}`).join('\n')
+
+function affinityCursorState(session: DocumentSession): {
+  readonly affinities: readonly ('before' | 'after')[]
+  readonly lastAddedAffinity: 'before' | 'after'
+} {
+  const snapshot = session.getSnapshot()
+  const set = session.getSelections()
+  const resolved = set.selections.map((selection) => resolveSelection(snapshot, selection))
+  const lastAdded = resolved[set.lastAddedIndex ?? 0]
+  if (!lastAdded) throw new Error('missing last-added selection')
+
+  return {
+    affinities: resolved.map((selection) => selection.affinity),
+    lastAddedAffinity: lastAdded.affinity,
+  }
+}
 
 describe('cursor history', () => {
   let container: HTMLElement
@@ -33,6 +51,65 @@ describe('cursor history', () => {
     expect(editor.getState().cursor).toMatchObject({ column: 15, row: 0 })
     expect(editor.cursorRedo()).toBe(true)
     expect(editor.getState().cursor).toMatchObject({ column: 4, row: 0 })
+  })
+
+  it('restores affinity while walking the caret history', () => {
+    const session = createDocumentSession('const value = 1')
+    session.setSelection(4, 4, { affinity: 'before' })
+    editor = new Editor(container)
+    editor.attachSession(session)
+
+    editor.setSelection(11)
+    expect(editor.cursorUndo()).toBe(true)
+    expect(primaryAffinity()).toBe('before')
+
+    expect(editor.cursorRedo()).toBe(true)
+    expect(primaryAffinity()).toBe('after')
+
+    function primaryAffinity(): 'before' | 'after' {
+      const selection = session.getSelections().selections[0]!
+      return resolveSelection(session.getSnapshot(), selection).affinity
+    }
+  })
+
+  it('keeps the last-added opposite-affinity caret through cursor undo', () => {
+    const session = createDocumentSession('abc')
+    session.setSelection(1, 1, { affinity: 'after' })
+    session.addSelection(1, 1, { affinity: 'before' })
+    editor = new Editor(container)
+    editor.attachSession(session)
+
+    editor.setSelection(2)
+    expect(editor.cursorUndo()).toBe(true)
+    expect(affinityCursorState(session)).toEqual({
+      affinities: ['before', 'after'],
+      lastAddedAffinity: 'before',
+    })
+
+    expect(editor.dispatchCommand('clearSecondarySelections')).toBe(true)
+    expect(affinityCursorState(session)).toEqual({
+      affinities: ['before'],
+      lastAddedAffinity: 'before',
+    })
+  })
+
+  it('keeps the last-added opposite-affinity caret through cursor redo', () => {
+    const session = createDocumentSession('abc')
+    editor = new Editor(container)
+    editor.attachSession(session)
+    editor.setSelection(0)
+
+    session.setSelection(1, 1, { affinity: 'after' })
+    session.addSelection(1, 1, { affinity: 'before' })
+    editor.setSelection(2)
+
+    expect(editor.cursorUndo()).toBe(true)
+    expect(editor.cursorUndo()).toBe(true)
+    expect(editor.cursorRedo()).toBe(true)
+    expect(affinityCursorState(session)).toEqual({
+      affinities: ['before', 'after'],
+      lastAddedAffinity: 'before',
+    })
   })
 
   it('leaves the document alone when the caret is undone', () => {
@@ -113,10 +190,10 @@ describe('cursor history', () => {
 
     editor.setSelection(4)
     editor.setSelection(11)
-    // Re-issuing the same selection, and a caret move that runs into the end of
-    // the document, both flush a pass without moving anything.
+    // Re-issuing the same selection, and a caret move that runs into the end with its canonical
+    // forward affinity already set, both flush a pass without moving anything.
     editor.setSelection(11)
-    editor.setSelection(15)
+    editor.setSelection(15, 15, { affinity: 'before' })
     editor.dispatchCommand('cursorRight')
 
     // Three moves happened — the initial caret to 4, 4 to 11, 11 to 15 — so

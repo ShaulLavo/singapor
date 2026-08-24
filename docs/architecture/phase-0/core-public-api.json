@@ -676,6 +676,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorSetSelectionOptions",
+          "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorSetTextOptions",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
@@ -1013,6 +1019,12 @@
         {
           "kind": "type",
           "name": "ResolvedAnchor",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SelectionAffinity",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -1888,6 +1900,12 @@
         },
         {
           "kind": "type",
+          "name": "SelectionAffinity",
+          "source": "packages/editor/src/selections.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "TextCharacterClass",
           "source": "packages/editor/src/textRanges.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -2598,6 +2616,12 @@
           "kind": "type",
           "name": "EditorSessionOptions",
           "source": "packages/editor/src/editor/types.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSetSelectionOptions",
+          "source": "packages/editor/src/editor/selectionReveal.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -3682,6 +3706,12 @@
         },
         {
           "kind": "type",
+          "name": "SelectionAffinity",
+          "source": "packages/editor/src/selections.ts",
+          "via": "packages/editor/src/internal.ts"
+        },
+        {
+          "kind": "type",
           "name": "SelectionSet",
           "source": "packages/editor/src/selections.ts",
           "via": "packages/editor/src/internal.ts"
@@ -4469,6 +4499,12 @@
         {
           "kind": "unknown",
           "name": "createShikiHighlighterPlugin",
+          "source": "packages/editor/src/shiki/plugin.ts",
+          "via": "packages/editor/src/shiki/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createShikiHighlighterProvider",
           "source": "packages/editor/src/shiki/plugin.ts",
           "via": "packages/editor/src/shiki/index.ts"
         },

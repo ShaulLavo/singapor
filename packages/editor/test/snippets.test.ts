@@ -69,7 +69,7 @@ describe('snippet insertion', () => {
   })
 
   /** Expands a snippet at the caret and starts its stops, which is all a completion source does. */
-  const insertSnippet = (source: string) => {
+  const insertSnippet = (source: string, affinity: 'before' | 'after' = 'after') => {
     const contributed = edits
     if (!contributed?.startSnippetSession) throw new Error('the host offered no snippet session')
 
@@ -78,6 +78,7 @@ describe('snippet insertion', () => {
     contributed.applyEdits([{ from: 0, text: parsed.text, to: 0 }], 'test.snippet', {
       anchor: selection.start,
       head: selection.end,
+      affinity,
     })
     // The caret visits the occurrence it can type into; every other occurrence of the same stop
     // rides along as a copy of it, which is what a completion source hands over.
@@ -150,6 +151,15 @@ describe('snippet insertion', () => {
     return editor.materializeFullText().slice(resolved.startOffset, resolved.endOffset)
   }
 
+  const selectionAffinity = (): 'before' | 'after' | undefined => {
+    const change = lastChange
+    if (!change) return undefined
+
+    const selection = change.selections.selections[0]
+    if (!selection) return undefined
+    return resolveSelection(change.snapshot, selection).affinity
+  }
+
   it('selects the first placeholder as the snippet lands', () => {
     insertSnippet('log(${1:message}, ${2:level})')
 
@@ -171,6 +181,24 @@ describe('snippet insertion', () => {
     pressTab()
 
     expect(selectedText()).toBe('delay')
+  })
+
+  it('keeps affinity while walking snippet stops', () => {
+    insertSnippet('${1:first} ${2:second}', 'before')
+
+    pressTab()
+
+    expect(selectedText()).toBe('second')
+    expect(selectionAffinity()).toBe('before')
+  })
+
+  it('keeps affinity while rewriting a mirrored stop', () => {
+    insertSnippet('${1:name} = $1', 'before')
+
+    type('x')
+
+    expect(editor.materializeFullText()).toBe('x = x')
+    expect(selectionAffinity()).toBe('before')
   })
 
   // Every stop after the one being filled in is still exactly where the snippet put it, so a

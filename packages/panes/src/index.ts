@@ -760,7 +760,7 @@ function notifyLayoutChange(
 }
 
 function layoutsEqual(a: ResizablePaneLayout, b: ResizablePaneLayout): boolean {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  const keys = new Set(Object.keys(a).concat(Object.keys(b)))
   for (const key of keys) {
     if (Math.abs((a[key] ?? 0) - (b[key] ?? 0)) > FLOAT_TOLERANCE) return false
   }

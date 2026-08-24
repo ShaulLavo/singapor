@@ -34,6 +34,7 @@
 ## 4. High-Level Architecture
 
 ### Main Thread (Sync / Immediate)
+
 - Input handling
 - Caret & selection
 - Minimal text echo
@@ -43,6 +44,7 @@
 - Reconciliation with worker
 
 ### Worker(s) (Async / Authoritative)
+
 - Document model
 - Transactions / edits
 - Tree-sitter syntax parsing
@@ -91,8 +93,10 @@ See: [Browser Layout + 2D Virtualizer](docs/display/browser-virtualization.md).
 **Key principles (locked):** native browser layout, custom viewport virtualization, CSS Highlight
 API for current selection/syntax paint, and DOM `Range`/caret APIs for geometry on mounted content.
 
-**Open:** virtual row data source, horizontal chunking for very long lines, interaction with FoldMap,
-and worker/main ownership of viewport inputs.
+**Implemented:** projected text-row input, fixed-height vertical virtualization, FoldMap integration,
+and conservative horizontal chunking for eligible long rows. **Open:** variable-height row producers,
+complete horizontal windowing for measurement-refusal rows, and the worker/main ownership boundary
+for viewport inputs.
 
 ---
 
@@ -117,6 +121,7 @@ Tree-sitter is the canonical syntax engine. It replaces Shiki as the long-term s
 See: [Syntax: Tree-sitter](docs/syntax/tree-sitter.md)
 
 **Locked:**
+
 - Parse state is a derived projection over a specific `PieceTableSnapshot`.
 - All Tree-sitter parser creation, parsing, incremental reparsing, and query execution runs in workers.
 - The main thread never loads grammars, owns parse trees, walks syntax nodes, or runs Tree-sitter queries during typing.
@@ -152,9 +157,11 @@ See: [Display: Transforms](docs/display/transforms.md) for decoration constraint
 
 ---
 
-### 5.10 Viewport & Virtualization
+### 5.10 Viewport & Virtualization (Implemented)
 
-**Not yet designed.**
+The virtualized view mounts projected text rows around the viewport and delegates glyph layout,
+BiDi caret geometry, hit testing, and selection rectangles to the browser. See
+[Display: Browser Virtualization](docs/display/browser-virtualization.md).
 
 ---
 
@@ -171,12 +178,12 @@ Extensions run through a host lifecycle with explicit `install`, `activate`, `up
 power through typed domain registries instead of a broad editor service locator.
 
 **Public contribution APIs:**
+
 - Commands
 - Capabilities
 - Edit helpers
 - Decorations
 - Gutters
-- Blocks
 - Injected rows
 - Syntax and highlighters
 - View contributions
@@ -191,9 +198,10 @@ through internal/testing entry points only while first-party features finish mig
 registries.
 
 **Locked:**
+
 - Public plugins do not receive `registerEditorFeatureContribution`.
 - Contribution conflicts fail near registration: duplicate command handlers, duplicate gutter ids,
-  duplicate block provider ownership, and duplicate row-decoration source ownership are rejected.
+  and duplicate row-decoration source ownership are rejected.
 - Contribution factory, `update()`, and disposal failures are contained and logged so one extension
   does not break unrelated editor systems.
 

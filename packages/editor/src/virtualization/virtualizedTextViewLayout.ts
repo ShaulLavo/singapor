@@ -8,6 +8,7 @@ import {
   type InjectedTextRow,
 } from '../displayTransforms'
 import type { TextSnapshot } from '../documentTextSnapshot'
+import type { SelectionAffinity } from '../selections'
 import type { TextEdit } from '../tokens'
 import { clamp } from '../style-utils'
 import { createLineStartOffsetIndex } from './lineStartIndex'
@@ -160,6 +161,7 @@ export function rebuildDisplayRows(
     tabSize: view.tabSize,
   })
   view.model = model
+  view.displayProjectionRevision += 1
 }
 
 export function refreshDisplayRowsForWrapWidth(
@@ -215,8 +217,20 @@ export function scrollableHeight(
   return snapshot.scrollHeight
 }
 
-export function visualColumnForOffset(view: VirtualizedTextViewInternal, offset: number): number {
-  const row = rowForOffset(view, offset)
+export function visualColumnForOffset(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity?: SelectionAffinity,
+): number {
+  const row = affinity ? rowForCaretPosition(view, offset, affinity) : rowForOffset(view, offset)
+  return visualColumnForDisplayRowOffset(view, row, offset)
+}
+
+function visualColumnForDisplayRowOffset(
+  view: VirtualizedTextViewInternal,
+  row: number,
+  offset: number,
+): number {
   const displayRow = view.model.rows[row]
   if (!isDocumentTextDisplayRow(displayRow)) return 0
 
@@ -495,6 +509,36 @@ export function rowForOffset(view: VirtualizedTextViewInternal, offset: number):
   if (displayRow) return displayRow.index
 
   return virtualRowForBufferRow(view, bufferRow)
+}
+
+/** Affinity chooses which wrapped display row owns their shared document boundary. */
+export function rowForCaretPosition(
+  view: VirtualizedTextViewInternal,
+  offset: number,
+  affinity: SelectionAffinity,
+): number {
+  const row = rowForOffset(view, offset)
+  if (affinity === 'before') return row
+
+  const displayRow = view.model.rows[row]
+  if (!isDocumentTextDisplayRow(displayRow)) return row
+  if (displayRow.endOffset !== offset) return row
+
+  return followingDocumentTextRowAtOffset(view.model.rows, row, offset)
+}
+
+function followingDocumentTextRowAtOffset(
+  rows: readonly DisplayRow[],
+  row: number,
+  offset: number,
+): number {
+  for (let index = row + 1; index < rows.length; index += 1) {
+    const candidate = rows[index]!
+    if (!isDocumentTextDisplayRow(candidate)) continue
+    return candidate.startOffset === offset ? index : row
+  }
+
+  return row
 }
 
 export function bufferRowForOffset(view: VirtualizedTextViewInternal, offset: number): number {

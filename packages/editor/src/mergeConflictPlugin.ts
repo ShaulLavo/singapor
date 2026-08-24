@@ -19,6 +19,7 @@ import type {
 import { createEditorCapabilityToken } from './plugins'
 import type { TextEdit } from './tokens'
 import type { VirtualizedTextHighlightStyle } from './virtualization'
+import type { EditorSetSelectionOptions } from './editor/selectionReveal'
 
 export const EDITOR_MERGE_CONFLICT_FEATURE_ID = 'editor.mergeConflicts'
 
@@ -39,7 +40,12 @@ type MergeConflictHost = {
   hasDocument(): boolean
   materializeFullText(): string
   focusEditor(): void
-  setSelection(anchor: number, head: number, timingName: string, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head: number,
+    timingName: string,
+    options?: EditorSetSelectionOptions,
+  ): void
   applyEdits(
     edits: readonly TextEdit[],
     timingName: string,
@@ -180,7 +186,7 @@ class EditorMergeConflictController {
       conflict.range.start,
       conflict.range.start,
       'input.revealMergeConflict',
-      conflict.range.start,
+      { revealOffset: conflict.range.start },
     )
     this.host.focusEditor()
     return true
@@ -411,8 +417,8 @@ function featureHost(context: EditorFeatureContributionContext): MergeConflictHo
     hasDocument: () => context.hasDocument(),
     materializeFullText: () => context.materializeFullText(),
     focusEditor: () => context.focusEditor(),
-    setSelection: (anchor, head, timingName, revealOffset) =>
-      context.setSelection(anchor, head, timingName, revealOffset),
+    setSelection: (anchor, head, timingName, options) =>
+      context.setSelection(anchor, head, timingName, options),
     applyEdits: (edits, timingName, selection) => context.applyEdits(edits, timingName, selection),
     setRangeHighlight: (name, ranges, style) => context.setRangeHighlight(name, ranges, style),
     clearRangeHighlight: (name) => context.clearRangeHighlight(name),

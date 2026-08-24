@@ -1,6 +1,11 @@
 import type { TextOffsetRange } from '../textRanges'
+import type { SelectionAffinity } from '../selections'
 import { clamp } from '../style-utils'
 import type { TextEdit } from '../tokens'
+import type {
+  VirtualizedBidiSelectionAnchor,
+  VirtualizedTextHitPosition,
+} from '../virtualization/virtualizedTextViewTypes'
 import { nowMs } from './timing'
 
 /**
@@ -9,12 +14,17 @@ import { nowMs } from './timing'
  */
 export type MouseSelectionGranularity = 'char' | 'word' | 'line' | 'column'
 
+export type MouseSelectionAnchor = {
+  readonly range: TextOffsetRange
+  readonly bidi: VirtualizedBidiSelectionAnchor | null
+}
+
 export type MouseSelectionDrag = {
   // The drag pivots on whichever end of the anchored word or line the pointer is away from, so the
   // unit the press landed on stays whole however far the pointer travels in either direction.
-  readonly anchor: TextOffsetRange
+  readonly anchor: MouseSelectionAnchor
   readonly granularity: MouseSelectionGranularity
-  headOffset: number
+  head: VirtualizedTextHitPosition
   clientX: number
   clientY: number
 }
@@ -44,11 +54,13 @@ export function mouseSelectionEnds(
  */
 export type MouseTextMoveDrag = {
   readonly source: TextOffsetRange
-  readonly pressOffset: number
+  readonly sourceAffinity: SelectionAffinity
+  readonly sourceReversed: boolean
+  readonly press: VirtualizedTextHitPosition
   // Null whenever the pointer is back over the run being carried, where there is nowhere to put it:
   // a release there has to leave the document alone rather than fall back on some earlier spot the
   // user has since moved away from.
-  dropOffset: number | null
+  drop: VirtualizedTextHitPosition | null
   moved: boolean
 }
 

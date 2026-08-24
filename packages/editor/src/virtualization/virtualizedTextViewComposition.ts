@@ -40,7 +40,9 @@ export function setCompositionPreedit(view: VirtualizedTextViewInternal, text: s
  */
 function positionCompositionPreedit(view: VirtualizedTextViewInternal, element: HTMLElement): void {
   const selection = view.selections[0]
-  const position = selection ? caretPosition(view, selection.head) : null
+  const position = selection
+    ? (caretPosition(view, selection.head, selection.affinity)?.[0] ?? null)
+    : null
   // Scrolled past the mounted rows there is no row to draw over. The next candidate the IME offers
   // puts the preedit back, so nothing is lost by waiting for one.
   if (!position) {

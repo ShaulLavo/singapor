@@ -41,7 +41,8 @@ import {
   setHighlightRegistry,
 } from '../src/public/testing'
 import { createFoldMap } from '../src/foldMap'
-import { resolveSelection } from '../src/selections'
+import { SelectionGoal, resolveSelection } from '../src/selections'
+import type { VirtualizedTextView } from '../src/virtualization'
 
 // Mock HighlightRegistry backed by a Map, used to assert highlight state.
 const highlightsMap = new Map<string, Highlight>()
@@ -594,6 +595,18 @@ function resolvedSelectionRanges(session: ReturnType<typeof createDocumentSessio
       head: resolved.headOffset,
       start: resolved.startOffset,
       end: resolved.endOffset,
+    }
+  })
+}
+
+function resolvedSelectionMetadata(session: ReturnType<typeof createDocumentSession>) {
+  return session.getSelections().selections.map((selection) => {
+    const resolved = resolveSelection(session.getSnapshot(), selection)
+    return {
+      affinity: resolved.affinity,
+      anchor: resolved.anchorOffset,
+      goal: resolved.goal,
+      head: resolved.headOffset,
     }
   })
 }
@@ -3031,7 +3044,7 @@ describe('Editor', () => {
       expect(session.materializeFullText()).toBe('abcd')
     })
 
-    it('keeps a visible row stable when pasting single-line text', () => {
+    it('reveals the affinity-owned row when a single-line paste crosses a row boundary', () => {
       const originalResizeObserver = globalThis.ResizeObserver
       globalThis.ResizeObserver = MockResizeObserver
       MockResizeObserver.instances = []
@@ -3057,7 +3070,7 @@ describe('Editor', () => {
         editorInput().dispatchEvent(createPasteEvent('!'))
 
         expect(editor.getState().cursor).toEqual({ row: 2, column: 7 })
-        expect(root.scrollTop).toBe(30)
+        expect(root.scrollTop).toBe(40)
       } finally {
         globalThis.ResizeObserver = originalResizeObserver
       }
@@ -3427,6 +3440,26 @@ describe('Editor', () => {
       expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 9, head: 9, start: 9, end: 9 }])
     })
 
+    it('preserves the last-added cursor affinity and goal when Escape clears the others', () => {
+      const session = createDocumentSession('abcdef')
+      session.setSelections([
+        { anchor: 1, affinity: 'after' },
+        { anchor: 4, affinity: 'before', goal: SelectionGoal.horizontal(37) },
+      ])
+      editor.attachSession(session)
+
+      dispatchEditorKey('Escape')
+
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        {
+          affinity: 'before',
+          anchor: 4,
+          goal: SelectionGoal.horizontal(37),
+          head: 4,
+        },
+      ])
+    })
+
     it('keeps extending in the same direction after two cursors collide', () => {
       const session = createDocumentSession('abcdef')
       session.setSelection(3)
@@ -3504,6 +3537,27 @@ describe('Editor', () => {
         { start: 8, end: 11 },
       ])
       expect(container.querySelectorAll('.editor-virtualized-caret')).toHaveLength(2)
+    })
+
+    it('preserves existing occurrence metadata and marks generated occurrences explicitly', () => {
+      const session = createDocumentSession('foo bar foo')
+      session.setSelection(0, 3, {
+        affinity: 'before',
+        goal: SelectionGoal.horizontal(29),
+      })
+      editor.attachSession(session)
+
+      dispatchEditorKey('d', primaryModifier())
+
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        {
+          affinity: 'before',
+          anchor: 0,
+          goal: SelectionGoal.horizontal(29),
+          head: 3,
+        },
+        { affinity: 'after', anchor: 8, goal: SelectionGoal.none(), head: 11 },
+      ])
     })
 
     it('keeps Mod+D on an adjacent repeat as its own cursor', () => {
@@ -3603,6 +3657,72 @@ describe('Editor', () => {
       ])
     })
 
+    it('preserves the source direction and affinity when selecting all occurrences', () => {
+      const session = createDocumentSession('foo bar foo')
+      session.setSelection(3, 0, { affinity: 'before' })
+      editor.attachSession(session)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      const revealCaret = vi.spyOn(view, 'revealCaret')
+
+      expect(editor.dispatchCommand('editor.action.selectHighlights')).toBe(true)
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'before', anchor: 3, goal: SelectionGoal.none(), head: 0 },
+        { affinity: 'after', anchor: 8, goal: SelectionGoal.none(), head: 11 },
+      ])
+      expect(revealCaret).toHaveBeenLastCalledWith(0, 'before', undefined)
+    })
+
+    it('reveals the current side when adjacent matches share the same head', () => {
+      const session = createDocumentSession('foofoo')
+      session.setSelection(6, 3, { affinity: 'before' })
+      editor.attachSession(session)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      const revealCaret = vi.spyOn(view, 'revealCaret')
+
+      expect(editor.dispatchCommand('editor.action.selectHighlights')).toBe(true)
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'after', anchor: 0, goal: SelectionGoal.none(), head: 3 },
+        { affinity: 'before', anchor: 6, goal: SelectionGoal.none(), head: 3 },
+      ])
+      expect(revealCaret).toHaveBeenLastCalledWith(3, 'before', undefined)
+    })
+
+    it('preserves every existing occurrence while generating missing matches', () => {
+      const session = createDocumentSession('foo foo foo')
+      session.setSelections([
+        {
+          anchor: 3,
+          affinity: 'before',
+          goal: SelectionGoal.horizontal(17),
+          head: 0,
+        },
+        {
+          anchor: 7,
+          affinity: 'before',
+          goal: SelectionGoal.horizontal(29),
+          head: 4,
+        },
+      ])
+      editor.attachSession(session)
+
+      expect(editor.dispatchCommand('editor.action.selectHighlights')).toBe(true)
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        {
+          affinity: 'before',
+          anchor: 3,
+          goal: SelectionGoal.horizontal(17),
+          head: 0,
+        },
+        {
+          affinity: 'before',
+          anchor: 7,
+          goal: SelectionGoal.horizontal(29),
+          head: 4,
+        },
+        { affinity: 'after', anchor: 8, goal: SelectionGoal.none(), head: 11 },
+      ])
+    })
+
     it('moves the last selection to the next exact occurrence', () => {
       const session = createDocumentSession('foo bar foo foo')
       session.setSelection(1)
@@ -3621,6 +3741,56 @@ describe('Editor', () => {
         { anchor: 0, head: 3, start: 0, end: 3 },
         { anchor: 12, head: 15, start: 12, end: 15 },
       ])
+    })
+
+    it('preserves direction and affinity when moving a selection to the next occurrence', () => {
+      const session = createDocumentSession('foo bar foo')
+      session.setSelection(3, 0, { affinity: 'before' })
+      editor.attachSession(session)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      const revealCaret = vi.spyOn(view, 'revealCaret')
+
+      expect(editor.dispatchCommand('editor.action.moveSelectionToNextFindMatch')).toBe(true)
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'before', anchor: 11, goal: SelectionGoal.none(), head: 8 },
+      ])
+      expect(revealCaret).toHaveBeenLastCalledWith(8, 'before', undefined)
+    })
+
+    it('reveals the moved side when adjacent occurrences share the same head', () => {
+      const session = createDocumentSession('foofoofoo')
+      session.setSelections([
+        { anchor: 0, affinity: 'after', head: 3 },
+        { anchor: 9, affinity: 'before', head: 6 },
+      ])
+      editor.attachSession(session)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      const revealCaret = vi.spyOn(view, 'revealCaret')
+
+      expect(editor.dispatchCommand('editor.action.moveSelectionToNextFindMatch')).toBe(true)
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'after', anchor: 0, goal: SelectionGoal.none(), head: 3 },
+        { affinity: 'before', anchor: 6, goal: SelectionGoal.none(), head: 3 },
+      ])
+      expect(revealCaret).toHaveBeenLastCalledWith(3, 'before', undefined)
+    })
+
+    it('moves the last-added occurrence even when it sorts before the other selections', () => {
+      const session = createDocumentSession('foo bar foo baz foo')
+      session.setSelection(8, 11, { affinity: 'after' })
+      session.addSelection(3, 0, { affinity: 'before' })
+      editor.attachSession(session)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      const revealCaret = vi.spyOn(view, 'revealCaret')
+
+      expect(session.getSelections().lastAddedIndex).toBe(0)
+      expect(editor.dispatchCommand('editor.action.moveSelectionToNextFindMatch')).toBe(true)
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'after', anchor: 8, goal: SelectionGoal.none(), head: 11 },
+        { affinity: 'before', anchor: 19, goal: SelectionGoal.none(), head: 16 },
+      ])
+      expect(session.getSelections().lastAddedIndex).toBe(1)
+      expect(revealCaret).toHaveBeenLastCalledWith(16, 'before', undefined)
     })
 
     it('reveals the wrapped occurrence when Mod+D loops to the top', () => {
@@ -3843,6 +4013,24 @@ describe('Editor', () => {
       resolved = resolveSelection(session.getSnapshot(), session.getSelections().selections[0]!)
       expect(resolved.startOffset).toBe(1)
       expect(resolved.endOffset).toBe(3)
+    })
+
+    it('keeps the browser affinity for an unsnapped character drag', () => {
+      const session = createDocumentSession('abcd')
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 120, 40)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      vi.spyOn(view, 'textPositionFromPoint')
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 0, offset: 1, rowX: 8 })
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 0, offset: 3, rowX: 24 })
+
+      pressMouse({ clientX: 8, clientY: 10 })
+      moveMouse({ clientX: 24, clientY: 10 })
+      releaseMouse({ clientX: 24, clientY: 10 })
+
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'after', anchor: 1, goal: SelectionGoal.none(), head: 3 },
+      ])
     })
 
     it('ignores browser selectionchange while dragging', () => {
@@ -4489,6 +4677,22 @@ describe('Editor', () => {
       expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 0, head: 5, start: 0, end: 5 }])
     })
 
+    it('preserves direction and affinity when carrying selected text', () => {
+      const session = createDocumentSession('alpha bravo')
+      session.setSelection(11, 6, { affinity: 'before' })
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+
+      pressMouse({ clientX: 64, clientY: 10 })
+      moveMouse({ clientX: 0, clientY: 10 })
+      releaseMouse({ clientX: 0, clientY: 10 })
+
+      expect(session.materializeFullText()).toBe('bravoalpha ')
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'before', anchor: 5, goal: SelectionGoal.none(), head: 0 },
+      ])
+    })
+
     it('leaves the original behind when the copy modifier is down at the release', () => {
       const session = createDocumentSession('alpha bravo')
       editor.attachSession(session)
@@ -4514,11 +4718,39 @@ describe('Editor', () => {
       pressMouse({ clientX: 48, clientY: 10 })
       moveMouse({ clientX: 88, clientY: 10 })
       releaseMouse({ clientX: 88, clientY: 10 })
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      vi.spyOn(view, 'textPositionFromPoint').mockReturnValue({
+        affinity: 'before',
+        displayRow: 0,
+        offset: 8,
+        rowX: 64,
+      })
       pressMouse({ clientX: 64, clientY: 10 })
       releaseMouse({ clientX: 64, clientY: 10 })
 
       expect(session.materializeFullText()).toBe('alpha bravo')
       expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 8, head: 8, start: 8, end: 8 }])
+      expect(resolvedSelectionMetadata(session)[0]?.affinity).toBe('before')
+    })
+
+    it('recognizes movement between two visual sides of the same selected-text offset', () => {
+      const session = createDocumentSession('alpha bravo')
+      session.setSelection(6, 11, { affinity: 'before' })
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 200, 200, 200)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      vi.spyOn(view, 'textPositionFromPoint')
+        .mockReturnValueOnce({ affinity: 'before', displayRow: 0, offset: 8, rowX: 64 })
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 0, offset: 8, rowX: 64 })
+
+      pressMouse({ clientX: 64, clientY: 10 })
+      moveMouse({ clientX: 64, clientY: 10 })
+      releaseMouse({ clientX: 64, clientY: 10 })
+
+      expect(session.materializeFullText()).toBe('alpha bravo')
+      expect(resolvedSelectionMetadata(session)).toEqual([
+        { affinity: 'before', anchor: 6, goal: SelectionGoal.none(), head: 11 },
+      ])
     })
 
     it('keeps the selection when a drag out of it comes back inside', () => {
@@ -4622,6 +4854,10 @@ describe('Editor', () => {
       const session = createDocumentSession('alpha bravo charlie')
       editor.attachSession(session)
       mockEditorViewport(editorRoot(), 200, 200, 200)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      vi.spyOn(view, 'textPositionFromPoint')
+        .mockReturnValueOnce({ affinity: 'before', displayRow: 0, offset: 8, rowX: 64 })
+        .mockReturnValueOnce({ affinity: 'before', displayRow: 0, offset: 2, rowX: 16 })
 
       pressMouse({ clientX: 64, clientY: 10, detail: 2 })
       moveMouse({ clientX: 16, clientY: 10 })
@@ -4631,18 +4867,24 @@ describe('Editor', () => {
       releaseMouse({ clientX: 16, clientY: 10 })
 
       expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 11, head: 0, start: 0, end: 11 }])
+      expect(resolvedSelectionMetadata(session)[0]?.affinity).toBe('after')
     })
 
     it('selects whole lines while dragging out of a triple click', () => {
       const session = createDocumentSession('one\ntwo\nthree')
       editor.attachSession(session)
       mockEditorViewport(editorRoot(), 200, 200, 200)
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      vi.spyOn(view, 'textPositionFromPoint')
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 1, offset: 5, rowX: 8 })
+        .mockReturnValueOnce({ affinity: 'after', displayRow: 2, offset: 9, rowX: 8 })
 
       pressMouse({ clientX: 8, clientY: 30, detail: 3 })
       moveMouse({ clientX: 8, clientY: 54 })
       releaseMouse({ clientX: 8, clientY: 54 })
 
       expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 4, head: 13, start: 4, end: 13 }])
+      expect(resolvedSelectionMetadata(session)[0]?.affinity).toBe('before')
     })
 
     it('drags a column of cursors that skips lines ending before the rectangle', () => {

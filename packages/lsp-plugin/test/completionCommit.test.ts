@@ -21,8 +21,11 @@ describe('committing a completion on a typed character', () => {
   // The character is the reason the item was accepted, so losing it turns `value` + `.` into `value`
   // and the user has to type the period again. One applyEdits call is one transaction and one undo
   // entry, which is what puts the character and the acceptance on the same Ctrl+Z.
-  it('accepts the focused item and keeps the character that committed it', async () => {
-    const editor = await connectedEditor('const va', 8, { acceptOnCommitCharacter: true })
+  it('keeps before affinity while repositioning past the commit character', async () => {
+    const editor = await connectedEditor('const va', 8, {
+      acceptOnCommitCharacter: true,
+      affinity: 'before',
+    })
     await openList(editor, [{ label: 'value', commitCharacters: ['.'] }])
 
     const event = editor.pressKey('.')
@@ -31,7 +34,7 @@ describe('committing a completion on a typed character', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 6, to: 9, text: 'value.' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 12, head: 12 },
+      { anchor: 12, head: 12, affinity: 'before' },
     )
     // The editor must not type the character a second time on top of the one in the edit.
     expect(event.defaultPrevented).toBe(true)
@@ -39,7 +42,10 @@ describe('committing a completion on a typed character', () => {
   })
 
   it('leaves a committed snippet on its first placeholder, with the character past the end', async () => {
-    const editor = await connectedEditor('const va', 8, { acceptOnCommitCharacter: true })
+    const editor = await connectedEditor('const va', 8, {
+      acceptOnCommitCharacter: true,
+      affinity: 'before',
+    })
     await openList(editor, [
       {
         label: 'value',
@@ -54,7 +60,7 @@ describe('committing a completion on a typed character', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 6, to: 9, text: 'value(x).' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 12, head: 13 },
+      { anchor: 12, head: 13, affinity: 'before' },
     )
   })
 
@@ -100,7 +106,7 @@ describe('committing a completion on a typed character', () => {
     expect(editor.applyEdits).toHaveBeenCalledWith(
       [{ from: 6, to: 9, text: 'valueOf(' }],
       COMPLETION_ACCEPT_TIMING_NAME,
-      { anchor: 14, head: 14 },
+      { anchor: 14, head: 14, affinity: 'after' },
     )
   })
 

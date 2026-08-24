@@ -52,6 +52,33 @@ function resolvedOffsets(session: DocumentSession): { start: number; end: number
   return { start: resolved.startOffset, end: resolved.endOffset }
 }
 
+function resolvedAffinity(session: DocumentSession): 'before' | 'after' {
+  const selection = session.getSelections().selections[0]!
+  return resolveSelection(session.getSnapshot(), selection).affinity
+}
+
+function resolvedSelectionState(session: DocumentSession) {
+  const set = session.getSelections()
+  return {
+    lastAddedId: set.selections[set.lastAddedIndex ?? 0]?.id,
+    selections: set.selections.map((selection) => {
+      const resolved = resolveSelection(session.getSnapshot(), selection)
+      return { affinity: resolved.affinity, id: resolved.id, offset: resolved.headOffset }
+    }),
+  }
+}
+
+function setAffinityCarets(
+  session: DocumentSession,
+  affinities: readonly ('before' | 'after')[],
+): void {
+  session.setSelections(affinities.map((affinity) => ({ affinity, anchor: 2 })))
+}
+
+function selectionIds(state: ReturnType<typeof resolvedSelectionState>): ReadonlySet<string> {
+  return new Set(state.selections.map((selection) => selection.id))
+}
+
 function resolvedSelectionOffsets(
   session: DocumentSession,
 ): readonly { start: number; end: number }[] {
@@ -199,6 +226,38 @@ describe('DocumentSession', () => {
     expect(resolvedOffsets(session)).toEqual({ start: 1, end: 1 })
   })
 
+  it('restores affinity-distinct backspace carets through undo and redo in either order', () => {
+    const affinityOrders = [
+      ['before', 'after'],
+      ['after', 'before'],
+    ] as const
+
+    for (const affinities of affinityOrders) {
+      const session = createDocumentSession('abc')
+      setAffinityCarets(session, affinities)
+      const before = resolvedSelectionState(session)
+
+      session.backspace()
+      const after = resolvedSelectionState(session)
+
+      expect(session.materializeFullText()).toBe('ac')
+      expect(after.selections).toMatchObject([
+        { affinity: 'before', offset: 1 },
+        { affinity: 'after', offset: 1 },
+      ])
+      expect(selectionIds(after)).toEqual(selectionIds(before))
+      expect(after.lastAddedId).toBe(before.lastAddedId)
+
+      session.undo()
+      expect(session.materializeFullText()).toBe('abc')
+      expect(resolvedSelectionState(session)).toEqual(before)
+
+      session.redo()
+      expect(session.materializeFullText()).toBe('ac')
+      expect(resolvedSelectionState(session)).toEqual(after)
+    }
+  })
+
   it('replaces selected ranges and collapses after inserted text', () => {
     const session = createDocumentSession('abcdef')
     session.setSelection(1, 4)
@@ -219,6 +278,20 @@ describe('DocumentSession', () => {
     expect(redone.textSnapshot.materializeFullText()).toBe('abc!')
     expect(session.materializeFullText()).toBe('abc!')
     expect(resolvedOffsets(session)).toEqual({ start: 4, end: 4 })
+  })
+
+  it('keeps affinity through an edit and its undo and redo pair', () => {
+    const session = createDocumentSession('abc')
+    session.setSelection(1, 1, { affinity: 'before' })
+
+    session.applyText('X')
+    expect(resolvedAffinity(session)).toBe('before')
+
+    session.undo()
+    expect(resolvedAffinity(session)).toBe('before')
+
+    session.redo()
+    expect(resolvedAffinity(session)).toBe('before')
   })
 
   it('coalesces contiguous typing into one undo entry', () => {
@@ -495,6 +568,16 @@ describe('DocumentSession', () => {
       selection: { anchor: 1, head: 2 },
     })
     expect(resolvedOffsets(session)).toEqual({ start: 1, end: 2 })
+  })
+
+  it('accepts affinity on replacement selection ranges', () => {
+    const session = createDocumentSession('abc')
+
+    session.applyEdits([{ from: 0, to: 0, text: '!' }], {
+      selection: { anchor: 1, affinity: 'before' },
+    })
+
+    expect(resolvedAffinity(session)).toBe('before')
   })
 })
 

@@ -16,10 +16,9 @@ describe('mergeDenseDecorations', () => {
     // 600px over 11,000 lines puts 55 lines inside one band: the run of single
     // rows is one band, the stragglers 100 lines apart are still their own.
     const stragglers = [1100, 1200, 1300, 1400, 1500]
-    const bands = [
-      ...rowBands(1, 1000, 1, MATCH_COLOR),
-      ...stragglers.map((row) => rowBand(row, MATCH_COLOR)),
-    ]
+    const bands = rowBands(1, 1000, 1, MATCH_COLOR).concat(
+      stragglers.map((row) => rowBand(row, MATCH_COLOR)),
+    )
 
     expect(mergeDenseDecorations(bands, 600, 11_000).map(span)).toEqual([
       [1, 1000],
@@ -28,7 +27,7 @@ describe('mergeDenseDecorations', () => {
   })
 
   it('merges each appearance on its own', () => {
-    const bands = [...rowBands(1, 1001, 1, MATCH_COLOR), ...rowBands(1, 1001, 1, ERROR_COLOR)]
+    const bands = rowBands(1, 1001, 1, MATCH_COLOR).concat(rowBands(1, 1001, 1, ERROR_COLOR))
 
     expect(mergeDenseDecorations(bands, 600, 3000)).toEqual([
       { ...rowBand(1, MATCH_COLOR), endLineNumber: 1001 },

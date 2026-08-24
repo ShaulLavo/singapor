@@ -1,3 +1,4 @@
+import { detectPlatform } from '@tanstack/hotkeys'
 import {
   documentSessionChangeTextSnapshot,
   type DocumentSession,
@@ -14,6 +15,7 @@ import { EditorFoldState } from './foldState'
 import { guessedTabSize } from './indentationGuess'
 import { EditorKeymapController } from './keymap'
 import { InputSelectionController } from './inputSelectionController'
+import { defaultRtlMoveVisually } from './navigationTargets'
 import { EditorSyntaxController } from './syntaxController'
 import { DocumentEditChain } from './editChain'
 import type { LineStartsView } from '../virtualization/lineStartIndex'
@@ -67,7 +69,12 @@ import {
   rangeDecorationsWithProjectionStacking,
   sameEditorRangeDecorations,
 } from './rangeDecorations'
-import { selectionRevealOffset, type EditorSelectionRevealTarget } from './selectionReveal'
+import {
+  normalizeEditorSetSelectionOptions,
+  selectionRevealOffset,
+  type EditorSetSelectionInput,
+  type EditorSetSelectionOptions,
+} from './selectionReveal'
 import { syncTextEdit } from './textEdits'
 import type {
   EditorDocumentMode,
@@ -133,7 +140,7 @@ import {
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
 } from '../plugins'
-import { resolveSelection } from '../selections'
+import { lastAddedSelectionIndex, resolveSelection } from '../selections'
 import { type EditorSyntaxLanguageId } from '../syntax/session'
 import type { EditorSyntaxRange } from '../syntax/session'
 import {
@@ -476,6 +483,7 @@ export class Editor {
     this.inputSelection = new InputSelectionController({
       el: this.el,
       announcer: this.announcer,
+      rtlMoveVisually: options.rtlMoveVisually ?? defaultRtlMoveVisually(detectPlatform()),
       selectionSyncMode: normalizeEditorSelectionSyncMode(options.selectionSyncMode),
       get tabSize(): number {
         return effectiveTabSize()
@@ -998,10 +1006,17 @@ export class Editor {
     this.view.focusInput()
   }
 
-  setSelection(anchor: number, head = anchor, reveal?: EditorSelectionRevealTarget): void {
+  setSelection(anchor: number, head?: number, options?: EditorSetSelectionOptions): void
+  /** @deprecated Pass an {@link EditorSetSelectionOptions} object instead. */
+  setSelection(anchor: number, head?: number, revealOffset?: number): void
+  setSelection(
+    anchor: number,
+    head?: number,
+    optionsOrRevealOffset?: EditorSetSelectionOptions | number,
+  ): void
+  setSelection(anchor: number, head = anchor, options?: EditorSetSelectionInput): void {
     this.runInOperation(() => {
-      const revealOffset = selectionRevealOffset(reveal, head)
-      this.applyRequestedSelection(anchor, head, 'editor.setSelection', revealOffset)
+      this.applyRequestedSelection(anchor, head, 'editor.setSelection', options, true)
     })
   }
 
@@ -2270,8 +2285,8 @@ export class Editor {
       revealLine: (row) => this.view.scrollToRow(row),
       announce: (message) => this.announcer.status(message),
       focusEditor: () => this.focus(),
-      setSelection: (anchor, head, timingName, revealOffset) =>
-        this.applyRequestedSelection(anchor, head, timingName, revealOffset),
+      setSelection: (anchor, head, timingName, options) =>
+        this.applyRequestedSelection(anchor, head, timingName, options),
       setSelections: (selections, timingName, revealOffset) =>
         this.applyRequestedSelections(selections, timingName, revealOffset),
       reserveOverlayWidth: (side, width) => this.reserveOverlayWidth(side, width),
@@ -2381,8 +2396,8 @@ export class Editor {
       getTextSnapshot: () => this.session?.getTextSnapshot() ?? null,
       getSelections: () => this.inputSelection.resolveViewSelections(),
       focusEditor: () => this.focus(),
-      setSelection: (anchor, head, timingName, revealOffset) =>
-        this.applyRequestedSelection(anchor, head, timingName, revealOffset),
+      setSelection: (anchor, head, timingName, options) =>
+        this.applyRequestedSelection(anchor, head, timingName, options),
       setSelections: (selections, timingName, revealOffset) =>
         this.applyRequestedSelections(selections, timingName, revealOffset),
       applyEdits: (edits, timingName, selection) =>
@@ -2805,7 +2820,11 @@ export class Editor {
     let timedChange = flush.latest.change
     if (flush.revealOffset !== null) {
       const revealStart = nowMs()
-      this.view.revealOffset(flush.revealOffset, flush.revealBlock)
+      if (flush.revealAffinity) {
+        this.view.revealCaret(flush.revealOffset, flush.revealAffinity, flush.revealBlock)
+      } else {
+        this.view.revealOffset(flush.revealOffset, flush.revealBlock)
+      }
       invalidateRowRectMeasurements()
       timedChange = appendTiming(timedChange, 'editor.reveal', revealStart)
     }
@@ -2892,12 +2911,16 @@ export class Editor {
 
   private captureCursorHistoryEntry(): CursorHistoryEntry {
     const scrollPosition = this.getScrollPosition()
+    const selectionSet = this.session?.getSelections()
     return {
+      lastAddedIndex: selectionSet ? lastAddedSelectionIndex(selectionSet) : 0,
       scrollLeft: scrollPosition.left,
       scrollTop: scrollPosition.top,
-      selections: this.inputSelection
-        .resolveViewSelections()
-        .map((selection) => ({ anchor: selection.anchorOffset, head: selection.headOffset })),
+      selections: this.inputSelection.resolveViewSelections().map((selection) => ({
+        anchor: selection.anchorOffset,
+        head: selection.headOffset,
+        affinity: selection.affinity,
+      })),
     }
   }
 
@@ -2913,7 +2936,7 @@ export class Editor {
     this.restoringCursorHistory = true
     try {
       this.runInOperation(() => {
-        this.applyRequestedSelections(entry.selections, timingName)
+        this.applyRequestedSelections(entry.selections, timingName, undefined, entry.lastAddedIndex)
       })
     } finally {
       this.restoringCursorHistory = false
@@ -3169,10 +3192,15 @@ export class Editor {
     anchor: number,
     head: number,
     timingName: string,
-    revealOffset?: number,
+    options?: EditorSetSelectionInput,
+    revealByDefault = false,
   ): void {
+    const normalizedOptions = normalizeEditorSetSelectionOptions(options)
     this.revealFoldedOffset(head)
-    this.inputSelection.applyFindSelection(anchor, head, timingName, revealOffset)
+    this.inputSelection.applyFindSelection(anchor, head, timingName, {
+      affinity: normalizedOptions?.affinity,
+      revealOffset: selectionRevealOffset(normalizedOptions, head, revealByDefault),
+    })
   }
 
   /** The primary selection is the one reveal follows, so it is the one that has to end up on screen. */
@@ -3180,10 +3208,11 @@ export class Editor {
     selections: readonly EditorSelectionRange[],
     timingName: string,
     revealOffset?: number,
+    lastAddedIndex?: number,
   ): void {
     const primary = selections[0]
     if (primary) this.revealFoldedOffset(primary.head)
-    this.inputSelection.applyFindSelections(selections, timingName, revealOffset)
+    this.inputSelection.applyFindSelections(selections, timingName, revealOffset, lastAddedIndex)
   }
 
   /**
@@ -3243,7 +3272,7 @@ export class Editor {
       'editor.fold.manual',
       carets[0],
     )
-    this.manualFolds = [...this.manualFolds, ...created]
+    this.manualFolds = this.manualFolds.concat(created)
     this.syncFoldStateFromProjections()
     for (const fold of created) this.foldState.fold(fold)
 
@@ -3437,12 +3466,7 @@ function projectRowDecorationMapThroughLineEdit(
 ): Map<number, VirtualizedTextRowDecoration> {
   const projected = new Map<number, VirtualizedTextRowDecoration>()
   for (const [row, decoration] of source) {
-    if (row < startRow) {
-      projected.set(row, decoration)
-      continue
-    }
-
-    if (row === startRow) {
+    if (row <= startRow) {
       projected.set(row, decoration)
       continue
     }

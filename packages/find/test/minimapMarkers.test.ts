@@ -217,6 +217,7 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
         headOffset: selection[1],
         startOffset: Math.min(...selection),
         endOffset: Math.max(...selection),
+        affinity: 'after',
       },
     ],
     metrics: { rowHeight: 20, characterWidth: 8 },

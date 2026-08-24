@@ -1,10 +1,11 @@
 import { detectPlatform } from '@tanstack/hotkeys'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '../src/editor'
 import {
   createDocumentSession,
   createPieceTableSnapshot,
   deleteFromPieceTable,
+  insertIntoPieceTable,
   materializePieceTableFullText,
 } from '../src/public/document'
 import { setHighlightRegistry } from '../src/public/testing'
@@ -27,12 +28,97 @@ import {
   undoEditorHistory,
 } from '../src/history'
 
+const backspaceEditReads = vi.hoisted(() => ({ coordinates: 0, enabled: false }))
+
+vi.mock('../src/pieceTable/edits', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/pieceTable/edits')>()
+  return {
+    ...actual,
+    applyBatchToPieceTable: (
+      ...args: Parameters<typeof actual.applyBatchToPieceTable>
+    ): ReturnType<typeof actual.applyBatchToPieceTable> => {
+      const result = actual.applyBatchToPieceTable(...args)
+      if (!backspaceEditReads.enabled) return result
+
+      for (const edit of args[1]) countEditCoordinates(edit)
+      return result
+    },
+  }
+})
+
+function countEditCoordinates(edit: { readonly from: number; readonly to: number }): void {
+  const from = edit.from
+  const to = edit.to
+  Object.defineProperties(edit, {
+    from: {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        backspaceEditReads.coordinates += 1
+        return from
+      },
+    },
+    to: {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        backspaceEditReads.coordinates += 1
+        return to
+      },
+    },
+  })
+}
+
+function countSeparatedBackspaceEditReads(cursorCount: number): number {
+  const snapshot = createPieceTableSnapshot('a '.repeat(cursorCount))
+  const selections = Array.from({ length: cursorCount }, (_value, index) =>
+    createAnchorSelection(snapshot, index * 2 + 1),
+  )
+  backspaceEditReads.coordinates = 0
+  backspaceEditReads.enabled = true
+  try {
+    const result = backspaceSelections(snapshot, createSelectionSet(selections))
+    expect(result.edits).toHaveLength(cursorCount)
+    expect(result.selections.selections).toHaveLength(cursorCount)
+    return backspaceEditReads.coordinates
+  } finally {
+    backspaceEditReads.enabled = false
+  }
+}
+
+function affinityBackspaceSelectionSet(
+  snapshot: Parameters<typeof createAnchorSelection>[0],
+  affinities: readonly ('before' | 'after')[],
+) {
+  return createSelectionSet(
+    affinities.map((affinity) =>
+      createAnchorSelection(snapshot, 2, 2, {
+        affinity,
+        goal: SelectionGoal.horizontal(affinity === 'before' ? 11 : 22),
+        id: affinity,
+      }),
+    ),
+  )
+}
+
+function resolvedBackspaceStates(result: ReturnType<typeof backspaceSelections>) {
+  return result.selections.selections.map((selection) => {
+    const resolved = resolveSelection(result.snapshot, selection)
+    return {
+      affinity: resolved.affinity,
+      goal: resolved.goal,
+      id: resolved.id,
+      offset: resolved.headOffset,
+    }
+  })
+}
+
 describe('selections', () => {
   it('creates anchor-backed selections with resolved anchor and head offsets', () => {
     const snapshot = createPieceTableSnapshot('abcdef')
     const selection = createAnchorSelection(snapshot, 4, 2, {
       id: 'selection-a',
-      goal: SelectionGoal.horizontal(24),
+      goal: SelectionGoal.horizontal(24.5),
     })
     const resolved = resolveSelection(snapshot, selection)
 
@@ -44,9 +130,61 @@ describe('selections', () => {
       headOffset: 2,
       reversed: true,
       collapsed: false,
-      goal: { kind: 'horizontal', x: 24 },
+      goal: { kind: 'horizontal', x: 24.5 },
+      affinity: 'after',
       liveness: 'live',
     })
+  })
+
+  it('keeps affinity in the selection identity at an ambiguous offset', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const before = createAnchorSelection(snapshot, 1, 1, { affinity: 'before' })
+    const after = createAnchorSelection(snapshot, 1, 1, { affinity: 'after' })
+
+    expect(before.id).not.toBe(after.id)
+    expect(resolveSelection(snapshot, before).affinity).toBe('before')
+    expect(resolveSelection(snapshot, after).affinity).toBe('after')
+  })
+
+  it('keeps opposite affinities apart through multi-cursor normalization', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const normalized = normalizeSelectionSet(
+      snapshot,
+      createSelectionSet([
+        createAnchorSelection(snapshot, 1, 1, { id: 'after', affinity: 'after' }),
+        createAnchorSelection(snapshot, 1, 1, { id: 'before', affinity: 'before' }),
+      ]),
+    )
+
+    expect(normalized.selections).toHaveLength(2)
+    expect(
+      normalized.selections.map((selection) => resolveSelection(snapshot, selection).affinity),
+    ).toEqual(['before', 'after'])
+  })
+
+  it('rechecks deferred opposite-affinity carets after a touching range absorbs one', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const set = {
+      selections: [
+        createAnchorSelection(snapshot, 1, 1, { id: 'before', affinity: 'before' }),
+        createAnchorSelection(snapshot, 1, 1, { id: 'after', affinity: 'after' }),
+        createAnchorSelection(snapshot, 1, 2, { id: 'range' }),
+      ],
+      lastAddedIndex: 2,
+      normalized: false as const,
+    }
+
+    const normalized = normalizeSelectionSet(snapshot, set)
+    expect(normalized.selections).toHaveLength(1)
+    expect(resolveSelection(snapshot, normalized.selections[0]!)).toMatchObject({
+      id: 'range',
+      startOffset: 1,
+      endOffset: 2,
+    })
+
+    const result = applyTextToSelections(snapshot, set, 'X')
+    expect(result.edits).toEqual([{ from: 1, to: 2, text: 'X' }])
+    expect(materializePieceTableFullText(result.snapshot)).toBe('aXc')
   })
 
   it('sorts selections and keeps non-empty ranges that only touch apart', () => {
@@ -83,11 +221,15 @@ describe('selections', () => {
     })
   })
 
-  it('merges overlapping ranges behind the last-added direction and goal', () => {
+  it('merges overlapping ranges behind the last-added direction, goal, and affinity', () => {
     const snapshot = createPieceTableSnapshot('abcdef')
     const set = createSelectionSet([
       createAnchorSelection(snapshot, 1, 4, { id: 'first' }),
-      createAnchorSelection(snapshot, 5, 2, { id: 'last', goal: SelectionGoal.horizontal(12) }),
+      createAnchorSelection(snapshot, 5, 2, {
+        id: 'last',
+        goal: SelectionGoal.horizontal(12),
+        affinity: 'before',
+      }),
     ])
     const normalized = normalizeSelectionSet(snapshot, set)
 
@@ -100,6 +242,7 @@ describe('selections', () => {
       headOffset: 1,
       reversed: true,
       goal: { kind: 'horizontal', x: 12 },
+      affinity: 'before',
     })
   })
 
@@ -172,6 +315,17 @@ describe('selections', () => {
     })
   })
 
+  it('carries affinity through edit-created piece-table anchors', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const set = createSelectionSet([createAnchorSelection(snapshot, 1, 1, { affinity: 'before' })])
+
+    const result = applyTextToSelections(snapshot, set, 'X')
+
+    expect(resolveSelection(result.snapshot, result.selections.selections[0]!).affinity).toBe(
+      'before',
+    )
+  })
+
   it('backspaces collapsed cursors by code point', () => {
     const snapshot = createPieceTableSnapshot('a😀b')
     const set = createSelectionSet([createAnchorSelection(snapshot, 3)])
@@ -183,6 +337,45 @@ describe('selections', () => {
     expect(resolveSelection(result.snapshot, result.selections.selections[0]!)).toMatchObject({
       startOffset: 1,
       endOffset: 1,
+    })
+  })
+
+  it('projects separated multi-cursor backspaces with linearly bounded edit reads', () => {
+    const smallCount = 128
+    const largeCount = 512
+    const smallReads = countSeparatedBackspaceEditReads(smallCount)
+    const largeReads = countSeparatedBackspaceEditReads(largeCount)
+
+    expect(smallReads).toBeGreaterThan(0)
+    expect(smallReads).toBeLessThanOrEqual(smallCount * 8)
+    expect(largeReads).toBeLessThanOrEqual(largeCount * 8)
+    expect(largeReads).toBeLessThanOrEqual(smallReads * 4 + 16)
+  })
+
+  it('keeps a backspace caret before text later inserted at its offset', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const set = createSelectionSet([createAnchorSelection(snapshot, 2)])
+
+    const result = backspaceSelections(snapshot, set)
+    const inserted = insertIntoPieceTable(result.snapshot, 1, 'X')
+
+    expect(materializePieceTableFullText(inserted)).toBe('aXc')
+    expect(resolveSelection(inserted, result.selections.selections[0]!)).toMatchObject({
+      headOffset: 1,
+      startOffset: 1,
+    })
+  })
+
+  it('does not copy range-start bias when deleted text collapses a selection', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const selection = createAnchorSelection(snapshot, 1, 2)
+    const deleted = deleteFromPieceTable(snapshot, 1, 2)
+    const normalized = normalizeSelectionSet(deleted, createSelectionSet([selection]))
+    const inserted = insertIntoPieceTable(deleted, 1, 'X')
+
+    expect(resolveSelection(inserted, normalized.selections[0]!)).toMatchObject({
+      headOffset: 2,
+      startOffset: 2,
     })
   })
 
@@ -199,6 +392,107 @@ describe('selections', () => {
       startOffset: 0,
       endOffset: 0,
     })
+  })
+
+  it('keeps affinity-distinct backspace carets and last-added identity in either order', () => {
+    const affinityOrders = [
+      ['before', 'after'],
+      ['after', 'before'],
+    ] as const
+
+    for (const affinities of affinityOrders) {
+      const snapshot = createPieceTableSnapshot('abc')
+      const set = affinityBackspaceSelectionSet(snapshot, affinities)
+      const normalized = normalizeSelectionSet(snapshot, set)
+      const lastAddedId = normalized.selections[normalized.lastAddedIndex ?? 0]?.id
+
+      const result = backspaceSelections(snapshot, set)
+
+      expect(materializePieceTableFullText(result.snapshot)).toBe('ac')
+      expect(result.edits).toEqual([{ from: 1, text: '', to: 2 }])
+      expect(resolvedBackspaceStates(result)).toEqual([
+        {
+          affinity: 'before',
+          goal: SelectionGoal.horizontal(11),
+          id: 'before',
+          offset: 1,
+        },
+        {
+          affinity: 'after',
+          goal: SelectionGoal.horizontal(22),
+          id: 'after',
+          offset: 1,
+        },
+      ])
+      expect(result.selections.selections[result.selections.lastAddedIndex ?? 0]?.id).toBe(
+        lastAddedId,
+      )
+    }
+  })
+
+  it('retains a document-start caret while another caret backspaces', () => {
+    const snapshot = createPieceTableSnapshot('abc')
+    const set = createSelectionSet([
+      createAnchorSelection(snapshot, 3, 3, { affinity: 'after', id: 'moving' }),
+      createAnchorSelection(snapshot, 0, 0, { affinity: 'before', id: 'stationary' }),
+    ])
+
+    const result = backspaceSelections(snapshot, set)
+
+    expect(materializePieceTableFullText(result.snapshot)).toBe('ab')
+    expect(result.edits).toEqual([{ from: 2, text: '', to: 3 }])
+    expect(
+      result.selections.selections.map((selection) => {
+        const resolved = resolveSelection(result.snapshot, selection)
+        return { affinity: resolved.affinity, id: resolved.id, offset: resolved.headOffset }
+      }),
+    ).toEqual([
+      { affinity: 'before', id: 'stationary', offset: 0 },
+      { affinity: 'after', id: 'moving', offset: 2 },
+    ])
+    expect(result.selections.selections[result.selections.lastAddedIndex ?? 0]?.id).toBe(
+      'stationary',
+    )
+  })
+
+  it('coalesces overlapping indentation deletes without dropping their carets', () => {
+    const snapshot = createPieceTableSnapshot('    x')
+    const set = createSelectionSet([
+      createAnchorSelection(snapshot, 2, 2, { affinity: 'before', id: 'partial' }),
+      createAnchorSelection(snapshot, 4, 4, { affinity: 'after', id: 'full' }),
+    ])
+
+    const result = backspaceSelections(snapshot, set, 4)
+
+    expect(materializePieceTableFullText(result.snapshot)).toBe('x')
+    expect(result.edits).toEqual([{ from: 0, text: '', to: 4 }])
+    expect(
+      result.selections.selections.map((selection) => {
+        const resolved = resolveSelection(result.snapshot, selection)
+        return { affinity: resolved.affinity, id: resolved.id, offset: resolved.headOffset }
+      }),
+    ).toEqual([
+      { affinity: 'before', id: 'partial', offset: 0 },
+      { affinity: 'after', id: 'full', offset: 0 },
+    ])
+  })
+
+  it('preserves selection identity when indentation backspace reorders target ranges', () => {
+    const snapshot = createPieceTableSnapshot('    x')
+    const set = createSelectionSet([
+      createAnchorSelection(snapshot, 2, 3, { affinity: 'before', id: 'range' }),
+      createAnchorSelection(snapshot, 4, 4, { affinity: 'after', id: 'indent' }),
+    ])
+
+    const result = backspaceSelections(snapshot, set, 4)
+
+    expect(materializePieceTableFullText(result.snapshot)).toBe('x')
+    expect(result.edits).toEqual([{ from: 0, text: '', to: 4 }])
+    expect(resolvedBackspaceStates(result)).toEqual([
+      { affinity: 'before', goal: SelectionGoal.none(), id: 'range', offset: 0 },
+      { affinity: 'after', goal: SelectionGoal.none(), id: 'indent', offset: 0 },
+    ])
+    expect(result.selections.selections[result.selections.lastAddedIndex ?? 0]?.id).toBe('indent')
   })
 
   it('deletes selected ranges without deleting collapsed cursors', () => {

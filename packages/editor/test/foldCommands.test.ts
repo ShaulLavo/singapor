@@ -70,12 +70,11 @@ const TREE_LINES = [
 ]
 const TREE_TEXT = TREE_LINES.join('\n')
 
-const DEEP_LINES = [
-  ...EDITOR_FOLD_LEVELS.map((level) => `open${level} {`),
+const DEEP_LINES = EDITOR_FOLD_LEVELS.map((level) => `open${level} {`).concat(
   'leaf',
-  ...[...EDITOR_FOLD_LEVELS].reverse().map((level) => `close${level} }`),
+  [...EDITOR_FOLD_LEVELS].reverse().map((level) => `close${level} }`),
   'tail',
-]
+)
 const DEEP_TEXT = DEEP_LINES.join('\n')
 
 /** A second file, as long as the first and with nothing in it any provider or indentation folds. */

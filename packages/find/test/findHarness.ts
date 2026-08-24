@@ -8,6 +8,7 @@ import {
   insertIntoPieceTable,
   resolveAnchor,
   type PieceTableSnapshot,
+  type SelectionAffinity,
   type TextEdit,
   type TextSnapshot,
 } from '@singapor/core/document'
@@ -24,10 +25,16 @@ import type { EditorFindOptions } from '../src/types'
 
 export type FindRangeTuple = readonly [number, number]
 
+export type FindSelectionFixture = {
+  readonly anchor: number
+  readonly head: number
+  readonly affinity?: SelectionAffinity
+}
+
 export type FindFixture = {
   readonly text: string
   /** Collapsed caret offset, or an anchor/head pair. */
-  readonly selection?: number | FindRangeTuple
+  readonly selection?: number | FindRangeTuple | FindSelectionFixture
   readonly options?: EditorFindOptions
 }
 
@@ -41,6 +48,7 @@ export type FindObservedState = {
   readonly current: FindRangeTuple | null
   readonly scope: readonly FindRangeTuple[] | null
   readonly selections: readonly FindRangeTuple[]
+  readonly selectionDetails: readonly Required<FindSelectionFixture>[]
   readonly count: string
   readonly searchString: string
   readonly toggles: readonly string[]
@@ -268,12 +276,12 @@ function createFindHarness(fixture: FindFixture): FindHarness {
     trackPaintedRanges: (ranges) => store.trackRanges(ranges),
     getSelections: () => selections,
     focusEditor: () => {},
-    setSelection: (anchor, head) => {
-      selections = [resolveSelection([anchor, head])]
+    setSelection: (anchor, head, _timingName, options) => {
+      selections = [resolveSelection({ anchor, head, affinity: options?.affinity })]
     },
     setSelections: (next) => {
       if (next.length === 0) return
-      selections = next.map((range) => resolveSelection([range.anchor, range.head]))
+      selections = next.map((range) => resolveSelection(range))
     },
     setRangeHighlight: (name, ranges) => {
       highlights.set(name, ranges)
@@ -288,7 +296,7 @@ function createFindHarness(fixture: FindFixture): FindHarness {
   const editRegistration = controller.attachEditHost({
     applyEdits: (edits, _timingName, selection) => {
       store.applyEdits(edits)
-      if (selection) selections = [resolveSelection([selection.anchor, selection.head])]
+      if (selection) selections = [resolveSelection(selection)]
       // The editor announces an edit to its contributions whoever made it, so
       // find hears about its own replaces the same way it hears about typing.
       controller.handleViewUpdate('content', null)
@@ -367,6 +375,11 @@ function createFindHarness(fixture: FindFixture): FindHarness {
       selections: selections.map(
         (selection) => [selection.startOffset, selection.endOffset] as const,
       ),
+      selectionDetails: selections.map((selection) => ({
+        anchor: selection.anchorOffset,
+        head: selection.headOffset,
+        affinity: selection.affinity,
+      })),
       count: textOf(container, '.editor-find-count'),
       searchString: widget ? searchInput(container).value : '',
       toggles: pressedToggles(container),
@@ -394,14 +407,26 @@ function recordedTextSource(source: FindTextSource, reads: FindRangeTuple[]): Fi
   }
 }
 
-function resolveSelection(selection: number | FindRangeTuple): EditorFindResolvedSelection {
-  const [anchor, head] = typeof selection === 'number' ? [selection, selection] : selection
+function resolveSelection(
+  selection: number | FindRangeTuple | FindSelectionFixture,
+): EditorFindResolvedSelection {
+  if (typeof selection === 'number') return resolvedSelection(selection, selection, 'after')
+  if (!('anchor' in selection)) return resolvedSelection(selection[0], selection[1], 'after')
+  return resolvedSelection(selection.anchor, selection.head, selection.affinity ?? 'after')
+}
+
+function resolvedSelection(
+  anchor: number,
+  head: number,
+  affinity: SelectionAffinity,
+): EditorFindResolvedSelection {
   return {
     anchorOffset: anchor,
     headOffset: head,
     startOffset: Math.min(anchor, head),
     endOffset: Math.max(anchor, head),
     collapsed: anchor === head,
+    affinity,
   }
 }
 

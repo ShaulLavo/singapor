@@ -28,7 +28,9 @@ describe('DiagnosticsPresenter', () => {
     expect(minimap.setDecorations).toHaveBeenCalledWith('editor.test.diagnostics', [
       expect.objectContaining({ startLineNumber: 1, color: DIAGNOSTIC_MARKER_COLORS.error }),
     ])
-    expect(context.setSelection).toHaveBeenCalledWith(1, 2, 'testLsp.marker.next', 1)
+    expect(context.setSelection).toHaveBeenCalledWith(1, 2, 'testLsp.marker.next', {
+      revealOffset: 1,
+    })
     expect(minimap.clearDecorations).toHaveBeenCalledWith('editor.test.diagnostics')
   })
 

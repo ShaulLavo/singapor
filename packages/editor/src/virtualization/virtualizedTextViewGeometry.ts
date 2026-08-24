@@ -312,6 +312,7 @@ const inlineWidgetWidths = new WeakMap<HTMLElement, number>()
  */
 let inlineWidgetWidthRevision = 0
 let rowGeometrySweepCount = 0
+let rtlTextClassificationScanCount = 0
 
 export function createTextChunkParts(
   node: Text,
@@ -636,6 +637,7 @@ function rtlTextClassification(row: MountedVirtualizedTextRow): RtlTextClassific
 }
 
 function classifyRtlText(text: string): RtlTextClassification {
+  rtlTextClassificationScanCount += 1
   let hasStrongCharacter = false
   let hasBidiControl = false
   let hasNonControl = false
@@ -1028,6 +1030,14 @@ export function resetRowGeometrySweepCount(): void {
 
 export function getRowGeometrySweepCount(): number {
   return rowGeometrySweepCount
+}
+
+export function resetRtlTextClassificationScanCount(): void {
+  rtlTextClassificationScanCount = 0
+}
+
+export function getRtlTextClassificationScanCount(): number {
+  return rtlTextClassificationScanCount
 }
 
 export function unitRectForOffset(

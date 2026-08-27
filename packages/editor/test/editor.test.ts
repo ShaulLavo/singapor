@@ -723,6 +723,15 @@ function mockEditorViewport(
   })
 }
 
+function mockEditorHorizontalViewport(
+  element: HTMLElement,
+  width: number,
+  scrollWidth: number,
+): void {
+  Object.defineProperty(element, 'clientWidth', { configurable: true, value: width })
+  Object.defineProperty(element, 'scrollWidth', { configurable: true, value: scrollWidth })
+}
+
 type ScrollMetricProperty =
   | 'clientHeight'
   | 'clientWidth'
@@ -4396,6 +4405,40 @@ describe('Editor', () => {
       )
       expect(editorRoot().scrollTop).toBeGreaterThan(0)
       expect(resolved.endOffset).toBeGreaterThan(4)
+    })
+
+    it('auto-scrolls sideways while dragging selection past the viewport edge', () => {
+      const session = createDocumentSession('a'.repeat(400))
+      editor.attachSession(session)
+      mockEditorViewport(editorRoot(), 80, 40)
+      mockEditorHorizontalViewport(editorRoot(), 80, 800)
+
+      editorRoot().dispatchEvent(
+        new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 0,
+          clientY: 5,
+          detail: 1,
+        }),
+      )
+      document.dispatchEvent(
+        new MouseEvent('mousemove', {
+          cancelable: true,
+          clientX: 120,
+          clientY: 5,
+        }),
+      )
+      document.dispatchEvent(
+        new MouseEvent('mouseup', {
+          cancelable: true,
+          clientX: 120,
+          clientY: 5,
+        }),
+      )
+
+      expect(editorRoot().scrollLeft).toBeGreaterThan(0)
+      expect(editorRoot().scrollTop).toBe(0)
     })
 
     it('snaps to the bottom visible line end when dragging below the viewport', () => {

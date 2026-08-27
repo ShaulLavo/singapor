@@ -258,12 +258,43 @@ function foldProjection(folds: readonly FoldRange[]): EditorDisplayProjection<'f
 }
 
 describe('mouse selection helpers', () => {
-  it('returns signed auto-scroll deltas near the vertical edges', () => {
-    const rect = { top: 100, bottom: 300, height: 200 } as DOMRect
+  const autoScrollRect = {
+    top: 100,
+    bottom: 300,
+    height: 200,
+    left: 0,
+    right: 400,
+    width: 400,
+  } as DOMRect
 
-    expect(mouseSelectionAutoScrollDelta(99, rect)).toBeLessThan(0)
-    expect(mouseSelectionAutoScrollDelta(301, rect)).toBeGreaterThan(0)
-    expect(mouseSelectionAutoScrollDelta(200, rect)).toBe(0)
+  it('returns signed auto-scroll deltas near the vertical edges', () => {
+    expect(mouseSelectionAutoScrollDelta(200, 99, autoScrollRect).y).toBeLessThan(0)
+    expect(mouseSelectionAutoScrollDelta(200, 301, autoScrollRect).y).toBeGreaterThan(0)
+    expect(mouseSelectionAutoScrollDelta(200, 200, autoScrollRect).y).toBe(0)
+  })
+
+  it('returns signed auto-scroll deltas near the horizontal edges', () => {
+    expect(mouseSelectionAutoScrollDelta(-1, 200, autoScrollRect).x).toBeLessThan(0)
+    expect(mouseSelectionAutoScrollDelta(401, 200, autoScrollRect).x).toBeGreaterThan(0)
+    expect(mouseSelectionAutoScrollDelta(200, 200, autoScrollRect).x).toBe(0)
+  })
+
+  it('starts the zones at the insets, which cover text the pointer cannot see', () => {
+    expect(mouseSelectionAutoScrollDelta(60, 200, autoScrollRect).x).toBe(0)
+    expect(
+      mouseSelectionAutoScrollDelta(60, 200, autoScrollRect, { left: 50, right: 0 }).x,
+    ).toBeLessThan(0)
+    expect(mouseSelectionAutoScrollDelta(340, 200, autoScrollRect).x).toBe(0)
+    expect(
+      mouseSelectionAutoScrollDelta(340, 200, autoScrollRect, { left: 0, right: 50 }).x,
+    ).toBeGreaterThan(0)
+  })
+
+  it('splits the zones evenly when the viewport is narrower than two of them', () => {
+    const narrow = { top: 0, bottom: 40, height: 40, left: 0, right: 40, width: 40 } as DOMRect
+
+    expect(mouseSelectionAutoScrollDelta(30, 30, narrow).x).toBeGreaterThan(0)
+    expect(mouseSelectionAutoScrollDelta(30, 30, narrow).y).toBeGreaterThan(0)
   })
 })
 

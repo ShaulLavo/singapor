@@ -107,16 +107,40 @@ const MOUSE_SELECTION_SCROLL_ZONE_PX = 40
 const MOUSE_SELECTION_MAX_SCROLL_PX = 24
 const MOUSE_SELECTION_MIN_SCROLL_PX = 2
 
-export function mouseSelectionAutoScrollDelta(clientY: number, rect: DOMRect): number {
-  if (rect.height <= 0) return 0
-  if (clientY < rect.top + MOUSE_SELECTION_SCROLL_ZONE_PX) {
-    return -mouseSelectionScrollStep(rect.top + MOUSE_SELECTION_SCROLL_ZONE_PX - clientY)
-  }
-  if (clientY > rect.bottom - MOUSE_SELECTION_SCROLL_ZONE_PX) {
-    return mouseSelectionScrollStep(clientY - (rect.bottom - MOUSE_SELECTION_SCROLL_ZONE_PX))
-  }
+/** How far the viewport should travel this frame on each axis, signed towards the pointer. */
+export type MouseSelectionAutoScrollDelta = {
+  readonly x: number
+  readonly y: number
+}
 
-  return 0
+export const NO_MOUSE_SELECTION_AUTO_SCROLL: MouseSelectionAutoScrollDelta = { x: 0, y: 0 }
+
+type HorizontalInsets = {
+  readonly left: number
+  readonly right: number
+}
+
+const NO_HORIZONTAL_INSETS: HorizontalInsets = { left: 0, right: 0 }
+
+/**
+ * `insets` are the edges that show no text — the sticky gutter, an overlay's reserved padding. The
+ * zones start there, or a pointer over the gutter would sit on text it cannot see and never scroll.
+ */
+export function mouseSelectionAutoScrollDelta(
+  clientX: number,
+  clientY: number,
+  rect: DOMRect,
+  insets: HorizontalInsets = NO_HORIZONTAL_INSETS,
+): MouseSelectionAutoScrollDelta {
+  return {
+    x: autoScrollAxisDelta(
+      clientX,
+      rect.left + insets.left,
+      rect.right - insets.right,
+      rect.width - insets.left - insets.right,
+    ),
+    y: autoScrollAxisDelta(clientY, rect.top, rect.bottom, rect.height),
+  }
 }
 
 export function requestFrame(callback: FrameRequestCallback): number {
@@ -131,6 +155,17 @@ export function cancelFrame(handle: number): void {
   }
 
   clearTimeout(handle)
+}
+
+/** A viewport under two zones wide would sit in both at once and only ever scroll one way. */
+function autoScrollAxisDelta(point: number, start: number, end: number, size: number): number {
+  if (size <= 0) return 0
+
+  const zone = Math.min(MOUSE_SELECTION_SCROLL_ZONE_PX, size / 2)
+  if (point < start + zone) return -mouseSelectionScrollStep(start + zone - point)
+  if (point > end - zone) return mouseSelectionScrollStep(point - (end - zone))
+
+  return 0
 }
 
 function mouseSelectionScrollStep(distance: number): number {

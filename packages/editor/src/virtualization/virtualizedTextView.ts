@@ -35,6 +35,7 @@ import {
   normalizeRowGap,
   normalizeRowHeight,
   normalizeScrollMode,
+  scrollElementPadding,
 } from './virtualizedTextViewHelpers'
 import {
   adoptTokens as adoptViewTokens,
@@ -682,6 +683,15 @@ export class VirtualizedTextView {
 
     this.scrollElement.style[property] = value
     return true
+  }
+
+  /**
+   * How much of each horizontal edge shows something other than text: the padding an overlay
+   * reserved, plus the sticky gutter parked on the left. The same insets the hit test works in.
+   */
+  public textViewportInsets(): { readonly left: number; readonly right: number } {
+    const padding = scrollElementPadding(this.scrollElement)
+    return { left: padding.left + gutterWidth(this.view), right: padding.right }
   }
 
   public reservedOverlayWidth(side: 'left' | 'right'): number {

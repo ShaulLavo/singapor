@@ -63,12 +63,14 @@ import {
   type HiddenInputState,
 } from './input'
 import {
+  NO_MOUSE_SELECTION_AUTO_SCROLL,
   cancelFrame,
   mouseSelectionAutoScrollDelta,
   mouseSelectionEnds,
   mouseTextMove,
   requestFrame,
   type MouseSelectionAnchor,
+  type MouseSelectionAutoScrollDelta,
   type MouseSelectionDrag,
   type MouseSelectionEnds,
   type MouseSelectionGranularity,
@@ -2329,39 +2331,41 @@ export class InputSelectionController {
   }
 
   private updateMouseSelectionAutoScroll(): void {
-    const delta = this.mouseSelectionAutoScrollDelta()
-    if (delta === 0 || !this.canMouseSelectionAutoScroll(delta)) {
+    if (!this.scrollMouseSelection(this.mouseSelectionAutoScrollDelta())) {
       this.stopMouseSelectionAutoScroll()
       return
     }
 
-    this.scrollMouseSelection(delta)
     this.scheduleMouseSelectionAutoScroll()
   }
 
-  private mouseSelectionAutoScrollDelta(): number {
+  private mouseSelectionAutoScrollDelta(): MouseSelectionAutoScrollDelta {
     const drag = this.mouseSelectionDrag
-    if (!drag) return 0
+    if (!drag) return NO_MOUSE_SELECTION_AUTO_SCROLL
 
     const rect = this.options.el.getBoundingClientRect()
-    return mouseSelectionAutoScrollDelta(drag.clientY, rect)
+    return mouseSelectionAutoScrollDelta(
+      drag.clientX,
+      drag.clientY,
+      rect,
+      this.options.view.textViewportInsets(),
+    )
   }
 
-  private canMouseSelectionAutoScroll(delta: number): boolean {
-    const maxScrollTop = Math.max(0, this.options.el.scrollHeight - this.options.el.clientHeight)
-    if (delta < 0) return this.options.el.scrollTop > 0
-    if (delta > 0) return this.options.el.scrollTop < maxScrollTop
-    return false
-  }
+  /** Answers whether the viewport moved, so a drag held against an edge stops the frame loop. */
+  private scrollMouseSelection(delta: MouseSelectionAutoScrollDelta): boolean {
+    const { el } = this.options
+    const maxScrollTop = Math.max(0, el.scrollHeight - el.clientHeight)
+    const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth)
+    const nextScrollTop = clamp(el.scrollTop + delta.y, 0, maxScrollTop)
+    const nextScrollLeft = clamp(el.scrollLeft + delta.x, 0, maxScrollLeft)
+    if (nextScrollTop === el.scrollTop && nextScrollLeft === el.scrollLeft) return false
 
-  private scrollMouseSelection(delta: number): void {
-    const maxScrollTop = Math.max(0, this.options.el.scrollHeight - this.options.el.clientHeight)
-    const nextScrollTop = clamp(this.options.el.scrollTop + delta, 0, maxScrollTop)
-    if (nextScrollTop === this.options.el.scrollTop) return
-
-    this.options.el.scrollTop = nextScrollTop
-    this.options.view.setScrollMetrics(this.options.el.scrollTop, this.options.el.clientHeight)
+    el.scrollTop = nextScrollTop
+    el.scrollLeft = nextScrollLeft
+    this.options.view.setScrollMetrics(el.scrollTop, el.clientHeight, undefined, el.scrollLeft)
     this.updateMouseSelectionFromDragPoint()
+    return true
   }
 
   private scheduleMouseSelectionAutoScroll(): void {

@@ -4,7 +4,11 @@ import type {
   EditorSyntaxSession,
   EditorSyntaxSessionOptions,
 } from '../syntax/session'
-import type { EditorPlugin } from '../plugins'
+import type {
+  EditorInitialHighlightStatus,
+  EditorInitialPaintEvent,
+  EditorPlugin,
+} from '../plugins'
 import type { EditorTheme } from '../theme'
 import type {
   EditorCursorLineHighlightOptions,
@@ -69,6 +73,7 @@ export type EditorState = {
   readonly editability: EditorEditability
   readonly languageId: EditorSyntaxLanguageId | null
   readonly syntaxStatus: EditorSyntaxStatus
+  readonly initialHighlightStatus: EditorInitialHighlightStatus
   readonly cursor: {
     readonly row: number
     readonly column: number
@@ -87,6 +92,7 @@ export type EditorOptions = {
   readonly editability?: EditorEditability
   readonly theme?: EditorTheme
   readonly onChange?: EditorChangeHandler
+  readonly onInitialPaint?: (event: EditorInitialPaintEvent) => void
   readonly plugins?: readonly EditorPlugin[]
   readonly keymap?: EditorKeymapOptions
   readonly cursorLineHighlight?: EditorCursorLineHighlightOptions

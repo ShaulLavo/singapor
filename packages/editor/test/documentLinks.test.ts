@@ -17,6 +17,13 @@ function rows(lines: readonly string[]): EditorVisibleRowSnapshot[] {
       startOffset: offset,
       text,
       top: index * 20,
+      leftSpacerWidth: 0,
+      contentCursorLine: false,
+      gutterNumberCursorLine: false,
+      gutterCursorLineBackgroundLaneIds: [],
+      mountedPaintSupport: 'replayable',
+      chunks: [],
+      foldMarker: null,
     }
     offset += text.length + 1
     return row

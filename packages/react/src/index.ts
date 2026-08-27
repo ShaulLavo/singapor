@@ -31,6 +31,7 @@ import {
 import type { EditorSyntaxLanguageId } from '@singapor/core/syntax'
 import type { EditorTheme, HiddenCharactersMode } from '@singapor/core/rendering'
 import type {
+  EditorInitialPaintEvent,
   EditorPlugin,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
@@ -63,7 +64,10 @@ export type ReactEditorDocumentTextSyncMode = 'open' | 'incremental'
 
 export type ReactEditorSelection = EditorControlledSelection
 
-export type ReactEditorOptions = Omit<EditorOptions, 'hiddenCharacters' | 'onChange' | 'theme'> & {
+export type ReactEditorOptions = Omit<
+  EditorOptions,
+  'hiddenCharacters' | 'onChange' | 'onInitialPaint' | 'theme'
+> & {
   readonly document?: ReactEditorDocument | null | undefined
   readonly theme?: EditorTheme | null | undefined
   readonly hiddenCharacters?: HiddenCharactersMode | undefined
@@ -71,6 +75,7 @@ export type ReactEditorOptions = Omit<EditorOptions, 'hiddenCharacters' | 'onCha
   readonly scrollPosition?: EditorScrollPosition | null | undefined
   readonly storeSync?: ReactEditorStoreSyncMode
   readonly onChange?: EditorChangeHandler
+  readonly onInitialPaint?: (event: EditorInitialPaintEvent) => void
 }
 
 export type ReactEditorStoreSyncMode = 'full' | 'none'
@@ -243,6 +248,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   private readonly optionSync: EditorOptionSync = createEditorOptionSync()
   private syncedPlugins: readonly EditorPlugin[] | null = null
   private syncedStoreSyncMode: ReactEditorStoreSyncMode | null = null
+  private editorIncarnation = 0
   private options: ReactEditorOptions
 
   public constructor(options: ReactEditorOptions) {
@@ -260,6 +266,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
 
   public dispose(): void {
     this.store.batch(() => {
+      this.editorIncarnation += 1
       disposeEditor(this.store)
       this.documentState.clear()
       this.optionSync.reset()
@@ -357,7 +364,9 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   }
 
   private mountEditor(element: HTMLElement): void {
-    const instance = new Editor(element, this.createConstructorOptions())
+    this.editorIncarnation += 1
+    const editorIncarnation = this.editorIncarnation
+    const instance = new Editor(element, this.createConstructorOptions(editorIncarnation))
     this.markPluginsSynced(this.options)
 
     this.store.update({
@@ -368,11 +377,12 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     this.syncMountedOptions(instance)
   }
 
-  private createConstructorOptions(): EditorOptions {
+  private createConstructorOptions(editorIncarnation: number): EditorOptions {
     const {
       document: _document,
       hiddenCharacters,
       onChange: _onChange,
+      onInitialPaint: _onInitialPaint,
       plugins: _plugins,
       scrollPosition: _scrollPosition,
       selection: _selection,
@@ -390,7 +400,18 @@ class ReactEditorControllerImplementation implements ReactEditorController {
         this.syncChange(state, change)
         this.options.onChange?.(state, change)
       },
+      onInitialPaint: (event) => this.forwardInitialPaint(event, editorIncarnation),
     }
+  }
+
+  private forwardInitialPaint(event: EditorInitialPaintEvent, editorIncarnation: number): void {
+    // @justification Defers delivery until the mount survives React's synchronous StrictMode
+    // replay; the incarnation guard cancels disposed mounts, and no editor work is scheduled.
+    queueMicrotask(() => {
+      if (editorIncarnation !== this.editorIncarnation) return
+
+      this.options.onInitialPaint?.(event)
+    })
   }
 
   private syncMountedOptions(editor: Editor): void {

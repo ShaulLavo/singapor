@@ -208,6 +208,7 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
     languageId: null,
     fullText: text,
     textVersion: 1,
+    initialHighlightStatus: 'painted',
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
@@ -230,6 +231,8 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
     lineCount: lineStarts.length,
     contentWidth: 88,
     totalHeight: lineStarts.length * 20,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 2,
     foldMarkers: [],
     visibleRows: [],
@@ -241,6 +244,12 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
       clientHeight: 200,
       clientWidth: 88,
       visibleRange: { start: 0, end: lineStarts.length },
+    },
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
     },
   }
 }

@@ -422,6 +422,7 @@ function snapshot(): EditorViewSnapshot {
     languageId: 'typescript',
     fullText: TEXT,
     textVersion: 1,
+    initialHighlightStatus: 'painted',
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
@@ -436,6 +437,8 @@ function snapshot(): EditorViewSnapshot {
     lineCount: LINES.length,
     contentWidth: 160,
     totalHeight: LINES.length * ROW_HEIGHT,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 2,
     foldMarkers: foldMarkers(),
     visibleRows: visibleRows(0, LINES.length - 1),
@@ -449,6 +452,12 @@ function snapshot(): EditorViewSnapshot {
       borderBoxHeight: 100,
       borderBoxWidth: 320,
       visibleRange: { start: 0, end: LINES.length },
+    },
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
     },
   }
 }
@@ -531,6 +540,13 @@ function deepSnapshot(): EditorViewSnapshot {
       primaryText: true,
       top: row * ROW_HEIGHT,
       height: ROW_HEIGHT,
+      leftSpacerWidth: 0,
+      contentCursorLine: false,
+      gutterNumberCursorLine: false,
+      gutterCursorLineBackgroundLaneIds: [],
+      mountedPaintSupport: 'replayable',
+      chunks: [],
+      foldMarker: null,
     })
   }
 
@@ -571,6 +587,13 @@ function visibleRows(from: number, to: number): EditorViewSnapshot['visibleRows'
       primaryText: true,
       top: row * ROW_HEIGHT,
       height: ROW_HEIGHT,
+      leftSpacerWidth: 0,
+      contentCursorLine: false,
+      gutterNumberCursorLine: false,
+      gutterCursorLineBackgroundLaneIds: [],
+      mountedPaintSupport: 'replayable',
+      chunks: [],
+      foldMarker: null,
     })
   }
   return rows

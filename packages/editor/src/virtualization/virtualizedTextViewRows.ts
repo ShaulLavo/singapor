@@ -13,6 +13,7 @@ import { clamp } from '../style-utils'
 import type { InlineMap } from '../inlineMap'
 import type { SelectionAffinity } from '../selections'
 import type {
+  EditorMountedChunkPaintJSON,
   EditorGutterContribution,
   EditorGutterRowContext,
   EditorGutterWidthContext,
@@ -246,6 +247,13 @@ function createRow(view: VirtualizedTextViewInternal): MountedVirtualizedTextRow
     chunks: [],
     top: Number.NaN,
     height: Number.NaN,
+    leftSpacerWidth: 0,
+    primaryText: false,
+    foldMarker: null,
+    gutterNumberCursorLine: false,
+    gutterCursorLineBackgroundLaneIds: [],
+    mountedPaintSupport: 'replayable',
+    coreBidiRefusal: false,
     textRevision: -1,
     tokenHighlightSlotId: view.nextTokenHighlightSlotId++,
     chunkKey: '',
@@ -550,13 +558,17 @@ function updateRow(
   updatePass: RowUpdatePass,
 ): void {
   if (isRowCurrent(view, row, item, snapshot)) {
-    updateGutterRowElement(view, row, item, mountedRowUpdateState(view, row, updatePass))
+    const state = mountedRowUpdateState(view, row, updatePass)
+    updateCursorLineContentClass(view, row, state.cursorVirtualLine)
+    updateGutterRowElement(view, row, item, state)
+    updateMountedRowPaintFacts(row, state)
     return
   }
 
   const state = rowUpdateState(view, item.index, updatePass)
 
   updateRowElement(view, row, item, state, snapshot)
+  updateMountedRowPaintFacts(row, state)
   updateMutableRow(row, {
     bufferRow: state.bufferRow,
     endOffset: state.endOffset,
@@ -630,6 +642,7 @@ function updateRowAfterSameLineEdit(
     patch,
     snapshot,
   )
+  updateMountedRowPaintFacts(row, state)
   updateMutableRow(row, {
     bufferRow: state.bufferRow,
     endOffset: state.endOffset,
@@ -743,6 +756,7 @@ function updateRowTextChunks(
   mapping: RowInlineMapping | null,
   snapshot = view.virtualizer.getSnapshot(),
 ): void {
+  setCoreBidiRefusal(row, false)
   const runs = inlineRowRuns(mapping, text)
   const refusal = bidiMeasurementRefusal(view, text)
   if (refusal) {
@@ -770,7 +784,7 @@ function setDirectRowText(
   mapping: RowInlineMapping | null,
 ): void {
   if (reuseDirectRowText(row, text, startOffset, mapping)) return
-  row.leftSpacerElement.style.width = '0px'
+  setLeftSpacerWidth(row, 0)
 
   // Splitting costs the row the in-place `Text.data` patch it lives on while the user types, so a
   // row short enough to be scanned cheaply keeps its single node and pays nothing.
@@ -876,6 +890,7 @@ function syncDirectRowChunk(
   mapping: RowInlineMapping | null,
   parts: readonly VirtualizedTextChunkPart[] = createTextChunkParts(row.textNode, 0, text.length),
   textNode = row.textNode,
+  mountedPaint = captureMountedPaint(parts),
 ): void {
   const chunk = {
     startOffset,
@@ -886,8 +901,31 @@ function syncDirectRowChunk(
     element: null,
     textNode,
     parts,
+    mountedPaint,
   }
   updateMutableRowChunks(row, [chunk])
+}
+
+function captureMountedPaint(
+  parts: readonly VirtualizedTextChunkPart[],
+): EditorMountedChunkPaintJSON {
+  const captured: Extract<EditorMountedChunkPaintJSON, { kind: 'replayable' }>['parts'][number][] =
+    []
+  for (const part of parts) {
+    if (part.kind === 'widget') return { kind: 'unreplayable-widget' }
+    if (part.kind === 'text') {
+      captured.push({ kind: 'text', text: part.node.data })
+      continue
+    }
+
+    captured.push({
+      kind: 'control',
+      text: part.element.textContent ?? '',
+      widthCells: part.widthCells,
+    })
+  }
+
+  return { kind: 'replayable', parts: captured }
 }
 
 function syncSimpleDirectRowChunk(
@@ -907,6 +945,7 @@ function syncSimpleDirectRowChunk(
     endOffset: number
     localEnd: number
     text: string
+    mountedPaint: EditorMountedChunkPaintJSON
   }
   mutableChunk.startOffset = startOffset
   // Chunk offsets are buffer offsets; with an inline mapping the display text is shorter than the
@@ -915,6 +954,10 @@ function syncSimpleDirectRowChunk(
   mutableChunk.endOffset = offsetForLocalIndex(mapping, startOffset, text.length, 'after')
   mutableChunk.localEnd = text.length
   mutableChunk.text = text
+  mutableChunk.mountedPaint = {
+    kind: 'replayable',
+    parts: [{ kind: 'text', text: chunk.textNode.data }],
+  }
 
   const part = chunk.parts[0] as { localEnd: number }
   part.localEnd = text.length
@@ -993,7 +1036,7 @@ function setInlineRunRowText(
   mapping: RowInlineMapping | null,
   runs: InlineRowRuns,
 ): void {
-  row.leftSpacerElement.style.width = '0px'
+  setLeftSpacerWidth(row, 0)
   const placements = runs.widgets.map((run) => inlineWidgetPlacement(view, run))
   const maxTextNodeLength = bidiTextNodeLength(view, text)
   const chunk = row.chunks[0]
@@ -1369,9 +1412,10 @@ function setChunkedRowText(
   const elements = chunks
     .map((chunk) => chunk.element)
     .filter((element): element is HTMLSpanElement => element !== null)
-  row.leftSpacerElement.style.width = `${Math.round(
+  const leftSpacerWidth = Math.round(
     estimatedDisplayCellForColumn(text, window.start, view.tabSize) * characterWidth(view),
-  )}px`
+  )
+  setLeftSpacerWidth(row, leftSpacerWidth)
   row.element.replaceChildren(row.leftSpacerElement, ...elements)
   setTextRenderMode(row, 'chunked')
   updateMutableRowChunks(row, chunks)
@@ -1430,6 +1474,7 @@ function createRowChunk(
     element,
     textNode: rendered.textNode,
     parts: rendered.parts,
+    mountedPaint: captureMountedPaint(rendered.parts),
   }
 }
 
@@ -1518,7 +1563,7 @@ function setUnmeasurableBidiRowText(
   endEndpoint.dataset.editorBidiEndpoint = 'end'
   endEndpoint.textContent = bidiMeasurementRefusalLabel(refusal)
   element.append(startEndpoint, endEndpoint)
-  row.leftSpacerElement.style.width = '0px'
+  setLeftSpacerWidth(row, 0)
   row.element.replaceChildren(element)
   setTextRenderMode(row, 'widget')
   syncDirectRowChunk(
@@ -1541,7 +1586,15 @@ function setUnmeasurableBidiRowText(
       },
     ],
     document.createTextNode(''),
+    {
+      kind: 'replayable',
+      parts: [
+        { kind: 'refusal', text: startEndpoint.textContent ?? '' },
+        { kind: 'refusal', text: endEndpoint.textContent ?? '' },
+      ],
+    },
   )
+  setCoreBidiRefusal(row, true)
 }
 
 function bidiMeasurementRefusalLabel(refusal: BidiMeasurementRefusal): string {
@@ -1664,6 +1717,7 @@ function updateGutterRowElement(
   item: FixedRowVirtualItem,
   state: RowUpdateState,
 ): void {
+  updateMountedGutterFacts(view, row, state)
   if (view.gutterContributions.length === 0) return
 
   if (row.index !== item.index) {
@@ -1674,6 +1728,26 @@ function updateGutterRowElement(
   }
 
   updateGutterContributionCells(view, row, state)
+}
+
+function updateMountedGutterFacts(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  state: RowUpdateState,
+): void {
+  const mutable = row as {
+    gutterNumberCursorLine: boolean
+    gutterCursorLineBackgroundLaneIds: readonly string[]
+  }
+  mutable.gutterNumberCursorLine = state.cursorLine && view.cursorLineHighlight.gutterNumber
+  if (!state.cursorLine) {
+    mutable.gutterCursorLineBackgroundLaneIds = []
+    return
+  }
+
+  mutable.gutterCursorLineBackgroundLaneIds = view.gutterContributions
+    .filter((contribution) => cursorLineGutterBackgroundEnabled(view, contribution.id))
+    .map((contribution) => contribution.id)
 }
 
 function positionRowElement(
@@ -1785,9 +1859,11 @@ function refreshCursorLineGutterCells(
   row: MountedVirtualizedTextRow,
   updatePass = createRowUpdatePass(view),
 ): void {
+  const state = mountedRowUpdateState(view, row, updatePass)
+  updateMountedGutterFacts(view, row, state)
   if (view.gutterContributions.length === 0) return
 
-  updateGutterContributionCells(view, row, mountedRowUpdateState(view, row, updatePass))
+  updateGutterContributionCells(view, row, state)
 }
 
 function updateCursorLineContentClass(
@@ -1960,6 +2036,34 @@ function setTextRenderMode(
 ): void {
   const mutable = row as { textRenderMode: VirtualizedTextRenderMode }
   mutable.textRenderMode = textRenderMode
+}
+
+function setLeftSpacerWidth(row: MountedVirtualizedTextRow, width: number): void {
+  const mutable = row as { leftSpacerWidth: number }
+  mutable.leftSpacerWidth = width
+  row.leftSpacerElement.style.width = `${width}px`
+}
+
+function setCoreBidiRefusal(row: MountedVirtualizedTextRow, active: boolean): void {
+  const mutable = row as { coreBidiRefusal: boolean }
+  mutable.coreBidiRefusal = active
+}
+
+function updateMountedRowPaintFacts(row: MountedVirtualizedTextRow, state: RowUpdateState): void {
+  const unsupportedClass =
+    row.inlineKindsClassName.length > 0 ||
+    row.rowDecorationClassName.length > 0 ||
+    row.rowDecorationGutterClassName.length > 0
+  const unsupportedWidget = row.textRenderMode === 'widget' && !row.coreBidiRefusal
+  const mutable = row as {
+    primaryText: boolean
+    foldMarker: VirtualizedFoldMarker | null
+    mountedPaintSupport: MountedVirtualizedTextRow['mountedPaintSupport']
+  }
+  mutable.primaryText = state.primaryText
+  mutable.foldMarker = state.foldMarker
+  mutable.mountedPaintSupport =
+    unsupportedClass || unsupportedWidget ? 'unreplayable-plugin-css' : 'replayable'
 }
 
 function setCursorLineContentActive(

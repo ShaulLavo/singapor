@@ -390,6 +390,13 @@ class EditorFixture {
       primaryText: true,
       top: index * ROW_HEIGHT,
       height: ROW_HEIGHT,
+      leftSpacerWidth: 0,
+      contentCursorLine: false,
+      gutterNumberCursorLine: false,
+      gutterCursorLineBackgroundLaneIds: [],
+      mountedPaintSupport: 'replayable',
+      chunks: [],
+      foldMarker: null,
     }))
 
     return {
@@ -397,6 +404,7 @@ class EditorFixture {
       languageId: 'typescript' as EditorViewSnapshot['languageId'],
       fullText: this.text,
       textVersion: this.textVersion,
+      initialHighlightStatus: 'painted',
       lineStarts,
       documentSyncPoint: this.#chain.point(this.textVersion),
       changesSinceDocumentSyncPoint: (point, scope) =>
@@ -410,6 +418,8 @@ class EditorFixture {
       lineCount: lineStarts.length,
       contentWidth: 0,
       totalHeight: rows.length * ROW_HEIGHT,
+      gutterWidth: 0,
+      gutterLayout: { fixedWidth: 0, lanes: [] },
       tabSize: 2,
       foldMarkers: [],
       visibleRows: rows,
@@ -424,6 +434,12 @@ class EditorFixture {
           start: 0,
           end: rows.length,
         } as EditorViewSnapshot['viewport']['visibleRange'],
+      },
+      toJSON() {
+        throw new Error('not used by this fixture')
+      },
+      toVisibleSnapshot() {
+        return null
       },
     }
   }

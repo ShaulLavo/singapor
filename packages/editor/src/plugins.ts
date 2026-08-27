@@ -5,7 +5,7 @@ import type { EditorCommandContext, EditorCommandId } from './editor/commands'
 import { EditorDisposableStore, MutableEditorDisposable } from './editor/disposables'
 import type { PieceTableSnapshot } from './pieceTable/pieceTableTypes'
 import type { SnippetMirrorRange, SnippetSessionStop } from './editor/snippetSession'
-import type { EditorTheme } from './theme'
+import type { EditorSyntaxThemeColor, EditorTheme, EditorThemeType } from './theme'
 import type { EditorToken, TextEdit } from './tokens'
 import type { DisplayTextRowSource, InjectedTextRow } from './displayTransforms'
 import {
@@ -181,6 +181,68 @@ export type EditorResolvedSelection = {
   readonly affinity: SelectionAffinity
 }
 
+export type EditorInitialHighlightStatus = 'loading' | 'painted' | 'plain' | 'degraded' | 'error'
+
+export type EditorInitialPaintEvent =
+  | {
+      readonly phase: 'text'
+      readonly documentId: string | null
+      readonly documentGeneration: number
+      readonly textVersion: number
+    }
+  | {
+      readonly phase: 'highlight-settled'
+      readonly documentId: string | null
+      readonly documentGeneration: number
+      readonly textVersion: number
+      readonly status: Exclude<EditorInitialHighlightStatus, 'loading'>
+    }
+
+export type EditorTokenStyleJSON = {
+  readonly color?: string
+  readonly backgroundColor?: string
+  readonly fontStyle?: 'normal' | 'italic'
+  readonly fontWeight?: string | number
+  readonly textDecoration?: string
+}
+
+export type EditorThemeJSON = {
+  readonly type?: EditorThemeType
+  readonly backgroundColor?: string
+  readonly foregroundColor?: string
+  readonly gutterBackgroundColor?: string
+  readonly gutterForegroundColor?: string
+  readonly caretColor?: string
+  readonly minimapBackgroundColor?: string
+  readonly syntax?: Readonly<Partial<Record<EditorSyntaxThemeColor, string>>>
+  readonly colors?: Readonly<Record<string, string>>
+}
+
+export type EditorMountedChunkPaintPartJSON =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'control'; readonly text: string; readonly widthCells: number }
+  | { readonly kind: 'refusal'; readonly text: string }
+
+export type EditorMountedChunkPaintJSON =
+  | { readonly kind: 'replayable'; readonly parts: readonly EditorMountedChunkPaintPartJSON[] }
+  | { readonly kind: 'unreplayable-widget' }
+
+export type EditorVisibleChunkSnapshot = {
+  readonly sourceStartOffset: number
+  readonly sourceEndOffset: number
+  readonly rowLocalStart: number
+  readonly rowLocalEnd: number
+  readonly text: string
+  readonly mountedPaint: EditorMountedChunkPaintJSON
+}
+
+export type EditorVisibleChunkSnapshotJSON = EditorVisibleChunkSnapshot
+
+export type EditorVisibleGutterLayoutJSON = {
+  readonly fixedWidth: number
+  readonly lanes: readonly { readonly id: string; readonly width: number }[]
+}
+
 export type EditorViewportSnapshot = {
   readonly scrollTop: number
   readonly scrollLeft: number
@@ -191,6 +253,18 @@ export type EditorViewportSnapshot = {
   readonly borderBoxHeight?: number
   readonly borderBoxWidth?: number
   readonly visibleRange: FixedRowVisibleRange
+}
+
+export type EditorViewportSnapshotJSON = {
+  readonly scrollTop: number
+  readonly scrollLeft: number
+  readonly scrollHeight: number
+  readonly scrollWidth: number
+  readonly clientHeight: number
+  readonly clientWidth: number
+  readonly borderBoxHeight: number | null
+  readonly borderBoxWidth: number | null
+  readonly visibleRange: { readonly start: number; readonly end: number }
 }
 
 export type EditorVisibleRowSnapshot = {
@@ -206,6 +280,123 @@ export type EditorVisibleRowSnapshot = {
   readonly primaryText: boolean
   readonly top: number
   readonly height: number
+  readonly leftSpacerWidth: number
+  readonly contentCursorLine: boolean
+  readonly gutterNumberCursorLine: boolean
+  readonly gutterCursorLineBackgroundLaneIds: readonly string[]
+  readonly mountedPaintSupport: 'replayable' | 'unreplayable-plugin-css'
+  readonly chunks: readonly EditorVisibleChunkSnapshot[]
+  readonly foldMarker: VirtualizedFoldMarker | null
+}
+
+export type EditorVisibleRowSnapshotJSON = {
+  readonly index: number
+  readonly bufferRow: number
+  readonly source: DisplayTextRowSource
+  readonly injectedTextRowId: string | null
+  readonly startOffset: number
+  readonly endOffset: number
+  readonly text: string
+  readonly kind: 'text'
+  readonly primaryText: boolean
+  readonly top: number
+  readonly height: number
+  readonly leftSpacerWidth: number
+  readonly contentCursorLine: boolean
+  readonly gutterNumberCursorLine: boolean
+  readonly gutterCursorLineBackgroundLaneIds: readonly string[]
+  readonly mountedPaintSupport: 'replayable' | 'unreplayable-plugin-css'
+  readonly chunks: readonly EditorVisibleChunkSnapshotJSON[]
+  readonly foldMarker: VirtualizedFoldMarker | null
+}
+
+export type EditorVisiblePaintRunJSON = {
+  /** Half-open UTF-16 offsets into the concatenated text paint parts. */
+  readonly start: number
+  readonly end: number
+  readonly style: {
+    readonly color?: string
+    readonly backgroundColor?: string
+    readonly textDecoration?: string
+  }
+}
+
+export type EditorVisiblePaintChunkJSON = {
+  readonly sourceStartOffset: number
+  readonly sourceEndOffset: number
+  readonly rowLocalStart: number
+  readonly rowLocalEnd: number
+  readonly parts: readonly EditorMountedChunkPaintPartJSON[]
+  readonly replayFidelity: 'exact' | 'plain-transformed' | 'plain-overlap' | 'plain-core-rendered'
+  readonly runs: readonly EditorVisiblePaintRunJSON[]
+}
+
+export type EditorVisiblePaintRowJSON = {
+  readonly index: number
+  readonly bufferRow: number
+  readonly source: DisplayTextRowSource
+  readonly injectedTextRowId: string | null
+  readonly primaryText: boolean
+  readonly top: number
+  readonly height: number
+  readonly leftSpacerWidth: number
+  readonly contentCursorLine: boolean
+  readonly gutterNumberCursorLine: boolean
+  readonly gutterCursorLineBackgroundLaneIds: readonly string[]
+  readonly foldMarker: VirtualizedFoldMarker | null
+  readonly chunks: readonly EditorVisiblePaintChunkJSON[]
+}
+
+export type EditorVisibleSnapshotJSON = {
+  readonly kind: 'editor-visible'
+  readonly schemaVersion: 1
+  readonly documentId: string | null
+  readonly languageId: EditorSyntaxLanguageId | null
+  readonly theme: EditorThemeJSON | null
+  readonly textVersion: number
+  readonly initialHighlightStatus: EditorInitialHighlightStatus
+  readonly metrics: { readonly rowHeight: number; readonly characterWidth: number }
+  readonly lineCount: number
+  readonly contentWidth: number
+  readonly totalHeight: number
+  readonly gutterWidth: number
+  readonly gutterLayout: EditorVisibleGutterLayoutJSON
+  readonly tabSize: number
+  readonly viewport: EditorViewportSnapshotJSON
+  readonly rows: readonly EditorVisiblePaintRowJSON[]
+}
+
+export type EditorVisibleSnapshot = EditorVisibleSnapshotJSON & {
+  toJSON(): EditorVisibleSnapshotJSON
+}
+
+export type EditorViewSnapshotJSON = {
+  readonly kind: 'editor-view'
+  readonly schemaVersion: 1
+  readonly documentId: string | null
+  readonly languageId: EditorSyntaxLanguageId | null
+  readonly theme: EditorThemeJSON | null
+  readonly fullText: string
+  readonly textVersion: number
+  readonly initialHighlightStatus: EditorInitialHighlightStatus
+  readonly lineStarts: readonly number[]
+  readonly tokens: readonly {
+    readonly start: number
+    readonly end: number
+    readonly style: EditorTokenStyleJSON
+  }[]
+  readonly brackets: readonly BracketInfo[]
+  readonly selections: readonly EditorResolvedSelection[]
+  readonly metrics: { readonly rowHeight: number; readonly characterWidth: number }
+  readonly lineCount: number
+  readonly contentWidth: number
+  readonly totalHeight: number
+  readonly gutterWidth: number
+  readonly gutterLayout: EditorVisibleGutterLayoutJSON
+  readonly tabSize: number
+  readonly foldMarkers: readonly VirtualizedFoldMarker[]
+  readonly visibleRows: readonly EditorVisibleRowSnapshotJSON[]
+  readonly viewport: EditorViewportSnapshotJSON
 }
 
 // Read-only line-start access without materializing the full array; see
@@ -225,6 +416,7 @@ export type EditorViewSnapshot = {
   readonly textSnapshot?: TextSnapshot
   readonly fullText: string
   readonly textVersion: number
+  readonly initialHighlightStatus: EditorInitialHighlightStatus
   readonly documentSyncPoint: DocumentSyncPoint
   readonly changesSinceDocumentSyncPoint: (
     point: DocumentSyncPoint,
@@ -242,10 +434,19 @@ export type EditorViewSnapshot = {
   readonly lineCount: number
   readonly contentWidth: number
   readonly totalHeight: number
+  readonly gutterWidth: number
+  readonly gutterLayout: EditorVisibleGutterLayoutJSON
   readonly tabSize: number
   readonly foldMarkers: readonly VirtualizedFoldMarker[]
   readonly visibleRows: readonly EditorVisibleRowSnapshot[]
   readonly viewport: EditorViewportSnapshot
+  /** Materializes full text and line starts; intentionally O(document size). */
+  toJSON(): EditorViewSnapshotJSON
+  /**
+   * Copies mounted vertical rows and horizontal chunks. Indexed built-in tokens stay viewport-bounded;
+   * an unindexed external array may be scanned once. Unsupported mounted plugin paint returns null.
+   */
+  toVisibleSnapshot(): EditorVisibleSnapshot | null
 }
 
 export type EditorOverlaySide = 'left' | 'right'

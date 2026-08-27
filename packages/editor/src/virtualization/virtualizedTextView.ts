@@ -829,6 +829,19 @@ export class VirtualizedTextView {
     return {
       lineCount: view.lineStarts.length,
       contentWidth: view.contentWidth,
+      gutterWidth: view.currentGutterWidth,
+      gutterLayout: {
+        fixedWidth:
+          view.currentGutterWidth -
+          Array.from(view.gutterContributionWidths.values()).reduce(
+            (total, width) => total + width,
+            0,
+          ),
+        lanes: view.gutterContributions.map((contribution) => ({
+          id: contribution.id,
+          width: view.gutterContributionWidths.get(contribution.id) ?? 0,
+        })),
+      },
       foldMapActive: view.model.foldMap !== null,
       metrics: view.metrics,
       scrollHeight: Math.max(snapshot.viewportHeight, snapshot.scrollHeight),

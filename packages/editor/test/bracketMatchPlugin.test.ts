@@ -128,11 +128,14 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
     changesSinceDocumentSyncPoint: unchangedChangesSinceDocumentSyncPoint,
     brackets: options.brackets ?? BRACKETS,
     contentWidth: 80,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     documentId: 'bracket-test',
     documentSyncPoint: TEST_DOCUMENT_SYNC_POINT,
     foldMarkers: [],
     fullText: TEXT,
     languageId: 'typescript',
+    initialHighlightStatus: 'painted',
     lineCount: 1,
     lineStarts: [0],
     metrics: { characterWidth: 8, rowHeight: 20 },
@@ -159,6 +162,12 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
       visibleRange: { end: 1, start: 0 },
     },
     visibleRows: [],
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
+    },
   }
 }
 

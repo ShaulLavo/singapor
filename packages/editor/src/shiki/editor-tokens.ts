@@ -1,5 +1,10 @@
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 import {
+  appendEditorTokenIndexEntry,
+  createEditorTokenIndexBuilder,
+  finishEditorTokenIndex,
+} from '../editor/tokenIndex'
+import {
   createPackedEditorTokenWriter,
   finishPackedEditorTokenWriter,
   writePackedEditorToken,
@@ -85,6 +90,7 @@ function hasEditorTokenStyle(token: ShikiToken): boolean {
 
 export function tokenLinesToEditorTokens(lines: readonly TokenLineSnapshot[]): EditorToken[] {
   const tokens: EditorToken[] = []
+  const index = createEditorTokenIndexBuilder()
   const palette = createEditorTokenStylePalette()
   let lineStart = 0
 
@@ -92,10 +98,11 @@ export function tokenLinesToEditorTokens(lines: readonly TokenLineSnapshot[]): E
     const line = lines[lineIndex]
     if (!line) continue
 
-    appendEditorTokensFromLine(tokens, line, lineStart, palette)
+    appendEditorTokensFromLine(tokens, line, lineStart, palette, index)
     lineStart = nextLineStart(lineStart, line.text.length, lineIndex, lines.length)
   }
 
+  finishEditorTokenIndex(tokens, index)
   return tokens
 }
 
@@ -104,6 +111,7 @@ function appendEditorTokensFromLine(
   line: TokenLineSnapshot,
   lineStart: number,
   palette: EditorTokenStylePalette,
+  index: ReturnType<typeof createEditorTokenIndexBuilder>,
 ): void {
   for (const token of line.tokens) {
     if (token.content.length === 0) continue
@@ -112,7 +120,9 @@ function appendEditorTokensFromLine(
     if (!entry) continue
 
     const start = lineStart + token.offset
-    tokens.push({ end: start + token.content.length, start, style: entry.style })
+    const editorToken = { end: start + token.content.length, start, style: entry.style }
+    tokens.push(editorToken)
+    appendEditorTokenIndexEntry(index, editorToken)
   }
 }
 

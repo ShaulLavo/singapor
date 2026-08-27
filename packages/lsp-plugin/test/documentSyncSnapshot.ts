@@ -19,6 +19,23 @@ export function documentSyncSnapshotFields(
   }
 }
 
+export function viewSnapshotStructuralFields(): Pick<
+  EditorViewSnapshot,
+  'gutterLayout' | 'gutterWidth' | 'initialHighlightStatus' | 'toJSON' | 'toVisibleSnapshot'
+> {
+  return {
+    gutterLayout: { fixedWidth: 0, lanes: [] },
+    gutterWidth: 0,
+    initialHighlightStatus: 'painted',
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
+    },
+  }
+}
+
 function segmentForKey(key: string): DocumentSyncSegment {
   const current = keyedSegments.get(key)
   if (current) return current

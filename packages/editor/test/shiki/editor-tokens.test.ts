@@ -30,6 +30,12 @@ describe('editor token adapters', () => {
       { end: 12, start: 6, style: { color: '#0f0' } },
       { end: 24, start: 18, style: { color: '#00f' } },
     ])
+    expect(getEditorTokenIndex(tokens)).toMatchObject({
+      maxEnds: [5, 12, 24],
+      monotonicEnd: true,
+      nonOverlapping: true,
+      sortedByStart: true,
+    })
   })
 
   it('maps Shiki font styles into editor styles', () => {

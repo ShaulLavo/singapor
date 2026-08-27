@@ -1,4 +1,9 @@
-import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
+import type {
+  EditorGutterContribution,
+  EditorGutterWidthContext,
+  EditorMountedChunkPaintJSON,
+  EditorVisibleGutterLayoutJSON,
+} from '../plugins'
 import type { SelectionAffinity } from '../selections'
 import type { EditorTokenStyle } from '../tokens'
 import type { DisplayTextRowSource, InjectedTextRow } from '../displayTransforms'
@@ -128,6 +133,7 @@ export type VirtualizedTextChunk = {
   readonly element: HTMLSpanElement | null
   readonly textNode: Text
   readonly parts: readonly VirtualizedTextChunkPart[]
+  readonly mountedPaint: EditorMountedChunkPaintJSON
 }
 
 export type VirtualizedTextChunkPart =
@@ -193,6 +199,8 @@ export type VirtualizedTextRow = {
 export type VirtualizedTextViewState = {
   readonly lineCount: number
   readonly contentWidth: number
+  readonly gutterWidth: number
+  readonly gutterLayout: EditorVisibleGutterLayoutJSON
   readonly foldMapActive: boolean
   readonly metrics: BrowserTextMetrics
   readonly scrollHeight: number
@@ -251,6 +259,13 @@ export type MountedVirtualizedTextRow = VirtualizedTextRow & {
   readonly hiddenCharactersLayerElement: HTMLDivElement
   readonly top: number
   readonly height: number
+  readonly leftSpacerWidth: number
+  readonly primaryText: boolean
+  readonly foldMarker: VirtualizedFoldMarker | null
+  readonly gutterNumberCursorLine: boolean
+  readonly gutterCursorLineBackgroundLaneIds: readonly string[]
+  readonly mountedPaintSupport: 'replayable' | 'unreplayable-plugin-css'
+  readonly coreBidiRefusal: boolean
   readonly textRevision: number
   readonly tokenHighlightSlotId: number
   readonly chunkKey: string

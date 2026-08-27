@@ -19,7 +19,7 @@ import { createLanguageServerPlugin, type LanguageServerConnectionContext } from
 import { LanguageServerDocumentSyncController } from '../src/documentSyncController'
 import type { LanguageServerPluginOptions } from '../src/types'
 import { flushPromises } from './connectedEditor'
-import { documentSyncSnapshotFields } from './documentSyncSnapshot'
+import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
 
 /**
  * The narrow `createLanguageServerPlugin` factory, driven end to end over a stub socket.
@@ -486,6 +486,7 @@ function snapshot(): EditorViewSnapshot {
   const fullText = 'const value = 1\n'
   return {
     ...documentSyncSnapshotFields(1),
+    ...viewSnapshotStructuralFields(),
     documentId: 'src/index.ts',
     languageId: 'typescript',
     fullText,
@@ -674,10 +675,18 @@ function layerSnapshot(
     primaryText: true,
     top: row * 20,
     height: 20,
+    leftSpacerWidth: 0,
+    contentCursorLine: false,
+    gutterNumberCursorLine: false,
+    gutterCursorLineBackgroundLaneIds: [],
+    mountedPaintSupport: 'replayable',
+    chunks: [],
+    foldMarker: null,
   }))
 
   return {
     ...documentSyncSnapshotFields(textVersion, documentId ?? 'no-document'),
+    ...viewSnapshotStructuralFields(),
     documentId,
     languageId: languageId as EditorViewSnapshot['languageId'],
     fullText,

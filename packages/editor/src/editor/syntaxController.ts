@@ -4,6 +4,8 @@ import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import type {
   EditorHighlightResult,
   EditorHighlighterSession,
+  EditorInitialHighlightStatus,
+  EditorInitialPaintEvent,
   EditorLogInput,
   EditorPluginHost,
 } from '../plugins'
@@ -41,6 +43,8 @@ export type EditorSyntaxDocumentStartOptions = {
 export type EditorSyntaxControllerOptions = {
   readonly pluginHost: EditorPluginHost
   getDocumentVersion(): number
+  getDocumentId(): string | null
+  getTextVersion(): number
   getCurrentSessionDocumentId(): string
   getLanguageId(): EditorSyntaxLanguageId | null
   getSession(): DocumentSession | null
@@ -49,6 +53,8 @@ export type EditorSyntaxControllerOptions = {
   clearSyntaxFolds(): void
   setSyntaxFolds(folds: readonly FoldRange[]): void
   notifyChange(change: DocumentSessionChange | null): void
+  notifyInitialHighlightStatusChanged(): void
+  onInitialPaint?(event: EditorInitialPaintEvent): void
   setSyntaxCaptures?(captures: readonly EditorSyntaxCapture[]): void
   /**
    * Whether anything downstream reads raw captures. Captures cost payload on every parse, so a
@@ -83,6 +89,7 @@ type PendingSyntaxPrefetch = {
 }
 
 type PendingSyntaxWarm = {
+  readonly configurationGeneration: number
   readonly contentVersion: number
   readonly delayMs: number
   readonly documentVersion: number
@@ -93,6 +100,18 @@ type PendingSyntaxWarm = {
 type CachedSyntaxFoldRange = {
   readonly range: EditorSyntaxRange
   readonly folds: readonly FoldRange[]
+}
+
+type InitialHighlightReplacement = 'all' | 'syntax' | 'theme'
+
+type PendingInitialHighlightReplacement = {
+  readonly generation: number
+  readonly kind: InitialHighlightReplacement
+}
+
+type PendingInitialHighlightThemeTerminal = {
+  readonly configurationGeneration: number
+  readonly status: Exclude<EditorInitialHighlightStatus, 'loading'>
 }
 
 const BACKGROUND_SYNTAX_TILE_CHARS = 120_000
@@ -112,6 +131,19 @@ const syntaxWorkTags = (
 export class EditorSyntaxController {
   private disposed = false
   private syntaxStatus: EditorSyntaxStatus = 'plain'
+  private initialHighlightState: EditorInitialHighlightStatus = 'plain'
+  private initialPaintDocumentVersion = 0
+  private initialTextPainted = false
+  private initialTextPaintEmitted = false
+  private initialHighlightPaintEmitted = false
+  private initialHighlightConfigurationGeneration = 0
+  private pendingInitialHighlightReplacement: PendingInitialHighlightReplacement | null = null
+  private pendingInitialHighlightThemeTerminal: PendingInitialHighlightThemeTerminal | null = null
+  private highlighterThemePending = false
+  private lastInitialHighlightTerminalStatus: Exclude<
+    EditorInitialHighlightStatus,
+    'loading'
+  > | null = 'plain'
   private syntaxSession: EditorSyntaxSession | null = null
   private syntaxSessionIncludesCaptures = false
   private highlighterSession: EditorHighlighterSession | null = null
@@ -161,6 +193,10 @@ export class EditorSyntaxController {
     return this.syntaxStatus
   }
 
+  get initialHighlightStatus(): EditorInitialHighlightStatus {
+    return this.initialHighlightState
+  }
+
   get tokens(): readonly EditorToken[] {
     return this.currentTokens
   }
@@ -197,6 +233,7 @@ export class EditorSyntaxController {
   startDocument(document: EditorSyntaxDocumentStartOptions): void {
     if (this.disposed) return
 
+    this.advanceInitialHighlightConfigurationGeneration()
     this.disposeSyntaxSession()
     this.disposeHighlighterSession()
     this.clearSyntaxRangeCache()
@@ -211,11 +248,41 @@ export class EditorSyntaxController {
     )
     this.syntaxSession = this.createSyntaxSession(document)
     this.syntaxStatus = this.syntaxSession ? 'loading' : 'plain'
+    this.initialPaintDocumentVersion = this.options.getDocumentVersion()
+    this.initialTextPainted = false
+    this.initialTextPaintEmitted = false
+    this.initialHighlightPaintEmitted = false
+    this.pendingInitialHighlightReplacement = null
+    this.initialHighlightState =
+      this.highlighterSession || this.syntaxSession || this.highlighterThemePending
+        ? 'loading'
+        : 'plain'
+    this.lastInitialHighlightTerminalStatus =
+      this.initialHighlightState === 'plain' ? 'plain' : null
     this.logSyntaxStatus('editor.syntax.document_started')
   }
 
+  notifyBaseTextPainted(): void {
+    if (this.initialPaintDocumentVersion !== this.options.getDocumentVersion()) return
+
+    this.initialTextPainted = true
+    if (!this.initialTextPaintEmitted) {
+      this.initialTextPaintEmitted = true
+      this.options.onInitialPaint?.({ ...this.initialPaintEventBase(), phase: 'text' })
+    }
+    this.emitInitialHighlightPaintIfReady()
+  }
+
   clearDocument(): void {
+    this.advanceInitialHighlightConfigurationGeneration()
     this.syntaxStatus = 'plain'
+    this.initialHighlightState = 'plain'
+    this.initialPaintDocumentVersion = this.options.getDocumentVersion()
+    this.initialTextPainted = false
+    this.initialTextPaintEmitted = false
+    this.initialHighlightPaintEmitted = false
+    this.pendingInitialHighlightReplacement = null
+    this.lastInitialHighlightTerminalStatus = 'plain'
     this.clearSyntaxRangeCache()
     this.resetSyntaxContentVersion()
     this.disposeSyntaxSession()
@@ -244,22 +311,29 @@ export class EditorSyntaxController {
   }
 
   reloadHighlighterAndSyntax(): void {
+    this.beginInitialHighlightReplacement('all')
     this.reloadHighlighterSession()
-    this.reloadSyntaxSession()
+    this.reloadSyntaxSession(false)
+    this.settlePlainInitialHighlightIfNeeded()
   }
 
-  reloadSyntaxSession(): void {
+  reloadSyntaxSession(resetInitialHighlight = true): void {
     // Plugin activation resolves async; a provider-changed callback can land
     // after dispose (StrictMode tears the editor down before tree-sitter
     // registers). Recreating a session then leaks an undisposed worker parse.
     if (this.disposed) return
+
+    if (resetInitialHighlight) this.beginInitialHighlightReplacement('syntax')
 
     this.disposeSyntaxSession()
     this.clearSyntaxRangeCache()
     this.options.clearSyntaxFolds()
 
     const session = this.options.getSession()
-    if (!session) return
+    if (!session) {
+      this.settlePlainInitialHighlightIfNeeded()
+      return
+    }
 
     this.syntaxSession = this.createSyntaxSession({
       documentId: this.options.getCurrentSessionDocumentId(),
@@ -269,21 +343,54 @@ export class EditorSyntaxController {
     })
     this.syntaxStatus = this.syntaxSession ? 'loading' : 'plain'
     this.logSyntaxStatus('editor.syntax.reloaded')
-    this.refresh(this.options.getDocumentVersion(), null)
+    const configurationGeneration = this.initialHighlightConfigurationGeneration
+    if (
+      !this.syntaxSession &&
+      this.highlighterSession &&
+      this.pendingReplacementMatches('syntax', configurationGeneration)
+    ) {
+      const terminalStatus = this.lastInitialHighlightTerminalStatus ?? 'painted'
+      this.commitInitialHighlightStatus(
+        terminalStatus,
+        () => this.setTokens(this.currentTokens),
+        configurationGeneration,
+      )
+    }
+    this.refreshStructuralSyntax(this.options.getDocumentVersion(), null)
     this.options.notifyChange(null)
+    this.settlePlainInitialHighlightIfNeeded()
+  }
+
+  beginThemeReplacement(): number {
+    return this.beginInitialHighlightReplacement('theme')
+  }
+
+  completeThemeReplacement(configurationGeneration: number): void {
+    if (!this.options.getSession()) return
+    if (!this.pendingReplacementMatches('theme', configurationGeneration)) return
+
+    const status = this.lastInitialHighlightTerminalStatus ?? this.currentApplicableTerminalStatus()
+    if (status === null) return
+    this.commitInitialHighlightStatus(
+      status,
+      () => this.setTokens(this.currentTokens),
+      configurationGeneration,
+    )
   }
 
   refreshHighlighterTheme(): void {
     if (!this.options.pluginHost.hasHighlighterProviders()) {
-      this.setProviderHighlighterTheme(null)
+      this.highlighterThemeRequests.cancel()
+      this.completeProviderHighlighterTheme(null)
       return
     }
 
+    this.highlighterThemePending = true
     this.highlighterThemeRequests.schedule({
       tags: { configuration: 'highlighterTheme' },
       run: () => this.options.pluginHost.loadHighlighterTheme(),
-      apply: (theme) => this.setProviderHighlighterTheme(theme),
-      fail: () => this.setProviderHighlighterTheme(null),
+      apply: (theme) => this.completeProviderHighlighterTheme(theme),
+      fail: () => this.completeProviderHighlighterTheme(null),
     })
   }
 
@@ -374,6 +481,7 @@ export class EditorSyntaxController {
     if (!seedRange) return
 
     const pendingWarm = {
+      configurationGeneration: this.initialHighlightConfigurationGeneration,
       contentVersion: this.syntaxContentVersion,
       delayMs: options.delayMs ?? 120,
       documentVersion,
@@ -466,18 +574,25 @@ export class EditorSyntaxController {
     kind: 'visible' | 'prefetch',
   ): void {
     const contentVersion = this.syntaxContentVersion
+    const configurationGeneration = this.initialHighlightConfigurationGeneration
     request.schedule({
       delayMs: options.delayMs ?? 50,
       tags: syntaxWorkTags(documentVersion, contentVersion, kind, range),
       run: () => this.loadSyntaxRangeResult(range, kind, { contentVersion }),
       apply: (result, startedAt) => {
-        const applied = this.applySyntaxResult(result, documentVersion, startedAt)
+        const applied = this.applySyntaxResult(
+          result,
+          documentVersion,
+          startedAt,
+          configurationGeneration,
+        )
         if (applied && kind === 'visible' && !this.flushPendingPrefetch()) {
           this.flushPendingWarm()
         }
         if (applied && kind === 'prefetch') this.flushPendingWarm()
       },
-      fail: (error, startedAt) => this.recoverSyntaxError(documentVersion, null, error, startedAt),
+      fail: (error, startedAt) =>
+        this.recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration),
     })
   }
 
@@ -510,6 +625,7 @@ export class EditorSyntaxController {
 
     this.syntaxStatus = 'loading'
     const contentVersion = this.syntaxContentVersion
+    const configurationGeneration = this.initialHighlightConfigurationGeneration
     this.pendingSyntaxContentVersion = contentVersion
 
     const delayMs = options.delayMs ?? syntaxRefreshDelay(change)
@@ -518,9 +634,10 @@ export class EditorSyntaxController {
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: syntaxWorkTags(documentVersion, contentVersion, 'full'),
       run: () => this.loadSyntaxResult(change, contentVersion),
-      apply: (result, startedAt) => this.applySyntaxResult(result, documentVersion, startedAt),
+      apply: (result, startedAt) =>
+        this.applySyntaxResult(result, documentVersion, startedAt, configurationGeneration),
       fail: (error, startedAt) =>
-        this.recoverSyntaxError(documentVersion, change, error, startedAt),
+        this.recoverSyntaxError(documentVersion, change, error, startedAt, configurationGeneration),
     })
   }
 
@@ -532,15 +649,23 @@ export class EditorSyntaxController {
     const session = this.options.getSession()
     if (!this.highlighterSession || !session) return
 
+    const configurationGeneration = this.initialHighlightConfigurationGeneration
     const delayMs = options.delayMs ?? syntaxRefreshDelay(change)
     this.highlightRequests.schedule({
       delayMs,
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: { version: documentVersion, configuration: 'highlight' },
       run: () => this.loadHighlightResult(change),
-      apply: (result, startedAt) => this.applyHighlightResult(result, documentVersion, startedAt),
+      apply: (result, startedAt) =>
+        this.applyHighlightResult(result, documentVersion, startedAt, configurationGeneration),
       fail: (_error, startedAt) =>
-        this.recoverHighlightError(documentVersion, change, _error, startedAt),
+        this.recoverHighlightError(
+          documentVersion,
+          change,
+          _error,
+          startedAt,
+          configurationGeneration,
+        ),
     })
   }
 
@@ -636,10 +761,12 @@ export class EditorSyntaxController {
     loadResult: EditorSyntaxLoadResult,
     documentVersion: number,
     _startedAt: number,
+    configurationGeneration: number,
   ): boolean {
     const session = this.options.getSession()
     if (loadResult.skipApply) return false
     if (!session || documentVersion !== this.options.getDocumentVersion()) return false
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return false
     if (loadResult.contentVersion !== this.syntaxContentVersion) return false
 
     const result = loadResult.result
@@ -659,7 +786,16 @@ export class EditorSyntaxController {
       this.currentBrackets = result.brackets
       this.currentInjections = result.injections
     }
-    if (!this.highlighterSession) this.setTokens(nextTokens)
+    if (!this.highlighterSession) {
+      const status: Exclude<EditorInitialHighlightStatus, 'loading'> = result.degraded
+        ? 'degraded'
+        : 'painted'
+      this.commitInitialHighlightStatus(
+        status,
+        () => this.setTokens(nextTokens),
+        configurationGeneration,
+      )
+    }
     if (loadResult.range) this.rememberSyntaxRange(loadResult.range, result)
     if (!this.highlighterSession && loadResult.range && !this.pendingWarm) {
       this.warmSyntaxAroundRange(documentVersion, loadResult.range)
@@ -667,6 +803,16 @@ export class EditorSyntaxController {
     if (applyScopeFacts) {
       this.options.setSyntaxFolds(result.folds)
       this.options.setSyntaxCaptures?.(result.captures)
+    }
+    if (
+      this.highlighterSession &&
+      this.pendingReplacementMatches('syntax', configurationGeneration)
+    ) {
+      this.commitInitialHighlightStatus(
+        'painted',
+        () => this.setTokens(this.currentTokens),
+        configurationGeneration,
+      )
     }
     this.options.notifyChange(null)
     return true
@@ -731,6 +877,7 @@ export class EditorSyntaxController {
     if (!pending) return
     if (pending.documentVersion !== this.options.getDocumentVersion()) return
     if (pending.contentVersion !== this.syntaxContentVersion) return
+    if (pending.configurationGeneration !== this.initialHighlightConfigurationGeneration) return
 
     this.scheduleNextWarmRange(pending)
   }
@@ -752,11 +899,22 @@ export class EditorSyntaxController {
         this.loadSyntaxRangeResult(range, 'warm', { contentVersion: pending.contentVersion }),
       apply: (result, startedAt) => {
         if (pending.generation !== this.warmGeneration) return
-        const applied = this.applySyntaxResult(result, pending.documentVersion, startedAt)
+        const applied = this.applySyntaxResult(
+          result,
+          pending.documentVersion,
+          startedAt,
+          pending.configurationGeneration,
+        )
         if (applied) this.scheduleNextWarmRange(pending)
       },
       fail: (error, startedAt) =>
-        this.recoverSyntaxError(pending.documentVersion, null, error, startedAt),
+        this.recoverSyntaxError(
+          pending.documentVersion,
+          null,
+          error,
+          startedAt,
+          pending.configurationGeneration,
+        ),
     })
   }
 
@@ -830,12 +988,18 @@ export class EditorSyntaxController {
     result: EditorHighlightResult,
     documentVersion: number,
     _startedAt: number,
+    configurationGeneration: number,
   ): void {
     const session = this.options.getSession()
     if (!session || documentVersion !== this.options.getDocumentVersion()) return
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
 
     if (result.theme !== undefined) this.setHighlighterTheme(result.theme)
-    this.setTokens(result.tokens)
+    this.commitInitialHighlightStatus(
+      'painted',
+      () => this.setTokens(result.tokens),
+      configurationGeneration,
+    )
     this.options.log?.({
       action: 'editor.syntax.highlight_applied',
       level: 'debug',
@@ -847,10 +1011,22 @@ export class EditorSyntaxController {
     this.options.notifyChange(null)
   }
 
-  private applySyntaxError(documentVersion: number): void {
+  private applySyntaxError(documentVersion: number, configurationGeneration: number): void {
     if (documentVersion !== this.options.getDocumentVersion()) return
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
 
     this.syntaxStatus = 'error'
+    if (!this.highlighterSession) this.commitInitialHighlightError(configurationGeneration)
+    if (
+      this.highlighterSession &&
+      this.pendingReplacementMatches('syntax', configurationGeneration)
+    ) {
+      this.commitInitialHighlightStatus(
+        'error',
+        () => this.setTokens(this.currentTokens),
+        configurationGeneration,
+      )
+    }
     warnEditorSyntax('mark structural syntax error', this.debugContext(documentVersion))
     this.options.notifyChange(null)
   }
@@ -860,17 +1036,19 @@ export class EditorSyntaxController {
     change: DocumentSessionChange | null,
     error: unknown,
     startedAt: number,
+    configurationGeneration: number,
   ): void {
     if (documentVersion !== this.options.getDocumentVersion()) return
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
     const changeKind = change?.kind ?? 'refresh'
 
-    if (!change) this.applySyntaxError(documentVersion)
+    if (!change) this.applySyntaxError(documentVersion, configurationGeneration)
     if (change) {
       warnEditorSyntax('reload structural syntax after edit failure', {
         ...this.debugContext(documentVersion),
         changeKind,
       })
-      this.reloadSyntaxSession()
+      this.reloadSyntaxSession(false)
     }
 
     this.options.log?.({
@@ -891,9 +1069,14 @@ export class EditorSyntaxController {
     })
   }
 
-  private applyHighlightError(documentVersion: number, _startedAt: number): void {
+  private applyHighlightError(
+    documentVersion: number,
+    _startedAt: number,
+    configurationGeneration: number,
+  ): void {
     const session = this.options.getSession()
     if (!session || documentVersion !== this.options.getDocumentVersion()) return
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
 
     this.options.log?.({
       action: 'editor.syntax.highlight_cleared_after_error',
@@ -902,7 +1085,7 @@ export class EditorSyntaxController {
     })
     warnEditorSyntax('clear plugin highlighting after error', this.debugContext(documentVersion))
     this.setHighlighterTheme(null)
-    this.setTokens([])
+    this.commitInitialHighlightStatus('error', () => this.setTokens([]), configurationGeneration)
     this.options.notifyChange(null)
   }
 
@@ -911,8 +1094,10 @@ export class EditorSyntaxController {
     change: DocumentSessionChange | null,
     error: unknown,
     startedAt: number,
+    configurationGeneration: number,
   ): void {
     if (documentVersion !== this.options.getDocumentVersion()) return
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
     this.options.log?.({
       action: 'editor.syntax.highlight_request_failed',
       level: 'warn',
@@ -931,7 +1116,7 @@ export class EditorSyntaxController {
     })
 
     if (!change) {
-      this.applyHighlightError(documentVersion, startedAt)
+      this.applyHighlightError(documentVersion, startedAt, configurationGeneration)
       return
     }
 
@@ -982,6 +1167,148 @@ export class EditorSyntaxController {
     this.options.notifyThemeChanged()
   }
 
+  private completeProviderHighlighterTheme(theme: EditorTheme | null | undefined): void {
+    this.highlighterThemePending = false
+    this.setProviderHighlighterTheme(theme)
+
+    const terminal = this.pendingInitialHighlightThemeTerminal
+    this.pendingInitialHighlightThemeTerminal = null
+    if (
+      terminal &&
+      terminal.configurationGeneration === this.initialHighlightConfigurationGeneration
+    ) {
+      this.commitInitialHighlightStatus(
+        terminal.status,
+        () => this.setTokens(this.currentTokens),
+        terminal.configurationGeneration,
+      )
+      return
+    }
+
+    this.settlePlainInitialHighlightIfNeeded()
+  }
+
+  private beginInitialHighlightReplacement(replacement: InitialHighlightReplacement): number {
+    if (!this.options.getSession()) return this.initialHighlightConfigurationGeneration
+
+    const pending = this.pendingInitialHighlightReplacement
+    if (!pending && this.initialHighlightState === 'loading' && replacement !== 'all') {
+      return this.initialHighlightConfigurationGeneration
+    }
+    if (pending && replacementPriority(replacement) < replacementPriority(pending.kind)) {
+      return pending.generation
+    }
+
+    if (replacement === 'theme') {
+      const generation = this.initialHighlightConfigurationGeneration
+      this.pendingInitialHighlightReplacement = { generation, kind: replacement }
+      this.initialHighlightState = 'loading'
+      this.options.notifyInitialHighlightStatusChanged()
+      return generation
+    }
+
+    const generation = this.advanceInitialHighlightConfigurationGeneration()
+    this.pendingInitialHighlightReplacement = { generation, kind: replacement }
+    this.initialHighlightState = 'loading'
+    this.options.notifyInitialHighlightStatusChanged()
+    return generation
+  }
+
+  private settlePlainInitialHighlightIfNeeded(): void {
+    if (!this.options.getSession()) return
+    if (this.highlighterSession || this.syntaxSession) return
+
+    this.commitInitialHighlightStatus(
+      'plain',
+      () => this.options.notifyInitialHighlightStatusChanged(),
+      this.initialHighlightConfigurationGeneration,
+    )
+  }
+
+  private currentApplicableTerminalStatus(): Exclude<
+    EditorInitialHighlightStatus,
+    'loading'
+  > | null {
+    if (this.highlighterSession) {
+      if (this.initialHighlightState === 'error') return 'error'
+      if (this.initialHighlightState === 'loading') return null
+      return 'painted'
+    }
+    if (this.syntaxSession) {
+      if (this.syntaxStatus === 'loading') return null
+      if (this.syntaxStatus === 'degraded') return 'degraded'
+      if (this.syntaxStatus === 'error') return 'error'
+      return 'painted'
+    }
+    return 'plain'
+  }
+
+  private commitInitialHighlightError(configurationGeneration: number): void {
+    this.commitInitialHighlightStatus(
+      'error',
+      () => this.options.notifyInitialHighlightStatusChanged(),
+      configurationGeneration,
+    )
+  }
+
+  private commitInitialHighlightStatus(
+    status: Exclude<EditorInitialHighlightStatus, 'loading'>,
+    publish: () => void,
+    configurationGeneration: number,
+  ): void {
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
+
+    if (this.highlighterThemePending) {
+      publish()
+      this.pendingInitialHighlightThemeTerminal = {
+        configurationGeneration,
+        status,
+      }
+      return
+    }
+
+    this.initialHighlightState = status
+    this.lastInitialHighlightTerminalStatus = status
+    this.pendingInitialHighlightReplacement = null
+    publish()
+    this.emitInitialHighlightPaintIfReady()
+  }
+
+  private pendingReplacementMatches(
+    kind: InitialHighlightReplacement,
+    configurationGeneration: number,
+  ): boolean {
+    const pending = this.pendingInitialHighlightReplacement
+    return pending?.generation === configurationGeneration && pending.kind === kind
+  }
+
+  private advanceInitialHighlightConfigurationGeneration(): number {
+    this.initialHighlightConfigurationGeneration += 1
+    this.pendingInitialHighlightThemeTerminal = null
+    return this.initialHighlightConfigurationGeneration
+  }
+
+  private emitInitialHighlightPaintIfReady(): void {
+    if (!this.initialTextPainted || this.initialHighlightPaintEmitted) return
+    if (this.initialHighlightState === 'loading') return
+    if (this.initialPaintDocumentVersion !== this.options.getDocumentVersion()) return
+
+    this.initialHighlightPaintEmitted = true
+    this.options.onInitialPaint?.({
+      ...this.initialPaintEventBase(),
+      phase: 'highlight-settled',
+      status: this.initialHighlightState,
+    })
+  }
+
+  private initialPaintEventBase(): Omit<EditorInitialPaintEvent, 'phase' | 'status'> {
+    return {
+      documentId: this.options.getDocumentId(),
+      documentGeneration: this.initialPaintDocumentVersion,
+      textVersion: this.options.getTextVersion(),
+    }
+  }
+
   private logSyntaxStatus(
     action: string,
     level: 'debug' | 'info' | 'warn' | 'error' = 'info',
@@ -995,6 +1322,12 @@ export class EditorSyntaxController {
 }
 
 type EditorSyntaxDebugPayload = Record<string, unknown>
+
+const replacementPriority = (replacement: InitialHighlightReplacement): number => {
+  if (replacement === 'all') return 2
+  if (replacement === 'syntax') return 1
+  return 0
+}
 
 const warnEditorSyntax = (message: string, payload: EditorSyntaxDebugPayload): void => {
   console.warn(`[editor-syntax] ${message}\n${JSON.stringify(payload, null, 2)}`)

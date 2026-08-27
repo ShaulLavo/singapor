@@ -376,6 +376,15 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
       visibleRange: { start: 0, end: 6 },
     },
     ...overrides,
+    initialHighlightStatus: overrides.initialHighlightStatus ?? 'painted',
+    gutterWidth: overrides.gutterWidth ?? 0,
+    gutterLayout: overrides.gutterLayout ?? { fixedWidth: 0, lanes: [] },
+    toJSON:
+      overrides.toJSON ??
+      (() => {
+        throw new Error('not used by this fixture')
+      }),
+    toVisibleSnapshot: overrides.toVisibleSnapshot ?? (() => null),
     documentSyncPoint: overrides.documentSyncPoint ?? {
       revision: overrides.textVersion ?? 1,
       segment: TEST_DOCUMENT_SYNC_SEGMENT,
@@ -452,6 +461,13 @@ function visibleRows(text: string): EditorViewSnapshot['visibleRows'] {
       primaryText: true,
       top: index * 20,
       height: 20,
+      leftSpacerWidth: 0,
+      contentCursorLine: false,
+      gutterNumberCursorLine: false,
+      gutterCursorLineBackgroundLaneIds: [],
+      mountedPaintSupport: 'replayable',
+      chunks: [],
+      foldMarker: null,
     }
   })
 }

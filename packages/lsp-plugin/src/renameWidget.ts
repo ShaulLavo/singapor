@@ -10,6 +10,7 @@ export type RenameWidgetOptions = {
 export type RenameWidgetPrompt = {
   readonly anchor: DOMRect
   readonly currentName: string
+  readonly signal: AbortSignal
 }
 
 export type RenameWidgetController = {
@@ -19,6 +20,11 @@ export type RenameWidgetController = {
   reanchor(anchor: DOMRect): void
   containsTarget(target: EventTarget | null): boolean
   dispose(): void
+}
+
+type RenamePromptState = {
+  removeAbortListener: (() => void) | null
+  settle: ((value: string | null) => void) | null
 }
 
 const THEME_VARIABLES = [
@@ -61,13 +67,18 @@ export function createRenameWidgetController(options: RenameWidgetOptions): Rena
     gapPx: RENAME_GAP_PX,
   })
 
-  let settle: ((value: string | null) => void) | null = null
+  const promptState: RenamePromptState = {
+    removeAbortListener: null,
+    settle: null,
+  }
 
   function close(value: string | null): void {
-    if (!settle) return
+    if (!promptState.settle) return
 
-    const resolve = settle
-    settle = null
+    const resolve = promptState.settle
+    promptState.settle = null
+    promptState.removeAbortListener?.()
+    promptState.removeAbortListener = null
     element.style.display = 'none'
     surface.release()
     resolve(value)
@@ -93,7 +104,7 @@ export function createRenameWidgetController(options: RenameWidgetOptions): Rena
   return {
     containsTarget: (target) => target instanceof Node && element.contains(target),
     reanchor(anchor) {
-      if (!settle) return
+      if (!promptState.settle) return
 
       surface.place(anchor)
     },
@@ -102,10 +113,12 @@ export function createRenameWidgetController(options: RenameWidgetOptions): Rena
       surface.dispose()
       element.remove()
     },
-    prompt({ anchor, currentName }) {
+    prompt({ anchor, currentName, signal }) {
       // A prompt already open is dismissed first, because dismissing it hides the element and takes
       // the anchor out of the page — done afterwards it would undo the showing it comes with.
       close(null)
+      if (signal.aborted) return Promise.resolve(null)
+
       applyTheme(element, options.themeSource)
       element.style.display = 'block'
       surface.place(anchor)
@@ -114,11 +127,23 @@ export function createRenameWidgetController(options: RenameWidgetOptions): Rena
       // Selected, so typing replaces the old name — the common case — while arrow keys still edit it.
       input.select()
 
-      return new Promise<string | null>((resolve) => {
-        settle = resolve
-      })
+      return beginRenamePrompt(promptState, signal, close)
     },
   }
+}
+
+function beginRenamePrompt(
+  state: RenamePromptState,
+  signal: AbortSignal,
+  close: (value: string | null) => void,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    state.settle = resolve
+    const handleAbort = () => close(null)
+    signal.addEventListener('abort', handleAbort, { once: true })
+    state.removeAbortListener = () => signal.removeEventListener('abort', handleAbort)
+    if (signal.aborted) close(null)
+  })
 }
 
 function applyTheme(element: HTMLElement, source: HTMLElement): void {

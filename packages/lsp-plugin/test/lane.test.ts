@@ -9,6 +9,57 @@ import type {
 } from '../src/lspConnection'
 
 describe('language-server lane acquisition', () => {
+  it('composes the exact WorkspaceEdit capability only for a lane with the host callback', () => {
+    const hosted = providerHarness()
+    const unhosted = providerHarness()
+    const onApplyWorkspaceEdit = vi.fn(async () => ({ status: 'applied' as const }))
+
+    acquireLanguageServerLane({
+      ...laneOptions('hosted', hosted.provider),
+      capabilities: {
+        textDocument: {
+          semanticTokens: {
+            formats: ['relative'],
+            requests: { full: true },
+            tokenModifiers: [],
+            tokenTypes: ['variable'],
+          },
+        },
+      },
+      onApplyWorkspaceEdit,
+    })
+    acquireLanguageServerLane(laneOptions('unhosted', unhosted.provider))
+
+    expect(hosted.acquired[0]?.capabilities).toEqual({
+      textDocument: {
+        semanticTokens: {
+          formats: ['relative'],
+          requests: { full: true },
+          tokenModifiers: [],
+          tokenTypes: ['variable'],
+        },
+      },
+      workspace: {
+        workspaceEdit: {
+          changeAnnotationSupport: { groupsOnLabel: true },
+          documentChanges: true,
+          failureHandling: 'undo',
+          normalizesLineEndings: true,
+          resourceOperations: ['create', 'rename', 'delete'],
+        },
+      },
+    })
+    expect(unhosted.acquired[0]?.capabilities?.workspace?.workspaceEdit).toBeUndefined()
+  })
+
+  it('shares one logical revision scope for pooled lanes over one workspace', () => {
+    const harness = providerHarness()
+    const first = acquireLanguageServerLane(laneOptions('first', harness.provider))
+    const second = acquireLanguageServerLane(laneOptions('second', harness.provider))
+
+    expect(first.logicalRevisionScope).toBe(second.logicalRevisionScope)
+  })
+
   it('delegates each lane to its supplied provider and releases independently', async () => {
     const first = providerHarness()
     const second = providerHarness()

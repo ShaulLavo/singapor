@@ -1,40 +1,44 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 import type {
-  LspLineStarts,
   LspDocument,
-  LspDocumentOpenOptions,
+  LspDocumentOpenSnapshotOptions,
+  LspDocumentOpenSnapshotResult,
+  LspDocumentTransitionOptions,
+  LspDocumentTransitionNotification,
+  LspDocumentTransitionResult,
+  LspLineStarts,
   LspTextDocumentSnapshot,
   LspTextSnapshot,
-  LspTextEdit,
-  LspWorkspaceSyncTarget,
-  LspWorkspaceEditOptions,
+  LspWorkspaceDocumentAttachment,
   LspWorkspaceSnapshotEditOptions,
+  LspWorkspaceSyncTarget,
+  LspWorkspaceUnchangedSourceOptions,
 } from './types'
 import { registerDefaultLspWorkspaceFactory } from './workspaceFactory'
 
 type MutableLspDocument = {
-  uri: lsp.DocumentUri
   languageId: string
-  version: number
-  textCache?: string
-  textSnapshot: LspTextSnapshot
   lineStarts: LspLineStarts
+  sourceLogicalRevisionCount: number
+  sourceRevision: number
+  sourceSegment: object
+  textSnapshot: LspTextSnapshot
+  uri: lsp.DocumentUri
+  version: number
+}
+
+type WorkspaceDocumentAttachmentRecord = {
+  readonly document: MutableLspDocument
+  readonly onDocumentTransition?: (transition: LspDocumentTransitionNotification) => void
 }
 
 export class LspWorkspace {
+  private readonly attachments = new Map<
+    LspWorkspaceDocumentAttachment,
+    WorkspaceDocumentAttachmentRecord
+  >()
   private readonly documentsByUri = new Map<lsp.DocumentUri, MutableLspDocument>()
   private readonly versionsByUri = new Map<lsp.DocumentUri, number>()
-  /**
-   * How many holders have this uri open.
-   *
-   * One workspace can be shared by several views — a split, a peek pane, two
-   * tabs on one file — and `didOpen`/`didClose` are statements about the server's
-   * copy of a document, not about any one view's interest in it. Counting is what
-   * keeps the second view opening a file from being an error, and the first view
-   * closing it from telling the server a document is gone while another view is
-   * still editing it.
-   */
-  private readonly openCountsByUri = new Map<lsp.DocumentUri, number>()
   private client: LspWorkspaceSyncTarget | null = null
 
   public get documents(): readonly LspDocument[] {
@@ -45,44 +49,27 @@ export class LspWorkspace {
     this.client = client
   }
 
-  public openDocument(options: LspDocumentOpenOptions): LspDocument {
+  public openDocumentSnapshot(
+    options: LspDocumentOpenSnapshotOptions,
+  ): LspDocumentOpenSnapshotResult {
+    assertSourceRevision(options.sourceRevision)
     const open = this.documentsByUri.get(options.uri)
-    if (open) return this.reopenDocument(open, options)
+    if (open) return this.attachOpenDocument(open, options)
 
-    this.openCountsByUri.set(options.uri, 1)
-    const document = {
-      uri: options.uri,
+    const document: MutableLspDocument = {
       languageId: options.languageId,
-      textCache: options.text,
-      textSnapshot: createStringTextSnapshot(options.text),
-      lineStarts: arrayLspLineStarts(computeLineStarts(options.text)),
-      version: this.nextVersion(options.uri),
+      lineStarts: options.lineStarts,
+      sourceLogicalRevisionCount: 0,
+      sourceRevision: options.sourceRevision,
+      sourceSegment: options.sourceSegment,
+      textSnapshot: options.textSnapshot,
+      uri: options.uri,
+      version: this.advanceVersion(options.uri, 1),
     }
     this.documentsByUri.set(options.uri, document)
+    const result = this.attachDocument(document, options.onDocumentTransition)
     this.client?.didOpenDocument(cloneDocument(document))
-    return cloneDocument(document)
-  }
-
-  public updateDocument(
-    uri: lsp.DocumentUri,
-    text: string,
-    options: LspWorkspaceEditOptions = {},
-  ): LspDocument {
-    const document = this.requireDocument(uri)
-    const previousText = materializeDocumentText(document)
-    if (previousText === text && !hasEffectiveEdits(options.edits)) return cloneDocument(document)
-
-    const previousSnapshot = documentSnapshot(document)
-    document.textCache = text
-    document.textSnapshot = createStringTextSnapshot(text)
-    document.lineStarts = arrayLspLineStarts(computeLineStarts(text))
-    document.version = this.nextVersion(uri)
-    this.client?.didChangeDocument(cloneDocument(document), {
-      edits: options.edits ?? [],
-      previousSnapshot,
-      previousText,
-    })
-    return cloneDocument(document)
+    return result
   }
 
   public updateDocumentSnapshot(
@@ -90,15 +77,22 @@ export class LspWorkspace {
     options: LspWorkspaceSnapshotEditOptions,
   ): LspDocument {
     const document = this.requireDocument(uri)
-    const previousSnapshot = documentSnapshot(document)
-    if (sameSnapshotDocument(previousSnapshot, options) && !hasEffectiveEdits(options.edits)) {
-      return cloneDocument(document)
+    assertLogicalRevisionCount(options.logicalRevisionCount)
+    assertSourceRevision(options.sourceRevision)
+    if (sameSourceTuple(document, options)) return adoptDuplicateSource(document, options)
+    if (options.logicalRevisionCount === 0) {
+      throw new Error('A new LSP document source requires a positive logical revision count.')
     }
+    assertForwardSourcePoint(document, options)
 
-    document.textCache = undefined
+    const nextVersion = this.advanceVersion(uri, options.logicalRevisionCount)
+    const previousSnapshot = documentSnapshot(document)
     document.textSnapshot = options.textSnapshot
     document.lineStarts = options.lineStarts
-    document.version = this.nextVersion(uri)
+    document.sourceLogicalRevisionCount = options.logicalRevisionCount
+    document.sourceRevision = options.sourceRevision
+    document.sourceSegment = options.sourceSegment
+    document.version = nextVersion
     this.client?.didChangeDocument(cloneDocument(document), {
       edits: options.edits ?? [],
       previousSnapshot,
@@ -106,45 +100,74 @@ export class LspWorkspace {
     return cloneDocument(document)
   }
 
-  public closeDocument(uri: lsp.DocumentUri): void {
-    const document = this.documentsByUri.get(uri)
-    if (!document) return
-
-    const remaining = (this.openCountsByUri.get(uri) ?? 1) - 1
-    if (remaining > 0) {
-      this.openCountsByUri.set(uri, remaining)
-      return
+  public adoptUnchangedDocumentSource(
+    uri: lsp.DocumentUri,
+    options: LspWorkspaceUnchangedSourceOptions,
+  ): LspDocument {
+    const document = this.requireDocument(uri)
+    assertSourceRevision(options.sourceRevision)
+    if (options.textSnapshot !== document.textSnapshot) {
+      throw new Error('An unchanged LSP source must retain the exact workspace text snapshot.')
     }
+    if (sameSourceTuple(document, options)) return cloneDocument(document)
+    assertForwardSourcePoint(document, options)
 
-    this.openCountsByUri.delete(uri)
-    this.documentsByUri.delete(uri)
-    this.client?.didCloseDocument(cloneDocument(document))
+    document.sourceRevision = options.sourceRevision
+    document.sourceSegment = options.sourceSegment
+    document.sourceLogicalRevisionCount = 0
+    return cloneDocument(document)
   }
 
-  /**
-   * A second holder opening a document the server already has.
-   *
-   * No `didOpen`: the server's copy exists and re-announcing it is a protocol
-   * error. The text is still reconciled, because the newest opener is the one
-   * that just read the file and a stale server copy is worse than a redundant
-   * `didChange` — `updateDocument` sends nothing when the text already matches,
-   * which is the ordinary case of two views on one buffer.
-   */
-  private reopenDocument(open: MutableLspDocument, options: LspDocumentOpenOptions): LspDocument {
-    this.openCountsByUri.set(options.uri, (this.openCountsByUri.get(options.uri) ?? 1) + 1)
-    if (open.languageId !== options.languageId) {
-      throw new Error(
-        `LSP document open as ${open.languageId}, reopened as ${options.languageId}: ${options.uri}`,
-      )
+  public transitionDocumentUri(
+    attachment: LspWorkspaceDocumentAttachment,
+    options: LspDocumentTransitionOptions,
+  ): LspDocumentTransitionResult {
+    const record = this.requireAttachment(attachment)
+    const document = record.document
+    if (document.uri === options.uri) return this.adoptCompletedTransition(document, options)
+
+    assertSourceRevision(options.sourceRevision)
+    assertSourceTextVersion(options.sourceTextVersion)
+    assertTransitionTargetAvailable(this.documentsByUri.get(options.uri), document, options.uri)
+    assertTransitionSourcePoint(document, options)
+    if (document.sourceSegment === options.sourceSegment) {
+      throw new Error('An LSP document URI transition requires a rotated source segment.')
     }
 
-    return this.updateDocument(options.uri, options.text)
+    const nextVersion = this.advanceVersion(options.uri, 1)
+    const previousDocument = cloneDocument(document)
+    this.client?.didCloseDocument(previousDocument)
+    this.documentsByUri.delete(document.uri)
+    document.uri = options.uri
+    document.languageId = options.languageId
+    document.textSnapshot = options.textSnapshot
+    document.lineStarts = options.lineStarts
+    document.sourceLogicalRevisionCount = 0
+    document.sourceRevision = options.sourceRevision
+    document.sourceSegment = options.sourceSegment
+    document.version = nextVersion
+    this.documentsByUri.set(options.uri, document)
+
+    const nextDocument = cloneDocument(document)
+    this.client?.didOpenDocument(nextDocument)
+    this.notifyTransitionedAttachments(document, options.sourceTextVersion)
+    return { document: nextDocument, previousDocument }
+  }
+
+  public closeDocument(attachment: LspWorkspaceDocumentAttachment): void {
+    const record = this.attachments.get(attachment)
+    if (!record) return
+
+    this.attachments.delete(attachment)
+    if (this.hasAttachment(record.document)) return
+
+    this.documentsByUri.delete(record.document.uri)
+    this.client?.didCloseDocument(cloneDocument(record.document))
   }
 
   public saveDocument(uri: lsp.DocumentUri): void {
     const document = this.documentsByUri.get(uri)
     if (!document) return
-
     this.client?.didSaveDocument(cloneDocument(document))
   }
 
@@ -163,8 +186,72 @@ export class LspWorkspace {
     return
   }
 
-  private nextVersion(uri: lsp.DocumentUri): number {
-    const version = (this.versionsByUri.get(uri) ?? -1) + 1
+  private attachOpenDocument(
+    document: MutableLspDocument,
+    options: LspDocumentOpenSnapshotOptions,
+  ): LspDocumentOpenSnapshotResult {
+    if (document.languageId !== options.languageId) {
+      throw new Error(
+        `LSP document open as ${document.languageId}, reopened as ${options.languageId}: ${options.uri}`,
+      )
+    }
+    if (!sameSourceTuple(document, options) || document.textSnapshot !== options.textSnapshot) {
+      throw new Error('A second LSP document attachment must adopt the exact shared source point.')
+    }
+    return this.attachDocument(document, options.onDocumentTransition)
+  }
+
+  private attachDocument(
+    document: MutableLspDocument,
+    onDocumentTransition: ((transition: LspDocumentTransitionNotification) => void) | undefined,
+  ): LspDocumentOpenSnapshotResult {
+    const attachment = Object.freeze({}) as LspWorkspaceDocumentAttachment
+    this.attachments.set(attachment, { document, onDocumentTransition })
+    return { attachment, document: cloneDocument(document) }
+  }
+
+  private adoptCompletedTransition(
+    document: MutableLspDocument,
+    options: LspDocumentTransitionOptions,
+  ): LspDocumentTransitionResult {
+    if (document.languageId !== options.languageId) {
+      throw new Error('An adopted LSP URI transition must retain the shared language identifier.')
+    }
+    if (document.textSnapshot !== options.textSnapshot || !sameSourceTuple(document, options)) {
+      throw new Error('An adopted LSP URI transition must retain the exact shared source point.')
+    }
+
+    const current = cloneDocument(document)
+    return { document: current, previousDocument: current }
+  }
+
+  private notifyTransitionedAttachments(
+    document: MutableLspDocument,
+    sourceTextVersion: number,
+  ): void {
+    for (const record of this.attachments.values()) {
+      if (record.document !== document) continue
+      record.onDocumentTransition?.({
+        document: cloneDocument(document),
+        sourceRevision: document.sourceRevision,
+        sourceSegment: document.sourceSegment,
+        sourceTextVersion,
+      })
+    }
+  }
+
+  private hasAttachment(document: MutableLspDocument): boolean {
+    for (const record of this.attachments.values()) {
+      if (record.document === document) return true
+    }
+    return false
+  }
+
+  private advanceVersion(uri: lsp.DocumentUri, count: number): number {
+    const version = (this.versionsByUri.get(uri) ?? -1) + count
+    if (!Number.isSafeInteger(version) || version < 0) {
+      throw new RangeError(`LSP document version exceeds the safe integer range: ${uri}`)
+    }
     this.versionsByUri.set(uri, version)
     return version
   }
@@ -173,6 +260,14 @@ export class LspWorkspace {
     const document = this.documentsByUri.get(uri)
     if (document) return document
     throw new Error(`LSP document is not open: ${uri}`)
+  }
+
+  private requireAttachment(
+    attachment: LspWorkspaceDocumentAttachment,
+  ): WorkspaceDocumentAttachmentRecord {
+    const record = this.attachments.get(attachment)
+    if (record) return record
+    throw new Error('LSP workspace document attachment is closed or belongs to another workspace.')
   }
 }
 
@@ -204,16 +299,74 @@ function documentSnapshot(document: MutableLspDocument): LspTextDocumentSnapshot
   }
 }
 
-function materializeDocumentText(document: MutableLspDocument): string {
-  return document.textCache ?? document.textSnapshot.materializeFullText()
+function sameSourceTuple(
+  document: MutableLspDocument,
+  source: { readonly sourceRevision: number; readonly sourceSegment: object },
+): boolean {
+  return (
+    document.sourceRevision === source.sourceRevision &&
+    document.sourceSegment === source.sourceSegment
+  )
 }
 
-function createStringTextSnapshot(text: string): LspTextSnapshot {
-  return {
-    length: text.length,
-    materializeFullText: () => text,
-    readRange: (start, end) => text.slice(start, end),
+function adoptDuplicateSource(
+  document: MutableLspDocument,
+  options: LspWorkspaceSnapshotEditOptions,
+): LspDocument {
+  if (document.textSnapshot !== options.textSnapshot) {
+    throw new Error('A duplicate LSP source tuple must retain the exact text snapshot.')
   }
+  if (
+    options.logicalRevisionCount !== 0 &&
+    options.logicalRevisionCount !== document.sourceLogicalRevisionCount
+  ) {
+    throw new Error('A duplicate LSP source tuple must retain its logical revision count.')
+  }
+  return cloneDocument(document)
+}
+
+function assertForwardSourcePoint(
+  document: MutableLspDocument,
+  source: { readonly sourceRevision: number; readonly sourceSegment: object },
+): void {
+  if (document.sourceSegment !== source.sourceSegment) return
+  if (source.sourceRevision > document.sourceRevision) return
+  throw new Error('An LSP source revision must advance within one source segment.')
+}
+
+function assertLogicalRevisionCount(count: number): void {
+  if (Number.isSafeInteger(count) && count >= 0) return
+  throw new RangeError('logicalRevisionCount must be a safe non-negative integer.')
+}
+
+function assertSourceRevision(revision: number): void {
+  if (Number.isSafeInteger(revision) && revision >= 0) return
+  throw new RangeError('sourceRevision must be a safe non-negative integer.')
+}
+
+function assertSourceTextVersion(version: number): void {
+  if (Number.isSafeInteger(version) && version >= 0) return
+  throw new RangeError('sourceTextVersion must be a safe non-negative integer.')
+}
+
+function assertTransitionTargetAvailable(
+  target: MutableLspDocument | undefined,
+  source: MutableLspDocument,
+  uri: lsp.DocumentUri,
+): void {
+  if (!target || target === source) return
+  throw new Error(`LSP document URI transition target is already open: ${uri}`)
+}
+
+function assertTransitionSourcePoint(
+  document: MutableLspDocument,
+  options: LspDocumentTransitionOptions,
+): void {
+  if (document.textSnapshot !== options.textSnapshot) {
+    throw new Error('An LSP document URI transition must retain the exact synchronized snapshot.')
+  }
+  if (document.sourceRevision === options.sourceRevision) return
+  throw new Error('An LSP document URI transition must retain the synchronized source revision.')
 }
 
 export function arrayLspLineStarts(lineStarts: readonly number[]): LspLineStarts {
@@ -239,30 +392,6 @@ function arrayRowForOffset(lineStarts: readonly number[], offset: number): numbe
     high = middle - 1
   }
   return row
-}
-
-function computeLineStarts(text: string): number[] {
-  const starts = [0]
-  let index = text.indexOf('\n')
-
-  while (index !== -1) {
-    starts.push(index + 1)
-    index = text.indexOf('\n', index + 1)
-  }
-
-  return starts
-}
-
-function sameSnapshotDocument(
-  left: LspTextDocumentSnapshot,
-  right: LspTextDocumentSnapshot,
-): boolean {
-  return left.textSnapshot === right.textSnapshot && left.lineStarts === right.lineStarts
-}
-
-const hasEffectiveEdits = (edits: readonly LspTextEdit[] | undefined): boolean => {
-  if (!edits) return false
-  return edits.some((edit) => edit.from !== edit.to || edit.text.length > 0)
 }
 
 registerDefaultLspWorkspaceFactory(() => new LspWorkspace())

@@ -293,7 +293,12 @@ export class EditorSyntaxController {
     options: EditorSyntaxRefreshOptions = {},
   ): void {
     if (!this.options.getSession()) return
-    if (change && (change.kind === 'none' || change.kind === 'selection')) return
+    if (
+      change &&
+      (change.kind === 'none' || change.kind === 'selection' || change.kind === 'synchronize')
+    ) {
+      return
+    }
 
     this.options.log?.({
       action: 'editor.syntax.refresh_scheduled',
@@ -309,7 +314,9 @@ export class EditorSyntaxController {
   }
 
   projectCacheForChange(change: DocumentSessionChange): void {
-    if (change.kind === 'none' || change.kind === 'selection') return
+    if (change.kind === 'none' || change.kind === 'selection' || change.kind === 'synchronize') {
+      return
+    }
     this.syntaxContentVersion += 1
     this.parsedSyntaxContentVersion = null
     this.projectSyntaxRangeCache(change)

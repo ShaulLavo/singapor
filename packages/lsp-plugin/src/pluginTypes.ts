@@ -10,6 +10,7 @@ import type {
   LanguageServerNavigationOptions,
   LanguageServerReferencesResult,
   LanguageServerStatus,
+  OnApplyWorkspaceEdit,
 } from './types'
 
 export type LanguageServerResolvedOptions = {
@@ -22,6 +23,7 @@ export type LanguageServerResolvedOptions = {
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void
+  readonly onApplyWorkspaceEdit?: OnApplyWorkspaceEdit
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,

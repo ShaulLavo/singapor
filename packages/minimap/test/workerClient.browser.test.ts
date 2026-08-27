@@ -54,6 +54,12 @@ function snapshot(text: string): EditorViewSnapshot {
     languageId: 'typescript',
     fullText: text,
     textVersion: 1,
+    documentSyncPoint: {
+      revision: 1,
+      segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
+      textVersion: 1,
+    },
+    changesSinceDocumentSyncPoint: () => null,
     lineStarts: lineStarts(text),
     tokens: [{ start: 0, end: 5, style: { color: 'var(--editor-syntax-keyword)' } }],
     brackets: [],

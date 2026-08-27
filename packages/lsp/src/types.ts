@@ -18,7 +18,8 @@ export type LspTextEdit = {
 export type LspTextSnapshot = {
   readonly length: number
   materializeFullText(): string
-  readRange(start: number, end?: number): string
+  readRange(start: number, end: number): string
+  forEachTextChunk(visit: (text: string, start: number, end: number) => void): void
 }
 
 // Read-only line-start access; backed by an array adapter or the editor's
@@ -48,24 +49,63 @@ export type LspDocumentSyncOptions = {
   readonly save: LspDocumentSaveSync
 }
 
-export type LspDocumentOpenOptions = {
+export type LspDocumentOpenSnapshotOptions = LspTextDocumentSnapshot & {
+  readonly uri: lsp.DocumentUri
+  readonly languageId: string
+  readonly sourceRevision: number
+  readonly sourceSegment: object
+  readonly onDocumentTransition?: (transition: LspDocumentTransitionNotification) => void
+}
+
+export type LspDocument = {
   readonly uri: lsp.DocumentUri
   readonly languageId: string
   readonly text: string
-}
-
-export type LspDocument = LspDocumentOpenOptions & {
   readonly version: number
   readonly textSnapshot: LspTextSnapshot
   readonly lineStarts: LspLineStarts
 }
 
-export type LspWorkspaceEditOptions = {
-  readonly edits?: readonly LspTextEdit[]
+declare const lspWorkspaceDocumentAttachmentBrand: unique symbol
+
+export type LspWorkspaceDocumentAttachment = {
+  readonly [lspWorkspaceDocumentAttachmentBrand]: true
+}
+
+export type LspDocumentOpenSnapshotResult = {
+  readonly attachment: LspWorkspaceDocumentAttachment
+  readonly document: LspDocument
 }
 
 export type LspWorkspaceSnapshotEditOptions = LspTextDocumentSnapshot & {
-  readonly edits?: readonly LspTextEdit[]
+  readonly edits: readonly LspTextEdit[] | null
+  readonly logicalRevisionCount: number
+  readonly sourceRevision: number
+  readonly sourceSegment: object
+}
+
+export type LspWorkspaceUnchangedSourceOptions = LspTextDocumentSnapshot & {
+  readonly sourceRevision: number
+  readonly sourceSegment: object
+}
+
+export type LspDocumentTransitionOptions = Omit<
+  LspDocumentOpenSnapshotOptions,
+  'onDocumentTransition'
+> & {
+  readonly sourceTextVersion: number
+}
+
+export type LspDocumentTransitionResult = {
+  readonly document: LspDocument
+  readonly previousDocument: LspDocument
+}
+
+export type LspDocumentTransitionNotification = {
+  readonly document: LspDocument
+  readonly sourceRevision: number
+  readonly sourceSegment: object
+  readonly sourceTextVersion: number
 }
 
 export type LspDocumentChange = {
@@ -84,13 +124,20 @@ export type LspWorkspaceSyncTarget = {
 export type LspClientWorkspace = {
   readonly documents: readonly LspDocument[]
   attachClient(client: LspWorkspaceSyncTarget): void
-  openDocument(options: LspDocumentOpenOptions): LspDocument
-  updateDocument(uri: lsp.DocumentUri, text: string, options?: LspWorkspaceEditOptions): LspDocument
+  openDocumentSnapshot(options: LspDocumentOpenSnapshotOptions): LspDocumentOpenSnapshotResult
   updateDocumentSnapshot(
     uri: lsp.DocumentUri,
     options: LspWorkspaceSnapshotEditOptions,
   ): LspDocument
-  closeDocument(uri: lsp.DocumentUri): void
+  adoptUnchangedDocumentSource(
+    uri: lsp.DocumentUri,
+    options: LspWorkspaceUnchangedSourceOptions,
+  ): LspDocument
+  transitionDocumentUri(
+    attachment: LspWorkspaceDocumentAttachment,
+    options: LspDocumentTransitionOptions,
+  ): LspDocumentTransitionResult
+  closeDocument(attachment: LspWorkspaceDocumentAttachment): void
   saveDocument(uri: lsp.DocumentUri): void
   getDocument(uri: lsp.DocumentUri): LspDocument | null
   connected(): void

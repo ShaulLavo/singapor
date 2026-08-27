@@ -43,6 +43,11 @@
       "import": "./dist/documentSync.js",
       "default": "./dist/documentSync.js"
     },
+    "./document-sync-controller": {
+      "types": "./dist/documentSyncController.d.ts",
+      "import": "./dist/documentSyncController.js",
+      "default": "./dist/documentSyncController.js"
+    },
     "./hover-definition-controller": {
       "types": "./dist/hoverDefinitionController.d.ts",
       "import": "./dist/hoverDefinitionController.js",
@@ -77,6 +82,11 @@
       "types": "./dist/websocket.d.ts",
       "import": "./dist/websocket.js",
       "default": "./dist/websocket.js"
+    },
+    "./workspace-edit": {
+      "types": "./dist/workspaceEdit.d.ts",
+      "import": "./dist/workspaceEdit.js",
+      "default": "./dist/workspaceEdit.js"
     }
   },
   "publishConfig": {

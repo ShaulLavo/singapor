@@ -16,6 +16,9 @@ type PaintedHighlight = {
 }
 
 type TestContext = ReturnType<typeof context>
+const TEST_DOCUMENT_SYNC_SEGMENT = Object.freeze(
+  {},
+) as EditorViewSnapshot['documentSyncPoint']['segment']
 
 afterEach(() => {
   document.head.querySelectorAll('style').forEach((element) => element.remove())
@@ -321,6 +324,12 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
       visibleRange: { start: 0, end: 1 },
     },
     ...overrides,
+    documentSyncPoint: overrides.documentSyncPoint ?? {
+      revision: overrides.textVersion ?? 1,
+      segment: TEST_DOCUMENT_SYNC_SEGMENT,
+      textVersion: overrides.textVersion ?? 1,
+    },
+    changesSinceDocumentSyncPoint: overrides.changesSinceDocumentSyncPoint ?? (() => null),
   }
 }
 

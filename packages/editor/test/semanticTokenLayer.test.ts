@@ -6,6 +6,10 @@ import type {
   EditorVisibleRowSnapshot,
 } from '../src/plugins'
 import {
+  TEST_DOCUMENT_SYNC_POINT,
+  unchangedChangesSinceDocumentSyncPoint,
+} from './factories/documentSync'
+import {
   createSemanticTokenLayer,
   SEMANTIC_TOKEN_Z_INDEX,
   type SemanticTokenLayerOptions,
@@ -85,7 +89,9 @@ function harness(options: Partial<SemanticTokenLayerOptions> = {}): Harness {
 
 function baseSnapshot(): EditorViewSnapshot {
   return {
+    changesSinceDocumentSyncPoint: unchangedChangesSinceDocumentSyncPoint,
     documentId: 'src/index.ts',
+    documentSyncPoint: TEST_DOCUMENT_SYNC_POINT,
     languageId: 'typescript',
     fullText: TEXT,
     textVersion: 7,

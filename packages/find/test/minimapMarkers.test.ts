@@ -208,6 +208,12 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
     languageId: null,
     fullText: text,
     textVersion: 1,
+    documentSyncPoint: {
+      revision: 1,
+      segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
+      textVersion: 1,
+    },
+    changesSinceDocumentSyncPoint: () => null,
     lineStarts,
     tokens: [],
     brackets: [],

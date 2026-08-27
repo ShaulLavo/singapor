@@ -16,7 +16,13 @@
  * and the narrow factory speaks WebSocket only.
  */
 
-import type { TextEdit } from '@singapor/core/document'
+import type {
+  DocumentChangesSinceSyncPoint,
+  DocumentLogicalRevisionScope,
+  DocumentSyncPoint,
+  DocumentSyncSegment,
+  TextEdit,
+} from '@singapor/core/document'
 import type {
   EditorPluginContext,
   EditorViewContribution,
@@ -252,6 +258,7 @@ type PaintedGroup = {
  */
 class FixtureEditChain {
   readonly #entries: { readonly fromVersion: number; readonly text: string }[] = []
+  readonly #segment = Object.freeze({}) as DocumentSyncSegment
 
   public record(fromVersion: number, text: string): void {
     this.#entries.push({ fromVersion, text })
@@ -269,6 +276,28 @@ class FixtureEditChain {
       .map((entry) => entry.text)
       .join('')
     return [{ from: 0, to: 0, text }]
+  }
+
+  public point(textVersion: number): DocumentSyncPoint {
+    return { revision: textVersion, segment: this.#segment, textVersion }
+  }
+
+  public changesSince(
+    point: DocumentSyncPoint,
+    _scope: DocumentLogicalRevisionScope | null,
+    textVersion: number,
+  ): DocumentChangesSinceSyncPoint | null {
+    if (point.segment !== this.#segment) return null
+    const edits = this.editsSince(point.textVersion)
+    if (edits === null) return null
+
+    const syncPointAfter = this.point(textVersion)
+    return {
+      edits,
+      logicalRevisionCount: textVersion - point.textVersion,
+      revisionAfter: syncPointAfter.revision,
+      syncPointAfter,
+    }
   }
 }
 
@@ -369,7 +398,9 @@ class EditorFixture {
       fullText: this.text,
       textVersion: this.textVersion,
       lineStarts,
-      editsSinceTextVersion: (textVersion) => this.#chain.editsSince(textVersion),
+      documentSyncPoint: this.#chain.point(this.textVersion),
+      changesSinceDocumentSyncPoint: (point, scope) =>
+        this.#chain.changesSince(point, scope, this.textVersion),
       tokens: [],
       brackets: [],
       selections: [

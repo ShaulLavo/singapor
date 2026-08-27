@@ -1,5 +1,11 @@
 import type { EditorCommandId } from '@singapor/core/editor'
-import type { DocumentSessionChange, TextEdit, TextSnapshot } from '@singapor/core/document'
+import type {
+  DocumentSessionChange,
+  DocumentSyncPoint,
+  DocumentSyncSegment,
+  TextEdit,
+  TextSnapshot,
+} from '@singapor/core/document'
 import type {
   EditorCommandContributionContext,
   EditorCommandHandler,
@@ -667,6 +673,7 @@ describe('createTypeScriptLspPlugin', () => {
     await flushPromises()
     contribution.update(
       snapshotWithThrowingText('const value: string = 2;', {
+        changesSinceDocumentSyncPoint: fixtureChangesSince(2, [{ from: 22, to: 23, text: '2' }]),
         textVersion: 2,
         selections: [collapsedSelection(23)],
       }),
@@ -1585,11 +1592,13 @@ function minimapFeature(): EditorMinimapFeature {
 
 function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSnapshot {
   const fullText = options.fullText ?? 'const value: string = 1;'
+  const textVersion = options.textVersion ?? 1
+  const documentSyncPoint = options.documentSyncPoint ?? fixtureSyncPoint(textVersion)
   return {
     documentId: 'src/index.ts',
     languageId: 'typescript',
     fullText,
-    textVersion: 1,
+    textVersion,
     lineStarts: [0],
     tokens: [],
     brackets: [],
@@ -1611,6 +1620,51 @@ function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSn
       visibleRange: { start: 0, end: 1 } as EditorViewSnapshot['viewport']['visibleRange'],
     },
     ...options,
+    documentSyncPoint,
+    changesSinceDocumentSyncPoint:
+      options.changesSinceDocumentSyncPoint ?? noChangesSince(documentSyncPoint),
+  }
+}
+
+const FIXTURE_DOCUMENT_SYNC_SEGMENT = Object.freeze({}) as DocumentSyncSegment
+
+function fixtureSyncPoint(textVersion: number): DocumentSyncPoint {
+  return {
+    revision: textVersion,
+    segment: FIXTURE_DOCUMENT_SYNC_SEGMENT,
+    textVersion,
+  }
+}
+
+function noChangesSince(
+  current: DocumentSyncPoint,
+): EditorViewSnapshot['changesSinceDocumentSyncPoint'] {
+  return (point) => {
+    if (point.segment !== current.segment) return null
+    if (point.revision !== current.revision || point.textVersion !== current.textVersion)
+      return null
+    return {
+      edits: [],
+      logicalRevisionCount: 0,
+      revisionAfter: current.revision,
+      syncPointAfter: current,
+    }
+  }
+}
+
+function fixtureChangesSince(
+  textVersion: number,
+  edits: readonly TextEdit[],
+): EditorViewSnapshot['changesSinceDocumentSyncPoint'] {
+  const current = fixtureSyncPoint(textVersion)
+  return (point) => {
+    if (point.segment !== current.segment) return null
+    return {
+      edits,
+      logicalRevisionCount: Math.max(1, current.revision - point.revision),
+      revisionAfter: current.revision,
+      syncPointAfter: current,
+    }
   }
 }
 

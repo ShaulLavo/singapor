@@ -14,6 +14,7 @@ import { LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE } from '../src/completion'
 import { CompletionController } from '../src/completionController'
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
 import type { ActiveDocument } from '../src/pluginTypes'
+import { documentSyncSnapshotFields } from './documentSyncSnapshot'
 
 type JsonMessage = Record<string, unknown>
 
@@ -912,6 +913,7 @@ function editorSnapshot(
   anchorOffset = caretOffset,
 ): EditorViewSnapshot {
   return {
+    ...documentSyncSnapshotFields(textVersion),
     documentId: 'src/index.ts',
     languageId: 'typescript',
     fullText,

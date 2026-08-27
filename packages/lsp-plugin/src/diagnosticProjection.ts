@@ -39,13 +39,7 @@ export function projectDiagnosticsInSnapshot(
   )
 }
 
-/**
- * Extract the text edits from a document session change, or an empty
- * array when no change was applied. Exported because `plugin.ts` also
- * hands these edits to `LspWorkspace.updateDocument` to keep the LSP
- * workspace in sync.
- */
-export function editsForChange(change: DocumentSessionChange | null): readonly TextEdit[] {
+function editsForChange(change: DocumentSessionChange | null): readonly TextEdit[] {
   if (!change) return []
   return change.edits
 }

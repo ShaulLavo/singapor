@@ -13,6 +13,19 @@
 
 export type DocumentLineEnding = '\n' | '\r\n'
 
+export type DocumentTextRoundTripIssue =
+  | 'mixed-line-endings'
+  | 'lone-carriage-return'
+  | 'unusual-line-terminator'
+
+export type DocumentTextRoundTripStatus =
+  | {
+      readonly hasByteOrderMark: boolean
+      readonly lineEnding: DocumentLineEnding
+      readonly ok: true
+    }
+  | { readonly issues: readonly DocumentTextRoundTripIssue[]; readonly ok: false }
+
 export const UTF8_BYTE_ORDER_MARK = '﻿'
 
 export const DEFAULT_DOCUMENT_LINE_ENDING: DocumentLineEnding = '\n'
@@ -100,6 +113,55 @@ export const applyDocumentLineEnding = (text: string, lineEnding: DocumentLineEn
   lineEnding === '\n' ? text : text.replace(/\n/g, '\r\n')
 
 export const hasByteOrderMark = (text: string): boolean => text.charCodeAt(0) === BYTE_ORDER_MARK
+
+export const documentTextRoundTripStatus = (text: string): DocumentTextRoundTripStatus => {
+  const byteOrderMark = hasByteOrderMark(text)
+  const body = byteOrderMark ? text.slice(1) : text
+  const facts = scanRoundTripTerminators(body)
+  const issues: DocumentTextRoundTripIssue[] = []
+  const endingKinds = Number(facts.lineFeeds > 0) + Number(facts.pairs > 0) + Number(facts.lone > 0)
+
+  if (endingKinds > 1) issues.push('mixed-line-endings')
+  if (facts.lone > 0) issues.push('lone-carriage-return')
+  if (facts.unusual) issues.push('unusual-line-terminator')
+  if (issues.length > 0) return { ok: false, issues }
+
+  return {
+    hasByteOrderMark: byteOrderMark,
+    lineEnding: facts.pairs > 0 ? '\r\n' : '\n',
+    ok: true,
+  }
+}
+
+function scanRoundTripTerminators(text: string): {
+  readonly lineFeeds: number
+  readonly lone: number
+  readonly pairs: number
+  readonly unusual: boolean
+} {
+  let lineFeeds = 0
+  let lone = 0
+  let pairs = 0
+  let unusual = false
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index)
+    if (code === CARRIAGE_RETURN && text.charCodeAt(index + 1) === LINE_FEED) {
+      pairs += 1
+      index += 1
+      continue
+    }
+    if (code === CARRIAGE_RETURN) {
+      lone += 1
+      continue
+    }
+    if (code === LINE_FEED) {
+      lineFeeds += 1
+      continue
+    }
+    if (code === LINE_SEPARATOR || code === PARAGRAPH_SEPARATOR) unusual = true
+  }
+  return { lineFeeds, lone, pairs, unusual }
+}
 
 // Ingestion boundary: strip a leading BOM into its own field and flatten line
 // endings, reporting what was found so the host can restore both on save.

@@ -116,6 +116,48 @@ export const mergeClientCapabilities = (
   override: lsp.ClientCapabilities | undefined,
 ): lsp.ClientCapabilities => mergeObjects(base, override) as lsp.ClientCapabilities
 
+const WORKSPACE_EDIT_CAPABILITY: NonNullable<
+  NonNullable<lsp.ClientCapabilities['workspace']>['workspaceEdit']
+> = {
+  documentChanges: true,
+  resourceOperations: ['create', 'rename', 'delete'],
+  failureHandling: 'undo',
+  normalizesLineEndings: true,
+  changeAnnotationSupport: { groupsOnLabel: true },
+}
+
+/**
+ * Adds the response capability only when a host can apply the complete plan. The returned block is
+ * also the policy boundary: callers cannot smuggle in server-initiated or snippet application.
+ */
+export const composeWorkspaceEditClientCapabilities = (
+  capabilities: lsp.ClientCapabilities | undefined,
+  supported: boolean,
+): lsp.ClientCapabilities | undefined => {
+  const cloned = capabilities
+    ? (mergeObjects({}, capabilities) as lsp.ClientCapabilities)
+    : undefined
+  const workspace = cloned?.workspace
+  const {
+    applyEdit: _applyEdit,
+    workspaceEdit: _workspaceEdit,
+    ...preservedWorkspace
+  } = workspace ?? {}
+  const { workspace: _workspace, ...preservedCapabilities } = cloned ?? {}
+
+  if (supported) {
+    return {
+      ...preservedCapabilities,
+      workspace: { ...preservedWorkspace, workspaceEdit: WORKSPACE_EDIT_CAPABILITY },
+    }
+  }
+  if (Object.keys(preservedWorkspace).length > 0) {
+    return { ...preservedCapabilities, workspace: preservedWorkspace }
+  }
+  if (Object.keys(preservedCapabilities).length > 0) return preservedCapabilities
+  return undefined
+}
+
 export const documentSyncModeFromCapabilities = (
   capabilities: lsp.ServerCapabilities | null,
 ): LspDocumentSyncMode => {

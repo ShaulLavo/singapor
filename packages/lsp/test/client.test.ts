@@ -7,6 +7,8 @@ import {
   LspResponseError,
   LspWorkspace,
   METHOD_NOT_FOUND,
+  type LspClientWorkspace,
+  type LspLineStarts,
   type LspTextSnapshot,
   type LspTransport,
   type LspTransportHandler,
@@ -51,6 +53,13 @@ class TestTransport implements LspTransport {
 type InitializedClient = {
   readonly client: LspClient
   readonly transport: TestTransport
+}
+
+type TestDocument = {
+  readonly attachment: ReturnType<LspClientWorkspace['openDocumentSnapshot']>['attachment']
+  readonly sourceSegment: object
+  readonly uri: string
+  sourceRevision: number
 }
 
 afterEach(() => {
@@ -249,14 +258,12 @@ describe('LspClient', () => {
 
   it('queues document opens until initialization completes', async () => {
     const workspace = new LspWorkspace()
-    workspace.openDocument({
+    const document = openTestDocument(workspace, {
       uri: 'file:///repo/index.ts',
       languageId: 'typescript',
       text: 'const a = 1;',
     })
-    workspace.updateDocument('file:///repo/index.ts', 'const aa = 1;', {
-      edits: [{ from: 7, to: 8, text: 'aa' }],
-    })
+    updateTestDocument(workspace, document, 'const aa = 1;', [{ from: 7, to: 8, text: 'aa' }])
 
     const transport = new TestTransport()
     const client = new LspClient({ workspace, timeoutMs: 1000 })
@@ -279,14 +286,12 @@ describe('LspClient', () => {
   it('sends full document changes when the server requests full sync', async () => {
     const { client, transport } = await initializedClient({ textDocumentSync: 1 })
 
-    client.workspace.openDocument({
+    const document = openTestDocument(client.workspace, {
       uri: 'file:///repo/a.ts',
       languageId: 'typescript',
       text: 'abc',
     })
-    client.workspace.updateDocument('file:///repo/a.ts', 'abcX', {
-      edits: [{ from: 3, to: 3, text: 'X' }],
-    })
+    updateTestDocument(client.workspace, document, 'abcX', [{ from: 3, to: 3, text: 'X' }])
 
     const didChange = transport.lastMessage()
     expect(didChange.method).toBe('textDocument/didChange')
@@ -299,7 +304,7 @@ describe('LspClient', () => {
     transport.failSend = true
 
     expect(() =>
-      client.workspace.openDocument({
+      openTestDocument(client.workspace, {
         uri: 'file:///repo/a.ts',
         languageId: 'typescript',
         text: 'abc',
@@ -312,14 +317,12 @@ describe('LspClient', () => {
   it('sends incremental document changes when the server requests incremental sync', async () => {
     const { client, transport } = await initializedClient({ textDocumentSync: 2 })
 
-    client.workspace.openDocument({
+    const document = openTestDocument(client.workspace, {
       uri: 'file:///repo/a.ts',
       languageId: 'typescript',
       text: 'ab\ncd',
     })
-    client.workspace.updateDocument('file:///repo/a.ts', 'aXb\ncd', {
-      edits: [{ from: 1, to: 1, text: 'X' }],
-    })
+    updateTestDocument(client.workspace, document, 'aXb\ncd', [{ from: 1, to: 1, text: 'X' }])
 
     const didChange = transport.lastMessage()
     expect(didChangeTextDocument(didChange)).toEqual({ uri: 'file:///repo/a.ts', version: 1 })
@@ -337,16 +340,18 @@ describe('LspClient', () => {
   it('sends snapshot incremental changes without materializing the next full text', async () => {
     const { client, transport } = await initializedClient({ textDocumentSync: 2 })
 
-    client.workspace.openDocument({
+    const document = openTestDocument(client.workspace, {
       uri: 'file:///repo/a.ts',
       languageId: 'typescript',
       text: 'ab\ncd',
     })
-    client.workspace.updateDocumentSnapshot('file:///repo/a.ts', {
-      textSnapshot: throwingFullTextSnapshot('aXb\ncd'),
-      lineStarts: arrayLspLineStarts([0, 4]),
-      edits: [{ from: 1, to: 1, text: 'X' }],
-    })
+    updateTestDocument(
+      client.workspace,
+      document,
+      throwingFullTextSnapshot('aXb\ncd'),
+      [{ from: 1, to: 1, text: 'X' }],
+      arrayLspLineStarts([0, 4]),
+    )
 
     const didChange = transport.lastMessage()
     expect(didChangeTextDocument(didChange)).toEqual({ uri: 'file:///repo/a.ts', version: 1 })
@@ -364,16 +369,12 @@ describe('LspClient', () => {
   it('materializes snapshot text when the server requests full sync', async () => {
     const { client, transport } = await initializedClient({ textDocumentSync: 1 })
 
-    client.workspace.openDocument({
+    const document = openTestDocument(client.workspace, {
       uri: 'file:///repo/a.ts',
       languageId: 'typescript',
       text: 'abc',
     })
-    client.workspace.updateDocumentSnapshot('file:///repo/a.ts', {
-      textSnapshot: stringTextSnapshot('abcX'),
-      lineStarts: arrayLspLineStarts([0]),
-      edits: [{ from: 3, to: 3, text: 'X' }],
-    })
+    updateTestDocument(client.workspace, document, 'abcX', [{ from: 3, to: 3, text: 'X' }])
 
     const didChange = transport.lastMessage()
     expect(didChangeTextDocument(didChange)).toEqual({ uri: 'file:///repo/a.ts', version: 1 })
@@ -383,15 +384,13 @@ describe('LspClient', () => {
   it('skips document sync notifications when the server does not opt in', async () => {
     const { client, transport } = await initializedClient({})
 
-    client.workspace.openDocument({
+    const document = openTestDocument(client.workspace, {
       uri: 'file:///repo/plain.txt',
       languageId: 'plaintext',
       text: 'abc',
     })
-    client.workspace.updateDocument('file:///repo/plain.txt', 'abcd', {
-      edits: [{ from: 3, to: 3, text: 'd' }],
-    })
-    client.workspace.closeDocument('file:///repo/plain.txt')
+    updateTestDocument(client.workspace, document, 'abcd', [{ from: 3, to: 3, text: 'd' }])
+    client.workspace.closeDocument(document.attachment)
 
     expect(transport.sent.map((message) => message.method)).toEqual(['initialize', 'initialized'])
   })
@@ -399,12 +398,12 @@ describe('LspClient', () => {
   it('sends didClose for synced documents', async () => {
     const { client, transport } = await initializedClient({ textDocumentSync: 1 })
 
-    client.workspace.openDocument({
+    const document = openTestDocument(client.workspace, {
       uri: 'file:///repo/close.ts',
       languageId: 'typescript',
       text: 'abc',
     })
-    client.workspace.closeDocument('file:///repo/close.ts')
+    client.workspace.closeDocument(document.attachment)
 
     const didClose = transport.lastMessage()
     expect(didClose.method).toBe('textDocument/didClose')
@@ -422,16 +421,16 @@ describe('LspClient', () => {
       { textDocumentSync: { openClose: true, change: 2, save: { includeText: true } } },
     )
 
-    client.workspace.openDocument({
+    const document = openTestDocument(client.workspace, {
       uri: 'file:///repo/lifecycle.ts',
       languageId: 'typescript',
       text: 'let value = 1;',
     })
-    client.workspace.updateDocument('file:///repo/lifecycle.ts', 'let value = 2;', {
-      edits: [{ from: 12, to: 13, text: '2' }],
-    })
+    updateTestDocument(client.workspace, document, 'let value = 2;', [
+      { from: 12, to: 13, text: '2' },
+    ])
     client.workspace.saveDocument('file:///repo/lifecycle.ts')
-    client.workspace.closeDocument('file:///repo/lifecycle.ts')
+    client.workspace.closeDocument(document.attachment)
 
     expect(transport.sent.map((message) => message.method)).toEqual([
       'initialize',
@@ -494,6 +493,53 @@ function didChangeContentChanges(message: JsonMessage): readonly unknown[] {
   return params.contentChanges
 }
 
+function openTestDocument(
+  workspace: LspClientWorkspace,
+  options: { readonly languageId: string; readonly text: string; readonly uri: string },
+): TestDocument {
+  const sourceSegment = {}
+  const opened = workspace.openDocumentSnapshot({
+    languageId: options.languageId,
+    lineStarts: arrayLspLineStarts(testLineStarts(options.text)),
+    sourceRevision: 0,
+    sourceSegment,
+    textSnapshot: stringTextSnapshot(options.text),
+    uri: options.uri,
+  })
+  return { attachment: opened.attachment, sourceRevision: 0, sourceSegment, uri: options.uri }
+}
+
+function updateTestDocument(
+  workspace: LspClientWorkspace,
+  document: TestDocument,
+  textOrSnapshot: string | LspTextSnapshot,
+  edits: readonly { readonly from: number; readonly text: string; readonly to: number }[],
+  lineStarts?: LspLineStarts,
+): void {
+  const textSnapshot =
+    typeof textOrSnapshot === 'string' ? stringTextSnapshot(textOrSnapshot) : textOrSnapshot
+  document.sourceRevision += 1
+  workspace.updateDocumentSnapshot(document.uri, {
+    edits,
+    lineStarts:
+      lineStarts ?? arrayLspLineStarts(testLineStarts(textSnapshot.materializeFullText())),
+    logicalRevisionCount: 1,
+    sourceRevision: document.sourceRevision,
+    sourceSegment: document.sourceSegment,
+    textSnapshot,
+  })
+}
+
+function testLineStarts(text: string): readonly number[] {
+  const starts = [0]
+  let index = text.indexOf('\n')
+  while (index !== -1) {
+    starts.push(index + 1)
+    index = text.indexOf('\n', index + 1)
+  }
+  return starts
+}
+
 function throwingFullTextSnapshot(text: string): LspTextSnapshot {
   return {
     length: text.length,
@@ -501,6 +547,7 @@ function throwingFullTextSnapshot(text: string): LspTextSnapshot {
       throw new Error('unexpected full text materialization')
     },
     readRange: (start, end) => text.slice(start, end),
+    forEachTextChunk: (visit) => visit(text, 0, text.length),
   }
 }
 
@@ -509,5 +556,6 @@ function stringTextSnapshot(text: string): LspTextSnapshot {
     length: text.length,
     materializeFullText: () => text,
     readRange: (start, end) => text.slice(start, end),
+    forEachTextChunk: (visit) => visit(text, 0, text.length),
   }
 }

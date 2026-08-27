@@ -12,9 +12,11 @@ describe('the rename input', () => {
   it('stays on screen when a second rename is asked for while one is open', async () => {
     const controller = createRenameWidgetController({ document, themeSource: document.body })
     const anchor = new DOMRect(10, 20, 40, 18)
+    const firstAbort = new AbortController()
+    const secondAbort = new AbortController()
 
-    const first = controller.prompt({ anchor, currentName: 'first' })
-    const second = controller.prompt({ anchor, currentName: 'second' })
+    const first = controller.prompt({ anchor, currentName: 'first', signal: firstAbort.signal })
+    const second = controller.prompt({ anchor, currentName: 'second', signal: secondAbort.signal })
 
     await expect(first).resolves.toBeNull()
     expect(renameElement().style.display).toBe('block')
@@ -27,6 +29,41 @@ describe('the rename input', () => {
     )
 
     await expect(second).resolves.toBe('renamed')
+    controller.dispose()
+  })
+
+  it('does not show an already-aborted prompt', async () => {
+    const controller = createRenameWidgetController({ document, themeSource: document.body })
+    const abort = new AbortController()
+    abort.abort()
+
+    await expect(
+      controller.prompt({
+        anchor: new DOMRect(10, 20, 40, 18),
+        currentName: 'value',
+        signal: abort.signal,
+      }),
+    ).resolves.toBeNull()
+    expect(renameElement().style.display).toBe('none')
+    expect(renameAnchorElement().style.display).toBe('none')
+    controller.dispose()
+  })
+
+  it('aborts closes and settles a mounted prompt exactly once', async () => {
+    const controller = createRenameWidgetController({ document, themeSource: document.body })
+    const abort = new AbortController()
+    const result = controller.prompt({
+      anchor: new DOMRect(10, 20, 40, 18),
+      currentName: 'value',
+      signal: abort.signal,
+    })
+
+    abort.abort()
+    abort.abort()
+
+    await expect(result).resolves.toBeNull()
+    expect(renameElement().style.display).toBe('none')
+    expect(renameAnchorElement().style.display).toBe('none')
     controller.dispose()
   })
 })

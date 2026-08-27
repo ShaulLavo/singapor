@@ -10,6 +10,10 @@ import type {
   EditorViewContributionContext,
   EditorViewSnapshot,
 } from '../src/plugins'
+import {
+  TEST_DOCUMENT_SYNC_POINT,
+  unchangedChangesSinceDocumentSyncPoint,
+} from './factories/documentSync'
 import type { BracketInfo } from '../src/syntax/session'
 
 const TEXT = 'fn(a)'
@@ -121,9 +125,11 @@ type SnapshotOptions = {
 function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
   const caret = options.caret ?? 0
   return {
+    changesSinceDocumentSyncPoint: unchangedChangesSinceDocumentSyncPoint,
     brackets: options.brackets ?? BRACKETS,
     contentWidth: 80,
     documentId: 'bracket-test',
+    documentSyncPoint: TEST_DOCUMENT_SYNC_POINT,
     foldMarkers: [],
     fullText: TEXT,
     languageId: 'typescript',

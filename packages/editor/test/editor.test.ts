@@ -7,6 +7,7 @@ import {
   createMergeConflictPlugin,
   defaultEditorKeyBindings,
   Editor,
+  type EditorChangeHandler,
   type EditorCommandId,
   type EditorDecorationContributionContext,
   type EditorKeymapOptions,
@@ -15,7 +16,15 @@ import {
 } from '../src/editor'
 import { EDITOR_OPTION_DESCRIPTORS } from '../src/editor/optionDescriptors'
 import {
+  acquireDocumentMutationLease,
+  commitPreparedDocumentTransaction,
   createDocumentSession,
+  createEditorBufferSession,
+  createEditorTextBuffer,
+  createEditorViewSession,
+  prepareDocumentTransaction,
+  releaseDocumentMutationLease,
+  reverseDocumentTransaction,
   type DocumentSessionChange,
   type DocumentTextSnapshot,
 } from '../src/public/document'
@@ -792,6 +801,30 @@ function trackScrollTopWrites(element: HTMLElement): {
   return {
     values,
     restore: () => restoreElementProperty(element, 'scrollTop', descriptor),
+  }
+}
+
+function recordDocumentChanges(changes: DocumentSessionChange[]): EditorChangeHandler {
+  return (_state, change) => {
+    if (!change) return
+    changes.push(change)
+  }
+}
+
+function trackBufferSubscriptionDisposal(
+  buffer: ReturnType<typeof createEditorTextBuffer>,
+  onDispose: () => void,
+): void {
+  const subscribe = buffer.subscribe.bind(buffer)
+  vi.spyOn(buffer, 'subscribe').mockImplementation((listener) =>
+    trackedDisposal(subscribe(listener), onDispose),
+  )
+}
+
+function trackedDisposal(dispose: () => void, onDispose: () => void): () => void {
+  return () => {
+    onDispose()
+    dispose()
   }
 }
 
@@ -2161,6 +2194,98 @@ describe('Editor', () => {
   })
 
   describe('attachSession', () => {
+    it('does not let public render APIs bypass an attached leased buffer', () => {
+      const buffer = createEditorTextBuffer('abc')
+      const session = createEditorBufferSession(buffer)
+      editor.attachSession(session)
+      const acquired = acquireDocumentMutationLease(
+        buffer,
+        buffer.getRevision(),
+        buffer.getSnapshot(),
+        'editor-render-guard',
+      )
+      if (acquired.status !== 'acquired') throw new RangeError('expected lease')
+
+      editor.setContent('bypass')
+      editor.setDocument({ text: 'replacement', tokens: [] })
+      editor.applyEdit({ from: 0, to: 1, text: 'X' }, [])
+
+      expect(buffer.materializeFullText()).toBe('abc')
+      expect(editorRoot().textContent).toBe('abc')
+      releaseDocumentMutationLease(buffer, acquired.lease)
+    })
+
+    it('disposes old buffer subscriptions before resetting to an owned document', () => {
+      const buffer = createEditorTextBuffer('old')
+      const session = createEditorBufferSession(buffer)
+      const unsubscribe = vi.fn()
+      trackBufferSubscriptionDisposal(buffer, unsubscribe)
+      editor.attachSession(session)
+
+      editor.openDocument({ documentId: 'new.ts', text: 'new' })
+      session.applyEdits([{ from: 0, to: 3, text: 'stale' }])
+
+      expect(unsubscribe).toHaveBeenCalledOnce()
+      expect(editor.materializeFullText()).toBe('new')
+      expect(editorRoot().textContent).toBe('new')
+    })
+
+    it('observes one external commit and rollback in two mounted views without double-applying a source-view edit', () => {
+      editor.dispose()
+      const secondContainer = document.createElement('div')
+      document.body.appendChild(secondContainer)
+      const firstChanges: DocumentSessionChange[] = []
+      const secondChanges: DocumentSessionChange[] = []
+      editor = new Editor(container, {
+        onChange: recordDocumentChanges(firstChanges),
+      })
+      const secondEditor = new Editor(secondContainer, {
+        onChange: recordDocumentChanges(secondChanges),
+      })
+      const buffer = createEditorTextBuffer('abcd')
+      const firstSession = createEditorBufferSession(
+        buffer,
+        createEditorViewSession(buffer, 'first'),
+      )
+      const secondSession = createEditorBufferSession(
+        buffer,
+        createEditorViewSession(buffer, 'second'),
+      )
+      editor.attachSession(firstSession)
+      secondEditor.attachSession(secondSession)
+      firstSession.setSelection(1)
+      secondSession.setSelection(3)
+      editor.setScrollPosition({ top: 11, left: 2 })
+      secondEditor.setScrollPosition({ top: 22, left: 4 })
+
+      const committed = commitPreparedDocumentTransaction(
+        { buffer, sourceView: null },
+        prepareDocumentTransaction(buffer, [{ from: 2, to: 2, text: 'X' }], 1, null),
+        { history: { kind: 'external-barrier', groupId: 'group' } },
+      )
+      if (committed.status !== 'committed') throw new RangeError('expected commit')
+      expect(editor.materializeFullText()).toBe('abXcd')
+      expect(secondEditor.materializeFullText()).toBe('abXcd')
+      expect(firstChanges).toHaveLength(1)
+      expect(secondChanges).toHaveLength(1)
+
+      expect(
+        reverseDocumentTransaction({ buffer, sourceView: null }, committed.receipt).status,
+      ).toBe('reversed')
+      expect(editor.materializeFullText()).toBe('abcd')
+      expect(secondEditor.materializeFullText()).toBe('abcd')
+      expect(editor.getScrollPosition()).toEqual({ top: 11, left: 2 })
+      expect(secondEditor.getScrollPosition()).toEqual({ top: 22, left: 4 })
+
+      editor.edit({ from: 4, to: 4, text: '!' })
+      expect(editor.materializeFullText()).toBe('abcd!')
+      expect(secondEditor.materializeFullText()).toBe('abcd!')
+      expect(firstChanges).toHaveLength(3)
+      expect(secondChanges).toHaveLength(3)
+      secondEditor.dispose()
+      secondContainer.remove()
+    })
+
     it('attaches document identity, language, scroll, and dirty state', () => {
       const session = createDocumentSession('abc')
 
@@ -7200,6 +7325,21 @@ describe('Editor', () => {
       editor.clear()
       expect(editorRoot().textContent).toBe('')
       expect(highlightsMap.size).toBe(0)
+    })
+
+    it('unsubscribes from an attached buffer before clearing the document', () => {
+      const buffer = createEditorTextBuffer('old')
+      const session = createEditorBufferSession(buffer)
+      const unsubscribe = vi.fn()
+      trackBufferSubscriptionDisposal(buffer, unsubscribe)
+      editor.attachSession(session)
+
+      editor.clearDocument()
+      session.applyEdits([{ from: 0, to: 3, text: 'stale' }])
+
+      expect(unsubscribe).toHaveBeenCalledOnce()
+      expect(editor.materializeFullText()).toBe('')
+      expect(editorRoot().textContent).toBe('')
     })
   })
 

@@ -16,8 +16,10 @@ import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { createLanguageServerPlugin, type LanguageServerConnectionContext } from '../src/plugin'
+import { LanguageServerDocumentSyncController } from '../src/documentSyncController'
 import type { LanguageServerPluginOptions } from '../src/types'
 import { flushPromises } from './connectedEditor'
+import { documentSyncSnapshotFields } from './documentSyncSnapshot'
 
 /**
  * The narrow `createLanguageServerPlugin` factory, driven end to end over a stub socket.
@@ -90,6 +92,7 @@ type Harness = {
   readonly initializeParams: lsp.InitializeParams
   readonly diagnostics: readonly lsp.PublishDiagnosticsParams[]
   answerInitialize(capabilities?: lsp.ServerCapabilities): Promise<void>
+  dispose(): void
 }
 
 async function narrowPlugin(options: Partial<LanguageServerPluginOptions> = {}): Promise<Harness> {
@@ -129,6 +132,7 @@ async function narrowPlugin(options: Partial<LanguageServerPluginOptions> = {}):
     client: connection.client,
     initializeParams: initialize.params as lsp.InitializeParams,
     diagnostics,
+    dispose: () => contribution.dispose(),
     answerInitialize: async (capabilities = {}) => {
       socket.receive({
         jsonrpc: '2.0',
@@ -143,6 +147,77 @@ async function narrowPlugin(options: Partial<LanguageServerPluginOptions> = {}):
 }
 
 describe('capabilities and clientInfo through the narrow factory', () => {
+  it('registers and disposes the host document-sync controller with each lane', async () => {
+    const controller = new LanguageServerDocumentSyncController()
+    const dispose = vi.fn()
+    const register = vi.spyOn(controller, 'register').mockReturnValue({ dispose })
+    const harness = await narrowPlugin({ documentSync: { controller } })
+
+    expect(register).toHaveBeenCalledOnce()
+    harness.dispose()
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('advertises WorkspaceEdit response capabilities only with a host callback', async () => {
+    const withoutHost = await narrowPlugin()
+    const withHost = await narrowPlugin({
+      onApplyWorkspaceEdit: async () => ({ status: 'applied' }),
+    })
+
+    expect(withoutHost.initializeParams.capabilities.workspace?.workspaceEdit).toBeUndefined()
+    expect(withHost.initializeParams.capabilities.workspace?.workspaceEdit).toBeDefined()
+  })
+
+  it('advertises documentChanges resources annotations line-ending normalization and failureHandling undo exactly', async () => {
+    const harness = await narrowPlugin({
+      onApplyWorkspaceEdit: async () => ({ status: 'applied' }),
+    })
+
+    expect(harness.initializeParams.capabilities.workspace?.workspaceEdit).toEqual({
+      changeAnnotationSupport: { groupsOnLabel: true },
+      documentChanges: true,
+      failureHandling: 'undo',
+      normalizesLineEndings: true,
+      resourceOperations: ['create', 'rename', 'delete'],
+    })
+  })
+
+  it('never advertises workspace applyEdit or snippet edit support', async () => {
+    const harness = await narrowPlugin({
+      capabilities: {
+        workspace: {
+          applyEdit: true,
+          workspaceEdit: { documentChanges: true, failureHandling: 'transactional' },
+        },
+      },
+      onApplyWorkspaceEdit: async () => ({ status: 'applied' }),
+    })
+    const workspace = harness.initializeParams.capabilities.workspace
+    const workspaceEdit = workspace?.workspaceEdit as Record<string, unknown> | undefined
+
+    expect(workspace?.applyEdit).toBeUndefined()
+    expect(workspaceEdit?.snippetEditSupport).toBeUndefined()
+    expect(workspaceEdit?.failureHandling).toBe('undo')
+  })
+
+  it('preserves semantic-token capability while adding workspace-edit capability', async () => {
+    const semanticTokens: lsp.SemanticTokensClientCapabilities = {
+      formats: ['relative'],
+      requests: { full: true },
+      tokenModifiers: ['readonly'],
+      tokenTypes: ['variable'],
+    }
+    const harness = await narrowPlugin({
+      capabilities: { textDocument: { semanticTokens } },
+      onApplyWorkspaceEdit: async () => ({ status: 'applied' }),
+    })
+
+    expect(harness.initializeParams.capabilities.textDocument?.semanticTokens).toEqual(
+      semanticTokens,
+    )
+    expect(harness.initializeParams.capabilities.workspace?.workspaceEdit).toBeDefined()
+  })
+
   it('sends a host-supplied block verbatim in the initialize params', async () => {
     const capabilities: lsp.ClientCapabilities = {
       textDocument: {
@@ -410,6 +485,7 @@ function viewContributionContext(): EditorViewContributionContext {
 function snapshot(): EditorViewSnapshot {
   const fullText = 'const value = 1\n'
   return {
+    ...documentSyncSnapshotFields(1),
     documentId: 'src/index.ts',
     languageId: 'typescript',
     fullText,
@@ -601,6 +677,7 @@ function layerSnapshot(
   }))
 
   return {
+    ...documentSyncSnapshotFields(textVersion, documentId ?? 'no-document'),
     documentId,
     languageId: languageId as EditorViewSnapshot['languageId'],
     fullText,

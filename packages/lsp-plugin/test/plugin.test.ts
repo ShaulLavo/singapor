@@ -22,7 +22,14 @@ import {
   type LspConnectionProvider,
 } from '../src/lspConnection'
 import { createLanguageServerAdapterPlugin, createLanguageServerPlugin } from '../src/plugin'
-import type { LanguageServerPlugin } from '../src/types'
+import type {
+  ApplyWorkspaceEditRequest,
+  ApplyWorkspaceEditResult,
+  LanguageServerPlugin,
+  LanguageServerRenamePrompt,
+} from '../src/types'
+import { connectedEditor, DOCUMENT_URI } from './connectedEditor'
+import { documentSyncSnapshotFields } from './documentSyncSnapshot'
 
 type JsonMessage = Record<string, unknown>
 type Listener = (event: Event) => void
@@ -277,6 +284,236 @@ describe('createLanguageServerAdapterPlugin', () => {
 type ActivationOptions = {
   readonly applyEdits: EditorEditContributionContext['applyEdits']
 }
+
+describe('rename WorkspaceEdit routing', () => {
+  afterEach(() => {
+    document.body.replaceChildren()
+  })
+
+  it('dispatches a same-document rename to the host exactly once', async () => {
+    const applied: ApplyWorkspaceEditRequest[] = []
+    const editor = await connectedEditor('const value = 1', 8, {
+      onApplyWorkspaceEdit: async (request) => {
+        applied.push(request)
+        return { status: 'applied' }
+      },
+      onRequestRenameName: async () => 'renamed',
+    })
+
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    await flushPromises()
+    expect(editor.renameRequests()).toHaveLength(1)
+    editor.answerRename({
+      changes: {
+        [DOCUMENT_URI]: [
+          {
+            newText: 'renamed',
+            range: { start: { line: 0, character: 6 }, end: { line: 0, character: 11 } },
+          },
+        ],
+      },
+    })
+    await flushPromises()
+
+    expect(applied).toHaveLength(1)
+    expect(applied[0]).toMatchObject({
+      originUri: DOCUMENT_URI,
+      serverId: 'editor.test-lsp',
+      source: 'rename',
+    })
+    expect(applied[0]?.guard.isCurrent(DOCUMENT_URI)).toBe(true)
+    expect(applied[0]?.guard.documents[0]?.textSnapshot).toBe(editor.textSnapshot())
+    expect(editor.applyEdits).not.toHaveBeenCalled()
+  })
+
+  it('dispatches rename with the owning lane version after a document change', async () => {
+    const editor = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: async () => 'renamed',
+    })
+    editor.editElsewhere({ from: 15, to: 15, text: ' ' })
+
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    await flushPromises()
+    editor.answerRename({ changes: { [DOCUMENT_URI]: [] } })
+    await flushPromises()
+
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
+    expect(editor.workspaceEditRequests()[0]?.originVersion).toBe(1)
+  })
+
+  it('dispatches a cross-file rename without applying the active-document half', async () => {
+    const editor = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: async () => 'renamed',
+    })
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    await flushPromises()
+    editor.answerRename({
+      changes: {
+        [DOCUMENT_URI]: [],
+        'file:///src/other.ts': [],
+      },
+    })
+    await flushPromises()
+
+    expect(editor.workspaceEditRequests()[0]?.plan.operations).toHaveLength(2)
+    expect(editor.applyEdits).not.toHaveBeenCalled()
+  })
+
+  it('propagates the host rename-name callback through resolved options', async () => {
+    const prompt = vi.fn(async () => null)
+    const editor = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: prompt,
+    })
+
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    await flushPromises()
+
+    expect(prompt).toHaveBeenCalledOnce()
+    expect(editor.renameRequests()).toHaveLength(0)
+  })
+
+  it('passes anchor currentName and the operation signal to the host rename prompt', async () => {
+    const prompts: LanguageServerRenamePrompt[] = []
+    const editor = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: async (prompt) => {
+        prompts.push(prompt)
+        return null
+      },
+    })
+
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    await flushPromises()
+
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toMatchObject({ currentName: 'value', anchor: expect.any(DOMRect) })
+    expect(prompts[0]?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('does not mount an already-aborted built-in rename prompt', async () => {
+    const editor = await connectedEditor('const value = 1', 8)
+
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    editor.type('!')
+    await flushPromises()
+
+    expect(document.querySelector('.lsp-plugin-rename')).toBeNull()
+  })
+
+  it('aborts and closes a pending rename prompt on a newer rename or disposal', async () => {
+    const editor = await connectedEditor('const value = 1', 8)
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    await flushPromises()
+    expect(renameInputElement()?.style.display).toBe('block')
+
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    await flushPromises()
+    expect(document.querySelectorAll('.lsp-plugin-rename')).toHaveLength(1)
+    expect(renameInputElement()?.style.display).toBe('block')
+
+    editor.dispose()
+    expect(document.querySelector('.lsp-plugin-rename')).toBeNull()
+  })
+
+  it('does not dispatch after prompt cancel request cancel or active-document drift', async () => {
+    const promptCancelled = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: async () => null,
+    })
+    promptCancelled.runCommand('editor.action.rename')
+    await flushPromises()
+    expect(promptCancelled.workspaceEditRequests()).toHaveLength(0)
+
+    const requestCancelled = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: async () => 'renamed',
+    })
+    requestCancelled.runCommand('editor.action.rename')
+    await flushPromises()
+    requestCancelled.type('!')
+    requestCancelled.answerRename({ changes: { [DOCUMENT_URI]: [] } })
+    await flushPromises()
+    expect(requestCancelled.workspaceEditRequests()).toHaveLength(0)
+
+    const drifted = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: async () => 'renamed',
+    })
+    drifted.runCommand('editor.action.rename')
+    drifted.type('!')
+    await flushPromises()
+    expect(drifted.renameRequests()).toHaveLength(0)
+    expect(drifted.workspaceEditRequests()).toHaveLength(0)
+  })
+
+  it('reports malformed producer output without invoking the host', async () => {
+    const editor = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: async () => 'renamed',
+    })
+    editor.runCommand('editor.action.rename')
+    await flushPromises()
+    editor.answerRename({ documentChanges: [{ nope: true }] })
+    await flushPromises()
+
+    expect(editor.workspaceEditRequests()).toHaveLength(0)
+    expect(editor.reportedErrors()).toHaveLength(1)
+  })
+
+  it('treats host cancellation as a non-error', async () => {
+    const editor = await renameSettlement({ status: 'cancelled' })
+
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
+    expect(editor.reportedErrors()).toHaveLength(0)
+  })
+
+  it('reports a real host failure exactly once', async () => {
+    const editor = await renameSettlement({
+      code: 'version-conflict',
+      message: 'The proposal is stale.',
+      status: 'failed',
+    })
+
+    expect(editor.reportedErrors()).toHaveLength(1)
+    expect(String(editor.reportedErrors()[0])).toContain('version-conflict')
+  })
+
+  it('preserves rolled-back and recovery-required host settlements without reporting applied', async () => {
+    const rolledBack = await renameSettlement({
+      code: 'write-failed',
+      message: 'Restored.',
+      status: 'rolled-back',
+    })
+    const recovery = await renameSettlement({
+      affectedPaths: ['src/index.ts'],
+      code: 'recovery-required',
+      message: 'Manual recovery is required.',
+      status: 'recovery-required',
+    })
+
+    expect(rolledBack.reportedErrors()).toHaveLength(0)
+    expect(recovery.reportedErrors()).toHaveLength(0)
+  })
+
+  it('never reports a post-commit settlement as cancelled', async () => {
+    const settlement = deferred<ApplyWorkspaceEditResult>()
+    const editor = await connectedEditor('const value = 1', 8, {
+      onApplyWorkspaceEdit: () => settlement.promise,
+      onRequestRenameName: async () => 'renamed',
+    })
+    editor.runCommand('editor.action.rename')
+    await flushPromises()
+    editor.answerRename({ changes: { [DOCUMENT_URI]: [] } })
+    await flushPromises()
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
+
+    editor.type('!')
+    settlement.resolve({
+      code: 'cancelled-after-commit',
+      message: 'Restored.',
+      status: 'rolled-back',
+    })
+    await flushPromises()
+
+    expect(editor.reportedErrors()).toHaveLength(0)
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
+  })
+})
 
 describe('connectionProvider', () => {
   /**
@@ -544,6 +781,7 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
     if (fullText.charCodeAt(index) === 10) lineStarts.push(index + 1)
   }
   return {
+    ...documentSyncSnapshotFields(1),
     documentId,
     languageId: 'markdown',
     fullText,
@@ -644,4 +882,31 @@ function sentMethods(socket: FakeWebSocket): readonly unknown[] {
 async function flushPromises(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
+}
+
+async function renameSettlement(
+  result: ApplyWorkspaceEditResult,
+): Promise<Awaited<ReturnType<typeof connectedEditor>>> {
+  const editor = await connectedEditor('const value = 1', 8, {
+    onApplyWorkspaceEdit: async () => result,
+    onRequestRenameName: async () => 'renamed',
+  })
+  editor.runCommand('editor.action.rename')
+  await flushPromises()
+  editor.answerRename({ changes: { [DOCUMENT_URI]: [] } })
+  await flushPromises()
+  await flushPromises()
+  return editor
+}
+
+function renameInputElement(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('.lsp-plugin-rename')
+}
+
+function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
 }

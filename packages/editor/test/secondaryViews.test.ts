@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { createStringTextSnapshot } from '@singapor/core/document'
 import type { EditorViewSnapshot } from '@singapor/core/extensions'
 import {
+  TEST_DOCUMENT_SYNC_POINT,
+  unchangedChangesSinceDocumentSyncPoint,
+} from './factories/documentSync'
+import {
   createEditorSecondaryViewProjection,
   EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
@@ -54,7 +58,9 @@ describe('secondary view projections', () => {
 
 function editorViewSnapshot(text: string): EditorViewSnapshot {
   return {
+    changesSinceDocumentSyncPoint: unchangedChangesSinceDocumentSyncPoint,
     documentId: 'secondary-test',
+    documentSyncPoint: TEST_DOCUMENT_SYNC_POINT,
     languageId: 'typescript',
     textSnapshot: createStringTextSnapshot(text),
     fullText: text,

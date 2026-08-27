@@ -16,6 +16,7 @@ export {
   // A host that must not silently rewrite a file needs to know the ingestion folded U+2028/U+2029
   // into real line breaks, because the folded text no longer carries the evidence.
   pieceTableContainsUnusualLineTerminators,
+  pieceTableDocumentText,
   pieceTableSnapshotsHaveSameText,
   pointToOffset,
   readPieceTableTextRange,
@@ -25,11 +26,29 @@ export {
 } from '../pieceTable'
 export {
   createDocumentSession,
+  acquireDocumentMutationLease,
+  beginReverseDocumentTransactionSequence,
+  commitPreparedDocumentTransaction,
+  commitPreparedDocumentTransactionSequenceSegment,
+  completePreparedDocumentTransactionSequence,
+  completeReverseDocumentTransactionSequence,
   createEditorBufferSession,
   createEditorTextBuffer,
   createEditorViewSession,
   createStaticDocumentSession,
+  getDocumentMutationLeaseState,
+  prepareDocumentTransaction,
+  prepareDocumentTransactionSequence,
+  releaseDocumentMutationLease,
+  releaseDocumentTransactionReceipt,
+  reverseDocumentTransaction,
+  reverseNextDocumentTransactionSequenceSegment,
+  rotateDocumentSyncSegment,
+  sealDocumentTransactionReceipt,
+  subscribeDocumentMutationLeaseState,
 } from '../documentSession'
+export { createDocumentLogicalRevisionScope } from '../editor/editChain'
+export { documentTextRoundTripStatus } from '../pieceTable/lineEndings'
 export { createDocumentTextSnapshot, createStringTextSnapshot } from '../documentTextSnapshot'
 export {
   characterClassAt,
@@ -55,12 +74,17 @@ export type {
   PieceTableAnchor,
   PieceTableEdit,
   PieceTableSnapshot,
+  PieceTableDocumentTextOptions,
   PieceTableWalker,
   PieceTableWalkerChunk,
   Point,
   ResolvedAnchor,
 } from '../pieceTable'
 export type {
+  AcquireDocumentMutationLeaseResult,
+  BeginReverseDocumentTransactionSequenceResult,
+  CompletePreparedDocumentSequenceResult,
+  CompleteReverseDocumentTransactionSequenceResult,
   DocumentSession,
   DocumentSessionApplyEditsOptions,
   DocumentSessionChange,
@@ -69,6 +93,15 @@ export type {
   DocumentSessionEditSelection,
   DocumentSessionSelectionOptions,
   DocumentSessionSelectionRange,
+  DocumentMutationLease,
+  DocumentMutationLeaseState,
+  DocumentMutationLeaseStateListener,
+  DocumentTransactionCommitOptions,
+  DocumentTransactionCommitTarget,
+  DocumentTransactionHistory,
+  DocumentTransactionReceipt,
+  DocumentTransactionSequenceReverseCursor,
+  DocumentTransactionSequenceSegmentInput,
   DocumentTransaction,
   DocumentTransactionMetadata,
   EditorBufferSession,
@@ -79,7 +112,27 @@ export type {
   EditorViewMetadataValue,
   EditorViewScrollPosition,
   EditorViewSession,
+  PreparedDocumentCommitResult,
+  PreparedDocumentSequenceSegmentCommitResult,
+  PreparedDocumentTransaction,
+  PreparedDocumentTransactionSequence,
+  ReleaseDocumentMutationLeaseResult,
+  ReleaseDocumentTransactionResult,
+  ReverseDocumentTransactionResult,
+  ReverseDocumentTransactionSequenceSegmentResult,
+  RotateDocumentSyncSegmentResult,
+  SealDocumentTransactionResult,
 } from '../documentSession'
+export type {
+  DocumentChangesSinceSyncPoint,
+  DocumentLogicalRevisionScope,
+  DocumentSyncPoint,
+  DocumentSyncSegment,
+} from '../editor/editChain'
+export type {
+  DocumentTextRoundTripIssue,
+  DocumentTextRoundTripStatus,
+} from '../pieceTable/lineEndings'
 export type { DocumentTextSnapshot, TextSnapshot } from '../documentTextSnapshot'
 export type { SelectionAffinity } from '../selections'
 export type { EditorDocument, TextEdit } from '../tokens'

@@ -4,6 +4,7 @@ export {
   documentSyncModeFromCapabilities,
   documentSyncOptionsFromCapabilities,
   mergeClientCapabilities,
+  composeWorkspaceEditClientCapabilities,
 } from './capabilities'
 export {
   SEMANTIC_TOKEN_MODIFIERS,
@@ -53,10 +54,14 @@ export type {
   LspLineStarts,
   LspDocument,
   LspDocumentChange,
+  LspDocumentOpenSnapshotOptions,
+  LspDocumentOpenSnapshotResult,
   LspDocumentSaveSync,
-  LspDocumentOpenOptions,
   LspDocumentSyncMode,
   LspDocumentSyncOptions,
+  LspDocumentTransitionOptions,
+  LspDocumentTransitionNotification,
+  LspDocumentTransitionResult,
   LspClientWorkspace,
   LspNotificationHandler,
   LspRequestHandle,
@@ -71,9 +76,10 @@ export type {
   LspTransportHandler,
   LspUnhandledNotificationHandler,
   LspWorkspaceSyncTarget,
-  LspWorkspaceEditOptions,
+  LspWorkspaceDocumentAttachment,
   LspWorkspaceFactory,
   LspWorkspaceSnapshotEditOptions,
+  LspWorkspaceUnchangedSourceOptions,
 } from './types'
 export { LspWorkspace, arrayLspLineStarts } from './workspace'
 export type * as lsp from 'vscode-languageserver-protocol'

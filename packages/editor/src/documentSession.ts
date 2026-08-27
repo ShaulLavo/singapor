@@ -30,11 +30,24 @@ import { EditorEventSource } from './editor/emitter'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from './documentTextSnapshot'
 import type { Anchor as PieceTableAnchor, PieceTableSnapshot } from './pieceTable/pieceTableTypes'
 import { applyBatchToPieceTable, snapBatchEditRanges } from './pieceTable/edits'
+import { diffPieceTableSnapshots } from './pieceTable/diff'
 import { readPieceTableTextRange, pieceTableSnapshotsHaveSameText } from './pieceTable/reads'
 import { createPieceTableSnapshot } from './pieceTable/snapshot'
 import { normalizeDocumentText, normalizeLineEndings } from './pieceTable/lineEndings'
+import {
+  DocumentEditChain,
+  type DocumentChangesSinceSyncPoint,
+  type DocumentLogicalRevisionScope,
+  type DocumentSyncPoint,
+} from './editor/editChain'
 
-export type DocumentSessionChangeKind = 'edit' | 'selection' | 'undo' | 'redo' | 'none'
+export type DocumentSessionChangeKind =
+  | 'edit'
+  | 'selection'
+  | 'undo'
+  | 'redo'
+  | 'synchronize'
+  | 'none'
 
 export type EditorTimingMeasurement = {
   readonly name: string
@@ -52,6 +65,8 @@ export type DocumentSessionChange = {
   readonly canUndo: boolean
   readonly canRedo: boolean
   readonly isDirty: boolean
+  readonly logicalRevisionCount: number
+  readonly logicalRevisionScope: DocumentLogicalRevisionScope | null
 }
 
 export type DocumentSession = {
@@ -107,6 +122,7 @@ export type EditorViewMetadataValue =
 
 export type EditorTextBufferChange = {
   readonly change: DocumentSessionChange
+  readonly origin: 'external' | 'view'
   readonly sourceViewId: string | null
 }
 
@@ -149,6 +165,11 @@ export type EditorTextBuffer = {
   getTextSnapshot(): DocumentTextSnapshot
   getSnapshot(): PieceTableSnapshot
   getRevision(): number
+  getDocumentSyncPoint(): DocumentSyncPoint
+  changesSinceDocumentSyncPoint(
+    point: DocumentSyncPoint,
+    scope: DocumentLogicalRevisionScope | null,
+  ): DocumentChangesSinceSyncPoint | null
   // Whether materializing the whole document as one string is a heap hazard,
   // the streaming alternative being `getTextSnapshot()`'s `forEachTextChunk`.
   // Decided once when the buffer is constructed and never re-evaluated, so a
@@ -227,6 +248,8 @@ export type DocumentTransactionMetadata = {
     | 'undo'
     | 'redo'
   readonly undoGroup?: string
+  readonly logicalRevisionCount: number
+  readonly logicalRevisionScope: DocumentLogicalRevisionScope | null
 }
 
 export type DocumentTransaction = {
@@ -237,6 +260,152 @@ export type DocumentTransaction = {
   readonly selectionBefore: SelectionSet<PieceTableAnchor>
   readonly selectionAfter: SelectionSet<PieceTableAnchor>
   readonly metadata: DocumentTransactionMetadata
+}
+
+export type PreparedDocumentTransaction = {
+  readonly hasTextChange: boolean
+  readonly logicalRevisionCount: number
+  readonly logicalRevisionScope: DocumentLogicalRevisionScope | null
+  readonly expectedRevision: number
+  readonly snapshotBefore: PieceTableSnapshot
+  readonly snapshotAfter: PieceTableSnapshot
+  readonly edits: readonly TextEdit[]
+  readonly inverseEdits: readonly TextEdit[]
+}
+
+declare const preparedDocumentTransactionSequenceBrand: unique symbol
+declare const documentTransactionSequenceReverseBrand: unique symbol
+declare const documentTransactionReceiptBrand: unique symbol
+declare const documentMutationLeaseBrand: unique symbol
+
+export type PreparedDocumentTransactionSequence = {
+  readonly [preparedDocumentTransactionSequenceBrand]: true
+  readonly expectedRevision: number
+  readonly segments: readonly PreparedDocumentTransaction[]
+  readonly snapshotAfter: PieceTableSnapshot
+  readonly snapshotBefore: PieceTableSnapshot
+}
+
+export type DocumentTransactionSequenceSegmentInput = {
+  readonly edits: readonly TextEdit[]
+  readonly logicalRevisionCount: number
+  readonly logicalRevisionScope: DocumentLogicalRevisionScope | null
+}
+
+export type DocumentTransactionSequenceReverseCursor = {
+  readonly [documentTransactionSequenceReverseBrand]: true
+  readonly nextSegmentIndex: number
+}
+
+export type DocumentTransactionHistory =
+  | { readonly kind: 'record'; readonly undoGroup?: string }
+  | { readonly groupId: string; readonly kind: 'external-barrier' }
+
+export type DocumentTransactionCommitTarget = {
+  readonly buffer: EditorTextBuffer
+  readonly mutationLease?: DocumentMutationLease
+  readonly sourceView: EditorViewSession | null
+}
+
+export type DocumentTransactionCommitOptions = {
+  readonly history: DocumentTransactionHistory
+  readonly selection?: DocumentSessionEditSelection
+  readonly selections?: readonly DocumentSessionEditSelection[]
+}
+
+export type DocumentMutationLease = {
+  readonly [documentMutationLeaseBrand]: true
+  readonly ownerId: string
+}
+
+export type AcquireDocumentMutationLeaseResult =
+  | { readonly lease: DocumentMutationLease; readonly status: 'acquired' }
+  | { readonly status: 'busy' | 'stale' }
+
+export type DocumentMutationLeaseState = {
+  readonly isLeased: boolean
+  readonly ownerId: string | null
+}
+
+export type DocumentMutationLeaseStateListener = (state: DocumentMutationLeaseState) => void
+
+export type DocumentTransactionReceipt = {
+  readonly [documentTransactionReceiptBrand]: true
+  readonly edits: readonly TextEdit[]
+  readonly history: DocumentTransactionHistory
+  readonly inverseEdits: readonly TextEdit[]
+  readonly logicalRevisionCount: number
+  readonly phase: 'provisional' | 'sealed'
+  readonly revisionAfter: number
+  readonly revisionBefore: number
+  readonly segmentCount: number
+  readonly snapshotAfter: PieceTableSnapshot
+  readonly snapshotBefore: PieceTableSnapshot
+}
+
+export type PreparedDocumentCommitResult =
+  | {
+      readonly status: 'committed'
+      readonly change: DocumentSessionChange
+      readonly receipt: DocumentTransactionReceipt
+    }
+  | { readonly status: 'logical-only'; readonly change: DocumentSessionChange }
+  | { readonly status: 'stale' }
+
+export type PreparedDocumentSequenceSegmentCommitResult =
+  | {
+      readonly change: DocumentSessionChange
+      readonly receipt: DocumentTransactionReceipt | null
+      readonly status: 'committed' | 'logical-only'
+    }
+  | { readonly status: 'out-of-order' | 'stale' }
+
+export type CompletePreparedDocumentSequenceResult =
+  | { readonly receipt: DocumentTransactionReceipt | null; readonly status: 'completed' }
+  | { readonly status: 'incomplete' | 'stale' }
+
+export type BeginReverseDocumentTransactionSequenceResult =
+  | {
+      readonly cursor: DocumentTransactionSequenceReverseCursor
+      readonly status: 'started'
+    }
+  | { readonly status: 'stale' }
+
+export type ReverseDocumentTransactionSequenceSegmentResult =
+  | {
+      readonly change: DocumentSessionChange
+      readonly cursor: DocumentTransactionSequenceReverseCursor
+      readonly status: 'reversed'
+    }
+  | { readonly status: 'out-of-order' | 'stale' }
+
+export type CompleteReverseDocumentTransactionSequenceResult =
+  | { readonly receipt: DocumentTransactionReceipt; readonly status: 'completed' }
+  | { readonly status: 'incomplete' | 'stale' }
+
+export type RotateDocumentSyncSegmentResult =
+  | { readonly status: 'rotated'; readonly syncPoint: DocumentSyncPoint }
+  | { readonly status: 'stale' }
+
+export type ReverseDocumentTransactionResult =
+  | {
+      readonly status: 'reversed'
+      readonly change: DocumentSessionChange
+      readonly receipt: DocumentTransactionReceipt
+    }
+  | { readonly status: 'stale' }
+
+export type SealDocumentTransactionResult = {
+  readonly receipt: DocumentTransactionReceipt
+  readonly status: 'sealed' | 'already-sealed'
+}
+
+export type ReleaseDocumentTransactionResult = {
+  readonly status: 'released' | 'already-released'
+}
+
+export type ReleaseDocumentMutationLeaseResult = {
+  readonly status: 'released' | 'already-released'
 }
 
 type CommitEditOptions = {
@@ -251,6 +420,44 @@ type DocumentHistory = EditorHistory<
   SelectionSet<PieceTableAnchor>,
   DocumentTransaction
 >
+
+type DocumentBarrierState = {
+  readonly buffer: PieceTableEditorTextBuffer
+  historyBefore: DocumentHistory
+  older: DocumentBarrierState | null
+  phase: 'provisional' | 'sealed'
+  released: boolean
+  installed: boolean
+  readonly revisionBefore: number
+  revisionAfter: number
+  readonly history: DocumentTransactionHistory
+  readonly segments: DocumentTransaction[]
+}
+
+type PreparedSequenceState = {
+  nextSegmentIndex: number
+  receipt: DocumentTransactionReceipt | null
+}
+
+type ReverseSequenceState = {
+  readonly barrier: DocumentBarrierState
+  expectedCurrentBarrier: DocumentBarrierState | null
+  expectedRevision: number
+  readonly historyBeforeReverse: DocumentHistory
+  readonly receipt: DocumentTransactionReceipt
+  readonly revisionBefore: number
+  readonly wasInstalled: boolean
+  completed: boolean
+  nextSegmentIndex: number
+  readonly reversedTransactions: DocumentTransaction[]
+}
+
+const receiptStates = new WeakMap<DocumentTransactionReceipt, DocumentBarrierState>()
+const sequenceStates = new WeakMap<PreparedDocumentTransactionSequence, PreparedSequenceState>()
+const reverseCursorStates = new WeakMap<
+  DocumentTransactionSequenceReverseCursor,
+  ReverseSequenceState
+>()
 
 type DocumentTransactionIntent = DocumentTransactionMetadata['intent']
 
@@ -282,11 +489,17 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   private readonly changes = new EditorEventSource<EditorTextBufferChange>({
     action: 'editor.buffer.change_listener_failed',
   })
+  private readonly leaseChanges = new EditorEventSource<DocumentMutationLeaseState>({
+    action: 'editor.buffer.lease_listener_failed',
+  })
+  private readonly editChain = new DocumentEditChain(0, 0)
   private history: DocumentHistory
   private cleanSnapshot: PieceTableSnapshot
   private dirtyCacheSnapshot: PieceTableSnapshot
   private dirtyCacheValue = false
   private revision = 0
+  private mutationLease: DocumentMutationLease | null = null
+  private currentBarrier: DocumentBarrierState | null = null
   private typingRun: TypingRun | null = null
   private textSnapshot: DocumentTextSnapshot
   private readonly tooLargeForHeapOperation: boolean
@@ -323,6 +536,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     sourceViewId: string | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
+    if (this.mutationLease)
+      return appendTiming(this.createChange('none', []), 'session.applyText', start)
     // Pasted text is the common CRLF carrier; flatten before the edits are
     // derived so selections land where the inserted text actually ends.
     const text = normalizeLineEndings(rawText)
@@ -334,7 +549,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
-        metadata: { source: 'keyboard', intent: 'insert-text' },
+        metadata: ordinaryTransactionMetadata('keyboard', 'insert-text'),
         selectionBefore: selections,
         sourceViewId,
       }),
@@ -349,11 +564,14 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     sourceViewId: string | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
+    if (this.mutationLease) {
+      return appendTiming(this.createChange('none', []), 'session.indentSelection', start)
+    }
     const result = indentSelections(this.history.current, selections, text)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
-        metadata: { source: 'keyboard', intent: 'indent' },
+        metadata: ordinaryTransactionMetadata('keyboard', 'indent'),
         selectionBefore: selections,
         sourceViewId,
       }),
@@ -368,11 +586,14 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     sourceViewId: string | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
+    if (this.mutationLease) {
+      return appendTiming(this.createChange('none', []), 'session.outdentSelection', start)
+    }
     const result = outdentSelections(this.history.current, selections, tabSize)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
-        metadata: { source: 'keyboard', intent: 'outdent' },
+        metadata: ordinaryTransactionMetadata('keyboard', 'outdent'),
         selectionBefore: selections,
         sourceViewId,
       }),
@@ -388,6 +609,9 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     sourceViewId: string | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
+    if (this.mutationLease) {
+      return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
+    }
     const normalizedEdits = normalizeTextEdits(edits)
     if (normalizedEdits.length === 0) {
       return appendTiming(this.createChange('none', []), 'session.applyEdits', start)
@@ -413,7 +637,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return appendTiming(
       this.commitEdit(nextSnapshot, nextSelections, effectiveEdits, {
         history: options.history ?? 'record',
-        metadata: { source: 'programmatic', intent: 'programmatic-edit' },
+        metadata: ordinaryTransactionMetadata('programmatic', 'programmatic-edit'),
         selectionBefore: selections,
         sourceViewId,
       }),
@@ -428,11 +652,14 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     tabSize?: number,
   ): DocumentSessionChange {
     const start = nowMs()
+    if (this.mutationLease) {
+      return appendTiming(this.createChange('none', []), 'session.backspace', start)
+    }
     const result = backspaceSelections(this.history.current, selections, tabSize)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
-        metadata: { source: 'keyboard', intent: 'backspace' },
+        metadata: ordinaryTransactionMetadata('keyboard', 'backspace'),
         selectionBefore: selections,
         sourceViewId,
       }),
@@ -446,11 +673,14 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     sourceViewId: string | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
+    if (this.mutationLease) {
+      return appendTiming(this.createChange('none', []), 'session.delete', start)
+    }
     const result = deleteSelections(this.history.current, selections)
     return appendTiming(
       this.commitEdit(result.snapshot, result.selections, result.edits, {
         history: 'record',
-        metadata: { source: 'keyboard', intent: 'delete' },
+        metadata: ordinaryTransactionMetadata('keyboard', 'delete'),
         selectionBefore: selections,
         sourceViewId,
       }),
@@ -461,6 +691,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public undo(sourceViewId: string | null = null): DocumentSessionChange {
     const start = nowMs()
+    if (this.mutationLease)
+      return appendTiming(this.createChange('none', []), 'session.undo', start)
     const transaction = this.history.undo?.entry.transaction ?? null
     const next = undoEditorHistory(this.history)
     this.typingRun = null
@@ -470,7 +702,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
     this.history = next
     this.textSnapshot = createDocumentTextSnapshot(this.history.current)
+    const revisionBefore = this.revision
     this.revision += 1
+    this.editChain.record({
+      edits: transaction?.inverseEdits ?? null,
+      logicalRevisionCount: 1,
+      logicalRevisionScope: null,
+      revisionAfter: this.revision,
+      revisionBefore,
+      textChanged: true,
+    })
     const change = appendTiming(
       this.createChange('undo', transaction?.inverseEdits ?? [], transaction),
       'session.undo',
@@ -482,6 +723,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public redo(sourceViewId: string | null = null): DocumentSessionChange {
     const start = nowMs()
+    if (this.mutationLease)
+      return appendTiming(this.createChange('none', []), 'session.redo', start)
     const transaction = this.history.redo?.entry.transaction ?? null
     const next = redoEditorHistory(this.history)
     this.typingRun = null
@@ -491,7 +734,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
     this.history = next
     this.textSnapshot = createDocumentTextSnapshot(this.history.current)
+    const revisionBefore = this.revision
     this.revision += 1
+    this.editChain.record({
+      edits: transaction?.edits ?? null,
+      logicalRevisionCount: 1,
+      logicalRevisionScope: null,
+      revisionAfter: this.revision,
+      revisionBefore,
+      textChanged: true,
+    })
     const change = appendTiming(
       this.createChange('redo', transaction?.edits ?? [], transaction),
       'session.redo',
@@ -515,6 +767,17 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public getRevision(): number {
     return this.revision
+  }
+
+  public getDocumentSyncPoint(): DocumentSyncPoint {
+    return this.editChain.point
+  }
+
+  public changesSinceDocumentSyncPoint(
+    point: DocumentSyncPoint,
+    scope: DocumentLogicalRevisionScope | null,
+  ): DocumentChangesSinceSyncPoint | null {
+    return this.editChain.changesSince(point, scope)
   }
 
   public isTooLargeForHeapOperation(): boolean {
@@ -554,6 +817,506 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     return () => subscription.dispose()
   }
 
+  public acquireMutationLease(
+    expectedRevision: number,
+    expectedSnapshot: PieceTableSnapshot,
+    ownerId: string,
+  ): AcquireDocumentMutationLeaseResult {
+    if (this.revision !== expectedRevision || this.getSnapshot() !== expectedSnapshot) {
+      return { status: 'stale' }
+    }
+    if (this.mutationLease) {
+      if (this.mutationLease.ownerId === ownerId) {
+        return { status: 'acquired', lease: this.mutationLease }
+      }
+      return { status: 'busy' }
+    }
+
+    const lease = Object.freeze({ ownerId }) as DocumentMutationLease
+    this.mutationLease = lease
+    this.leaseChanges.fire(this.getMutationLeaseState())
+    return { status: 'acquired', lease }
+  }
+
+  public releaseMutationLease(lease: DocumentMutationLease): ReleaseDocumentMutationLeaseResult {
+    if (this.mutationLease !== lease) return { status: 'already-released' }
+
+    this.mutationLease = null
+    this.leaseChanges.fire(this.getMutationLeaseState())
+    return { status: 'released' }
+  }
+
+  public getMutationLeaseState(): DocumentMutationLeaseState {
+    return {
+      isLeased: this.mutationLease !== null,
+      ownerId: this.mutationLease?.ownerId ?? null,
+    }
+  }
+
+  public subscribeMutationLeaseState(listener: DocumentMutationLeaseStateListener): () => void {
+    const subscription = this.leaseChanges.subscribe(listener)
+    return () => subscription.dispose()
+  }
+
+  public commitPrepared(
+    target: DocumentTransactionCommitTarget,
+    prepared: PreparedDocumentTransaction,
+    options: DocumentTransactionCommitOptions,
+    existingReceipt: DocumentTransactionReceipt | null = null,
+  ): PreparedDocumentCommitResult {
+    if (!this.canUsePrepared(target, prepared)) return { status: 'stale' }
+    if (!prepared.hasTextChange) {
+      const cumulativeBarrier = this.cumulativeBarrier(existingReceipt)
+      if (existingReceipt && !cumulativeBarrier) return { status: 'stale' }
+      return this.commitLogicalOnly(target, prepared, cumulativeBarrier)
+    }
+
+    const selectionBefore = target.sourceView?.getSelections() ?? this.history.selections
+    const selectionAfter = this.selectionsAfterProgrammaticEdit(
+      prepared.snapshotAfter,
+      selectionBefore,
+      options.selection,
+      options.selections,
+    )
+    const transaction = preparedTransactionRecord(
+      prepared,
+      selectionBefore,
+      selectionAfter,
+      options,
+    )
+    const revisionBefore = this.revision
+    const historyBefore = this.history
+    const barrier = this.commitPreparedHistory(
+      transaction,
+      options.history,
+      existingReceipt,
+      historyBefore,
+      revisionBefore,
+    )
+
+    target.sourceView?.acceptBufferSelections(selectionAfter)
+    this.typingRun = null
+    this.textSnapshot = createDocumentTextSnapshot(prepared.snapshotAfter)
+    this.revision += 1
+    barrier.revisionAfter = this.revision
+    this.editChain.record({
+      edits: prepared.edits,
+      logicalRevisionCount: prepared.logicalRevisionCount,
+      logicalRevisionScope: prepared.logicalRevisionScope,
+      revisionAfter: this.revision,
+      revisionBefore,
+      textChanged: true,
+    })
+    const change = this.createChange('edit', prepared.edits, transaction)
+    this.emitChange(change, target.sourceView?.viewId ?? null, 'external')
+    const receipt = createReceipt(barrier)
+    return { status: 'committed', change, receipt }
+  }
+
+  public reverseReceipt(
+    target: DocumentTransactionCommitTarget,
+    receipt: DocumentTransactionReceipt,
+  ): ReverseDocumentTransactionResult {
+    const barrier = receiptStates.get(receipt)
+    if (!barrier || barrier.buffer !== this || receipt.segmentCount !== 1) {
+      return { status: 'stale' }
+    }
+    if (!this.canReverse(target, receipt, barrier)) return { status: 'stale' }
+
+    const transaction = barrier.segments[0]!
+    const historyAtAfter = this.history
+    const wasInstalled = barrier.installed
+    this.restoreHistoryForReverse(barrier, transaction)
+    target.sourceView?.acceptBufferSelections(transaction.selectionBefore)
+    const revisionBefore = this.revision
+    this.textSnapshot = createDocumentTextSnapshot(receipt.snapshotBefore)
+    this.revision += 1
+    this.editChain.record({
+      edits: receipt.inverseEdits,
+      logicalRevisionCount: 1,
+      logicalRevisionScope: null,
+      revisionAfter: this.revision,
+      revisionBefore,
+      textChanged: true,
+    })
+
+    const reverseTransaction = reciprocalTransaction(transaction)
+    const change = this.createChange('edit', receipt.inverseEdits, reverseTransaction)
+    this.emitChange(change, target.sourceView?.viewId ?? null, 'external')
+    const reciprocalBarrier = this.createReciprocalBarrier(
+      barrier,
+      reverseTransaction,
+      historyAtAfter,
+      wasInstalled,
+      revisionBefore,
+    )
+    reciprocalBarrier.revisionAfter = this.revision
+    const reciprocal = createReceipt(reciprocalBarrier)
+    return { status: 'reversed', change, receipt: reciprocal }
+  }
+
+  public beginReverseSequence(
+    target: DocumentTransactionCommitTarget,
+    receipt: DocumentTransactionReceipt,
+  ): BeginReverseDocumentTransactionSequenceResult {
+    const barrier = receiptStates.get(receipt)
+    if (!barrier || barrier.buffer !== this || receipt.segmentCount <= 1) {
+      return { status: 'stale' }
+    }
+    if (!this.canReverse(target, receipt, barrier)) return { status: 'stale' }
+
+    const nextSegmentIndex = receipt.segmentCount - 1
+    const cursor = createReverseCursor(nextSegmentIndex)
+    reverseCursorStates.set(cursor, {
+      barrier,
+      expectedCurrentBarrier: this.currentBarrier,
+      expectedRevision: this.revision,
+      historyBeforeReverse: this.history,
+      receipt,
+      revisionBefore: this.revision,
+      wasInstalled: barrier.installed,
+      completed: false,
+      nextSegmentIndex,
+      reversedTransactions: [],
+    })
+    return { status: 'started', cursor }
+  }
+
+  public reverseSequenceSegment(
+    target: DocumentTransactionCommitTarget,
+    cursor: DocumentTransactionSequenceReverseCursor,
+    segmentIndex: number,
+  ): ReverseDocumentTransactionSequenceSegmentResult {
+    const state = reverseCursorStates.get(cursor)
+    if (!state || state.nextSegmentIndex !== segmentIndex) return { status: 'out-of-order' }
+    if (cursor.nextSegmentIndex !== segmentIndex) return { status: 'out-of-order' }
+    if (!this.canContinueReverseSequence(target, state)) return { status: 'stale' }
+
+    const transaction = state.barrier.segments[segmentIndex]
+    if (!transaction || this.getSnapshot() !== transaction.snapshotAfter) {
+      return { status: 'stale' }
+    }
+
+    if (segmentIndex === state.receipt.segmentCount - 1 && state.wasInstalled) {
+      this.currentBarrier = state.barrier.older
+      state.barrier.installed = false
+      state.expectedCurrentBarrier = this.currentBarrier
+    }
+    this.setHistoryForSequenceReverse(state, transaction, segmentIndex)
+    target.sourceView?.acceptBufferSelections(transaction.selectionBefore)
+    const revisionBefore = this.revision
+    this.textSnapshot = createDocumentTextSnapshot(transaction.snapshotBefore)
+    this.revision += 1
+    this.editChain.record({
+      edits: transaction.inverseEdits,
+      logicalRevisionCount: 1,
+      logicalRevisionScope: null,
+      revisionAfter: this.revision,
+      revisionBefore,
+      textChanged: true,
+    })
+    state.expectedRevision = this.revision
+    const reciprocal = reciprocalTransaction(transaction)
+    state.reversedTransactions.push(reciprocal)
+    state.nextSegmentIndex -= 1
+    const change = this.createChange('edit', transaction.inverseEdits, reciprocal)
+    this.emitChange(change, target.sourceView?.viewId ?? null, 'external')
+    const nextCursor = createReverseCursor(state.nextSegmentIndex)
+    reverseCursorStates.set(nextCursor, state)
+    return { status: 'reversed', change, cursor: nextCursor }
+  }
+
+  public completeReverseSequence(
+    target: DocumentTransactionCommitTarget,
+    cursor: DocumentTransactionSequenceReverseCursor,
+  ): CompleteReverseDocumentTransactionSequenceResult {
+    const state = reverseCursorStates.get(cursor)
+    if (!state || state.completed) return { status: 'incomplete' }
+    if (cursor.nextSegmentIndex !== state.nextSegmentIndex) return { status: 'incomplete' }
+    if (state.nextSegmentIndex >= 0) return { status: 'incomplete' }
+    if (!this.canContinueReverseSequence(target, state)) return { status: 'stale' }
+    if (this.getSnapshot() !== state.receipt.snapshotBefore) return { status: 'stale' }
+
+    const transactions = state.reversedTransactions
+    const first = transactions[0]
+    const last = transactions.at(-1)
+    if (!first || !last) return { status: 'incomplete' }
+
+    const barrier: DocumentBarrierState = {
+      buffer: this,
+      historyBefore: this.history,
+      older: this.currentBarrier,
+      phase: state.barrier.phase,
+      released: false,
+      installed: !state.wasInstalled,
+      revisionBefore: state.revisionBefore,
+      revisionAfter: this.revision,
+      history: state.barrier.history,
+      segments: transactions,
+    }
+    if (barrier.installed) {
+      barrier.historyBefore = state.historyBeforeReverse
+      this.currentBarrier = barrier
+      this.history = createEditorHistory(last.snapshotAfter, last.selectionAfter)
+    }
+    state.completed = true
+    const receipt = createReceipt(barrier)
+    return { status: 'completed', receipt }
+  }
+
+  public sealReceipt(receipt: DocumentTransactionReceipt): SealDocumentTransactionResult | null {
+    const barrier = receiptStates.get(receipt)
+    if (!barrier || barrier.buffer !== this || barrier.released) return null
+    const alreadySealed = barrier.phase === 'sealed'
+    barrier.phase = 'sealed'
+    barrier.historyBefore = { ...barrier.historyBefore, redo: null }
+    const sealedReceipt = createReceipt(barrier)
+    return {
+      receipt: sealedReceipt,
+      status: alreadySealed ? 'already-sealed' : 'sealed',
+    }
+  }
+
+  public releaseReceipt(receipt: DocumentTransactionReceipt): ReleaseDocumentTransactionResult {
+    const barrier = receiptStates.get(receipt)
+    if (!barrier || barrier.buffer !== this || barrier.released) {
+      return { status: 'already-released' }
+    }
+
+    barrier.released = true
+    barrier.installed = false
+    this.unlinkBarrier(barrier)
+    return { status: 'released' }
+  }
+
+  public rotateSyncSegment(
+    expectedPoint: DocumentSyncPoint,
+    lease: DocumentMutationLease,
+  ): RotateDocumentSyncSegmentResult {
+    if (this.mutationLease !== lease) return { status: 'stale' }
+    if (this.editChain.point !== expectedPoint) return { status: 'stale' }
+
+    this.editChain.rotate()
+    return { status: 'rotated', syncPoint: this.editChain.point }
+  }
+
+  private canUsePrepared(
+    target: DocumentTransactionCommitTarget,
+    prepared: PreparedDocumentTransaction,
+  ): boolean {
+    if (this.revision !== prepared.expectedRevision) return false
+    if (this.getSnapshot() !== prepared.snapshotBefore) return false
+    if (this.mutationLease && target.mutationLease !== this.mutationLease) return false
+    if (target.mutationLease && target.mutationLease !== this.mutationLease) return false
+    return true
+  }
+
+  private commitLogicalOnly(
+    target: DocumentTransactionCommitTarget,
+    prepared: PreparedDocumentTransaction,
+    cumulativeBarrier: DocumentBarrierState | null,
+  ): PreparedDocumentCommitResult {
+    const revisionBefore = this.revision
+    this.revision += 1
+    this.editChain.record({
+      edits: [],
+      logicalRevisionCount: prepared.logicalRevisionCount,
+      logicalRevisionScope: prepared.logicalRevisionScope,
+      revisionAfter: this.revision,
+      revisionBefore,
+      textChanged: false,
+    })
+    if (cumulativeBarrier) cumulativeBarrier.revisionAfter = this.revision
+    const change = this.createSynchronizeChange(prepared, target.sourceView)
+    this.emitChange(change, target.sourceView?.viewId ?? null, 'external')
+    return { status: 'logical-only', change }
+  }
+
+  private cumulativeBarrier(
+    receipt: DocumentTransactionReceipt | null,
+  ): DocumentBarrierState | null {
+    if (!receipt) return null
+    const barrier = receiptStates.get(receipt)
+    if (!barrier || barrier.buffer !== this) return null
+    if (barrier.released || !barrier.installed) return null
+    if (this.currentBarrier !== barrier) return null
+    if (receipt.revisionAfter !== this.revision) return null
+    if (receipt.snapshotAfter !== this.getSnapshot()) return null
+    return barrier
+  }
+
+  private createSynchronizeChange(
+    prepared: PreparedDocumentTransaction,
+    sourceView: EditorViewSession | null,
+  ): DocumentSessionChange {
+    return createDocumentSessionChange({
+      kind: 'synchronize',
+      edits: [],
+      transaction: null,
+      snapshot: this.history.current,
+      selections: sourceView?.getSelections() ?? this.history.selections,
+      textSnapshot: this.textSnapshot,
+      timings: [],
+      canUndo: this.canUndo(),
+      canRedo: this.canRedo(),
+      isDirty: this.isDirty(),
+      logicalRevisionCount: prepared.logicalRevisionCount,
+      logicalRevisionScope: prepared.logicalRevisionScope,
+    })
+  }
+
+  private commitPreparedHistory(
+    transaction: DocumentTransaction,
+    history: DocumentTransactionHistory,
+    existingReceipt: DocumentTransactionReceipt | null,
+    historyBefore: DocumentHistory,
+    revisionBefore: number,
+  ): DocumentBarrierState {
+    if (history.kind === 'record') {
+      this.history = commitEditorHistory(
+        { ...historyBefore, selections: transaction.selectionBefore },
+        transaction.snapshotAfter,
+        transaction.selectionAfter,
+        transaction,
+      )
+      return createDetachedBarrier(
+        this,
+        historyBefore,
+        this.currentBarrier,
+        history,
+        transaction,
+        revisionBefore,
+      )
+    }
+
+    const existing = existingReceipt ? receiptStates.get(existingReceipt) : null
+    if (existing && !existing.released && existing.installed) {
+      existing.segments.push(transaction)
+      this.history = {
+        ...this.history,
+        current: transaction.snapshotAfter,
+        selections: transaction.selectionAfter,
+        redo: null,
+      }
+      return existing
+    }
+
+    const barrier: DocumentBarrierState = {
+      buffer: this,
+      historyBefore,
+      older: this.currentBarrier,
+      phase: 'provisional',
+      released: false,
+      installed: true,
+      revisionBefore,
+      revisionAfter: revisionBefore,
+      history,
+      segments: [transaction],
+    }
+    this.currentBarrier = barrier
+    this.history = createEditorHistory(transaction.snapshotAfter, transaction.selectionAfter)
+    return barrier
+  }
+
+  private canReverse(
+    target: DocumentTransactionCommitTarget,
+    receipt: DocumentTransactionReceipt,
+    barrier: DocumentBarrierState,
+  ): boolean {
+    if (barrier.released) return false
+    if (this.revision !== receipt.revisionAfter) return false
+    if (this.getSnapshot() !== receipt.snapshotAfter) return false
+    if (this.mutationLease && target.mutationLease !== this.mutationLease) return false
+    if (target.mutationLease && target.mutationLease !== this.mutationLease) return false
+    if (barrier.installed && this.currentBarrier !== barrier) return false
+    return true
+  }
+
+  private canUseLease(lease: DocumentMutationLease | undefined): boolean {
+    if (this.mutationLease) return lease === this.mutationLease
+    return lease === undefined
+  }
+
+  private canContinueReverseSequence(
+    target: DocumentTransactionCommitTarget,
+    state: ReverseSequenceState,
+  ): boolean {
+    if (!this.canUseLease(target.mutationLease)) return false
+    if (state.barrier.released) return false
+    if (this.revision !== state.expectedRevision) return false
+    return this.currentBarrier === state.expectedCurrentBarrier
+  }
+
+  private setHistoryForSequenceReverse(
+    state: ReverseSequenceState,
+    transaction: DocumentTransaction,
+    segmentIndex: number,
+  ): void {
+    if (segmentIndex === 0 && state.wasInstalled) {
+      this.history = state.barrier.historyBefore
+      return
+    }
+    this.history = createEditorHistory(transaction.snapshotBefore, transaction.selectionBefore)
+  }
+
+  private restoreHistoryForReverse(
+    barrier: DocumentBarrierState,
+    transaction: DocumentTransaction,
+  ): void {
+    if (barrier.installed) {
+      this.currentBarrier = barrier.older
+      barrier.installed = false
+      this.history = barrier.historyBefore
+      return
+    }
+
+    this.history = {
+      ...this.history,
+      current: transaction.snapshotBefore,
+      selections: transaction.selectionBefore,
+      redo: null,
+    }
+  }
+
+  private createReciprocalBarrier(
+    previous: DocumentBarrierState,
+    transaction: DocumentTransaction,
+    historyAtAfter: DocumentHistory,
+    previousWasInstalled: boolean,
+    revisionBefore: number,
+  ): DocumentBarrierState {
+    const reciprocal = createDetachedBarrier(
+      this,
+      this.history,
+      this.currentBarrier,
+      previous.history,
+      transaction,
+      revisionBefore,
+      previous.phase,
+    )
+    if (previousWasInstalled) return reciprocal
+
+    reciprocal.installed = true
+    reciprocal.historyBefore = historyAtAfter
+    reciprocal.older = this.currentBarrier
+    this.currentBarrier = reciprocal
+    this.history = createEditorHistory(transaction.snapshotAfter, transaction.selectionAfter)
+    return reciprocal
+  }
+
+  private unlinkBarrier(target: DocumentBarrierState): void {
+    if (this.currentBarrier === target) {
+      this.currentBarrier = target.older
+      return
+    }
+
+    for (let barrier = this.currentBarrier; barrier; barrier = barrier.older) {
+      if (barrier.older !== target) continue
+      barrier.older = target.older
+      return
+    }
+  }
+
   private commitEdit(
     snapshot: PieceTableSnapshot,
     selections: SelectionSet<PieceTableAnchor>,
@@ -577,7 +1340,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
     this.typingRun = createTypingRun(this.typingRun, edits, options.metadata.intent, transaction)
     this.textSnapshot = createDocumentTextSnapshot(snapshot)
+    const revisionBefore = this.revision
     this.revision += 1
+    this.editChain.record({
+      edits,
+      logicalRevisionCount: options.metadata.logicalRevisionCount,
+      logicalRevisionScope: options.metadata.logicalRevisionScope,
+      revisionAfter: this.revision,
+      revisionBefore,
+      textChanged: true,
+    })
     const change = this.createChange('edit', edits, transaction)
     this.emitChange(change, options.sourceViewId)
     return change
@@ -666,6 +1438,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     edits: readonly TextEdit[],
     transaction: DocumentTransaction | null = null,
   ): DocumentSessionChange {
+    const logicalRevision = documentChangeLogicalRevision(kind, transaction)
     return createDocumentSessionChange({
       kind,
       edits,
@@ -677,13 +1450,19 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       canUndo: this.canUndo(),
       canRedo: this.canRedo(),
       isDirty: this.isDirty(),
+      logicalRevisionCount: logicalRevision.count,
+      logicalRevisionScope: logicalRevision.scope,
     })
   }
 
-  private emitChange(change: DocumentSessionChange, sourceViewId: string | null | undefined): void {
+  private emitChange(
+    change: DocumentSessionChange,
+    sourceViewId: string | null | undefined,
+    origin: EditorTextBufferChange['origin'] = 'view',
+  ): void {
     if (change.kind === 'none') return
 
-    this.changes.fire({ change, sourceViewId: sourceViewId ?? null })
+    this.changes.fire({ change, origin, sourceViewId: sourceViewId ?? null })
   }
 }
 
@@ -821,6 +1600,8 @@ class PieceTableEditorViewSession implements EditorViewSession {
       canUndo: this.buffer.canUndo(),
       canRedo: this.buffer.canRedo(),
       isDirty: this.buffer.isDirty(),
+      logicalRevisionCount: 0,
+      logicalRevisionScope: null,
     })
   }
 }
@@ -1180,6 +1961,8 @@ class StaticDocumentSession implements DocumentSession {
       canUndo: false,
       canRedo: false,
       isDirty: false,
+      logicalRevisionCount: kind === 'edit' ? 1 : 0,
+      logicalRevisionScope: null,
     })
   }
 }
@@ -1210,10 +1993,370 @@ export function createStaticDocumentSession(text: string): DocumentSession {
   return new StaticDocumentSession(text)
 }
 
+export function prepareDocumentTransaction(
+  buffer: EditorTextBuffer,
+  edits: readonly TextEdit[],
+  logicalRevisionCount: number,
+  logicalRevisionScope: DocumentLogicalRevisionScope | null,
+): PreparedDocumentTransaction {
+  assertLogicalRevisionCount(logicalRevisionCount)
+  return prepareDocumentTransactionForSnapshot(
+    buffer.getRevision(),
+    buffer.getSnapshot(),
+    edits,
+    logicalRevisionCount,
+    logicalRevisionScope,
+  )
+}
+
+export function prepareDocumentTransactionSequence(
+  buffer: EditorTextBuffer,
+  segments: readonly DocumentTransactionSequenceSegmentInput[],
+): PreparedDocumentTransactionSequence {
+  let snapshot = buffer.getSnapshot()
+  const expectedRevision = buffer.getRevision()
+  const preparedSegments: PreparedDocumentTransaction[] = []
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!
+    assertLogicalRevisionCount(segment.logicalRevisionCount)
+    const prepared = prepareDocumentTransactionForSnapshot(
+      expectedRevision + index,
+      snapshot,
+      segment.edits,
+      segment.logicalRevisionCount,
+      segment.logicalRevisionScope,
+    )
+    preparedSegments.push(prepared)
+    snapshot = prepared.snapshotAfter
+  }
+
+  const sequence = Object.freeze({
+    expectedRevision,
+    segments: Object.freeze(preparedSegments),
+    snapshotAfter: snapshot,
+    snapshotBefore: buffer.getSnapshot(),
+  }) as PreparedDocumentTransactionSequence
+  sequenceStates.set(sequence, { nextSegmentIndex: 0, receipt: null })
+  return sequence
+}
+
+export function acquireDocumentMutationLease(
+  buffer: EditorTextBuffer,
+  expectedRevision: number,
+  expectedSnapshot: PieceTableSnapshot,
+  ownerId: string,
+): AcquireDocumentMutationLeaseResult {
+  return pieceTableBuffer(buffer).acquireMutationLease(expectedRevision, expectedSnapshot, ownerId)
+}
+
+export function releaseDocumentMutationLease(
+  buffer: EditorTextBuffer,
+  lease: DocumentMutationLease,
+): ReleaseDocumentMutationLeaseResult {
+  return pieceTableBuffer(buffer).releaseMutationLease(lease)
+}
+
+export function getDocumentMutationLeaseState(
+  buffer: EditorTextBuffer,
+): DocumentMutationLeaseState {
+  return pieceTableBuffer(buffer).getMutationLeaseState()
+}
+
+export function subscribeDocumentMutationLeaseState(
+  buffer: EditorTextBuffer,
+  listener: DocumentMutationLeaseStateListener,
+): () => void {
+  return pieceTableBuffer(buffer).subscribeMutationLeaseState(listener)
+}
+
+export function commitPreparedDocumentTransaction(
+  target: DocumentTransactionCommitTarget,
+  prepared: PreparedDocumentTransaction,
+  options: DocumentTransactionCommitOptions,
+): PreparedDocumentCommitResult {
+  return pieceTableBuffer(target.buffer).commitPrepared(target, prepared, options)
+}
+
+export function commitPreparedDocumentTransactionSequenceSegment(
+  target: DocumentTransactionCommitTarget,
+  sequence: PreparedDocumentTransactionSequence,
+  segmentIndex: number,
+  options: DocumentTransactionCommitOptions,
+): PreparedDocumentSequenceSegmentCommitResult {
+  const state = sequenceStates.get(sequence)
+  if (!state || state.nextSegmentIndex !== segmentIndex) return { status: 'out-of-order' }
+  if (options.history.kind === 'record' && sequence.segments.length > 1) {
+    throw new RangeError('multi-segment native history is not supported')
+  }
+
+  const prepared = sequence.segments[segmentIndex]
+  if (!prepared) return { status: 'out-of-order' }
+  const result = pieceTableBuffer(target.buffer).commitPrepared(
+    target,
+    prepared,
+    options,
+    state.receipt,
+  )
+  if (result.status === 'stale') return result
+
+  state.nextSegmentIndex += 1
+  if (result.status === 'committed') state.receipt = result.receipt
+  if (result.status === 'logical-only' && state.receipt) {
+    state.receipt = refreshReceipt(state.receipt)
+  }
+  return {
+    change: result.change,
+    receipt: state.receipt,
+    status: result.status,
+  }
+}
+
+export function completePreparedDocumentTransactionSequence(
+  target: DocumentTransactionCommitTarget,
+  sequence: PreparedDocumentTransactionSequence,
+): CompletePreparedDocumentSequenceResult {
+  const state = sequenceStates.get(sequence)
+  if (!state || state.nextSegmentIndex !== sequence.segments.length) {
+    return { status: 'incomplete' }
+  }
+  if (target.buffer.getSnapshot() !== sequence.snapshotAfter) return { status: 'stale' }
+  if (target.buffer.getRevision() !== sequence.expectedRevision + sequence.segments.length) {
+    return { status: 'stale' }
+  }
+  return { status: 'completed', receipt: state.receipt }
+}
+
+export function reverseDocumentTransaction(
+  target: DocumentTransactionCommitTarget,
+  receipt: DocumentTransactionReceipt,
+): ReverseDocumentTransactionResult {
+  if (receipt.segmentCount > 1) {
+    throw new RangeError('sequence receipts must be reversed segment by segment')
+  }
+  return pieceTableBuffer(target.buffer).reverseReceipt(target, receipt)
+}
+
+export function beginReverseDocumentTransactionSequence(
+  target: DocumentTransactionCommitTarget,
+  receipt: DocumentTransactionReceipt,
+): BeginReverseDocumentTransactionSequenceResult {
+  return pieceTableBuffer(target.buffer).beginReverseSequence(target, receipt)
+}
+
+export function reverseNextDocumentTransactionSequenceSegment(
+  target: DocumentTransactionCommitTarget,
+  cursor: DocumentTransactionSequenceReverseCursor,
+  segmentIndex: number,
+): ReverseDocumentTransactionSequenceSegmentResult {
+  return pieceTableBuffer(target.buffer).reverseSequenceSegment(target, cursor, segmentIndex)
+}
+
+export function completeReverseDocumentTransactionSequence(
+  target: DocumentTransactionCommitTarget,
+  cursor: DocumentTransactionSequenceReverseCursor,
+): CompleteReverseDocumentTransactionSequenceResult {
+  return pieceTableBuffer(target.buffer).completeReverseSequence(target, cursor)
+}
+
+export function sealDocumentTransactionReceipt(
+  target: DocumentTransactionCommitTarget,
+  receipt: DocumentTransactionReceipt,
+): SealDocumentTransactionResult {
+  const result = pieceTableBuffer(target.buffer).sealReceipt(receipt)
+  if (result) return result
+  return { status: 'already-sealed', receipt }
+}
+
+export function releaseDocumentTransactionReceipt(
+  target: DocumentTransactionCommitTarget,
+  receipt: DocumentTransactionReceipt,
+): ReleaseDocumentTransactionResult {
+  return pieceTableBuffer(target.buffer).releaseReceipt(receipt)
+}
+
+export function rotateDocumentSyncSegment(
+  buffer: EditorTextBuffer,
+  expectedPoint: DocumentSyncPoint,
+  mutationLease: DocumentMutationLease,
+): RotateDocumentSyncSegmentResult {
+  return pieceTableBuffer(buffer).rotateSyncSegment(expectedPoint, mutationLease)
+}
+
+function prepareDocumentTransactionForSnapshot(
+  expectedRevision: number,
+  snapshotBefore: PieceTableSnapshot,
+  edits: readonly TextEdit[],
+  logicalRevisionCount: number,
+  logicalRevisionScope: DocumentLogicalRevisionScope | null,
+): PreparedDocumentTransaction {
+  const normalized = normalizeTextEdits(edits)
+  const applied = snapBatchEditRanges(snapshotBefore, normalized).filter(isEffectiveTextEdit)
+  const candidate = applyBatchToPieceTable(snapshotBefore, applied)
+  const hasTextChange = !pieceTableSnapshotsHaveSameText(snapshotBefore, candidate)
+  const snapshotAfter = hasTextChange ? candidate : snapshotBefore
+  return Object.freeze({
+    hasTextChange,
+    logicalRevisionCount,
+    logicalRevisionScope,
+    expectedRevision,
+    snapshotBefore,
+    snapshotAfter,
+    edits: applied,
+    inverseEdits: invertTextEdits(snapshotBefore, applied),
+  })
+}
+
+function assertLogicalRevisionCount(count: number): void {
+  if (Number.isSafeInteger(count) && count > 0) return
+  throw new RangeError('logicalRevisionCount must be a positive safe integer')
+}
+
+function pieceTableBuffer(buffer: EditorTextBuffer): PieceTableEditorTextBuffer {
+  if (buffer instanceof PieceTableEditorTextBuffer) return buffer
+  throw new TypeError('transaction target is not an Editor piece-table buffer')
+}
+
+function preparedTransactionRecord(
+  prepared: PreparedDocumentTransaction,
+  selectionBefore: SelectionSet<PieceTableAnchor>,
+  selectionAfter: SelectionSet<PieceTableAnchor>,
+  options: DocumentTransactionCommitOptions,
+): DocumentTransaction {
+  return {
+    edits: prepared.edits,
+    inverseEdits: prepared.inverseEdits,
+    snapshotBefore: prepared.snapshotBefore,
+    snapshotAfter: prepared.snapshotAfter,
+    selectionBefore,
+    selectionAfter,
+    metadata: {
+      source: 'programmatic',
+      intent: 'programmatic-edit',
+      undoGroup: options.history.kind === 'record' ? options.history.undoGroup : undefined,
+      logicalRevisionCount: prepared.logicalRevisionCount,
+      logicalRevisionScope: prepared.logicalRevisionScope,
+    },
+  }
+}
+
+function reciprocalTransaction(transaction: DocumentTransaction): DocumentTransaction {
+  return {
+    edits: transaction.inverseEdits,
+    inverseEdits: transaction.edits,
+    snapshotBefore: transaction.snapshotAfter,
+    snapshotAfter: transaction.snapshotBefore,
+    selectionBefore: transaction.selectionAfter,
+    selectionAfter: transaction.selectionBefore,
+    metadata: ordinaryTransactionMetadata('history', 'undo'),
+  }
+}
+
+function createDetachedBarrier(
+  buffer: PieceTableEditorTextBuffer,
+  historyBefore: DocumentHistory,
+  older: DocumentBarrierState | null,
+  history: DocumentTransactionHistory,
+  transaction: DocumentTransaction,
+  revisionBefore: number,
+  phase: DocumentBarrierState['phase'] = 'provisional',
+): DocumentBarrierState {
+  return {
+    buffer,
+    historyBefore,
+    older,
+    phase,
+    released: false,
+    installed: false,
+    revisionBefore,
+    revisionAfter: revisionBefore,
+    history,
+    segments: [transaction],
+  }
+}
+
+function createReceipt(barrier: DocumentBarrierState): DocumentTransactionReceipt {
+  const first = barrier.segments[0]!
+  const last = barrier.segments.at(-1)!
+  const edits = receiptEdits(first.snapshotBefore, last.snapshotAfter, barrier.segments, false)
+  const inverseEdits = receiptEdits(
+    first.snapshotBefore,
+    last.snapshotAfter,
+    barrier.segments,
+    true,
+  )
+  const receipt = Object.freeze({
+    edits,
+    history: barrier.history,
+    inverseEdits,
+    logicalRevisionCount: barrier.segments.reduce(
+      (count, segment) => count + segment.metadata.logicalRevisionCount,
+      0,
+    ),
+    phase: barrier.phase,
+    revisionAfter: barrier.revisionAfter,
+    revisionBefore: barrier.revisionBefore,
+    segmentCount: barrier.segments.length,
+    snapshotAfter: last.snapshotAfter,
+    snapshotBefore: first.snapshotBefore,
+  }) as DocumentTransactionReceipt
+  receiptStates.set(receipt, barrier)
+  return receipt
+}
+
+function refreshReceipt(receipt: DocumentTransactionReceipt): DocumentTransactionReceipt {
+  const barrier = receiptStates.get(receipt)
+  if (!barrier) throw new RangeError('document transaction receipt lost its barrier')
+  return createReceipt(barrier)
+}
+
+function createReverseCursor(nextSegmentIndex: number): DocumentTransactionSequenceReverseCursor {
+  return Object.freeze({ nextSegmentIndex }) as DocumentTransactionSequenceReverseCursor
+}
+
+function receiptEdits(
+  snapshotBefore: PieceTableSnapshot,
+  snapshotAfter: PieceTableSnapshot,
+  segments: readonly DocumentTransaction[],
+  inverse: boolean,
+): readonly TextEdit[] {
+  if (segments.length === 1) return inverse ? segments[0]!.inverseEdits : segments[0]!.edits
+  const edit = inverse
+    ? diffPieceTableSnapshots(snapshotAfter, snapshotBefore)
+    : diffPieceTableSnapshots(snapshotBefore, snapshotAfter)
+  return edit ? [edit] : []
+}
+
 type DocumentSessionChangeFields = DocumentSessionChange
 
 function createDocumentSessionChange(fields: DocumentSessionChangeFields): DocumentSessionChange {
   return { ...fields } // TODO why do we need this func??
+}
+
+function ordinaryTransactionMetadata(
+  source: DocumentTransactionMetadata['source'],
+  intent: DocumentTransactionIntent,
+  undoGroup?: string,
+): DocumentTransactionMetadata {
+  return {
+    source,
+    intent,
+    undoGroup,
+    logicalRevisionCount: 1,
+    logicalRevisionScope: null,
+  }
+}
+
+function documentChangeLogicalRevision(
+  kind: DocumentSessionChangeKind,
+  transaction: DocumentTransaction | null,
+): { readonly count: number; readonly scope: DocumentLogicalRevisionScope | null } {
+  if (kind === 'undo' || kind === 'redo') return { count: 1, scope: null }
+  if (kind !== 'edit' || !transaction) return { count: 0, scope: null }
+  return {
+    count: transaction.metadata.logicalRevisionCount,
+    scope: transaction.metadata.logicalRevisionScope,
+  }
 }
 
 function typingRunKind(intent: DocumentTransactionIntent): TypingRunKind | null {
@@ -1380,6 +2523,8 @@ export function withDocumentSessionChangeTimings(
     canUndo: change.canUndo,
     canRedo: change.canRedo,
     isDirty: change.isDirty,
+    logicalRevisionCount: change.logicalRevisionCount,
+    logicalRevisionScope: change.logicalRevisionScope,
   })
 }
 

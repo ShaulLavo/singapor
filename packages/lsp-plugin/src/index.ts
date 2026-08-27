@@ -19,6 +19,8 @@ export {
   laneSupports,
   rankedLanguageServerLanes,
   type LanguageServerFeatureRouter,
+  type LanguageServerCodeActionProvenance,
+  type LanguageServerCodeActionRouter,
   type LanguageServerLaneResult,
   type LanguageServerSetLane,
 } from './serverSet'
@@ -37,6 +39,11 @@ export {
   type LspConnectionProvider,
   type LspConnectionTransportFactory,
 } from './lspConnection'
+export {
+  LanguageServerDocumentSyncController,
+  type LanguageServerDocumentSyncControllerRegistration,
+  type LanguageServerDocumentUriTransition,
+} from './documentSyncController'
 export {
   diagnosticHighlightGroups,
   summarizeDiagnostics,
@@ -64,20 +71,28 @@ export {
   sourcePathToFileName,
 } from './paths'
 export type {
+  ApplyWorkspaceEditRequest,
+  ApplyWorkspaceEditResult,
   LanguageServerDiagnosticCounts,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticSummary,
+  LanguageServerDocumentSyncOptions,
   LanguageServerNavigationKind,
   LanguageServerNavigationOpenMode,
   LanguageServerNavigationOptions,
   LanguageServerPlugin,
   LanguageServerFeatureId,
   LanguageServerFeatureRanks,
+  LanguageServerLaneHostOptions,
   LanguageServerLaneOptions,
   LanguageServerPluginOptions,
+  LanguageServerRenamePrompt,
   LanguageServerReadyNotification,
   LanguageServerReferencesResult,
   LanguageServerSetPluginOptions,
   LanguageServerStatus,
+  OnApplyWorkspaceEdit,
+  WorkspaceEditOriginGuard,
 } from './types'
 export { LANGUAGE_SERVER_FEATURE_IDS } from './types'
+export * from './workspaceEdit'

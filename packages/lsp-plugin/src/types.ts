@@ -1,9 +1,13 @@
+import type { DocumentLogicalRevisionScope } from '@singapor/core/document'
 import type { EditorDisposable, EditorPlugin, EditorViewSnapshot } from '@singapor/core/extensions'
 import type { LspClient, LspNotificationHandler, LspWebSocketTransportOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { LanguageServerConnectionContext } from './connectionContext'
+import type { LanguageServerDocumentSyncController } from './documentSyncController'
 import type { LspConnectionProvider } from './lspConnection'
+import type { ParsedWorkspaceEdit } from './workspaceEdit'
+import type { WorkspaceTextDocumentProvenance } from './workspaceTextEdits'
 export type { LanguageServerConnectionContext } from './connectionContext'
 import type {
   LanguageServerSemanticTokensFactory,
@@ -74,6 +78,8 @@ export type LanguageServerReferencesResult = {
 }
 
 export type LanguageServerDocumentSyncOptions = {
+  /** Projects a live path transition before deferred view publication catches up. */
+  readonly controller?: LanguageServerDocumentSyncController
   /**
    * The language id sent to the server when the editor and protocol use different names.
    * Returning undefined keeps the editor's id.
@@ -83,7 +89,52 @@ export type LanguageServerDocumentSyncOptions = {
   shouldSyncUri?(uri: lsp.DocumentUri, snapshot: EditorViewSnapshot): boolean
 }
 
-export type LanguageServerPluginOptions = {
+export type { WorkspaceTextDocumentProvenance } from './workspaceTextEdits'
+
+export type WorkspaceEditOriginGuard = {
+  readonly documents: readonly WorkspaceTextDocumentProvenance[]
+  isCurrent(uri: string): boolean
+}
+
+export type ApplyWorkspaceEditRequest = {
+  readonly guard: WorkspaceEditOriginGuard
+  readonly label: string
+  readonly logicalRevisionScope: DocumentLogicalRevisionScope
+  readonly originUri: string
+  readonly originVersion: number
+  readonly plan: ParsedWorkspaceEdit
+  readonly serverId: string
+  readonly signal: AbortSignal
+  readonly source: 'code-action' | 'rename'
+}
+
+export type ApplyWorkspaceEditResult =
+  | { readonly status: 'applied' }
+  | { readonly status: 'cancelled' }
+  | { readonly code: string; readonly message: string; readonly status: 'failed' }
+  | { readonly code: string; readonly message: string; readonly status: 'rolled-back' }
+  | {
+      readonly affectedPaths: readonly string[]
+      readonly code: string
+      readonly message: string
+      readonly status: 'recovery-required'
+    }
+
+export type OnApplyWorkspaceEdit = (
+  request: ApplyWorkspaceEditRequest,
+) => Promise<ApplyWorkspaceEditResult>
+
+export type LanguageServerLaneHostOptions = {
+  readonly onApplyWorkspaceEdit?: OnApplyWorkspaceEdit
+}
+
+export type LanguageServerRenamePrompt = {
+  readonly anchor: DOMRect
+  readonly currentName: string
+  readonly signal: AbortSignal
+}
+
+export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
   readonly rootUri?: lsp.DocumentUri | null
   readonly hoverMarkdownCodeBackground?: boolean
   readonly initializationOptions?: unknown
@@ -138,7 +189,7 @@ export type LanguageServerPluginOptions = {
   readonly onError?: (error: unknown) => void
 }
 
-export type LanguageServerLaneOptions = {
+export type LanguageServerLaneOptions = LanguageServerLaneHostOptions & {
   readonly id: string
   readonly features: LanguageServerFeatureRanks
   readonly rootUri?: lsp.DocumentUri | null
@@ -170,6 +221,7 @@ export type LanguageServerSetPluginOptions = Pick<
   | 'onOpenDefinition'
   | 'onOpenReferences'
   | 'onError'
+  | 'onApplyWorkspaceEdit'
 > & {
   readonly lanes: readonly LanguageServerLaneOptions[]
   readonly semanticTokens?: LanguageServerSemanticTokensFactory

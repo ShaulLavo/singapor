@@ -1081,6 +1081,12 @@ function snapshot(
     textSnapshot: createStringTextSnapshot(text),
     fullText: text,
     textVersion: 1,
+    documentSyncPoint: {
+      revision: 1,
+      segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
+      textVersion: 1,
+    },
+    changesSinceDocumentSyncPoint: () => null,
     lineStarts: starts,
     tokens: overrides.tokens ?? [],
     brackets: [],

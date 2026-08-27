@@ -1,4 +1,12 @@
-import type { LspClient, LspWorkspace } from '@singapor/lsp'
+import {
+  createDocumentLogicalRevisionScope,
+  type DocumentLogicalRevisionScope,
+} from '@singapor/core/document'
+import {
+  composeWorkspaceEditClientCapabilities,
+  type LspClient,
+  type LspWorkspace,
+} from '@singapor/lsp'
 
 import {
   createWebSocketLspTransportFactory,
@@ -15,10 +23,12 @@ import type {
 } from './types'
 
 const DEFAULT_TIMEOUT_MS = 15_000
+const logicalRevisionScopes = new WeakMap<LspWorkspace, DocumentLogicalRevisionScope>()
 
 export type AcquiredLanguageServerLane = {
   readonly id: string
   readonly client: LspClient
+  readonly logicalRevisionScope: DocumentLogicalRevisionScope
   readonly workspace: LspWorkspace
   readonly ready: Promise<LanguageServerConnectionContext>
   isReady(): boolean
@@ -86,12 +96,14 @@ export function acquireResolvedLanguageServerLane(
   connection =
     connectionLease?.connection ?? new LspConnection(connectionOptions, connectionCallbacks)
   const context = connectionContext(connection)
+  const logicalRevisionScope = logicalRevisionScopeFor(connection.workspace)
   registration = options.onConnectionCreated?.(context) ?? null
   if (!connectionLease) connection.connect()
 
   return {
     id: options.id,
     client: connection.client,
+    logicalRevisionScope,
     workspace: connection.workspace,
     ready: ready.promise,
     isReady: () => usable && !released,
@@ -140,6 +152,10 @@ export function resolveLanguageServerLaneOptions(
     ...options,
     rootUri: options.rootUri ?? 'file:///',
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    capabilities: composeWorkspaceEditClientCapabilities(
+      options.capabilities,
+      options.onApplyWorkspaceEdit !== undefined,
+    ),
     createTransport: createWebSocketLspTransportFactory(
       options.webSocketRoute,
       options.webSocketTransportOptions,
@@ -154,11 +170,23 @@ function resolveConnectionOptions(
     rootUri: options.rootUri ?? 'file:///',
     initializationOptions: options.initializationOptions,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    capabilities: options.capabilities,
+    capabilities: composeWorkspaceEditClientCapabilities(
+      options.capabilities,
+      options.onApplyWorkspaceEdit !== undefined,
+    ),
     clientInfo: options.clientInfo,
     notificationHandlers: options.notificationHandlers,
     createTransport: options.createTransport,
   }
+}
+
+function logicalRevisionScopeFor(workspace: LspWorkspace): DocumentLogicalRevisionScope {
+  const current = logicalRevisionScopes.get(workspace)
+  if (current) return current
+
+  const created = createDocumentLogicalRevisionScope()
+  logicalRevisionScopes.set(workspace, created)
+  return created
 }
 
 function reportTransportStatus(

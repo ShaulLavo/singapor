@@ -124,6 +124,46 @@ describe('LspConnectionPool', () => {
     expect(first.connection).toBe(second.connection)
   })
 
+  it('reuses a key only when immutable initialize options and capabilities are deep-equal', () => {
+    const provider = pool.provider(KEY)
+    const first = provider.acquire(
+      connectionOptions({
+        capabilities: { workspace: { diagnostics: { refreshSupport: true } } },
+        initializationOptions: { preferences: { quote: 'single', semicolons: false } },
+      }),
+      callbacks(),
+    )
+    const second = provider.acquire(
+      connectionOptions({
+        capabilities: { workspace: { diagnostics: { refreshSupport: true } } },
+        initializationOptions: { preferences: { semicolons: false, quote: 'single' } },
+        timeoutMs: 30_000,
+      }),
+      callbacks(),
+    )
+
+    expect(first.connection).toBe(second.connection)
+    expect(FakeTransport.created).toHaveLength(1)
+  })
+
+  it('rejects a later borrower whose pooled initialization contract differs', () => {
+    const provider = pool.provider(KEY)
+    provider.acquire(
+      connectionOptions({ capabilities: { workspace: { diagnostics: { refreshSupport: true } } } }),
+      callbacks(),
+    )
+
+    expect(() =>
+      provider.acquire(
+        connectionOptions({
+          capabilities: { workspace: { diagnostics: { refreshSupport: false } } },
+        }),
+        callbacks(),
+      ),
+    ).toThrow('different initialization contract')
+    expect(FakeTransport.created).toHaveLength(1)
+  })
+
   it('opens a separate connection per server on one root', () => {
     pool.provider(KEY).acquire(connectionOptions(), callbacks())
     pool.provider('w\u0000python').acquire(connectionOptions(), callbacks())

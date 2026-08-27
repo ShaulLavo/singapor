@@ -1,8 +1,12 @@
 import { detectPlatform } from '@tanstack/hotkeys'
 import {
   documentSessionChangeTextSnapshot,
+  getDocumentMutationLeaseState,
+  subscribeDocumentMutationLeaseState,
   type DocumentSession,
   type DocumentSessionChange,
+  type EditorBufferSession,
+  type EditorTextBufferChange,
 } from '../documentSession'
 import {
   foldRangesEqual,
@@ -17,7 +21,11 @@ import { EditorKeymapController } from './keymap'
 import { InputSelectionController } from './inputSelectionController'
 import { defaultRtlMoveVisually } from './navigationTargets'
 import { EditorSyntaxController } from './syntaxController'
-import { DocumentEditChain } from './editChain'
+import {
+  DocumentEditChain,
+  type DocumentLogicalRevisionScope,
+  type DocumentSyncPoint,
+} from './editChain'
 import type { LineStartsView } from '../virtualization/lineStartIndex'
 import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
 import { appendTiming, nowMs } from './timing'
@@ -140,7 +148,7 @@ import {
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
 } from '../plugins'
-import { lastAddedSelectionIndex, resolveSelection } from '../selections'
+import { lastAddedSelectionIndex, markSelectionSetDirty, resolveSelection } from '../selections'
 import { type EditorSyntaxLanguageId } from '../syntax/session'
 import type { EditorSyntaxRange } from '../syntax/session'
 import {
@@ -305,7 +313,9 @@ export class Editor {
   private readonly environmentRegistrations = new EditorDisposableStore()
   private readonly viewContributions: EditorViewContributionController
   private readonly secondaryWork = new EditorSecondaryWorkScheduler()
-  private readonly editChain = new DocumentEditChain()
+  private readonly detachedEditChain = new DocumentEditChain(0, 0)
+  private unsubscribeBufferChanges: (() => void) | null = null
+  private unsubscribeLeaseChanges: (() => void) | null = null
   private lineStartsViewCache: { textVersion: number; view: LineStartsView } | null = null
   private readonly displayProjections = new EditorDisplayProjectionRegistry()
   private readonly decorations = new EditorDecorationStore()
@@ -348,9 +358,8 @@ export class Editor {
   }
 
   private set text(text: string) {
-    const textVersionBeforeReplace = this.textVersion
     this.document.setRenderedText(text)
-    this.editChain.record(textVersionBeforeReplace, this.textVersion, null)
+    this.recordDetachedTextChange(null)
   }
 
   private get textSnapshot(): TextSnapshot {
@@ -630,6 +639,11 @@ export class Editor {
   }
 
   setContent(text: string): void {
+    if (editorBufferSession(this.session)) return
+    this.renderContent(text)
+  }
+
+  private renderContent(text: string): void {
     this.text = text
     this.view.setText(text)
     this.retagDisplayProjectionSources()
@@ -648,10 +662,18 @@ export class Editor {
   }
 
   applyEdit(edit: TextEdit, tokens: readonly EditorToken[], textSnapshot?: TextSnapshot): void {
+    if (editorBufferSession(this.session)) return
+    this.renderEdit(edit, tokens, textSnapshot)
+  }
+
+  private renderEdit(
+    edit: TextEdit,
+    tokens: readonly EditorToken[],
+    textSnapshot?: TextSnapshot,
+  ): void {
     const nextTextSnapshot = textSnapshot ?? this.legacyEditTextSnapshot(edit)
-    const textVersionBeforeEdit = this.textVersion
     this.document.setRenderedTextSnapshot(nextTextSnapshot)
-    this.editChain.record(textVersionBeforeEdit, this.textVersion, [edit])
+    this.recordDetachedTextChange([edit])
     this.retagDisplayProjectionSources()
     measureEditorPerformance('editor.view.applyEdit', () =>
       this.view.applyEdit(edit, nextTextSnapshot),
@@ -671,7 +693,12 @@ export class Editor {
   }
 
   setDocument(document: EditorDocument): void {
-    this.setContent(document.text)
+    if (editorBufferSession(this.session)) return
+    this.renderDocument(document)
+  }
+
+  private renderDocument(document: EditorDocument): void {
+    this.renderContent(document.text)
     this.setTokens(document.tokens ?? [])
   }
 
@@ -907,7 +934,7 @@ export class Editor {
     // session nothing ever disposes, leaking a parse tree in the worker.
     if (this.disposed) return
 
-    this.editChain.clear()
+    this.detachedEditChain.rotate()
     const documentVersion = this.resetOwnedDocument(document, {
       documentId: document.documentId ?? null,
       persistentIdentity: true,
@@ -1251,7 +1278,9 @@ export class Editor {
 
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
     const replacingDocument = this.session !== null
+    this.disposeBufferSubscriptions()
     const attachment = this.document.attachSession(session, options)
+    this.subscribeToBufferSession(session)
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
       languageId: attachment.languageId,
@@ -1264,7 +1293,7 @@ export class Editor {
     // Asked for before the text lands so the replacement renders the restored viewport directly.
     // Setting it afterwards drew the outgoing offset first and every row twice.
     this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
-    this.setDocument({ text: attachment.fullText, tokens: [] })
+    this.renderDocument({ text: attachment.fullText, tokens: [] })
     // A host handing over its own session is replacing the document just as much as opening one is.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()
     // Still applied: it settles the horizontal offset, and clamps the vertical one against the
@@ -1278,6 +1307,7 @@ export class Editor {
   }
 
   detachSession(): void {
+    this.disposeBufferSubscriptions()
     this.document.detachSession()
     this.inputSelection.clearSelectionHighlight()
     this.view.setEditable(false)
@@ -1285,12 +1315,14 @@ export class Editor {
   }
 
   clear(): void {
+    this.detachedEditChain.rotate()
+    this.disposeBufferSubscriptions()
     this.document.clear()
     this.syntax.clearDocument()
     this.inputSelection.clearSelectionHighlight()
     this.forgetOutgoingDocumentProjections()
     this.view.setEditable(false)
-    this.setContent('')
+    this.renderContent('')
     this.applyDocumentScrollPosition()
     this.notifyViewContributions('clear', null)
     this.lifecycleSummary.document.clearedCount += 1
@@ -1334,6 +1366,7 @@ export class Editor {
     // registered ranges before the editor ever held one meant them for the document it was waiting
     // for, and that document is the one arriving here.
     const replacingDocument = this.session !== null
+    this.disposeBufferSubscriptions()
     const attachment = this.document.resetOwnedDocument(document, options)
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
@@ -1346,7 +1379,7 @@ export class Editor {
     this.adoptDocumentTabSize(attachment.fullText)
     // Asked for before the text lands, so the replacement renders the restored viewport directly.
     this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
-    this.setDocument({ text: attachment.fullText, tokens: [] })
+    this.renderDocument({ text: attachment.fullText, tokens: [] })
     // After the text is in, so what is rebuilt here is measured against the document that arrived.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()
     this.applyRangeDecorations()
@@ -2413,7 +2446,63 @@ export class Editor {
   }
 
   private canEditDocument(): boolean {
-    return this.document.canEditDocument()
+    if (!this.document.canEditDocument()) return false
+    const session = editorBufferSession(this.session)
+    if (!session) return true
+    return !getDocumentMutationLeaseState(session.buffer).isLeased
+  }
+
+  private recordDetachedTextChange(edits: readonly TextEdit[] | null): void {
+    if (editorBufferSession(this.session)) return
+
+    const point = this.detachedEditChain.point
+    this.detachedEditChain.record({
+      edits,
+      logicalRevisionCount: 1,
+      logicalRevisionScope: null,
+      revisionAfter: point.revision + 1,
+      revisionBefore: point.revision,
+      textChanged: true,
+    })
+  }
+
+  private currentDocumentEditChain(): Pick<DocumentEditChain, 'changesSince' | 'point'> {
+    const session = editorBufferSession(this.session)
+    if (!session) return this.detachedEditChain
+    return {
+      point: session.buffer.getDocumentSyncPoint(),
+      changesSince: (point, scope) => session.buffer.changesSinceDocumentSyncPoint(point, scope),
+    }
+  }
+
+  private subscribeToBufferSession(session: DocumentSession): void {
+    const bufferSession = editorBufferSession(session)
+    if (!bufferSession) return
+
+    this.unsubscribeBufferChanges = bufferSession.buffer.subscribe((event) =>
+      this.handleBufferChange(bufferSession, event),
+    )
+    this.unsubscribeLeaseChanges = subscribeDocumentMutationLeaseState(bufferSession.buffer, () =>
+      this.syncViewEditability(),
+    )
+  }
+
+  private handleBufferChange(session: EditorBufferSession, event: EditorTextBufferChange): void {
+    if (this.session !== session) return
+    if (event.origin === 'view' && event.sourceViewId === session.view.viewId) return
+
+    if (event.change.kind !== 'synchronize' && event.sourceViewId !== session.view.viewId) {
+      session.view.acceptBufferSelections(markSelectionSetDirty(session.view.getSelections()))
+    }
+    const change = { ...event.change, selections: session.view.getSelections() }
+    this.applySessionChange(change, 'editor.bufferChange', nowMs())
+  }
+
+  private disposeBufferSubscriptions(): void {
+    this.unsubscribeBufferChanges?.()
+    this.unsubscribeLeaseChanges?.()
+    this.unsubscribeBufferChanges = null
+    this.unsubscribeLeaseChanges = null
   }
 
   private syncViewEditability(): void {
@@ -2504,13 +2593,18 @@ export class Editor {
         ? cachedView.view
         : this.view.getLineStartsView()
     this.lineStartsViewCache = { textVersion: this.textVersion, view: lineStartsView }
+    const sync = this.currentDocumentEditChain()
     return defineLazyFullTextProperty({
       documentId: this.documentId,
       languageId: this.languageId,
       theme: this.resolvedTheme(),
       textSnapshot,
       textVersion: this.textVersion,
-      editsSinceTextVersion: (textVersion: number) => this.editChain.editsSince(textVersion),
+      documentSyncPoint: sync.point,
+      changesSinceDocumentSyncPoint: (
+        point: DocumentSyncPoint,
+        scope: DocumentLogicalRevisionScope | null,
+      ) => sync.changesSince(point, scope),
       // Materializing per snapshot costs O(lines) on every keystroke for
       // large documents; consumers that need the array pay lazily instead.
       get lineStarts() {
@@ -2952,7 +3046,9 @@ export class Editor {
 
   private renderSessionChange(change: DocumentSessionChange): void {
     const edit = change.edits[0]
-    if (change.kind === 'selection' || change.kind === 'none') return
+    if (change.kind === 'selection' || change.kind === 'synchronize' || change.kind === 'none') {
+      return
+    }
 
     if (edit && change.edits.length === 1) {
       const previousTextSnapshot = this.textSnapshot
@@ -2977,7 +3073,7 @@ export class Editor {
         edit,
         previousTextSnapshot,
       )
-      this.applyEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
+      this.renderEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
       // No reparse ever restates a hand-drawn region, so this is the only thing keeping one on the
       // rows it was drawn over.
       if (manualFolds) this.manualFolds = manualFolds
@@ -2988,7 +3084,7 @@ export class Editor {
 
     this.dropManualFolds()
     this.clearSyntaxFolds()
-    this.setDocument({ text: change.textSnapshot.materializeFullText(), tokens: [] })
+    this.renderDocument({ text: change.textSnapshot.materializeFullText(), tokens: [] })
   }
 
   /**
@@ -3123,7 +3219,9 @@ export class Editor {
     change: DocumentSessionChange,
     timingName: string,
   ): boolean {
-    if (change.kind === 'selection' || change.kind === 'none') return false
+    if (change.kind === 'selection' || change.kind === 'synchronize' || change.kind === 'none') {
+      return false
+    }
     return RAPID_INPUT_TIMING_NAMES.has(timingName)
   }
 
@@ -3496,8 +3594,15 @@ function syntaxScrollDirection(delta: number): SyntaxScrollDirection {
 }
 
 function sessionChangeLogLevel(change: DocumentSessionChange): 'debug' | 'info' {
-  if (change.kind === 'selection' || change.kind === 'none') return 'debug'
+  if (change.kind === 'selection' || change.kind === 'synchronize' || change.kind === 'none') {
+    return 'debug'
+  }
   return 'info'
+}
+
+function editorBufferSession(session: DocumentSession | null): EditorBufferSession | null {
+  if (!session || !('buffer' in session) || !('view' in session)) return null
+  return session as EditorBufferSession
 }
 
 function summarizeTextEdits(edits: readonly TextEdit[]): readonly Record<string, number>[] {

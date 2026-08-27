@@ -7,7 +7,13 @@
  * stay green.
  */
 
-import type { DocumentSessionChange, SelectionAffinity, TextEdit } from '@singapor/core/document'
+import {
+  createStringTextSnapshot,
+  type DocumentSessionChange,
+  type SelectionAffinity,
+  type TextEdit,
+  type TextSnapshot,
+} from '@singapor/core/document'
 import type { EditorCommandId } from '@singapor/core/editor'
 import type {
   EditorCommandHandler,
@@ -22,6 +28,12 @@ import { vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
+import type {
+  ApplyWorkspaceEditRequest,
+  ApplyWorkspaceEditResult,
+  LanguageServerRenamePrompt,
+} from '../src/types'
+import { documentSyncSnapshotFields } from './documentSyncSnapshot'
 
 type JsonMessage = Record<string, unknown>
 
@@ -62,6 +74,7 @@ class FakeTransport implements LspManagedTransport {
 export type ConnectedEditor = {
   readonly applyEdits: ReturnType<typeof vi.fn<EditorEditContributionContext['applyEdits']>>
   readonly focusEditor: ReturnType<typeof vi.fn>
+  dispose(): void
   type(character: string): void
   backspace(): void
   moveCaret(offset: number): void
@@ -79,6 +92,7 @@ export type ConnectedEditor = {
   answerSignatureHelp(help: lsp.SignatureHelp | null): void
   answerCodeAction(actions: readonly (lsp.Command | lsp.CodeAction)[] | null): void
   answerCodeActionResolve(action: lsp.CodeAction): void
+  answerRename(edit: unknown): void
   publishDiagnostics(diagnostics: readonly lsp.Diagnostic[], version?: number): void
   runCommand(commandId: EditorCommandId): boolean
   completionElement(): HTMLElement
@@ -87,8 +101,11 @@ export type ConnectedEditor = {
   completionRequests(): readonly lsp.CompletionParams[]
   hoverRequests(): readonly lsp.HoverParams[]
   codeActionRequests(): readonly lsp.CodeActionParams[]
+  renameRequests(): readonly lsp.RenameParams[]
   initializeParams(): lsp.InitializeParams
   reportedErrors(): readonly unknown[]
+  workspaceEditRequests(): readonly ApplyWorkspaceEditRequest[]
+  textSnapshot(): TextSnapshot
   /** The tab stops each accepted snippet handed the host, newest last. */
   startedSnippetSessions(): readonly (readonly SnippetStopRange[])[]
 }
@@ -108,6 +125,10 @@ export type ConnectedEditorOptions = {
   readonly capabilities?: lsp.ServerCapabilities
   readonly acceptOnCommitCharacter?: boolean
   readonly affinity?: SelectionAffinity
+  readonly onApplyWorkspaceEdit?: (
+    request: ApplyWorkspaceEditRequest,
+  ) => Promise<ApplyWorkspaceEditResult>
+  readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
 }
 
 /**
@@ -129,6 +150,7 @@ export async function connectedEditor(
 
   const commands = new Map<EditorCommandId, EditorCommandHandler>()
   const errors: unknown[] = []
+  const workspaceEditRequests: ApplyWorkspaceEditRequest[] = []
   const snippetSessions: (readonly SnippetStopRange[])[] = []
   const provider = activateProvider(
     transport,
@@ -138,6 +160,7 @@ export async function connectedEditor(
     errors,
     options,
     snippetSessions,
+    workspaceEditRequests,
   )
   const contribution = provider.createContribution(
     viewContributionContext({
@@ -198,6 +221,7 @@ export async function connectedEditor(
   return {
     applyEdits,
     focusEditor,
+    dispose: () => contribution.dispose(),
     type: (character) => {
       const at = caretOffsetOf(snapshot)
       applyChange({ from: at, to: at, text: character }, at + character.length)
@@ -253,6 +277,7 @@ export async function connectedEditor(
     answerSignatureHelp: (help) => answer('textDocument/signatureHelp', help),
     answerCodeAction: (actions) => answer('textDocument/codeAction', actions),
     answerCodeActionResolve: (action) => answer('codeAction/resolve', action),
+    answerRename: (edit) => answer('textDocument/rename', edit),
     publishDiagnostics: (diagnostics, version) =>
       transport.receive({
         jsonrpc: '2.0',
@@ -292,12 +317,19 @@ export async function connectedEditor(
         .map(jsonMessage)
         .filter((sent) => sent.method === 'textDocument/codeAction')
         .map((sent) => sent.params as lsp.CodeActionParams),
+    renameRequests: () =>
+      transport.sent
+        .map(jsonMessage)
+        .filter((sent) => sent.method === 'textDocument/rename')
+        .map((sent) => sent.params as lsp.RenameParams),
     initializeParams: () => {
       const sent = transport.sent.map(jsonMessage).find((entry) => entry.method === 'initialize')
       if (!sent) throw new Error('missing initialize request')
       return sent.params as lsp.InitializeParams
     },
     reportedErrors: () => errors,
+    workspaceEditRequests: () => workspaceEditRequests,
+    textSnapshot: () => snapshot.textSnapshot!,
     startedSnippetSessions: () => snippetSessions,
   }
 }
@@ -319,6 +351,7 @@ function activateProvider(
   errors: unknown[],
   options: ConnectedEditorOptions,
   snippetSessions: (readonly SnippetStopRange[])[],
+  workspaceEditRequests: ApplyWorkspaceEditRequest[],
 ): EditorViewContributionProvider {
   let provider: EditorViewContributionProvider | null = null
   const disposable = { dispose: () => undefined }
@@ -332,6 +365,11 @@ function activateProvider(
       acceptOnCommitCharacter: options.acceptOnCommitCharacter ?? false,
     },
     onError: (error) => errors.push(error),
+    onApplyWorkspaceEdit: async (request) => {
+      workspaceEditRequests.push(request)
+      return options.onApplyWorkspaceEdit?.(request) ?? { status: 'applied' }
+    },
+    onRequestRenameName: options.onRequestRenameName,
     onRequestError: (_serverId, _method, error) => errors.push(error),
   }).activate({
     registerHighlighter: () => disposable,
@@ -408,9 +446,11 @@ function editorSnapshot(
   anchorOffset = caretOffset,
 ): EditorViewSnapshot {
   return {
+    ...documentSyncSnapshotFields(textVersion),
     documentId: 'src/index.ts',
     languageId: 'typescript',
     fullText,
+    textSnapshot: createStringTextSnapshot(fullText),
     textVersion,
     lineStarts: lineStartsOf(fullText),
     tokens: [],

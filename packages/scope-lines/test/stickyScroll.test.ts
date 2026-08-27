@@ -422,6 +422,12 @@ function snapshot(): EditorViewSnapshot {
     languageId: 'typescript',
     fullText: TEXT,
     textVersion: 1,
+    documentSyncPoint: {
+      revision: 1,
+      segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
+      textVersion: 1,
+    },
+    changesSinceDocumentSyncPoint: () => null,
     lineStarts: lineStarts(),
     tokens: [],
     brackets: [],

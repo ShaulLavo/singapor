@@ -1,4 +1,4 @@
-import type { LspRequestOptions } from '@singapor/lsp'
+import type { LspRequestOptions, LspWorkspace } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { AcquiredLanguageServerLane } from './lane'
@@ -6,6 +6,9 @@ import {
   LANGUAGE_SERVER_FEATURE_IDS,
   type LanguageServerFeatureId,
   type LanguageServerFeatureRanks,
+  type OnApplyWorkspaceEdit,
+  type WorkspaceEditOriginGuard,
+  type WorkspaceTextDocumentProvenance,
 } from './types'
 
 export type LanguageServerSetLane = {
@@ -13,11 +16,13 @@ export type LanguageServerSetLane = {
   readonly features: LanguageServerFeatureRanks
   readonly connection: AcquiredLanguageServerLane
   readonly onInteractiveReady?: () => void
+  readonly onApplyWorkspaceEdit?: OnApplyWorkspaceEdit
   readonly onRequestError?: (method: string, error: unknown) => void
 }
 
 export type LanguageServerLaneResult = {
   readonly lane: LanguageServerSetLane
+  readonly provenance?: LanguageServerCodeActionProvenance
   readonly result: unknown
 }
 
@@ -38,9 +43,27 @@ export type LanguageServerFeatureRouter = {
   ): Promise<TResult>
 }
 
+export type LanguageServerCodeActionRouter = LanguageServerFeatureRouter & {
+  ownerOf(value: unknown): LanguageServerSetLane | null
+  provenanceOf(value: unknown): LanguageServerCodeActionProvenance | null
+  resolveOwnedCodeAction(
+    action: lsp.CodeAction,
+    options: LspRequestOptions,
+  ): Promise<LanguageServerOwnedCodeAction | null>
+}
+
+export type LanguageServerCodeActionProvenance = {
+  readonly guard: WorkspaceEditOriginGuard
+  readonly lane: LanguageServerSetLane
+}
+
+export type LanguageServerOwnedCodeAction = LanguageServerCodeActionProvenance & {
+  readonly action: lsp.CodeAction
+}
+
 export class LanguageServerSet {
   readonly #lanes: readonly LanguageServerSetLane[]
-  readonly #provenance = new WeakMap<object, LanguageServerSetLane>()
+  readonly #provenance = new WeakMap<object, LanguageServerCodeActionProvenance>()
 
   public constructor(lanes: readonly LanguageServerSetLane[]) {
     this.#lanes = lanes
@@ -71,6 +94,15 @@ export class LanguageServerSet {
     })
   }
 
+  public ownerOf(value: unknown): LanguageServerSetLane | null {
+    return this.provenanceOf(value)?.lane ?? null
+  }
+
+  public provenanceOf(value: unknown): LanguageServerCodeActionProvenance | null {
+    if (!isRecord(value)) return null
+    return this.#provenance.get(value) ?? null
+  }
+
   public request<TResult = unknown, TParams = unknown>(
     method: string,
     params?: TParams,
@@ -84,7 +116,9 @@ export class LanguageServerSet {
       const lane = lanes.length === 1 ? lanes[0] : undefined
       if (lane) {
         return this.requestSingle(lane, method, params, options, [], (result) =>
-          this.mergeArrayResults('codeActions', [{ lane, result }]),
+          this.mergeArrayResults('codeActions', [
+            { lane, provenance: codeActionProvenance(lane), result },
+          ]),
         ) as Promise<TResult>
       }
 
@@ -173,14 +207,15 @@ export class LanguageServerSet {
 
   mergeArrayResults(feature: 'codeActions', results: readonly LanguageServerLaneResult[]) {
     const merged: unknown[] = []
-    for (const { lane, result } of results) {
+    for (const { lane, provenance, result } of results) {
       if (!Array.isArray(result)) continue
+      if (!provenance) continue
 
       for (const item of result) {
         if (!isRecord(item)) continue
         if (feature === 'codeActions' && !usableCodeAction(item, lane)) continue
 
-        this.#provenance.set(item, lane)
+        this.#provenance.set(item, provenance)
         merged.push(item)
       }
     }
@@ -189,11 +224,31 @@ export class LanguageServerSet {
   }
 
   async resolveCodeAction<TParams>(params: TParams | undefined, options: LspRequestOptions) {
-    const lane = isRecord(params) ? this.#provenance.get(params) : undefined
-    const owner = lane ?? this.ready('codeActions', 'codeAction/resolve')[0]
-    if (!owner) return params ?? null
+    if (!isCodeAction(params)) return params ?? null
 
-    return this.requestSingle(owner, 'codeAction/resolve', params, options, params ?? null)
+    const resolved = await this.resolveOwnedCodeAction(params, options)
+    return resolved?.action ?? params
+  }
+
+  public async resolveOwnedCodeAction(
+    action: lsp.CodeAction,
+    options: LspRequestOptions,
+  ): Promise<LanguageServerOwnedCodeAction | null> {
+    const current = this.provenanceOf(action)
+    if (!current) return null
+
+    const result = await this.requestSingle(
+      current.lane,
+      'codeAction/resolve',
+      action,
+      options,
+      null,
+    )
+    if (!isCodeAction(result)) return null
+
+    const provenance = codeActionProvenance(current.lane)
+    this.#provenance.set(result, provenance)
+    return { action: result, ...provenance }
   }
 
   requestSingle<TParams, TResult = unknown>(
@@ -253,8 +308,9 @@ export class LanguageServerSet {
     const requests = this.ready(feature, method).map(async (lane) => {
       try {
         const result = await lane.connection.client.request(method, params, options)
+        const provenance = feature === 'codeActions' ? codeActionProvenance(lane) : undefined
         lane.onInteractiveReady?.()
-        return { lane, result }
+        return { lane, provenance, result }
       } catch (error) {
         if (!isAbortError(error)) lane.onRequestError?.(method, error)
         return { lane, result: null }
@@ -410,6 +466,12 @@ function isNonNullResult(result: unknown): boolean {
   return result !== null && result !== undefined
 }
 
+function isCodeAction(value: unknown): value is lsp.CodeAction {
+  if (!isRecord(value)) return false
+  if (typeof value.title !== 'string') return false
+  return typeof value.command !== 'string'
+}
+
 function mergedHover(hovers: readonly lsp.Hover[]): lsp.Hover | null {
   if (hovers.length === 0) return null
 
@@ -437,6 +499,40 @@ function markedStringText(value: lsp.MarkedString): string {
 function isAbortError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === 'AbortError') return true
   return isRecord(error) && error.name === 'LspRequestCancelledError'
+}
+
+function codeActionProvenance(lane: LanguageServerSetLane): LanguageServerCodeActionProvenance {
+  return {
+    guard: captureWorkspaceEditOriginGuard(lane.connection.workspace),
+    lane,
+  }
+}
+
+export function captureWorkspaceEditOriginGuard(workspace: LspWorkspace): WorkspaceEditOriginGuard {
+  const documents: readonly WorkspaceTextDocumentProvenance[] = workspace.documents.map(
+    (document) => ({
+      textSnapshot: document.textSnapshot,
+      uri: document.uri,
+      version: document.version,
+    }),
+  )
+  const documentsByUri = new Map(documents.map((document) => [document.uri, document]))
+
+  return {
+    documents,
+    isCurrent(uri) {
+      const captured = documentsByUri.get(uri)
+      if (!captured) return false
+
+      const current = workspace.getDocument(uri)
+      if (!current) return false
+      return (
+        current.uri === captured.uri &&
+        current.version === captured.version &&
+        current.textSnapshot === captured.textSnapshot
+      )
+    },
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -514,6 +514,12 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
     languageId: 'typescript',
     fullText: '',
     textVersion: 1,
+    documentSyncPoint: {
+      revision: 1,
+      segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
+      textVersion: 1,
+    },
+    changesSinceDocumentSyncPoint: () => null,
     lineStarts: [0],
     tokens: [],
     brackets: [],

@@ -6,11 +6,18 @@ import * as lspApi from '../src/index.ts'
 import {
   LspClient,
   LspWorkspace,
+  arrayLspLineStarts,
   createWorkerLspTransport,
   defaultClientCapabilities,
   offsetToLspPosition,
+  type LspDocumentOpenSnapshotOptions,
+  type LspDocumentTransitionOptions,
+  type LspTextSnapshot,
   type LspTextEdit,
   type LspTransport,
+  type LspWorkspaceDocumentAttachment,
+  type LspWorkspaceSnapshotEditOptions,
+  type LspWorkspaceUnchangedSourceOptions,
 } from '../src/index.ts'
 
 describe('public API facade', () => {
@@ -29,6 +36,58 @@ describe('public API facade', () => {
     expect(offsetToLspPosition('abc', 1)).toEqual({ line: 0, character: 1 })
     expect(edit).toEqual({ from: 0, to: 0, text: 'x' })
     expect(transport).toBeTruthy()
+  })
+
+  it('exports only the snapshot and attachment workspace document surface', () => {
+    const workspace = new LspWorkspace()
+    const textSnapshot: LspTextSnapshot = {
+      length: 3,
+      materializeFullText: () => 'one',
+      readRange: (start, end) => 'one'.slice(start, end),
+      forEachTextChunk: (visit) => visit('one', 0, 3),
+    }
+    const sourceSegment = {}
+    const openOptions: LspDocumentOpenSnapshotOptions = {
+      languageId: 'typescript',
+      lineStarts: arrayLspLineStarts([0]),
+      sourceRevision: 0,
+      sourceSegment,
+      textSnapshot,
+      uri: 'file:///repo/public-api.ts',
+    }
+    const opened = workspace.openDocumentSnapshot(openOptions)
+    const attachment: LspWorkspaceDocumentAttachment = opened.attachment
+    const editOptions: LspWorkspaceSnapshotEditOptions = {
+      edits: [],
+      lineStarts: openOptions.lineStarts,
+      logicalRevisionCount: 0,
+      sourceRevision: 0,
+      sourceSegment,
+      textSnapshot,
+    }
+    const unchangedOptions: LspWorkspaceUnchangedSourceOptions = {
+      lineStarts: openOptions.lineStarts,
+      sourceRevision: 0,
+      sourceSegment,
+      textSnapshot,
+    }
+    const transitionOptions: LspDocumentTransitionOptions = {
+      ...openOptions,
+      sourceRevision: 0,
+      sourceSegment: {},
+      sourceTextVersion: 0,
+      uri: 'file:///repo/public-api-renamed.ts',
+    }
+
+    expect(workspace.updateDocumentSnapshot(openOptions.uri, editOptions).version).toBe(0)
+    expect(workspace.adoptUnchangedDocumentSource(openOptions.uri, unchangedOptions).version).toBe(
+      0,
+    )
+    expect(workspace.transitionDocumentUri(attachment, transitionOptions).document.uri).toBe(
+      transitionOptions.uri,
+    )
+    expect(workspace).not.toHaveProperty('openDocument')
+    workspace.closeDocument(attachment)
   })
 
   it('does not export editor plugin factories', () => {

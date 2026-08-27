@@ -319,7 +319,9 @@ export class InputSelectionController {
 
     const start = context.event ? eventStartMs(context.event) : nowMs()
     const change = command === 'undo' ? session.undo() : session.redo()
-    if (change.kind !== 'none') this.markSessionSelectionForNextInput()
+    if (change.kind !== 'none' && change.kind !== 'synchronize') {
+      this.markSessionSelectionForNextInput()
+    }
     this.applyChange(change, command === 'undo' ? 'input.undo' : 'input.redo', start)
     return true
   }

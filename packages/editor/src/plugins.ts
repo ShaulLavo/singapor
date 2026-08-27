@@ -21,6 +21,11 @@ import type { InlineReplacementSpec } from './inlineMap'
 import type { TextOffsetRange } from './textRanges'
 import type { SelectionAffinity } from './selections'
 import type { EditorSetSelectionOptions } from './editor/selectionReveal'
+import type {
+  DocumentChangesSinceSyncPoint,
+  DocumentLogicalRevisionScope,
+  DocumentSyncPoint,
+} from './editor/editChain'
 import type { BrowserTextMetrics } from './virtualization/browserMetrics'
 import type { FixedRowVisibleRange } from './virtualization/fixedRowVirtualizer'
 import type {
@@ -220,10 +225,11 @@ export type EditorViewSnapshot = {
   readonly textSnapshot?: TextSnapshot
   readonly fullText: string
   readonly textVersion: number
-  // Composed edits transforming the given older text version into this
-  // snapshot, or null when unknown; lets deferred consumers sync
-  // incrementally instead of re-shipping the document. See DocumentEditChain.
-  readonly editsSinceTextVersion?: (textVersion: number) => readonly TextEdit[] | null
+  readonly documentSyncPoint: DocumentSyncPoint
+  readonly changesSinceDocumentSyncPoint: (
+    point: DocumentSyncPoint,
+    scope: DocumentLogicalRevisionScope | null,
+  ) => DocumentChangesSinceSyncPoint | null
   // Materializes the full array on first read; prefer lineStartsView on
   // per-keystroke paths.
   readonly lineStarts: readonly number[]

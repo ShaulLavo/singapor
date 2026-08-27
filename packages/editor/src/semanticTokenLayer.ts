@@ -134,6 +134,7 @@ export function createSemanticTokenLayer(
   let lastRequest = ''
   let demandTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
+  const syncPointsByTextVersion = new Map<number, EditorViewSnapshot['documentSyncPoint']>()
   /** The document the painted groups and their anchors belong to. See the check in `update`. */
   let paintedDocumentId: string | null = null
 
@@ -189,15 +190,19 @@ export function createSemanticTokenLayer(
     // exception. The edit chain keeps a bounded number of transitions and returns null for one it
     // can no longer reach — a slow cold server plus fast typing gets there — so the resync branch is
     // not hypothetical and a host has to implement it.
-    const edits = snapshot.editsSinceTextVersion?.(payload.textVersion)
-    if (!edits) return dropped('version-too-old', options)
+    const point = syncPointsByTextVersion.get(payload.textVersion)
+    if (!point) return dropped('version-too-old', options)
+    const changes = snapshot.changesSinceDocumentSyncPoint(point, null)
+    if (!changes?.edits) return dropped('version-too-old', options)
 
-    return paint(projectSpans(payload.spans, edits), snapshot, edits.length)
+    return paint(projectSpans(payload.spans, changes.edits), snapshot, changes.edits.length)
   }
 
   return {
     update(snapshot, kind) {
       if (disposed) return
+      syncPointsByTextVersion.set(snapshot.textVersion, snapshot.documentSyncPoint)
+      trimSyncPoints(syncPointsByTextVersion)
       if (kind === 'clear') {
         cancelDemand()
         clearPainted()
@@ -325,6 +330,14 @@ export function createSemanticTokenLayer(
       status: 'painted',
       unresolvedTypeNames: [...unresolved],
     }
+  }
+}
+
+function trimSyncPoints(points: Map<number, EditorViewSnapshot['documentSyncPoint']>): void {
+  while (points.size > 128) {
+    const oldest = points.keys().next().value
+    if (oldest === undefined) return
+    points.delete(oldest)
   }
 }
 

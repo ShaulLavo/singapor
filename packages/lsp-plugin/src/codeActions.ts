@@ -1,22 +1,18 @@
-import type { TextEdit } from '@singapor/core'
 import type {
-  EditorCapabilityToken,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
 } from '@singapor/core/extensions'
 import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import type { LanguageServerCompletionEditFeature } from './completion'
 import type { OffsetRange } from './definitionNavigation'
-import { formattingEdits } from './formatting'
 import type { ActiveDocument } from './pluginTypes'
-import type { LanguageServerFeatureRouter } from './serverSet'
 import {
-  workspaceEditForDocument,
-  workspaceEditPlan,
-  workspaceEditTouchesOtherDocuments,
-} from './workspaceEdit'
+  type LanguageServerCodeActionProvenance,
+  type LanguageServerCodeActionRouter,
+} from './serverSet'
+import type { ApplyWorkspaceEditResult, WorkspaceTextDocumentProvenance } from './types'
+import { parseWorkspaceEdit } from './workspaceEdit'
 
 /**
  * Long enough that a held arrow key or a burst of typing asks once, short enough that the answer is
@@ -89,9 +85,8 @@ export function codeActionAutoTriggerRange(
 }
 
 export type CodeActionControllerOptions = {
-  readonly router: LanguageServerFeatureRouter
+  readonly router: LanguageServerCodeActionRouter
   readonly context: EditorViewContributionContext
-  readonly editFeature: EditorCapabilityToken<LanguageServerCompletionEditFeature>
   readonly getActiveDocument: () => ActiveDocument | null
   readonly getDiagnostics: () => readonly lsp.Diagnostic[]
   readonly onRequestError: (error: unknown) => void
@@ -111,6 +106,7 @@ export class CodeActionController {
   private seenDiagnostics: readonly lsp.Diagnostic[] | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private abort: AbortController | null = null
+  private applicationAbort: AbortController | null = null
   private requestId = 0
   private disposed = false
 
@@ -156,7 +152,13 @@ export class CodeActionController {
     const fix = this.fix
     if (!fix) return false
 
-    void this.runAction(active, fix)
+    const provenance = this.options.router.provenanceOf(fix)
+    if (!provenance) return false
+
+    this.applicationAbort?.abort()
+    const abort = new AbortController()
+    this.applicationAbort = abort
+    void this.runAction(active, fix, provenance, abort)
     return true
   }
 
@@ -185,6 +187,8 @@ export class CodeActionController {
     this.timer = null
     this.abort?.abort()
     this.abort = null
+    this.applicationAbort?.abort()
+    this.applicationAbort = null
     this.requestId += 1
     this.fix = null
   }
@@ -239,24 +243,37 @@ export class CodeActionController {
       // Narrowed again on arrival, because `only` is a hint the server is free to ignore.
       this.fix = preferredQuickFix(response, this.resolvesActions())
     } catch (error) {
-      this.options.onRequestError(error)
+      if (!isAbortError(error)) this.options.onRequestError(error)
     }
   }
 
-  private async runAction(active: ActiveDocument, action: lsp.CodeAction): Promise<void> {
+  private async runAction(
+    active: ActiveDocument,
+    action: lsp.CodeAction,
+    provenance: LanguageServerCodeActionProvenance,
+    abort: AbortController,
+  ): Promise<void> {
     try {
-      // Servers that compute fixes lazily answer the list with titles and a `data` handle alone, so
-      // an edit that is missing here is one that has not been asked for yet.
-      const resolved = action.edit
-        ? action
-        : ((await this.options.router.request<lsp.CodeAction>('codeAction/resolve', action)) ??
-          action)
-      if (this.disposed) return
-      if (active !== this.options.getActiveDocument()) return
+      if (action.command) {
+        this.reportUnsupportedCommand(action)
+        return
+      }
 
-      this.applyAction(active, resolved)
+      const owned = action.edit
+        ? { action, ...provenance }
+        : await this.options.router.resolveOwnedCodeAction(action, { signal: abort.signal })
+      if (!owned) return
+      if (!this.isCurrentApplication(active, abort)) return
+      if (owned.action.command) {
+        this.reportUnsupportedCommand(owned.action)
+        return
+      }
+
+      await this.dispatchAction(active, owned.action, owned, abort.signal)
     } catch (error) {
-      this.options.onRequestError(error)
+      if (!isAbortError(error)) this.options.onRequestError(error)
+    } finally {
+      if (this.applicationAbort === abort) this.applicationAbort = null
     }
   }
 
@@ -264,42 +281,63 @@ export class CodeActionController {
     return this.options.router.canResolveCodeActions()
   }
 
-  private applyAction(active: ActiveDocument, action: lsp.CodeAction): void {
+  private async dispatchAction(
+    active: ActiveDocument,
+    action: lsp.CodeAction,
+    provenance: LanguageServerCodeActionProvenance,
+    signal: AbortSignal,
+  ): Promise<void> {
     if (!action.edit) {
-      // The server means to carry this one out itself, over a `workspace/executeCommand` round trip
-      // this client has no half of. The chord was reported handled the moment the fix was chosen,
-      // so saying so is all that stops it from looking like a keystroke the editor ate.
+      this.reportUnsupportedCommand(action)
+      return
+    }
+
+    const parsed = parseWorkspaceEdit(action.edit)
+    if (!parsed.ok) {
+      this.options.onRequestError(new Error(parsed.error.reason))
+      return
+    }
+    const origin = currentProducerProvenance(provenance, active)
+    if (!origin) return
+    if (signal.aborted) return
+
+    const apply = provenance.lane.onApplyWorkspaceEdit
+    if (!apply) {
       this.options.onRequestError(
-        new Error(
-          `"${action.title}" is applied by a server command, which this editor cannot run.`,
-        ),
+        new Error(`"${action.title}" cannot be applied without a workspace edit host.`),
       )
       return
     }
 
-    const plan = workspaceEditPlan(action.edit)
-    if (workspaceEditTouchesOtherDocuments(plan, active.uri)) {
-      this.options.onRequestError(
-        new Error(`"${action.title}" spans several files, which this editor cannot apply yet.`),
-      )
-      return
-    }
-
-    const edits = formattingEdits(active.fullText, workspaceEditForDocument(plan, active.uri))
-    if (edits.length === 0) return
-
-    this.applyEdits(edits)
+    const result = await apply({
+      guard: provenance.guard,
+      label: action.title,
+      logicalRevisionScope: provenance.lane.connection.logicalRevisionScope,
+      originUri: active.uri,
+      originVersion: origin.version,
+      plan: parsed.value,
+      serverId: provenance.lane.id,
+      signal,
+      source: 'code-action',
+    })
+    this.reportHostFailure(result)
   }
 
-  private applyEdits(edits: readonly TextEdit[]): void {
-    const feature = this.options.context.getFeature?.(this.options.editFeature)
-    if (!feature) return
+  private isCurrentApplication(active: ActiveDocument, abort: AbortController): boolean {
+    if (this.disposed) return false
+    if (abort.signal.aborted) return false
+    return active === this.options.getActiveDocument()
+  }
 
-    // Pinned to its offset rather than mapped through the fix: a quick fix rewrites the text the
-    // caret is sitting in, and the offset it was at is closer to what the user was looking at than
-    // any position derived from the replacement.
-    const head = this.options.context.getSnapshot().selections[0]?.headOffset ?? 0
-    feature.applyCompletion({ edits, selection: { anchor: head, head } })
+  private reportUnsupportedCommand(action: lsp.CodeAction): void {
+    this.options.onRequestError(
+      new Error(`"${action.title}" includes a server command, which this editor cannot run.`),
+    )
+  }
+
+  private reportHostFailure(result: ApplyWorkspaceEditResult): void {
+    if (result.status !== 'failed') return
+    this.options.onRequestError(new Error(`${result.code}: ${result.message}`))
   }
 }
 
@@ -335,4 +373,25 @@ function diagnosticsOverlapping(
 
 function isWhitespace(character: string | undefined): boolean {
   return character !== undefined && /\s/.test(character)
+}
+
+function currentProducerProvenance(
+  provenance: LanguageServerCodeActionProvenance,
+  active: ActiveDocument,
+): WorkspaceTextDocumentProvenance | null {
+  const origin = provenance.guard.documents.find((document) => document.uri === active.uri)
+  if (!origin) return null
+  if (origin.textSnapshot !== active.textSnapshot) return null
+  if (!provenance.guard.isCurrent(active.uri)) return null
+  return origin
+}
+
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true
+  if (!isRecord(error)) return false
+  return error.name === 'LspRequestCancelledError'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

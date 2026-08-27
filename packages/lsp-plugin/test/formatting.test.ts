@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formattingChangesText, formattingEdits, formattingOptions } from '../src/formatting'
+import { formattingChangesText, formattingOptions, prepareFormattingEdits } from '../src/formatting'
 import { REDIFF_LENGTH_LIMIT } from '../src/minimalEdits'
 
 const edit = (
@@ -28,28 +28,31 @@ const linesWhere = (count: number, changed: (line: number) => boolean) =>
     changed(line) ? `LINE ${line}` : `line ${line}`,
   ).join('\n')
 
-describe('formattingEdits', () => {
+describe('prepareFormattingEdits', () => {
   it('converts positions to offsets', () => {
-    const result = formattingEdits('const a=1', [edit(0, 7, 0, 8, ' = ')])
+    const result = prepareFormattingEdits('const a=1', [edit(0, 7, 0, 8, ' = ')])
 
     expect(result).toEqual([{ from: 7, text: ' = ', to: 8 }])
   })
 
   it('has nothing to do for an empty or absent result', () => {
-    expect(formattingEdits('a', [])).toEqual([])
-    expect(formattingEdits('a', null)).toEqual([])
+    expect(prepareFormattingEdits('a', [])).toEqual([])
+    expect(prepareFormattingEdits('a', null)).toEqual([])
   })
 
   // The batch applicator rejects overlaps outright, so a formatter returning a whole-document edit
   // alongside a nested one must not be handed both.
   it('drops an edit nested inside another', () => {
-    const result = formattingEdits('abcdef', [edit(0, 0, 0, 6, 'XYZ'), edit(0, 2, 0, 3, 'q')])
+    const result = prepareFormattingEdits('abcdef', [
+      edit(0, 0, 0, 6, 'XYZ'),
+      edit(0, 2, 0, 3, 'q'),
+    ])
 
     expect(result).toEqual([{ from: 0, text: 'XYZ', to: 6 }])
   })
 
   it('returns edits in descending order so they apply without shifting each other', () => {
-    const result = formattingEdits('ab\ncd', [edit(0, 0, 0, 1, 'A'), edit(1, 0, 1, 1, 'C')])
+    const result = prepareFormattingEdits('ab\ncd', [edit(0, 0, 0, 1, 'A'), edit(1, 0, 1, 1, 'C')])
 
     expect(result.map((entry) => entry.from)).toEqual([3, 0])
   })
@@ -57,7 +60,7 @@ describe('formattingEdits', () => {
   it('rewrites only the line a whole-document reply changes', () => {
     const text = 'const a = 1\nconst b=2\nconst c = 3\n'
 
-    const result = formattingEdits(text, [
+    const result = prepareFormattingEdits(text, [
       wholeDocument(text, 'const a = 1\nconst b = 2\nconst c = 3\n'),
     ])
 
@@ -67,7 +70,7 @@ describe('formattingEdits', () => {
   it('emits one edit per changed region rather than one spanning them', () => {
     const text = 'a\nb\nc\nd\ne\n'
 
-    const result = formattingEdits(text, [wholeDocument(text, 'a\nB\nc\nd\nE\n')])
+    const result = prepareFormattingEdits(text, [wholeDocument(text, 'a\nB\nc\nd\nE\n')])
 
     expect(result).toEqual([
       { from: 8, text: 'E', to: 9 },
@@ -78,13 +81,13 @@ describe('formattingEdits', () => {
   // Two fragments that meet can cancel each other out, which is invisible while they are compared
   // apart: the first deletes the character the second puts back.
   it('joins edits that meet before comparing them', () => {
-    const result = formattingEdits('ab', [edit(0, 0, 0, 1, ''), edit(0, 1, 0, 2, 'ab')])
+    const result = prepareFormattingEdits('ab', [edit(0, 0, 0, 1, ''), edit(0, 1, 0, 2, 'ab')])
 
     expect(result).toEqual([])
   })
 
   it('drops an edit that rewrites text to what it already is', () => {
-    const result = formattingEdits('a=1\nb=2\n', [
+    const result = prepareFormattingEdits('a=1\nb=2\n', [
       edit(0, 0, 0, 3, 'a=1'),
       edit(1, 0, 1, 3, 'b = 2'),
     ])
@@ -95,7 +98,7 @@ describe('formattingEdits', () => {
   it('leaves a surrogate pair whole when narrowing to the difference', () => {
     const text = 'const a = "\u{1F600}"\n'
 
-    const result = formattingEdits(text, [wholeDocument(text, 'const a = "\u{1F601}"\n')])
+    const result = prepareFormattingEdits(text, [wholeDocument(text, 'const a = "\u{1F601}"\n')])
 
     expect(result).toEqual([{ from: 11, text: '\u{1F601}', to: 13 }])
   })
@@ -105,10 +108,10 @@ describe('formattingEdits', () => {
     const within = `x${filler}`
     const beyond = `x${filler}aa`
 
-    expect(formattingEdits(within, [wholeDocument(within, `X${filler}`)])).toEqual([
+    expect(prepareFormattingEdits(within, [wholeDocument(within, `X${filler}`)])).toEqual([
       { from: 0, text: 'X', to: 1 },
     ])
-    expect(formattingEdits(beyond, [wholeDocument(beyond, `X${filler}aa`)])).toEqual([
+    expect(prepareFormattingEdits(beyond, [wholeDocument(beyond, `X${filler}aa`)])).toEqual([
       { from: 0, text: `X${filler}aa`, to: beyond.length },
     ])
   })
@@ -120,7 +123,7 @@ describe('formattingEdits', () => {
     const rewritten = 'b'.repeat(REDIFF_LENGTH_LIMIT * 0.6)
     const text = `${untouched}\n${rewritten}`
 
-    const result = formattingEdits(text, [
+    const result = prepareFormattingEdits(text, [
       edit(0, 0, 1, 0, `${untouched}\n`),
       edit(1, 0, 1, rewritten.length, `B${rewritten.slice(1)}`),
     ])
@@ -133,7 +136,7 @@ describe('formattingEdits', () => {
   it('gives up on an alignment with too many separate differences', () => {
     const alternating = (count: number) => {
       const text = linesWhere(count, () => false)
-      return formattingEdits(text, [
+      return prepareFormattingEdits(text, [
         wholeDocument(
           text,
           linesWhere(count, (line) => line % 2 === 1),

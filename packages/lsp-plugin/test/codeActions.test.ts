@@ -233,7 +233,7 @@ describe('editor.action.autoFix', () => {
     expect(readonlySafeEditorCommandPacks).not.toContain('lsp-editing')
   })
 
-  it('is dispatched by the plugin and applies the preferred fix with no menu', async () => {
+  it('dispatches the complete preferred fix with its owning lane', async () => {
     const editor = await connectedEditor('improt fs', 3, {
       capabilities: CODE_ACTION_ONLY_CAPABILITY,
     })
@@ -244,10 +244,40 @@ describe('editor.action.autoFix', () => {
 
     expect(editor.runCommand('editor.action.autoFix')).toBe(true)
     await flushPromises()
-    expect(documentAfterEdits('improt fs', editor)).toBe('import fs')
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
+    expect(editor.workspaceEditRequests()[0]).toMatchObject({
+      originUri: DOCUMENT_URI,
+      serverId: 'editor.test-lsp',
+      source: 'code-action',
+      plan: {
+        operations: [
+          {
+            kind: 'text-document',
+            uri: DOCUMENT_URI,
+            version: null,
+            edits: [{ newText: 'import' }],
+          },
+        ],
+      },
+    })
+    expect(editor.workspaceEditRequests()[0]?.guard.isCurrent(DOCUMENT_URI)).toBe(true)
   })
 
-  it('leaves the caret where the user left it rather than at the head of the file', async () => {
+  it('dispatches with the owning lane version after a document change', async () => {
+    const editor = await connectedEditor('improt fs', 3, {
+      capabilities: CODE_ACTION_ONLY_CAPABILITY,
+    })
+    editor.editElsewhere({ from: 9, to: 9, text: ' ' })
+    await settledActions(editor, [spellingFix('Change spelling to import')])
+
+    expect(editor.runCommand('editor.action.autoFix')).toBe(true)
+    await flushPromises()
+
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
+    expect(editor.workspaceEditRequests()[0]?.originVersion).toBe(1)
+  })
+
+  it('does not call the local completion edit feature for a WorkspaceEdit', async () => {
     const editor = await connectedEditor('improt fs', 3, {
       capabilities: CODE_ACTION_ONLY_CAPABILITY,
     })
@@ -256,43 +286,38 @@ describe('editor.action.autoFix', () => {
     expect(editor.runCommand('editor.action.autoFix')).toBe(true)
     await flushPromises()
 
-    const [, , selection] = editor.applyEdits.mock.calls[0] ?? []
-    expect(selection).toEqual({ anchor: 3, head: 3 })
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
+    expect(editor.applyEdits).not.toHaveBeenCalled()
   })
 
-  it('resolves an action that arrived with a command and no edit before running it', async () => {
+  it('rejects edit plus unsupported command without invoking the host or applying text', async () => {
     const editor = await connectedEditor('improt fs', 3, { capabilities: RESOLVING_CAPABILITY })
-    const unresolved = spellingFix('Change spelling to import', {
+    const commandBearing = spellingFix('Change spelling to import', {
       command: { command: '_typescript.applyFix', title: 'Change spelling to import' },
-      data: { fixId: 7 },
-      edit: undefined,
     })
-    await settledActions(editor, [unresolved])
+    await settledActions(editor, [commandBearing])
 
     expect(editor.runCommand('editor.action.autoFix')).toBe(true)
     await flushPromises()
     expect(editor.applyEdits).not.toHaveBeenCalled()
-
-    editor.answerCodeActionResolve({ ...unresolved, edit: replacement(0, 6, 'import') })
-    await flushPromises()
-    expect(documentAfterEdits('improt fs', editor)).toBe('import fs')
-  })
-
-  it('says so when the resolved fix turns out to be a command it cannot run', async () => {
-    const editor = await connectedEditor('improt fs', 3, { capabilities: RESOLVING_CAPABILITY })
-    const commandOnly = spellingFix('Change spelling to import', {
-      command: { command: '_typescript.applyFix', title: 'Change spelling to import' },
-      data: { fixId: 7 },
-      edit: undefined,
-    })
-    await settledActions(editor, [commandOnly])
-
-    expect(editor.runCommand('editor.action.autoFix')).toBe(true)
-    editor.answerCodeActionResolve(commandOnly)
-    await flushPromises()
-
-    expect(editor.applyEdits).not.toHaveBeenCalled()
+    expect(editor.workspaceEditRequests()).toHaveLength(0)
     expect(String(editor.reportedErrors()[0])).toContain('server command')
+  })
+
+  it('resolves a lazy action before dispatching its complete edit', async () => {
+    const editor = await connectedEditor('improt fs', 3, { capabilities: RESOLVING_CAPABILITY })
+    const lazy = spellingFix('Change spelling to import', {
+      data: { fixId: 7 },
+      edit: undefined,
+    })
+    await settledActions(editor, [lazy])
+
+    expect(editor.runCommand('editor.action.autoFix')).toBe(true)
+    editor.answerCodeActionResolve({ ...lazy, edit: replacement(0, 6, 'import') })
+    await flushPromises()
+
+    expect(editor.applyEdits).not.toHaveBeenCalled()
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
   })
 
   it('lets the chord through when the server offers no fix it can carry out', async () => {
@@ -312,7 +337,7 @@ describe('editor.action.autoFix', () => {
     expect(editor.reportedErrors()).toHaveLength(0)
   })
 
-  it('refuses a fix reaching into another file rather than applying its near half', async () => {
+  it('dispatches a cross-file fix without applying its near half', async () => {
     const editor = await connectedEditor('improt fs', 3, {
       capabilities: CODE_ACTION_ONLY_CAPABILITY,
     })
@@ -331,7 +356,46 @@ describe('editor.action.autoFix', () => {
     await flushPromises()
 
     expect(editor.applyEdits).not.toHaveBeenCalled()
-    expect(String(editor.reportedErrors()[0])).toContain('spans several files')
+    expect(editor.workspaceEditRequests()[0]?.plan.operations).toHaveLength(2)
+  })
+
+  it('cancels resolved-action application on document drift or disposal', async () => {
+    const drifted = await connectedEditor('improt fs', 3, { capabilities: RESOLVING_CAPABILITY })
+    const lazy = spellingFix('Change spelling to import', { data: { fixId: 7 }, edit: undefined })
+    await settledActions(drifted, [lazy])
+
+    expect(drifted.runCommand('editor.action.autoFix')).toBe(true)
+    drifted.type('!')
+    drifted.answerCodeActionResolve({ ...lazy, edit: replacement(0, 6, 'import') })
+    await flushPromises()
+    expect(drifted.workspaceEditRequests()).toHaveLength(0)
+
+    const disposed = await connectedEditor('improt fs', 3, { capabilities: RESOLVING_CAPABILITY })
+    await settledActions(disposed, [lazy])
+    expect(disposed.runCommand('editor.action.autoFix')).toBe(true)
+    disposed.dispose()
+    disposed.answerCodeActionResolve({ ...lazy, edit: replacement(0, 6, 'import') })
+    await flushPromises()
+    expect(disposed.workspaceEditRequests()).toHaveLength(0)
+  })
+
+  it('reports one host failure and no partial local edits', async () => {
+    const editor = await connectedEditor('improt fs', 3, {
+      capabilities: CODE_ACTION_ONLY_CAPABILITY,
+      onApplyWorkspaceEdit: async () => ({
+        code: 'version-conflict',
+        message: 'The proposal is stale.',
+        status: 'failed',
+      }),
+    })
+    await settledActions(editor, [spellingFix('Change spelling to import')])
+
+    expect(editor.runCommand('editor.action.autoFix')).toBe(true)
+    await flushPromises()
+
+    expect(editor.reportedErrors()).toHaveLength(1)
+    expect(String(editor.reportedErrors()[0])).toContain('version-conflict')
+    expect(editor.applyEdits).not.toHaveBeenCalled()
   })
 })
 
@@ -364,17 +428,4 @@ function spellingFix(title: string, rest: Partial<lsp.CodeAction> = {}): lsp.Cod
 
 function replacement(start: number, end: number, newText: string): lsp.WorkspaceEdit {
   return { changes: { [DOCUMENT_URI]: [{ newText, range: singleLineRange(start, end) }] } }
-}
-
-function documentAfterEdits(text: string, editor: ConnectedEditor): string {
-  let result = text
-  for (const [edits] of editor.applyEdits.mock.calls) {
-    // The applicator is handed descending edits, so replaying them in order cannot shift the ones
-    // still to come.
-    for (const edit of edits) {
-      result = `${result.slice(0, edit.from)}${edit.text}${result.slice(edit.to)}`
-    }
-  }
-
-  return result
 }

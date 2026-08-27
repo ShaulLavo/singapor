@@ -2,6 +2,7 @@ import {
   compareTextOffsetRanges,
   createStringTextSnapshot,
   type DocumentSessionChange,
+  type DocumentSyncPoint,
 } from '@singapor/core/document'
 import { projectDecorationRangeThroughEdits } from '@singapor/core/extensions'
 import type {
@@ -407,6 +408,7 @@ class PaintedFindRanges implements FindTrackedRanges {
   private elsewhere: readonly FindRange[]
   /** Text version the offsets in `elsewhere` describe, which is not always the document's. */
   private elsewhereVersion: number
+  private elsewhereSyncPoint: DocumentSyncPoint
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -415,6 +417,7 @@ class PaintedFindRanges implements FindTrackedRanges {
   ) {
     this.elsewhere = ranges
     this.elsewhereVersion = snapshot.textVersion
+    this.elsewhereSyncPoint = snapshot.documentSyncPoint
     this.partition(snapshot)
   }
 
@@ -447,6 +450,7 @@ class PaintedFindRanges implements FindTrackedRanges {
     this.tracked = tracked
     this.elsewhere = tracked ? ranges.filter((range) => !overlapsSpan(range, span)) : ranges
     this.elsewhereVersion = snapshot.textVersion
+    this.elsewhereSyncPoint = snapshot.documentSyncPoint
     return true
   }
 
@@ -465,10 +469,12 @@ class PaintedFindRanges implements FindTrackedRanges {
     if (snapshot.textVersion === this.elsewhereVersion) return
     if (this.elsewhere.length === 0) {
       this.elsewhereVersion = snapshot.textVersion
+      this.elsewhereSyncPoint = snapshot.documentSyncPoint
       return
     }
 
-    const edits = snapshot.editsSinceTextVersion?.(this.elsewhereVersion) ?? null
+    const edits =
+      snapshot.changesSinceDocumentSyncPoint(this.elsewhereSyncPoint, null)?.edits ?? null
     this.elsewhere = edits
       ? this.elsewhere
           .map((range) => projectDecorationRangeThroughEdits({ ...range, ...MATCH_BIAS }, edits))
@@ -476,6 +482,7 @@ class PaintedFindRanges implements FindTrackedRanges {
           .map((range) => ({ end: range.end, start: range.start }))
       : []
     this.elsewhereVersion = snapshot.textVersion
+    this.elsewhereSyncPoint = snapshot.documentSyncPoint
   }
 }
 

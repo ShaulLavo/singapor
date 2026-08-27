@@ -28,7 +28,7 @@ import {
   LanguageServerCompletionSources,
 } from './completionProviders'
 import { CompositeDiagnosticsPresenter, DiagnosticsPresenter } from './diagnosticsPresenter'
-import { activeDocumentForSnapshot, DocumentSync, type DocumentSyncOptions } from './documentSync'
+import { activeDocumentForSnapshot, DocumentSync } from './documentSync'
 import { FormatOnTypeController } from './formatOnType'
 import { HoverDefinitionController } from './hoverDefinitionController'
 import { SignatureHelpController } from './signatureHelpController'
@@ -40,11 +40,7 @@ import {
   type LanguageServerSemanticTokensOwnerOptions,
 } from './semanticTokens'
 import { createRenameWidgetController, type RenameWidgetController } from './renameWidget'
-import {
-  workspaceEditForDocument,
-  workspaceEditPlan,
-  workspaceEditTouchesOtherDocuments,
-} from './workspaceEdit'
+import { parseWorkspaceEdit } from './workspaceEdit'
 import { wordRangeAtOffset } from '@singapor/core/internal'
 import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
 import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
@@ -55,6 +51,7 @@ import {
 } from './lane'
 import {
   allLanguageServerFeatures,
+  captureWorkspaceEditOriginGuard,
   LanguageServerSet,
   rankedLanguageServerLanes,
   type LanguageServerSetLane,
@@ -65,19 +62,24 @@ import type {
   LanguageServerNavigationCommand,
 } from './pluginTypes'
 import { PullDiagnosticsController } from './pullDiagnostics'
-import { formattingChangesText, formattingEdits, formattingOptions } from './formatting'
+import { formattingChangesText, formattingOptions, prepareFormattingEdits } from './formatting'
 import type { TextEdit } from '@singapor/core'
 import type {
   LanguageServerConnectionContext,
   LanguageServerDefinitionTarget,
   LanguageServerDiagnosticSummary,
+  LanguageServerDocumentSyncOptions,
   LanguageServerNavigationOptions,
   LanguageServerPlugin,
   LanguageServerLaneOptions,
+  LanguageServerLaneHostOptions,
   LanguageServerPluginOptions,
+  LanguageServerRenamePrompt,
   LanguageServerSetPluginOptions,
   LanguageServerReferencesResult,
   LanguageServerStatus,
+  WorkspaceEditOriginGuard,
+  WorkspaceTextDocumentProvenance,
 } from './types'
 // Re-exported so `@singapor/lsp-plugin` keeps handing this out from where it always did; it is
 // defined in `types.ts` because the narrow factory's options need it and a shared vocabulary module
@@ -108,12 +110,7 @@ export type LanguageServerCommandSpec = {
   run(target: LanguageServerCommandTarget): boolean
 }
 
-export type LanguageServerRenamePrompt = {
-  readonly currentName: string
-  readonly anchor: DOMRect
-}
-
-export type LanguageServerAdapterPluginOptions = {
+export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions & {
   readonly name: string
   /**
    * Asks the host for a new symbol name. Supply this to use the application's own dialog; without
@@ -134,7 +131,7 @@ export type LanguageServerAdapterPluginOptions = {
   /** Borrows the connection instead of constructing one per view. See LspConnectionProvider. */
   readonly connectionProvider?: LspConnectionProvider
   readonly defaultHighlightPrefix?: string
-  readonly documentSync?: Omit<DocumentSyncOptions, 'onDocumentClosed'>
+  readonly documentSync?: LanguageServerDocumentSyncOptions
   readonly diagnostics?: {
     readonly minimapSourceId?: string
     readonly highlightNameNamespace?: string
@@ -188,7 +185,7 @@ type LanguageServerResolvedAdapterOptions = {
   readonly hoverMarkdownCodeBackground: boolean
   readonly lanes: readonly LanguageServerResolvedLaneOptions[]
   readonly defaultHighlightPrefix: string
-  readonly documentSync: Omit<DocumentSyncOptions, 'onDocumentClosed'>
+  readonly documentSync: LanguageServerDocumentSyncOptions
   readonly diagnostics: {
     readonly minimapSourceId: string
     readonly highlightNameNamespace: string
@@ -211,6 +208,7 @@ type LanguageServerResolvedAdapterOptions = {
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
   readonly onInteractiveReady?: () => void
   readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
+  readonly onApplyWorkspaceEdit?: LanguageServerLaneHostOptions['onApplyWorkspaceEdit']
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -225,6 +223,7 @@ export function createLanguageServerPlugin(
   return createLanguageServerSetPlugin({
     hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
     lanes: [languageServerLaneFromPluginOptions(options)],
+    onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
     documentSync: options.documentSync,
     semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
@@ -377,8 +376,19 @@ class LanguageServerCompletionEditContribution implements EditorEditContribution
 }
 
 type ViewLanguageServerLane = LanguageServerSetLane & {
+  readonly documentSyncRegistration: EditorDisposable | null
   readonly pullDiagnostics: PullDiagnosticsController | null
   readonly sync: DocumentSync
+}
+
+type RenameWorkspaceEditDispatch = {
+  readonly active: ActiveDocument
+  readonly currentName: string
+  readonly edit: unknown
+  readonly guard: WorkspaceEditOriginGuard
+  readonly nextName: string
+  readonly owner: LanguageServerSetLane
+  readonly signal: AbortSignal
 }
 
 class LanguageServerContribution implements EditorViewContribution {
@@ -398,6 +408,8 @@ class LanguageServerContribution implements EditorViewContribution {
   private semanticTokensOptions: LanguageServerSemanticTokensOwnerOptions | null = null
   private semanticTokensOwner: ViewLanguageServerLane | null = null
   private rename: RenameWidgetController | null = null
+  private renameOperation: AbortController | null = null
+  private renameActiveDocument: ActiveDocument | null = null
   /** The symbol an open prompt is renaming, which is what the prompt has to stay beside. */
   private renamePromptRange: OffsetRange | null = null
   private viewDocument: ActiveDocument | null = null
@@ -478,7 +490,6 @@ class LanguageServerContribution implements EditorViewContribution {
     this.codeActions = new CodeActionController({
       router: this.servers,
       context,
-      editFeature: options.completion.editFeature,
       getActiveDocument: () => this.activeDocument(),
       getDiagnostics: () => this.diagnostics.diagnostics,
       onRequestError: (error) => this.handleRequestError(error),
@@ -498,6 +509,7 @@ class LanguageServerContribution implements EditorViewContribution {
     if (this.disposed) return
 
     this.updateViewDocument(snapshot, kind)
+    this.abortRenameOnDocumentDrift()
     this.hoverDefinition.update(snapshot, kind)
     if (anchoredSurfaceFollowsUpdate(kind)) this.reanchorRenamePrompt()
     for (const lane of this.lanes) {
@@ -523,6 +535,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.hoverDefinition.dispose()
     this.completion.hide()
     for (const lane of this.lanes) {
+      lane.documentSyncRegistration?.dispose()
       lane.pullDiagnostics?.dispose()
       lane.sync.close()
     }
@@ -537,6 +550,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.semanticTokensOptions?.dispose?.()
     this.semanticTokensOptions = null
     this.semanticTokensOwner = null
+    this.cancelRename()
     this.rename?.dispose()
     for (const lane of this.lanes) lane.connection.release()
   }
@@ -587,7 +601,11 @@ class LanguageServerContribution implements EditorViewContribution {
     if (!active) return false
     if (!this.servers.hasReady('rename', 'textDocument/rename')) return false
 
-    void this.runRename(active)
+    this.cancelRename()
+    const abort = new AbortController()
+    this.renameOperation = abort
+    this.renameActiveDocument = active
+    void this.runRename(active, abort).finally(() => this.finishRename(abort))
     return true
   }
 
@@ -621,6 +639,7 @@ class LanguageServerContribution implements EditorViewContribution {
     })
     const sync = new DocumentSync(connection.workspace, diagnostics, {
       ...this.options.documentSync,
+      logicalRevisionScope: connection.logicalRevisionScope,
       onDocumentClosed: () => this.completion.hide(),
     })
     const pullDiagnostics =
@@ -641,10 +660,17 @@ class LanguageServerContribution implements EditorViewContribution {
               else this.options.onRequestError?.(options.id, 'textDocument/diagnostic', error)
             },
           })
+    const documentSyncRegistration = this.options.documentSync.controller?.register({
+      getSnapshot: () => this.context.getSnapshot(),
+      sync,
+      workspace: connection.workspace,
+    })
     lane = {
       connection,
+      documentSyncRegistration: documentSyncRegistration ?? null,
       features: options.features,
       id: options.id,
+      onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
       pullDiagnostics,
       onRequestError: (method, error) => {
         if (options.onRequestError) options.onRequestError(method, error)
@@ -719,7 +745,7 @@ class LanguageServerContribution implements EditorViewContribution {
     this.viewDocument = activeDocumentForSnapshot(snapshot, this.options.documentSync)
   }
 
-  private async runRename(active: ActiveDocument): Promise<void> {
+  private async runRename(active: ActiveDocument, abort: AbortController): Promise<void> {
     const selection = this.context.getSnapshot().selections[0]
     if (!selection) return
 
@@ -727,8 +753,9 @@ class LanguageServerContribution implements EditorViewContribution {
     const owner = this.servers.ready('rename', 'textDocument/rename')[0]
     if (!owner) return
 
-    const prepared = await this.prepareRename(active, offset, owner)
+    const prepared = await this.prepareRename(active, offset, owner, abort.signal)
     if (!prepared) return
+    if (!this.renameIsCurrent(active, abort)) return
 
     const { range, currentName } = prepared
 
@@ -739,12 +766,12 @@ class LanguageServerContribution implements EditorViewContribution {
       this.renamePromptRange = range
       let nextName: string | null
       try {
-        nextName = await this.promptRenameName({ anchor, currentName })
+        nextName = await this.promptRenameName({ anchor, currentName, signal: abort.signal })
       } finally {
         this.renamePromptRange = null
       }
       if (nextName === null || nextName === currentName) return
-      if (active !== this.activeDocument()) return
+      if (!this.renameIsCurrent(active, abort)) return
 
       const edit = await this.servers.requestSingle(
         owner,
@@ -754,12 +781,22 @@ class LanguageServerContribution implements EditorViewContribution {
           position: offsetToLspPosition(active.fullText, offset),
           textDocument: { uri: active.uri },
         },
-        {},
-        null as lsp.WorkspaceEdit | null,
+        { signal: abort.signal },
+        null as unknown,
       )
-      if (active !== this.activeDocument()) return
+      const guard = captureWorkspaceEditOriginGuard(owner.connection.workspace)
+      if (edit === null) return
+      if (!this.renameIsCurrent(active, abort)) return
 
-      this.applyRenameEdit(active, edit)
+      await this.dispatchRenameEdit({
+        active,
+        currentName,
+        edit,
+        guard,
+        nextName,
+        owner,
+        signal: abort.signal,
+      })
     } catch (error) {
       this.handleRequestError(error)
     }
@@ -769,6 +806,7 @@ class LanguageServerContribution implements EditorViewContribution {
     active: ActiveDocument,
     offset: number,
     owner: LanguageServerSetLane,
+    signal: AbortSignal,
   ): Promise<{ readonly range: OffsetRange; readonly currentName: string } | null> {
     const fallback = wordRangeAtOffset(active.fullText, offset)
     const provider = owner.connection.client.serverCapabilities?.renameProvider
@@ -785,7 +823,7 @@ class LanguageServerContribution implements EditorViewContribution {
         position: offsetToLspPosition(active.fullText, offset),
         textDocument: { uri: active.uri },
       },
-      {},
+      { signal },
       null,
     )
     if (!result) return null
@@ -818,6 +856,8 @@ class LanguageServerContribution implements EditorViewContribution {
   }
 
   private promptRenameName(prompt: LanguageServerRenamePrompt): Promise<string | null> {
+    if (prompt.signal.aborted) return Promise.resolve(null)
+
     const host = this.options.onRequestRenameName
     if (host) return host(prompt)
 
@@ -836,30 +876,86 @@ class LanguageServerContribution implements EditorViewContribution {
     return this.rename
   }
 
-  /**
-   * Applies a rename that stays inside the active document.
-   *
-   * A rename reaching other files is reported rather than partially applied: writing only this
-   * document would leave every other file referring to a name that no longer exists, which is worse
-   * than not renaming at all. Multi-file application needs a workspace-wide edit applicator.
-   */
-  private applyRenameEdit(active: ActiveDocument, edit: lsp.WorkspaceEdit | null): void {
-    const plan = workspaceEditPlan(edit)
-    if (workspaceEditTouchesOtherDocuments(plan, active.uri)) {
-      this.handleRequestError(
-        new Error('Rename spans several files, which this editor cannot apply yet.'),
+  private async dispatchRenameEdit(request: RenameWorkspaceEditDispatch): Promise<void> {
+    const parsed = parseWorkspaceEdit(request.edit)
+    if (!parsed.ok) {
+      this.reportLaneRequestError(
+        request.owner,
+        'textDocument/rename',
+        new Error(parsed.error.reason),
+      )
+      return
+    }
+    const origin = currentRenameProducerProvenance(request.guard, request.active)
+    if (!origin) return
+    if (request.signal.aborted) return
+
+    const apply = request.owner.onApplyWorkspaceEdit
+    if (!apply) {
+      this.reportLaneRequestError(
+        request.owner,
+        'textDocument/rename',
+        new Error('Rename cannot be applied without a workspace edit host.'),
       )
       return
     }
 
-    const edits = formattingEdits(active.fullText, workspaceEditForDocument(plan, active.uri))
-    if (edits.length === 0) return
+    const result = await apply({
+      guard: request.guard,
+      label: `Rename ${request.currentName} to ${request.nextName}`,
+      logicalRevisionScope: request.owner.connection.logicalRevisionScope,
+      originUri: request.active.uri,
+      originVersion: origin.version,
+      plan: parsed.value,
+      serverId: request.owner.id,
+      signal: request.signal,
+      source: 'rename',
+    })
+    if (result.status !== 'failed') return
+    this.reportLaneRequestError(
+      request.owner,
+      'textDocument/rename',
+      new Error(`${result.code}: ${result.message}`),
+    )
+  }
 
-    const feature = this.context.getFeature?.(this.options.completion.editFeature)
-    if (!feature) return
+  private renameIsCurrent(active: ActiveDocument, abort: AbortController): boolean {
+    if (this.disposed) return false
+    if (abort.signal.aborted) return false
+    if (this.renameOperation !== abort) return false
+    return active === this.activeDocument()
+  }
 
-    const head = this.context.getSnapshot().selections[0]?.headOffset ?? 0
-    feature.applyCompletion({ edits, selection: { anchor: head, head } })
+  private abortRenameOnDocumentDrift(): void {
+    if (!this.renameOperation) return
+    if (this.renameActiveDocument === this.activeDocument()) return
+    this.cancelRename()
+  }
+
+  private cancelRename(): void {
+    const abort = this.renameOperation
+    this.renameOperation = null
+    this.renameActiveDocument = null
+    this.renamePromptRange = null
+    abort?.abort()
+  }
+
+  private finishRename(abort: AbortController): void {
+    if (this.renameOperation !== abort) return
+    this.renameOperation = null
+    this.renameActiveDocument = null
+  }
+
+  private reportLaneRequestError(
+    owner: LanguageServerSetLane,
+    method: string,
+    error: unknown,
+  ): void {
+    if (owner.onRequestError) {
+      owner.onRequestError(method, error)
+      return
+    }
+    this.handleRequestError(error)
   }
 
   private async requestFormatting(active: ActiveDocument): Promise<void> {
@@ -873,7 +969,7 @@ class LanguageServerContribution implements EditorViewContribution {
       // The document can change while the formatter runs; its edits describe the text it was given.
       if (active !== this.activeDocument()) return
 
-      const converted = formattingEdits(active.fullText, edits)
+      const converted = prepareFormattingEdits(active.fullText, edits)
       if (converted.length === 0) return
       if (!formattingChangesText(active.fullText, converted)) return
 
@@ -914,6 +1010,17 @@ function renameTarget(
   return { currentName, range }
 }
 
+function currentRenameProducerProvenance(
+  guard: WorkspaceEditOriginGuard,
+  active: ActiveDocument,
+): WorkspaceTextDocumentProvenance | null {
+  const origin = guard.documents.find((document) => document.uri === active.uri)
+  if (!origin) return null
+  if (origin.textSnapshot !== active.textSnapshot) return null
+  if (!guard.isCurrent(active.uri)) return null
+  return origin
+}
+
 function resolveAdapterOptions(
   options: LanguageServerAdapterPluginOptions,
 ): LanguageServerResolvedAdapterOptions {
@@ -932,6 +1039,8 @@ function resolveAdapterOptions(
     onDiagnostics: options.onDiagnostics,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onRequestRenameName: options.onRequestRenameName,
+    onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
     onRequestError: options.onRequestError,
     onError: options.onError,
   }
@@ -943,7 +1052,12 @@ function resolveLanguageServerSetOptions(
   return {
     name: DEFAULT_PLUGIN_NAME,
     hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground ?? false,
-    lanes: options.lanes.map(resolveLanguageServerLaneOptions),
+    lanes: options.lanes.map((lane) =>
+      resolveLanguageServerLaneOptions({
+        ...lane,
+        onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
+      }),
+    ),
     defaultHighlightPrefix: DEFAULT_HIGHLIGHT_PREFIX,
     documentSync: options.documentSync ?? {},
     diagnostics: resolveDiagnosticsOptions(),
@@ -956,6 +1070,7 @@ function resolveLanguageServerSetOptions(
     onInteractiveReady: options.onInteractiveReady,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
+    onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
     onRequestError: options.onRequestError,
     onError: options.onError,
   }
@@ -976,6 +1091,7 @@ function languageServerLaneFromPluginOptions(
     webSocketRoute: options.webSocketRoute,
     webSocketTransportOptions: options.webSocketTransportOptions,
     connectionProvider: options.connectionProvider,
+    onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
     onConnectionCreated: options.onConnectionCreated,
     onConnected: options.onConnected,
     onStatusChange: options.onStatusChange,
@@ -998,6 +1114,7 @@ function resolvedLaneFromAdapterOptions(
     notificationHandlers: options.notificationHandlers,
     createTransport: options.createTransport,
     connectionProvider: options.connectionProvider,
+    onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
     onConnectionCreated: options.onConnectionCreated,
     onConnected: options.onConnected,
     onStatusChange: options.onStatusChange,

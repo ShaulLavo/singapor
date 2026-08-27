@@ -2,13 +2,41 @@ import { describe, expect, it } from 'vitest'
 
 import * as core from '@singapor/core'
 import {
+  acquireDocumentMutationLease,
+  beginReverseDocumentTransactionSequence,
   characterClassAt,
+  commitPreparedDocumentTransaction,
+  commitPreparedDocumentTransactionSequenceSegment,
+  completePreparedDocumentTransactionSequence,
+  completeReverseDocumentTransactionSequence,
+  createDocumentLogicalRevisionScope,
   createPieceTableSnapshot,
+  documentTextRoundTripStatus,
+  getDocumentMutationLeaseState,
   materializePieceTableFullText,
   nextWordOffset,
   previousWordOffset,
+  prepareDocumentTransaction,
+  prepareDocumentTransactionSequence,
   readPieceTableTextRange,
+  releaseDocumentMutationLease,
+  releaseDocumentTransactionReceipt,
+  reverseDocumentTransaction,
+  reverseNextDocumentTransactionSequenceSegment,
+  rotateDocumentSyncSegment,
+  sealDocumentTransactionReceipt,
+  subscribeDocumentMutationLeaseState,
   wordRangeAtOffset,
+  type DocumentChangesSinceSyncPoint,
+  type DocumentLogicalRevisionScope,
+  type DocumentMutationLease,
+  type DocumentSyncPoint,
+  type DocumentSyncSegment,
+  type DocumentTextRoundTripIssue,
+  type DocumentTextRoundTripStatus,
+  type DocumentTransactionReceipt,
+  type PreparedDocumentTransaction,
+  type PreparedDocumentTransactionSequence,
   type TextCharacterClass,
   type TextEdit,
   type TextOffsetRange,
@@ -92,6 +120,55 @@ type RequiredFields<T> = {
 type OptionalFields<T> = Exclude<keyof T, RequiredFields<T>>
 
 describe('public API facade', () => {
+  it('exports the exact document transaction and sync surface from root and document', () => {
+    type DocumentTransactionTypes = [
+      DocumentChangesSinceSyncPoint,
+      DocumentLogicalRevisionScope,
+      DocumentMutationLease,
+      DocumentSyncPoint,
+      DocumentSyncSegment,
+      DocumentTextRoundTripIssue,
+      DocumentTextRoundTripStatus,
+      DocumentTransactionReceipt,
+      PreparedDocumentTransaction,
+      PreparedDocumentTransactionSequence,
+    ]
+    type RootLogicalRevisionScope = core.DocumentLogicalRevisionScope
+    const types = null as unknown as DocumentTransactionTypes
+    const rootScope = null as unknown as RootLogicalRevisionScope
+
+    expect(types).toBeNull()
+    expect(rootScope).toBeNull()
+    expect(core.createDocumentLogicalRevisionScope).toBe(createDocumentLogicalRevisionScope)
+    expect(core.prepareDocumentTransaction).toBe(prepareDocumentTransaction)
+    expect(core.prepareDocumentTransactionSequence).toBe(prepareDocumentTransactionSequence)
+    expect(core.acquireDocumentMutationLease).toBe(acquireDocumentMutationLease)
+    expect(core.commitPreparedDocumentTransaction).toBe(commitPreparedDocumentTransaction)
+    expect(core.commitPreparedDocumentTransactionSequenceSegment).toBe(
+      commitPreparedDocumentTransactionSequenceSegment,
+    )
+    expect(core.completePreparedDocumentTransactionSequence).toBe(
+      completePreparedDocumentTransactionSequence,
+    )
+    expect(core.beginReverseDocumentTransactionSequence).toBe(
+      beginReverseDocumentTransactionSequence,
+    )
+    expect(core.reverseNextDocumentTransactionSequenceSegment).toBe(
+      reverseNextDocumentTransactionSequenceSegment,
+    )
+    expect(core.completeReverseDocumentTransactionSequence).toBe(
+      completeReverseDocumentTransactionSequence,
+    )
+    expect(core.reverseDocumentTransaction).toBe(reverseDocumentTransaction)
+    expect(core.sealDocumentTransactionReceipt).toBe(sealDocumentTransactionReceipt)
+    expect(core.releaseDocumentTransactionReceipt).toBe(releaseDocumentTransactionReceipt)
+    expect(core.releaseDocumentMutationLease).toBe(releaseDocumentMutationLease)
+    expect(core.getDocumentMutationLeaseState).toBe(getDocumentMutationLeaseState)
+    expect(core.subscribeDocumentMutationLeaseState).toBe(subscribeDocumentMutationLeaseState)
+    expect(core.rotateDocumentSyncSegment).toBe(rotateDocumentSyncSegment)
+    expect(core.documentTextRoundTripStatus).toBe(documentTextRoundTripStatus)
+  })
+
   it('exports reviewed root entrypoints without internal debug surfaces', () => {
     const snapshot = createPieceTableSnapshot('abc')
     const edit: TextEdit = { from: 1, to: 2, text: 'B' }

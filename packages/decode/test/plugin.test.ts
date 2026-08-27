@@ -10,6 +10,9 @@ import { createDecodePlugin, type DecodePluginOptions } from '../src/index'
 import { tokenizeLengths } from '../src/tokenize'
 
 const SAMPLE = 'function f() {\n  if (x) {\n    y()\n  }\n}\n'
+const TEST_DOCUMENT_SYNC_SEGMENT = Object.freeze(
+  {},
+) as EditorViewSnapshot['documentSyncPoint']['segment']
 
 type RecordedAnimation = {
   readonly element: HTMLElement
@@ -394,6 +397,12 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
       visibleRange: { start: 0, end: 6 },
     },
     ...overrides,
+    documentSyncPoint: overrides.documentSyncPoint ?? {
+      revision: overrides.textVersion ?? 1,
+      segment: TEST_DOCUMENT_SYNC_SEGMENT,
+      textVersion: overrides.textVersion ?? 1,
+    },
+    changesSinceDocumentSyncPoint: overrides.changesSinceDocumentSyncPoint ?? (() => null),
   }
 }
 

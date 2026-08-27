@@ -3,13 +3,35 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '../src/editor/Editor'
 import { resetEditorInstanceCount } from '../src/public/testing'
 import {
+  acquireDocumentMutationLease,
+  beginReverseDocumentTransactionSequence,
+  commitPreparedDocumentTransaction,
+  commitPreparedDocumentTransactionSequenceSegment,
+  completePreparedDocumentTransactionSequence,
+  completeReverseDocumentTransactionSequence,
+  createDocumentLogicalRevisionScope,
   createDocumentSession,
   createEditorBufferSession,
   createEditorTextBuffer,
+  createEditorViewSession,
+  documentTextRoundTripStatus,
+  getDocumentMutationLeaseState,
   materializePieceTableFullText,
   offsetToPoint,
+  prepareDocumentTransaction,
+  prepareDocumentTransactionSequence,
   pointToOffset,
+  releaseDocumentMutationLease,
+  releaseDocumentTransactionReceipt,
+  reverseDocumentTransaction,
+  reverseNextDocumentTransactionSequenceSegment,
+  rotateDocumentSyncSegment,
+  sealDocumentTransactionReceipt,
+  subscribeDocumentMutationLeaseState,
   type DocumentSession,
+  type DocumentTransactionCommitTarget,
+  type DocumentTransactionReceipt,
+  type EditorViewSession,
   type EditorTextBuffer,
   type TextEdit,
 } from '../src/public/document'
@@ -580,6 +602,806 @@ describe('DocumentSession', () => {
     expect(resolvedAffinity(session)).toBe('before')
   })
 })
+
+describe('prepared document transactions', () => {
+  it('prepares a readonly edit batch without changing text, revision, dirty state, history, selection, or subscribers', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const view = createEditorViewSession(buffer)
+    view.setSelection(1)
+    const listener = vi.fn()
+    buffer.subscribe(listener)
+    const snapshot = buffer.getSnapshot()
+
+    const prepared = prepareDocumentTransaction(
+      buffer,
+      Object.freeze([{ from: 1, to: 2, text: 'B' }] satisfies readonly TextEdit[]),
+      1,
+      null,
+    )
+
+    expect(prepared.snapshotBefore).toBe(snapshot)
+    expect(prepared.snapshotAfter).not.toBe(snapshot)
+    expect(buffer.getRevision()).toBe(0)
+    expect(buffer.getSnapshot()).toBe(snapshot)
+    expect(buffer.materializeFullText()).toBe('abc')
+    expect(buffer.isDirty()).toBe(false)
+    expect(buffer.canUndo()).toBe(false)
+    expect(resolveSelection(snapshot, view.getSelections().selections[0]!).headOffset).toBe(1)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('commits a prepared batch as one transaction, one change event, and one undo step', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const listener = vi.fn()
+    buffer.subscribe(listener)
+    const result = commitPreparedDocumentTransaction(
+      transactionTarget(buffer),
+      prepareDocumentTransaction(buffer, [{ from: 1, to: 2, text: 'B' }], 1, null),
+      { history: { kind: 'record' } },
+    )
+
+    expect(result.status).toBe('committed')
+    expect(buffer.materializeFullText()).toBe('aBc')
+    expect(buffer.getRevision()).toBe(1)
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(buffer.undo().kind).toBe('undo')
+    expect(buffer.materializeFullText()).toBe('abc')
+    expect(buffer.undo().kind).toBe('none')
+  })
+
+  it('returns exact before and after revisions snapshots effective snapped edits and inverse receipt', () => {
+    const buffer = createEditorTextBuffer('a😀b')
+    const before = buffer.getSnapshot()
+    const prepared = prepareDocumentTransaction(buffer, [{ from: 2, to: 2, text: 'x' }], 1, null)
+    expect(prepared.edits).toEqual([{ from: 1, to: 1, text: 'x' }])
+
+    const result = commitPreparedDocumentTransaction(transactionTarget(buffer), prepared, {
+      history: { kind: 'record' },
+    })
+    if (result.status !== 'committed') throw new RangeError('expected commit')
+
+    expect(result.receipt).toMatchObject({ revisionBefore: 0, revisionAfter: 1 })
+    expect(result.receipt.snapshotBefore).toBe(before)
+    expect(result.receipt.snapshotAfter).toBe(prepared.snapshotAfter)
+    expect(result.receipt.edits).toEqual(prepared.edits)
+    expect(result.receipt.inverseEdits).toEqual(prepared.inverseEdits)
+  })
+
+  it('rejects a prepared commit after an intervening edit without mutation', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const prepared = prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: 'A' }], 1, null)
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+    const snapshot = buffer.getSnapshot()
+
+    expect(
+      commitPreparedDocumentTransaction(transactionTarget(buffer), prepared, {
+        history: { kind: 'record' },
+      }),
+    ).toEqual({ status: 'stale' })
+    expect(buffer.getSnapshot()).toBe(snapshot)
+    expect(buffer.materializeFullText()).toBe('abc!')
+  })
+
+  it('rejects a prepared commit after edit then undo even when text matches again', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const prepared = prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: 'A' }], 1, null)
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+    buffer.undo()
+
+    expect(buffer.materializeFullText()).toBe('abc')
+    expect(
+      commitPreparedDocumentTransaction(transactionTarget(buffer), prepared, {
+        history: { kind: 'record' },
+      }).status,
+    ).toBe('stale')
+  })
+
+  it('discards a prepared transaction as cancellation with no effects', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const snapshot = buffer.getSnapshot()
+    const listener = vi.fn()
+    buffer.subscribe(listener)
+    void prepareDocumentTransaction(buffer, [{ from: 0, to: 3, text: 'cancelled' }], 1, null)
+
+    expect(buffer.getSnapshot()).toBe(snapshot)
+    expect(buffer.getRevision()).toBe(0)
+    expect(buffer.canUndo()).toBe(false)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('rolls back a provisional receipt and restores preexisting undo and redo exactly', () => {
+    const buffer = createEditorTextBuffer('abc')
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+    buffer.undo()
+    expect(buffer.canRedo()).toBe(true)
+    const receipt = commitExternal(buffer, [{ from: 0, to: 1, text: 'A' }])
+
+    const reversed = reverseDocumentTransaction(transactionTarget(buffer), receipt)
+    expect(reversed.status).toBe('reversed')
+    expect(buffer.materializeFullText()).toBe('abc')
+    expect(buffer.canRedo()).toBe(true)
+    expect(buffer.redo().kind).toBe('redo')
+    expect(buffer.materializeFullText()).toBe('abc!')
+  })
+
+  it('refuses receipt rollback after later buffer drift', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const receipt = commitExternal(buffer, [{ from: 0, to: 1, text: 'A' }])
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+    const snapshot = buffer.getSnapshot()
+
+    expect(reverseDocumentTransaction(transactionTarget(buffer), receipt)).toEqual({
+      status: 'stale',
+    })
+    expect(buffer.getSnapshot()).toBe(snapshot)
+  })
+
+  it('stops ordinary undo at an external barrier after undoing later user text', () => {
+    const buffer = createEditorTextBuffer('abc')
+    commitExternal(buffer, [{ from: 0, to: 1, text: 'A' }])
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+
+    expect(buffer.undo().kind).toBe('undo')
+    expect(buffer.materializeFullText()).toBe('Abc')
+    expect(buffer.undo().kind).toBe('none')
+  })
+
+  it('restores and reciprocates an external barrier for exact Platform undo and redo', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const receipt = commitExternal(buffer, [{ from: 0, to: 1, text: 'A' }])
+    const undone = reverseDocumentTransaction(transactionTarget(buffer), receipt)
+    if (undone.status !== 'reversed') throw new RangeError('expected reverse')
+    expect(buffer.materializeFullText()).toBe('abc')
+
+    const redone = reverseDocumentTransaction(transactionTarget(buffer), undone.receipt)
+    expect(redone.status).toBe('reversed')
+    expect(buffer.materializeFullText()).toBe('Abc')
+    expect(buffer.undo().kind).toBe('none')
+  })
+
+  it('seals a finalized barrier and permanently discards the pre-group redo branch', () => {
+    const buffer = createEditorTextBuffer('abc')
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+    buffer.undo()
+    const receipt = commitExternal(buffer, [{ from: 0, to: 1, text: 'A' }])
+    const sealed = sealDocumentTransactionReceipt(transactionTarget(buffer), receipt)
+    expect(sealed.status).toBe('sealed')
+
+    expect(reverseDocumentTransaction(transactionTarget(buffer), sealed.receipt).status).toBe(
+      'reversed',
+    )
+    expect(buffer.canRedo()).toBe(false)
+  })
+
+  it('releases a drifted external barrier without exposing a grouped leg', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const receipt = commitExternal(buffer, [{ from: 0, to: 1, text: 'A' }])
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+    expect(releaseDocumentTransactionReceipt(transactionTarget(buffer), receipt)).toEqual({
+      status: 'released',
+    })
+    expect(buffer.undo().kind).toBe('undo')
+    expect(buffer.undo().kind).toBe('none')
+    expect(buffer.materializeFullText()).toBe('Abc')
+  })
+
+  it('releases an older external barrier beneath a newer barrier without text or history leakage', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const older = commitExternal(buffer, [{ from: 0, to: 1, text: 'A' }], 'older')
+    const newer = commitExternal(buffer, [{ from: 1, to: 2, text: 'B' }], 'newer')
+    const revision = buffer.getRevision()
+    const snapshot = buffer.getSnapshot()
+
+    expect(releaseDocumentTransactionReceipt(transactionTarget(buffer), older).status).toBe(
+      'released',
+    )
+    expect(buffer.getRevision()).toBe(revision)
+    expect(buffer.getSnapshot()).toBe(snapshot)
+    expect(reverseDocumentTransaction(transactionTarget(buffer), newer).status).toBe('reversed')
+    expect(buffer.materializeFullText()).toBe('Abc')
+    expect(buffer.undo().kind).toBe('none')
+  })
+
+  it('acquires a mutation lease only for the exact revision and snapshot and reports busy for another owner', () => {
+    const buffer = createEditorTextBuffer('abc')
+    expect(acquireDocumentMutationLease(buffer, 1, buffer.getSnapshot(), 'stale')).toEqual({
+      status: 'stale',
+    })
+    const acquired = acquireDocumentMutationLease(buffer, 0, buffer.getSnapshot(), 'one')
+    expect(acquired.status).toBe('acquired')
+    expect(acquireDocumentMutationLease(buffer, 0, buffer.getSnapshot(), 'two')).toEqual({
+      status: 'busy',
+    })
+  })
+
+  it('blocks keyboard paste drop undo redo and ordinary programmatic text mutations while leased', () => {
+    const buffer = createEditorTextBuffer('abc')
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+    const lease = acquiredLease(buffer, 'owner')
+    const selection = rangeSelection(buffer, 4, 4)
+
+    expect(buffer.applyText(selection, 'x').kind).toBe('none')
+    expect(buffer.applyEdits(selection, [{ from: 0, to: 1, text: 'A' }]).kind).toBe('none')
+    expect(buffer.backspace(selection).kind).toBe('none')
+    expect(buffer.deleteSelection(selection).kind).toBe('none')
+    expect(buffer.undo().kind).toBe('none')
+    expect(buffer.redo().kind).toBe('none')
+    expect(buffer.materializeFullText()).toBe('abc!')
+    releaseDocumentMutationLease(buffer, lease)
+  })
+
+  it('allows only a prepared commit and reciprocal reverse carrying the matching lease', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const prepared = prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: 'A' }], 1, null)
+    const lease = acquiredLease(buffer, 'owner')
+    expect(
+      commitPreparedDocumentTransaction(transactionTarget(buffer), prepared, {
+        history: { kind: 'external-barrier', groupId: 'group' },
+      }).status,
+    ).toBe('stale')
+
+    const committed = commitPreparedDocumentTransaction(
+      transactionTarget(buffer, null, lease),
+      prepared,
+      { history: { kind: 'external-barrier', groupId: 'group' } },
+    )
+    if (committed.status !== 'committed') throw new RangeError('expected commit')
+    expect(reverseDocumentTransaction(transactionTarget(buffer), committed.receipt).status).toBe(
+      'stale',
+    )
+    expect(
+      reverseDocumentTransaction(transactionTarget(buffer, null, lease), committed.receipt).status,
+    ).toBe('reversed')
+  })
+
+  it('marks every mounted view non-editable until the lease is released', () => {
+    const mounted = mountTwoBufferViews('abc')
+    const lease = acquiredLease(mounted.buffer, 'owner')
+    expect(mounted.inputs.every((input) => input.readOnly)).toBe(true)
+
+    releaseDocumentMutationLease(mounted.buffer, lease)
+    expect(mounted.inputs.every((input) => !input.readOnly)).toBe(true)
+    mounted.dispose()
+  })
+
+  it('publishes one non-text lease state event on acquire and release to every mounted view', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const first = vi.fn()
+    const second = vi.fn()
+    subscribeDocumentMutationLeaseState(buffer, first)
+    subscribeDocumentMutationLeaseState(buffer, second)
+
+    const lease = acquiredLease(buffer, 'owner')
+    releaseDocumentMutationLease(buffer, lease)
+    expect(first).toHaveBeenCalledTimes(2)
+    expect(second).toHaveBeenCalledTimes(2)
+    expect(first.mock.calls.map(([state]) => state.isLeased)).toEqual([true, false])
+  })
+
+  it('rotates a shared document sync segment under lease without changing text revision dirty or history', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const point = buffer.getDocumentSyncPoint()
+    const lease = acquiredLease(buffer, 'owner')
+    const result = rotateDocumentSyncSegment(buffer, point, lease)
+
+    expect(result.status).toBe('rotated')
+    if (result.status !== 'rotated') return
+    expect(result.syncPoint.segment).not.toBe(point.segment)
+    expect(result.syncPoint.revision).toBe(point.revision)
+    expect(buffer.materializeFullText()).toBe('abc')
+    expect(buffer.getRevision()).toBe(0)
+    expect(buffer.isDirty()).toBe(false)
+    expect(buffer.canUndo()).toBe(false)
+  })
+
+  it('preserves distinct selections in two mounted views across external commit and rollback', () => {
+    const mounted = mountTwoBufferViews('abcd')
+    mounted.sessions[0].setSelection(1)
+    mounted.sessions[1].setSelection(3)
+    mounted.sessions[0].view.setScrollPosition({ top: 11, left: 2 })
+    mounted.sessions[1].view.setScrollPosition({ top: 22, left: 4 })
+    const receipt = commitExternal(mounted.buffer, [{ from: 2, to: 2, text: 'X' }])
+
+    expect(resolvedSelectionOffsets(mounted.sessions[0])).toEqual([{ start: 1, end: 1 }])
+    expect(resolvedSelectionOffsets(mounted.sessions[1])).toEqual([{ start: 4, end: 4 }])
+    expect(reverseDocumentTransaction(transactionTarget(mounted.buffer), receipt).status).toBe(
+      'reversed',
+    )
+    expect(resolvedSelectionOffsets(mounted.sessions[0])).toEqual([{ start: 1, end: 1 }])
+    expect(resolvedSelectionOffsets(mounted.sessions[1])).toEqual([{ start: 3, end: 3 }])
+    expect(mounted.sessions.map((session) => session.view.getScrollPosition())).toEqual([
+      { top: 11, left: 2 },
+      { top: 22, left: 4 },
+    ])
+    mounted.dispose()
+  })
+
+  it('restores the source view selection through reciprocal single-segment undo and redo', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const session = createEditorBufferSession(buffer)
+    session.setSelection(1)
+    const target = transactionTarget(buffer, session.view)
+    const committed = commitPreparedDocumentTransaction(
+      target,
+      prepareDocumentTransaction(buffer, [{ from: 0, to: 0, text: 'X' }], 1, null),
+      { history: { kind: 'external-barrier', groupId: 'group' } },
+    )
+    if (committed.status !== 'committed') throw new RangeError('expected commit')
+    expect(resolvedSelectionOffsets(session)).toEqual([{ start: 2, end: 2 }])
+
+    const undone = reverseDocumentTransaction(target, committed.receipt)
+    if (undone.status !== 'reversed') throw new RangeError('expected reverse')
+    expect(resolvedSelectionOffsets(session)).toEqual([{ start: 1, end: 1 }])
+
+    const redone = reverseDocumentTransaction(target, undone.receipt)
+    if (redone.status !== 'reversed') throw new RangeError('expected reciprocal reverse')
+    expect(resolvedSelectionOffsets(session)).toEqual([{ start: 2, end: 2 }])
+  })
+
+  it('carries a positive logical revision count on the transaction change and receipt', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const scope = createDocumentLogicalRevisionScope()
+    const result = commitPreparedDocumentTransaction(
+      transactionTarget(buffer),
+      prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: 'A' }], 3, scope),
+      { history: { kind: 'external-barrier', groupId: 'group' } },
+    )
+    if (result.status !== 'committed') throw new RangeError('expected commit')
+    expect(result.change.logicalRevisionCount).toBe(3)
+    expect(result.change.logicalRevisionScope).toBe(scope)
+    expect(result.receipt.logicalRevisionCount).toBe(3)
+  })
+
+  it('accepts the safe integer boundary and rejects an unsafe logical revision count', () => {
+    const buffer = createEditorTextBuffer('abc')
+
+    expect(() =>
+      prepareDocumentTransaction(buffer, [], Number.MAX_SAFE_INTEGER, null),
+    ).not.toThrow()
+    expect(() => prepareDocumentTransaction(buffer, [], Number.MAX_SAFE_INTEGER + 1, null)).toThrow(
+      /positive safe integer/,
+    )
+  })
+
+  it('commits effective steps with net-identical text as one logical-only synchronize change with no dirty history selection or receipt', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const view = createEditorViewSession(buffer)
+    view.setSelection(2)
+    const selection = view.getSelections()
+    const listener = vi.fn()
+    buffer.subscribe(listener)
+    const result = commitPreparedDocumentTransaction(
+      transactionTarget(buffer, view),
+      prepareDocumentTransaction(buffer, [{ from: 1, to: 2, text: 'b' }], 2, null),
+      { history: { kind: 'external-barrier', groupId: 'group' } },
+    )
+
+    expect(result.status).toBe('logical-only')
+    if (result.status !== 'logical-only') throw new RangeError('expected logical-only commit')
+    expect(result.change.kind).toBe('synchronize')
+    expect(result.change.logicalRevisionCount).toBe(2)
+    expect(buffer.getRevision()).toBe(1)
+    expect(buffer.getSnapshot()).toBe(result.change.snapshot)
+    expect(view.getSelections()).toBe(selection)
+    expect(buffer.isDirty()).toBe(false)
+    expect(buffer.canUndo()).toBe(false)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('commits two resource-delimited segments with one barrier and one cumulative reciprocal receipt', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const sequence = prepareDocumentTransactionSequence(buffer, [
+      {
+        edits: [{ from: 0, to: 1, text: 'A' }],
+        logicalRevisionCount: 1,
+        logicalRevisionScope: null,
+      },
+      {
+        edits: [{ from: 1, to: 2, text: 'B' }],
+        logicalRevisionCount: 1,
+        logicalRevisionScope: null,
+      },
+    ])
+    const target = transactionTarget(buffer)
+    const options = { history: { kind: 'external-barrier', groupId: 'group' } } as const
+    expect(
+      commitPreparedDocumentTransactionSequenceSegment(target, sequence, 0, options).status,
+    ).toBe('committed')
+    const second = commitPreparedDocumentTransactionSequenceSegment(target, sequence, 1, options)
+    expect(second.status).toBe('committed')
+    if (second.status !== 'committed') throw new RangeError('expected sequence commit')
+    expect(second.receipt?.segmentCount).toBe(2)
+    const completed = completePreparedDocumentTransactionSequence(target, sequence)
+    expect(completed.status).toBe('completed')
+    if (completed.status !== 'completed' || !completed.receipt) {
+      throw new RangeError('expected completed sequence')
+    }
+    expect(completed.receipt).toMatchObject({
+      revisionBefore: 0,
+      revisionAfter: 2,
+      segmentCount: 2,
+    })
+    expect(completed.receipt.snapshotBefore).toBe(sequence.snapshotBefore)
+    expect(completed.receipt.snapshotAfter).toBe(sequence.snapshotAfter)
+    expect(buffer.undo().kind).toBe('none')
+  })
+
+  it('reverses every committed sequence segment when a later resource boundary fails', () => {
+    const committed = commitTwoSegmentSequence()
+    const begin = beginReverseDocumentTransactionSequence(committed.target, committed.receipt)
+    if (begin.status !== 'started') throw new RangeError('expected reverse cursor')
+    const second = reverseNextDocumentTransactionSequenceSegment(committed.target, begin.cursor, 1)
+    if (second.status !== 'reversed') throw new RangeError('expected reverse')
+    const first = reverseNextDocumentTransactionSequenceSegment(committed.target, second.cursor, 0)
+    expect(first.status).toBe('reversed')
+    expect(committed.buffer.materializeFullText()).toBe('abc')
+  })
+
+  it('rejects skipped repeated or stale sequence segment commits without mutation', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const sequence = prepareDocumentTransactionSequence(buffer, [
+      {
+        edits: [{ from: 0, to: 1, text: 'A' }],
+        logicalRevisionCount: 1,
+        logicalRevisionScope: null,
+      },
+      {
+        edits: [{ from: 1, to: 2, text: 'B' }],
+        logicalRevisionCount: 1,
+        logicalRevisionScope: null,
+      },
+    ])
+    const target = transactionTarget(buffer)
+    const options = { history: { kind: 'external-barrier', groupId: 'group' } } as const
+    expect(
+      commitPreparedDocumentTransactionSequenceSegment(target, sequence, 1, options).status,
+    ).toBe('out-of-order')
+    expect(
+      commitPreparedDocumentTransactionSequenceSegment(target, sequence, 0, options).status,
+    ).toBe('committed')
+    expect(
+      commitPreparedDocumentTransactionSequenceSegment(target, sequence, 0, options).status,
+    ).toBe('out-of-order')
+    buffer.applyText(rangeSelection(buffer, 3, 3), '!')
+    const snapshot = buffer.getSnapshot()
+    expect(
+      commitPreparedDocumentTransactionSequenceSegment(target, sequence, 1, options).status,
+    ).toBe('stale')
+    expect(buffer.getSnapshot()).toBe(snapshot)
+  })
+
+  it('reverses sequence segments only in descending order and completes with one reciprocal receipt', () => {
+    const committed = commitTwoSegmentSequence()
+    const begin = beginReverseDocumentTransactionSequence(committed.target, committed.receipt)
+    if (begin.status !== 'started') throw new RangeError('expected reverse cursor')
+    expect(
+      reverseNextDocumentTransactionSequenceSegment(committed.target, begin.cursor, 0).status,
+    ).toBe('out-of-order')
+    const second = reverseNextDocumentTransactionSequenceSegment(committed.target, begin.cursor, 1)
+    if (second.status !== 'reversed') throw new RangeError('expected reverse')
+    expect(completeReverseDocumentTransactionSequence(committed.target, second.cursor).status).toBe(
+      'incomplete',
+    )
+    const first = reverseNextDocumentTransactionSequenceSegment(committed.target, second.cursor, 0)
+    if (first.status !== 'reversed') throw new RangeError('expected reverse')
+    const completed = completeReverseDocumentTransactionSequence(committed.target, first.cursor)
+    expect(completed).toMatchObject({ status: 'completed', receipt: { segmentCount: 2 } })
+  })
+
+  it('rejects a reverse cursor after same-text logical revision drift under its matching lease', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const lease = acquiredLease(buffer, 'reverse-sequence')
+    const target = transactionTarget(buffer, null, lease)
+    const committed = commitTwoSegmentSequenceOnTarget(target)
+    const begin = beginReverseDocumentTransactionSequence(target, committed)
+    if (begin.status !== 'started') throw new RangeError('expected reverse cursor')
+    const second = reverseNextDocumentTransactionSequenceSegment(target, begin.cursor, 1)
+    if (second.status !== 'reversed') throw new RangeError('expected reverse')
+    const snapshot = buffer.getSnapshot()
+    const logicalOnly = commitPreparedDocumentTransaction(
+      target,
+      prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: 'A' }], 1, null),
+      { history: { kind: 'external-barrier', groupId: 'drift' } },
+    )
+    expect(logicalOnly.status).toBe('logical-only')
+
+    expect(reverseNextDocumentTransactionSequenceSegment(target, second.cursor, 0).status).toBe(
+      'stale',
+    )
+    expect(buffer.getSnapshot()).toBe(snapshot)
+    expect(buffer.materializeFullText()).toBe('Abc')
+    releaseDocumentMutationLease(buffer, lease)
+  })
+
+  it('rejects reverse completion after same-text logical revision drift', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const lease = acquiredLease(buffer, 'reverse-completion')
+    const target = transactionTarget(buffer, null, lease)
+    const committed = commitTwoSegmentSequenceOnTarget(target)
+    const begin = beginReverseDocumentTransactionSequence(target, committed)
+    if (begin.status !== 'started') throw new RangeError('expected reverse cursor')
+    const second = reverseNextDocumentTransactionSequenceSegment(target, begin.cursor, 1)
+    if (second.status !== 'reversed') throw new RangeError('expected reverse')
+    const first = reverseNextDocumentTransactionSequenceSegment(target, second.cursor, 0)
+    if (first.status !== 'reversed') throw new RangeError('expected reverse')
+    const logicalOnly = commitPreparedDocumentTransaction(
+      target,
+      prepareDocumentTransaction(buffer, [{ from: 0, to: 1, text: 'a' }], 1, null),
+      { history: { kind: 'external-barrier', groupId: 'drift' } },
+    )
+    expect(logicalOnly.status).toBe('logical-only')
+
+    expect(completeReverseDocumentTransactionSequence(target, first.cursor).status).toBe('stale')
+    expect(buffer.materializeFullText()).toBe('abc')
+    releaseDocumentMutationLease(buffer, lease)
+  })
+
+  it('rejects a reverse cursor when its expected current barrier is unlinked', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const olderReceipt = commitExternal(buffer, [{ from: 2, to: 3, text: 'C' }], 'older')
+    const target = transactionTarget(buffer)
+    const committed = commitTwoSegmentSequenceOnTarget(target)
+    const begin = beginReverseDocumentTransactionSequence(target, committed)
+    if (begin.status !== 'started') throw new RangeError('expected reverse cursor')
+    const second = reverseNextDocumentTransactionSequenceSegment(target, begin.cursor, 1)
+    if (second.status !== 'reversed') throw new RangeError('expected reverse')
+    expect(releaseDocumentTransactionReceipt(target, olderReceipt).status).toBe('released')
+
+    expect(reverseNextDocumentTransactionSequenceSegment(target, second.cursor, 0).status).toBe(
+      'stale',
+    )
+    expect(buffer.materializeFullText()).toBe('AbC')
+  })
+
+  it('keeps a cumulative receipt current through a trailing logical-only sequence leg', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const sequence = prepareDocumentTransactionSequence(buffer, [
+      {
+        edits: [{ from: 0, to: 1, text: 'A' }],
+        logicalRevisionCount: 1,
+        logicalRevisionScope: null,
+      },
+      {
+        edits: [{ from: 0, to: 1, text: 'A' }],
+        logicalRevisionCount: 3,
+        logicalRevisionScope: null,
+      },
+    ])
+    const target = transactionTarget(buffer)
+    const options = { history: { kind: 'external-barrier', groupId: 'group' } } as const
+    expect(
+      commitPreparedDocumentTransactionSequenceSegment(target, sequence, 0, options).status,
+    ).toBe('committed')
+    const logicalOnly = commitPreparedDocumentTransactionSequenceSegment(
+      target,
+      sequence,
+      1,
+      options,
+    )
+    expect(logicalOnly).toMatchObject({
+      status: 'logical-only',
+      receipt: { revisionAfter: 2, segmentCount: 1 },
+    })
+    const completed = completePreparedDocumentTransactionSequence(target, sequence)
+    if (completed.status !== 'completed' || !completed.receipt) {
+      throw new RangeError('expected completed sequence')
+    }
+
+    expect(reverseDocumentTransaction(target, completed.receipt).status).toBe('reversed')
+    expect(buffer.materializeFullText()).toBe('abc')
+  })
+
+  it('threads a cumulative receipt through text logical-only and text sequence legs', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const sequence = prepareDocumentTransactionSequence(buffer, [
+      {
+        edits: [{ from: 0, to: 1, text: 'A' }],
+        logicalRevisionCount: 1,
+        logicalRevisionScope: null,
+      },
+      {
+        edits: [{ from: 0, to: 1, text: 'A' }],
+        logicalRevisionCount: 2,
+        logicalRevisionScope: null,
+      },
+      {
+        edits: [{ from: 2, to: 3, text: 'C' }],
+        logicalRevisionCount: 1,
+        logicalRevisionScope: null,
+      },
+    ])
+    const target = transactionTarget(buffer)
+    const options = { history: { kind: 'external-barrier', groupId: 'group' } } as const
+    for (let index = 0; index < sequence.segments.length; index += 1) {
+      expect(
+        commitPreparedDocumentTransactionSequenceSegment(target, sequence, index, options).status,
+      ).not.toBe('stale')
+    }
+    const completed = completePreparedDocumentTransactionSequence(target, sequence)
+    if (completed.status !== 'completed' || !completed.receipt) {
+      throw new RangeError('expected completed sequence')
+    }
+    expect(completed.receipt).toMatchObject({ revisionAfter: 3, segmentCount: 2 })
+
+    const begin = beginReverseDocumentTransactionSequence(target, completed.receipt)
+    if (begin.status !== 'started') throw new RangeError('expected reverse cursor')
+    const second = reverseNextDocumentTransactionSequenceSegment(target, begin.cursor, 1)
+    if (second.status !== 'reversed') throw new RangeError('expected reverse')
+    const first = reverseNextDocumentTransactionSequenceSegment(target, second.cursor, 0)
+    if (first.status !== 'reversed') throw new RangeError('expected reverse')
+    expect(completeReverseDocumentTransactionSequence(target, first.cursor).status).toBe(
+      'completed',
+    )
+    expect(buffer.materializeFullText()).toBe('abc')
+  })
+
+  it('advances forward replay by K while compensation undo and redo each advance by one', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const scope = createDocumentLogicalRevisionScope()
+    const before = buffer.getDocumentSyncPoint()
+    const receipt = commitExternal(buffer, [{ from: 0, to: 1, text: 'A' }], 'group', 4, scope)
+    expect(buffer.changesSinceDocumentSyncPoint(before, scope)?.logicalRevisionCount).toBe(4)
+    const undone = reverseDocumentTransaction(transactionTarget(buffer), receipt)
+    if (undone.status !== 'reversed') throw new RangeError('expected reverse')
+    expect(undone.change.logicalRevisionCount).toBe(1)
+    const redone = reverseDocumentTransaction(transactionTarget(buffer), undone.receipt)
+    if (redone.status !== 'reversed') throw new RangeError('expected reverse')
+    expect(redone.change.logicalRevisionCount).toBe(1)
+  })
+
+  it('keeps invalid and overlapping preparation atomic', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const snapshot = buffer.getSnapshot()
+    expect(() =>
+      prepareDocumentTransaction(
+        buffer,
+        [
+          { from: 0, to: 2, text: 'x' },
+          { from: 1, to: 3, text: 'y' },
+        ],
+        1,
+        null,
+      ),
+    ).toThrow(RangeError)
+    expect(buffer.getSnapshot()).toBe(snapshot)
+    expect(buffer.getRevision()).toBe(0)
+  })
+
+  it('accepts readonly edit fixtures without ownership copies', () => {
+    const edit = Object.freeze({ from: 0, to: 1, text: 'A' })
+    const edits = Object.freeze([edit])
+    const buffer = createEditorTextBuffer('abc')
+    const prepared = prepareDocumentTransaction(buffer, edits, 1, null)
+    expect(prepared.edits).toEqual(edits)
+    expect(edit).toEqual({ from: 0, to: 1, text: 'A' })
+  })
+
+  it('classifies consistent LF CRLF and BOM as round-trip safe and mixed lone-CR unusual terminators as unsafe', () => {
+    expect(documentTextRoundTripStatus('a\nb\n')).toEqual({
+      hasByteOrderMark: false,
+      lineEnding: '\n',
+      ok: true,
+    })
+    expect(documentTextRoundTripStatus(`${UTF8_BYTE_ORDER_MARK}a\r\nb\r\n`)).toEqual({
+      hasByteOrderMark: true,
+      lineEnding: '\r\n',
+      ok: true,
+    })
+    expect(documentTextRoundTripStatus('a\r\nb\nc\rd\u2028e')).toEqual({
+      issues: ['mixed-line-endings', 'lone-carriage-return', 'unusual-line-terminator'],
+      ok: false,
+    })
+  })
+
+  it('serializes a prepared snapshot with its original consistent line ending and BOM', () => {
+    const buffer = createEditorTextBuffer(`${UTF8_BYTE_ORDER_MARK}a\r\nb`)
+    const prepared = prepareDocumentTransaction(buffer, [{ from: 2, to: 3, text: 'B' }], 1, null)
+    expect(pieceTableDocumentText(prepared.snapshotAfter)).toBe(`${UTF8_BYTE_ORDER_MARK}a\r\nB`)
+  })
+
+  it('exports exact safe and unsafe round-trip discriminants and reason codes', () => {
+    const safe = documentTextRoundTripStatus('single line')
+    const unsafe = documentTextRoundTripStatus('a\rb')
+    expect(safe.ok && safe.lineEnding).toBe('\n')
+    expect(!unsafe.ok && unsafe.issues).toEqual(['lone-carriage-return'])
+  })
+})
+
+function transactionTarget(
+  buffer: EditorTextBuffer,
+  sourceView: EditorViewSession | null = null,
+  mutationLease?: DocumentTransactionCommitTarget['mutationLease'],
+): DocumentTransactionCommitTarget {
+  return { buffer, sourceView, mutationLease }
+}
+
+function acquiredLease(buffer: EditorTextBuffer, ownerId: string) {
+  const result = acquireDocumentMutationLease(
+    buffer,
+    buffer.getRevision(),
+    buffer.getSnapshot(),
+    ownerId,
+  )
+  if (result.status !== 'acquired') throw new RangeError('expected lease')
+  expect(getDocumentMutationLeaseState(buffer)).toEqual({ isLeased: true, ownerId })
+  return result.lease
+}
+
+function commitExternal(
+  buffer: EditorTextBuffer,
+  edits: readonly TextEdit[],
+  groupId = 'group',
+  logicalRevisionCount = 1,
+  logicalRevisionScope = null as ReturnType<typeof createDocumentLogicalRevisionScope> | null,
+): DocumentTransactionReceipt {
+  const result = commitPreparedDocumentTransaction(
+    transactionTarget(buffer),
+    prepareDocumentTransaction(buffer, edits, logicalRevisionCount, logicalRevisionScope),
+    { history: { kind: 'external-barrier', groupId } },
+  )
+  if (result.status !== 'committed') throw new RangeError('expected external commit')
+  return result.receipt
+}
+
+function commitTwoSegmentSequence(): {
+  readonly buffer: EditorTextBuffer
+  readonly receipt: DocumentTransactionReceipt
+  readonly target: DocumentTransactionCommitTarget
+} {
+  const buffer = createEditorTextBuffer('abc')
+  const target = transactionTarget(buffer)
+  const receipt = commitTwoSegmentSequenceOnTarget(target)
+  return { buffer, receipt, target }
+}
+
+function commitTwoSegmentSequenceOnTarget(
+  target: DocumentTransactionCommitTarget,
+): DocumentTransactionReceipt {
+  const buffer = target.buffer
+  const sequence = prepareDocumentTransactionSequence(buffer, [
+    { edits: [{ from: 0, to: 1, text: 'A' }], logicalRevisionCount: 1, logicalRevisionScope: null },
+    { edits: [{ from: 1, to: 2, text: 'B' }], logicalRevisionCount: 1, logicalRevisionScope: null },
+  ])
+  const options = { history: { kind: 'external-barrier', groupId: 'group' } } as const
+  commitPreparedDocumentTransactionSequenceSegment(target, sequence, 0, options)
+  commitPreparedDocumentTransactionSequenceSegment(target, sequence, 1, options)
+  const completed = completePreparedDocumentTransactionSequence(target, sequence)
+  if (completed.status !== 'completed' || !completed.receipt) {
+    throw new RangeError('expected completed sequence')
+  }
+  return completed.receipt
+}
+
+function mountTwoBufferViews(text: string): {
+  readonly buffer: EditorTextBuffer
+  readonly dispose: () => void
+  readonly inputs: readonly HTMLTextAreaElement[]
+  readonly sessions: readonly ReturnType<typeof createEditorBufferSession>[]
+} {
+  resetEditorInstanceCount()
+  const buffer = createEditorTextBuffer(text)
+  const sessions = [
+    createEditorBufferSession(buffer, createEditorViewSession(buffer, 'first')),
+    createEditorBufferSession(buffer, createEditorViewSession(buffer, 'second')),
+  ]
+  const containers = [document.createElement('div'), document.createElement('div')]
+  const editors = containers.map((container, index) => {
+    document.body.appendChild(container)
+    const editor = new Editor(container, {})
+    editor.attachSession(sessions[index]!)
+    return editor
+  })
+  const inputs = containers.map((container) => container.querySelector('textarea')!)
+  return {
+    buffer,
+    inputs,
+    sessions,
+    dispose: () => {
+      for (const editor of editors) editor.dispose()
+      for (const container of containers) container.remove()
+    },
+  }
+}
 
 describe('EditorTextBuffer change notifications', () => {
   it('reaches every listener when one of them throws', () => {

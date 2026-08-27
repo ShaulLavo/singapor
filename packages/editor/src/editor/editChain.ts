@@ -1,11 +1,41 @@
 import type { TextEdit } from '../tokens'
 
-type EditChainEntry = {
-  readonly fromVersion: number
-  readonly toVersion: number
-  // null marks a text change whose edits are unknown; chains crossing it
-  // cannot compose and consumers fall back to a full resync.
+declare const documentLogicalRevisionScopeBrand: unique symbol
+declare const documentSyncSegmentBrand: unique symbol
+
+export type DocumentLogicalRevisionScope = {
+  readonly [documentLogicalRevisionScopeBrand]: true
+}
+
+export type DocumentSyncSegment = {
+  readonly [documentSyncSegmentBrand]: true
+}
+
+export type DocumentSyncPoint = {
+  readonly revision: number
+  readonly segment: DocumentSyncSegment
+  readonly textVersion: number
+}
+
+export type DocumentChangesSinceSyncPoint = {
   readonly edits: readonly TextEdit[] | null
+  readonly logicalRevisionCount: number
+  readonly revisionAfter: number
+  readonly syncPointAfter: DocumentSyncPoint
+}
+
+export type DocumentEditChainRecord = {
+  readonly edits: readonly TextEdit[] | null
+  readonly logicalRevisionCount: number
+  readonly logicalRevisionScope: DocumentLogicalRevisionScope | null
+  readonly revisionAfter: number
+  readonly revisionBefore: number
+  readonly textChanged: boolean
+}
+
+type EditChainEntry = DocumentEditChainRecord & {
+  readonly textVersionAfter: number
+  readonly textVersionBefore: number
 }
 
 type ComposedEdit = {
@@ -16,68 +46,147 @@ type ComposedEdit = {
 
 const MAX_ENTRIES = 128
 
-// Records every text-version transition with its edits so deferred consumers
-// (LSP sync, anything that batches behind rapid input) can ask for the exact
-// edits between the version they last saw and the current document, composed
-// into base coordinates. Without this they only see the final change of a
-// batch and must fall back to shipping the whole document.
+export function createDocumentLogicalRevisionScope(): DocumentLogicalRevisionScope {
+  return Object.freeze({}) as DocumentLogicalRevisionScope
+}
+
+function createDocumentSyncSegment(): DocumentSyncSegment {
+  return Object.freeze({}) as DocumentSyncSegment
+}
+
 export class DocumentEditChain {
   #entries: EditChainEntry[] = []
+  #point: DocumentSyncPoint
 
-  public record(fromVersion: number, toVersion: number, edits: readonly TextEdit[] | null): void {
-    if (fromVersion === toVersion) return
-
-    this.#entries.push({ fromVersion, toVersion, edits })
-    if (this.#entries.length > MAX_ENTRIES) {
-      this.#entries.splice(0, this.#entries.length - MAX_ENTRIES)
+  public constructor(revision = 0, textVersion = 0) {
+    this.#point = {
+      revision,
+      segment: createDocumentSyncSegment(),
+      textVersion,
     }
   }
 
-  public clear(): void {
-    this.#entries = []
+  public get point(): DocumentSyncPoint {
+    return this.#point
   }
 
-  // Edits in `fromVersion` base coordinates whose batch application produces
-  // the newest recorded version. Empty array when already current, null when
-  // the chain is broken, unknown, or not composable.
-  public editsSince(fromVersion: number): readonly TextEdit[] | null {
-    const last = this.#entries.at(-1)
-    if (!last) return null
-    if (fromVersion === last.toVersion) return []
+  public record(record: DocumentEditChainRecord): void {
+    const current = this.#point
+    if (record.revisionBefore !== current.revision) {
+      this.rotate(record.revisionAfter, current.textVersion + Number(record.textChanged))
+      return
+    }
 
-    const start = this.#entries.findIndex((entry) => entry.fromVersion === fromVersion)
+    const textVersionAfter = current.textVersion + Number(record.textChanged)
+    this.#entries.push({
+      ...record,
+      textVersionBefore: current.textVersion,
+      textVersionAfter,
+    })
+    this.#point = {
+      revision: record.revisionAfter,
+      segment: current.segment,
+      textVersion: textVersionAfter,
+    }
+    this.trim()
+  }
+
+  public rotate(revision = this.#point.revision, textVersion = this.#point.textVersion): void {
+    this.#entries = []
+    this.#point = {
+      revision,
+      segment: createDocumentSyncSegment(),
+      textVersion,
+    }
+  }
+
+  public changesSince(
+    point: DocumentSyncPoint,
+    scope: DocumentLogicalRevisionScope | null,
+  ): DocumentChangesSinceSyncPoint | null {
+    const current = this.#point
+    if (point.segment !== current.segment) return null
+    if (point.revision === current.revision && point.textVersion === current.textVersion) {
+      return {
+        edits: [],
+        logicalRevisionCount: 0,
+        revisionAfter: current.revision,
+        syncPointAfter: current,
+      }
+    }
+
+    const entries = this.entriesFrom(point)
+    if (!entries) return null
+
+    return {
+      edits: composeEntries(entries),
+      logicalRevisionCount: logicalRevisionCount(entries, scope),
+      revisionAfter: current.revision,
+      syncPointAfter: current,
+    }
+  }
+
+  private entriesFrom(point: DocumentSyncPoint): readonly EditChainEntry[] | null {
+    const start = this.#entries.findIndex(
+      (entry) =>
+        entry.revisionBefore === point.revision && entry.textVersionBefore === point.textVersion,
+    )
     if (start === -1) return null
 
-    let composed: ComposedEdit[] = []
-    let cursorVersion = fromVersion
-    for (let index = start; index < this.#entries.length; index += 1) {
-      const entry = this.#entries[index]!
-      if (entry.fromVersion !== cursorVersion) return null
-      if (!entry.edits) return null
-
-      const next = composeBatch(composed, entry.edits)
-      if (!next) return null
-
-      composed = next
-      cursorVersion = entry.toVersion
+    const entries = this.#entries.slice(start)
+    let revision = point.revision
+    let textVersion = point.textVersion
+    for (const entry of entries) {
+      if (entry.revisionBefore !== revision || entry.textVersionBefore !== textVersion) return null
+      revision = entry.revisionAfter
+      textVersion = entry.textVersionAfter
     }
 
-    return composed.map((edit) => ({ from: edit.from, to: edit.to, text: edit.text }))
+    if (revision !== this.#point.revision || textVersion !== this.#point.textVersion) return null
+    return entries
+  }
+
+  private trim(): void {
+    if (this.#entries.length <= MAX_ENTRIES) return
+    this.#entries.splice(0, this.#entries.length - MAX_ENTRIES)
   }
 }
 
-// Transforms `batch` (edits in current-document coordinates, mutually
-// disjoint) into base coordinates against `composed` and merges them in.
-// Returns null for shapes that do not compose cleanly (edits straddling a
-// previous edit's boundary); callers fall back to a full resync, so bailing
-// is always safe.
+function logicalRevisionCount(
+  entries: readonly EditChainEntry[],
+  scope: DocumentLogicalRevisionScope | null,
+): number {
+  let count = 0
+  for (const entry of entries) {
+    if (scope !== null && entry.logicalRevisionScope === scope) {
+      count += entry.logicalRevisionCount
+      continue
+    }
+    if (entry.textChanged) count += 1
+  }
+  return count
+}
+
+function composeEntries(entries: readonly EditChainEntry[]): readonly TextEdit[] | null {
+  let composed: ComposedEdit[] = []
+  for (const entry of entries) {
+    if (!entry.textChanged) continue
+    if (!entry.edits) return null
+
+    const next = composeBatch(composed, entry.edits)
+    if (!next) return null
+    composed = next
+  }
+  return composed
+}
+
 function composeBatch(
   composed: readonly ComposedEdit[],
   batch: readonly TextEdit[],
 ): ComposedEdit[] | null {
   const next = composed.map((edit) => ({ ...edit }))
   const inserts: ComposedEdit[] = []
-  const sortedBatch = [...batch].sort((left, right) => right.from - left.from)
+  const sortedBatch = batch.toSorted((left, right) => right.from - left.from)
 
   for (const edit of sortedBatch) {
     if (!placeBatchEdit(next, inserts, edit)) return null
@@ -86,7 +195,6 @@ function composeBatch(
   for (const insert of inserts) {
     if (!insertComposedEdit(next, insert)) return null
   }
-
   return next
 }
 
@@ -111,7 +219,6 @@ function placeBatchEdit(
       return true
     }
     if (from < currentEnd) return false
-
     delta += target.text.length - (target.to - target.from)
   }
 
@@ -128,8 +235,6 @@ function insertComposedEdit(composed: ComposedEdit[], edit: ComposedEdit): boole
   const following = composed[index]
   if (following && edit.to > following.from) return false
 
-  // Touching edits must merge: two entries sharing a boundary would apply in
-  // an undefined order relative to each other.
   if (following && edit.to === following.from) {
     following.from = edit.from
     following.text = edit.text + following.text
@@ -138,7 +243,7 @@ function insertComposedEdit(composed: ComposedEdit[], edit: ComposedEdit): boole
   }
   if (previous && previous.to === edit.from) {
     previous.to = edit.to
-    previous.text = previous.text + edit.text
+    previous.text += edit.text
     return true
   }
 
@@ -152,6 +257,6 @@ function mergeWithPrevious(composed: ComposedEdit[], index: number): void {
   if (!previous || !current || previous.to !== current.from) return
 
   previous.to = current.to
-  previous.text = previous.text + current.text
+  previous.text += current.text
   composed.splice(index, 1)
 }

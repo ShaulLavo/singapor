@@ -17,6 +17,7 @@ import {
   type EditorCompletionSource,
 } from '../src/completionProviders'
 import { createLanguageServerAdapterPlugin } from '../src/plugin'
+import { documentSyncSnapshotFields } from './documentSyncSnapshot'
 
 type JsonMessage = Record<string, unknown>
 
@@ -365,6 +366,7 @@ function editorSnapshot(
   textVersion: number,
 ): EditorViewSnapshot {
   return {
+    ...documentSyncSnapshotFields(textVersion),
     documentId: 'src/index.ts',
     languageId: 'typescript',
     fullText,

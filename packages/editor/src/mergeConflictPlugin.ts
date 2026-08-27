@@ -131,7 +131,9 @@ class EditorMergeConflictController {
 
   public handleEditorChange(change: DocumentSessionChange | null): void {
     if (!change) return
-    if (change.kind === 'selection' || change.kind === 'none') return
+    if (change.kind === 'selection' || change.kind === 'synchronize' || change.kind === 'none') {
+      return
+    }
     if (this.canSkipRefreshForChange(change)) return
 
     this.refresh()

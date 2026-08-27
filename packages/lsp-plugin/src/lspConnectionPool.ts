@@ -52,6 +52,7 @@ type ConnectionLease = {
 }
 
 type PooledConnection = {
+  readonly initializationContract: ImmutableInitializationContract
   readonly key: string
   readonly leases: Set<ConnectionLease>
   readonly createdAt: number
@@ -62,6 +63,13 @@ type PooledConnection = {
   connected: boolean
   readyAt: number | null
   idleTimer: ReturnType<typeof setTimeout> | null
+}
+
+type ImmutableInitializationContract = {
+  readonly capabilities: unknown
+  readonly clientInfo: unknown
+  readonly initializationOptions: unknown
+  readonly rootUri: string | null
 }
 
 /**
@@ -90,6 +98,8 @@ export class LspConnectionPool {
     callbacks: LspConnectionCallbacks,
   ): LspConnectionLease {
     const existing = this.#entries.get(key)
+    if (existing) this.#assertCompatible(existing, options)
+
     const entry = existing ?? this.#create(key, options)
     if (entry.idleTimer !== null) {
       clearTimeout(entry.idleTimer)
@@ -127,6 +137,7 @@ export class LspConnectionPool {
       connection: null as unknown as LspConnection,
       createdAt: now(),
       idleTimer: null,
+      initializationContract: initializationContract(options),
       key,
       leases: new Set(),
       notificationMethods,
@@ -144,6 +155,15 @@ export class LspConnectionPool {
     entry.connection.connect()
 
     return entry
+  }
+
+  #assertCompatible(entry: PooledConnection, options: LspConnectionOptions): void {
+    const incoming = initializationContract(options)
+    if (structurallyEqual(entry.initializationContract, incoming)) return
+
+    throw new Error(
+      `LSP connection pool key "${entry.key}" already has a different initialization contract.`,
+    )
   }
 
   /** Handled is the disjunction: one view claiming a notification must not hide it from another. */
@@ -273,4 +293,58 @@ function leasesOf(entry: PooledConnection): readonly ConnectionLease[] {
 
 function now(): number {
   return typeof performance === 'undefined' ? Date.now() : performance.now()
+}
+
+function initializationContract(options: LspConnectionOptions): ImmutableInitializationContract {
+  return {
+    capabilities: normalizeComparable(options.capabilities),
+    clientInfo: normalizeComparable(options.clientInfo),
+    initializationOptions: normalizeComparable(options.initializationOptions),
+    rootUri: options.rootUri,
+  }
+}
+
+function normalizeComparable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeComparable)
+  if (!isRecord(value)) return value
+
+  const normalized: Record<string, unknown> = {}
+  const keys = Object.keys(value)
+    .filter((key) => value[key] !== undefined)
+    .sort()
+  for (const key of keys) normalized[key] = normalizeComparable(value[key])
+  return normalized
+}
+
+function structurallyEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) return equalArrays(left, right)
+  if (!isRecord(left) || !isRecord(right)) return false
+  return equalRecords(left, right)
+}
+
+function equalArrays(left: unknown, right: unknown): boolean {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false
+  if (left.length !== right.length) return false
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (!structurallyEqual(left[index], right[index])) return false
+  }
+  return true
+}
+
+function equalRecords(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  if (leftKeys.length !== rightKeys.length) return false
+
+  for (const key of leftKeys) {
+    if (!(key in right)) return false
+    if (!structurallyEqual(left[key], right[key])) return false
+  }
+  return true
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

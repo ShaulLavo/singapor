@@ -15,7 +15,10 @@ import { minimalReplacementEdits, REDIFF_LENGTH_LIMIT } from './minimalEdits'
  * What survives is re-diffed against the text it replaces, so a reply that rewrites the document to
  * change one line touches only that line.
  */
-export function formattingEdits(text: string, edits: readonly lsp.TextEdit[] | null): TextEdit[] {
+export function prepareFormattingEdits(
+  text: string,
+  edits: readonly lsp.TextEdit[] | null,
+): TextEdit[] {
   if (!edits || edits.length === 0) return []
 
   const converted = edits

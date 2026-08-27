@@ -1,4 +1,8 @@
-import type { LspClient, LspWorkspace } from '@singapor/lsp'
+import {
+  createDocumentLogicalRevisionScope,
+  createStringTextSnapshot,
+} from '@singapor/core/document'
+import { arrayLspLineStarts, LspWorkspace, type LspClient } from '@singapor/lsp'
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
@@ -193,6 +197,55 @@ describe('LanguageServerSet', () => {
     expect(second.connection.client.request).toHaveBeenCalledTimes(1)
   })
 
+  it('captures each code-action guard when its owning lane responds', async () => {
+    const fastAnswer = deferred<lsp.CodeAction[]>()
+    const slowAnswer = deferred<lsp.CodeAction[]>()
+    const fastCaptured = deferred<void>()
+    const fastAction = { edit: { changes: {} }, title: 'fast' }
+    const slowAction = { edit: { changes: {} }, title: 'slow' }
+    const fast = {
+      ...fakeLane(
+        'fast',
+        { codeActions: 0 },
+        { codeActionProvider: true },
+        {
+          'textDocument/codeAction': () => fastAnswer.promise,
+        },
+      ),
+      onInteractiveReady: () => fastCaptured.resolve(),
+    }
+    const slow = fakeLane(
+      'slow',
+      { codeActions: 1 },
+      { codeActionProvider: true },
+      {
+        'textDocument/codeAction': () => slowAnswer.promise,
+      },
+    )
+    const sourceSegment = {}
+    const initialSnapshot = createStringTextSnapshot('const value = 1')
+    openWorkspaceDocument(fast.connection.workspace, initialSnapshot, sourceSegment)
+    openWorkspaceDocument(slow.connection.workspace, initialSnapshot, sourceSegment)
+    const servers = new LanguageServerSet([fast, slow])
+
+    const pending = servers.request<lsp.CodeAction[], unknown>('textDocument/codeAction', {})
+    fastAnswer.resolve([fastAction])
+    await fastCaptured.promise
+
+    const nextSnapshot = createStringTextSnapshot('const value = 2')
+    updateWorkspaceDocument(fast.connection.workspace, nextSnapshot, sourceSegment)
+    updateWorkspaceDocument(slow.connection.workspace, nextSnapshot, sourceSegment)
+    slowAnswer.resolve([slowAction])
+    await pending
+
+    const fastGuard = servers.provenanceOf(fastAction)?.guard
+    const slowGuard = servers.provenanceOf(slowAction)?.guard
+    expect(fastGuard?.documents[0]).toMatchObject({ uri: 'file:///src/index.ts', version: 0 })
+    expect(fastGuard?.isCurrent('file:///src/index.ts')).toBe(false)
+    expect(slowGuard?.documents[0]).toMatchObject({ uri: 'file:///src/index.ts', version: 1 })
+    expect(slowGuard?.isCurrent('file:///src/index.ts')).toBe(true)
+  })
+
   it('registers one view, command, and edit contribution for several lanes', () => {
     const registrations = {
       command: vi.fn(() => ({ dispose: vi.fn() })),
@@ -257,16 +310,48 @@ function fakeLane(
     request,
     serverCapabilities,
   } as unknown as LspClient
+  const workspace = new LspWorkspace()
   const connection = {
     client,
     id,
     isReady: () => true,
-    ready: Promise.resolve({ client, workspace: {} as LspWorkspace }),
+    logicalRevisionScope: createDocumentLogicalRevisionScope(),
+    ready: Promise.resolve({ client, workspace }),
     release: vi.fn(),
-    workspace: {} as LspWorkspace,
+    workspace,
   } satisfies AcquiredLanguageServerLane
 
   return { connection, features, id, onRequestError: vi.fn() }
+}
+
+function openWorkspaceDocument(
+  workspace: LspWorkspace,
+  textSnapshot: ReturnType<typeof createStringTextSnapshot>,
+  sourceSegment: object,
+): void {
+  workspace.openDocumentSnapshot({
+    languageId: 'typescript',
+    lineStarts: arrayLspLineStarts([0]),
+    sourceRevision: 0,
+    sourceSegment,
+    textSnapshot,
+    uri: 'file:///src/index.ts',
+  })
+}
+
+function updateWorkspaceDocument(
+  workspace: LspWorkspace,
+  textSnapshot: ReturnType<typeof createStringTextSnapshot>,
+  sourceSegment: object,
+): void {
+  workspace.updateDocumentSnapshot('file:///src/index.ts', {
+    edits: [{ from: 14, text: '2', to: 15 }],
+    lineStarts: arrayLspLineStarts([0]),
+    logicalRevisionCount: 1,
+    sourceRevision: 1,
+    sourceSegment,
+    textSnapshot,
+  })
 }
 
 function capabilities(): lsp.ServerCapabilities {

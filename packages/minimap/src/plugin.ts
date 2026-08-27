@@ -18,6 +18,10 @@ import type { EditorMinimapOptions, ResolvedMinimapOptions } from './types'
 import { canUseMinimapWorker, MinimapWorkerClient, type MinimapHost } from './workerClient'
 
 const THIN_SCROLLBAR_GUTTER_FALLBACK = 7
+// An overlay scrollbar takes no layout width, so nothing in the measurement chain can
+// report one — but it is still painted over the scroller and still has to be grabbable,
+// and the minimap paints above it. Step clear by its hit region instead of covering it.
+const OVERLAY_SCROLLBAR_GUTTER = 15
 const WEBKIT_SCROLLBAR_PSEUDO_ELEMENT = '::-webkit-scrollbar'
 
 export function createMinimapPlugin(options: EditorMinimapOptions = {}): EditorPlugin {
@@ -100,6 +104,7 @@ class MinimapContribution implements EditorViewContribution {
       snapshot: this.latestSnapshot,
       decorations: this.collectDecorations(),
       onLayoutWidth: this.reserveWidth,
+      reservedLane: () => this.appliedReservedWidth,
     })
     this.decorationSubscription = decorations.subscribe(this.handleDecorationsChanged)
     this.installPointerHandlers()
@@ -139,8 +144,9 @@ class MinimapContribution implements EditorViewContribution {
     if (nextWidth === this.reservedWidth) return
 
     this.reservedWidth = nextWidth
-    this.updateNativeScrollbarGutter()
-    this.reserveEditorOverlayWidth()
+    // The gutter no longer depends on the minimap's own width, and the padding
+    // this writes is what the next snapshot measures around.
+    this.reserveEditorOverlayWidth(this.verticalScrollbarWidth)
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
@@ -248,14 +254,13 @@ class MinimapContribution implements EditorViewContribution {
   }
 
   private updateNativeScrollbarGutter(): void {
-    const signature = nativeScrollbarGutterSignature(this.latestSnapshot, this.reservedWidth)
+    const signature = nativeScrollbarGutterSignature(this.latestSnapshot, this.appliedReservedWidth)
     if (signature === this.scrollbarGutterSignature) return
 
     this.scrollbarGutterSignature = signature
     const gutter = nativeScrollbarGutter(
       this.latestSnapshot,
-      this.reservedWidth,
-      this.scrollElementBorderMetrics,
+      this.measureScrollbarGutter(),
       this.scrollbarGutterFallback,
     )
     if (
@@ -265,10 +270,11 @@ class MinimapContribution implements EditorViewContribution {
       return
     }
 
+    const previousVertical = this.verticalScrollbarWidth
     this.verticalScrollbarWidth = gutter.vertical
     this.horizontalScrollbarHeight = gutter.horizontal
     this.host.root.style.bottom = `${gutter.horizontal}px`
-    this.reserveEditorOverlayWidth()
+    this.reserveEditorOverlayWidth(previousVertical)
     if (this.options.side === 'right') {
       this.host.root.style.right = `${gutter.vertical}px`
       this.host.root.style.left = ''
@@ -279,13 +285,67 @@ class MinimapContribution implements EditorViewContribution {
     this.host.root.style.right = ''
   }
 
-  private reserveEditorOverlayWidth(): void {
+  /**
+   * `clientWidth` already includes the lane's padding and `offsetWidth` includes it too,
+   * so the lane cancels and what is left is border plus scrollbar. Both come from one
+   * layout, so they cannot disagree with each other.
+   *
+   * Deriving this from the snapshot instead — border box minus content box minus the lane
+   * believed to be applied — cannot be made correct: the content box describes whichever
+   * lane was applied when it was measured, the plugin reserves the lane from the answer,
+   * and the two chase each other. Three separate oscillations came from that one shortcut.
+   */
+  private measureScrollbarGutter(): { readonly vertical: number; readonly horizontal: number } {
+    const element = this.context.scrollElement
+    const offsetWidth = element.offsetWidth
+    if (offsetWidth <= 0) return { vertical: 0, horizontal: 0 }
+
+    return {
+      vertical: Math.max(0, offsetWidth - element.clientWidth - this.scrollElementBorderMetrics.x),
+      horizontal: Math.max(
+        0,
+        element.offsetHeight - element.clientHeight - this.scrollElementBorderMetrics.y,
+      ),
+    }
+  }
+
+  // Every lane change, whichever input moved it. The lane is padding on the scroll
+  // element, so a lane that keeps changing is the minimap sizing itself from a width
+  // its own reservation just shrank.
+  private logLane(previousWidth: number, previousVertical: number): void {
+    const viewport = this.latestSnapshot.viewport
+    this.context.log?.({
+      action: 'editor.minimap.lane_changed',
+      level: 'info',
+      minimap: {
+        documentId: this.latestSnapshot.documentId,
+        scrollElementClass: this.context.scrollElement.className,
+        containerClass: this.context.container.className,
+        appliedOverlayWidth: this.appliedReservedWidth,
+        borderBoxWidth: viewport.borderBoxWidth ?? null,
+        clientWidth: viewport.clientWidth,
+        fallbackVertical: this.scrollbarGutterFallback.vertical,
+        hasVerticalScrollbar: hasVerticalScrollbar(this.latestSnapshot),
+        horizontalScrollbar: this.horizontalScrollbarHeight,
+        previousOverlayWidth: previousWidth,
+        previousVertical,
+        reservedWidth: this.reservedWidth,
+        scrollElementBorderWidth: this.scrollElementBorderMetrics.x,
+        side: this.options.side,
+        vertical: this.verticalScrollbarWidth,
+      },
+    })
+  }
+
+  private reserveEditorOverlayWidth(previousVertical: number): void {
     const scrollbarWidth =
       this.options.side === 'right' ? Math.max(0, this.verticalScrollbarWidth) : 0
     const nextWidth = this.reservedWidth + scrollbarWidth
     if (nextWidth === this.appliedReservedWidth) return
 
+    const previousWidth = this.appliedReservedWidth
     this.appliedReservedWidth = nextWidth
+    this.logLane(previousWidth, previousVertical)
     this.context.reserveOverlayWidth(this.options.side, nextWidth)
   }
 
@@ -422,43 +482,45 @@ function cancelFrame(handle: number): void {
 
 function nativeScrollbarGutter(
   snapshot: EditorViewSnapshot,
-  reservedOverlayWidth: number,
-  border: ScrollElementBorderMetrics,
+  measured: { readonly vertical: number; readonly horizontal: number },
   fallback: ScrollbarGutterFallbackMetrics,
 ): {
   readonly vertical: number
   readonly horizontal: number
 } {
   const viewport = snapshot.viewport
-  const hasVerticalScrollbar =
-    viewport.clientHeight > 0 &&
-    Math.max(viewport.scrollHeight, snapshot.totalHeight) > viewport.clientHeight
   const hasHorizontalScrollbar =
     viewport.clientWidth > 0 && viewport.scrollWidth > viewport.clientWidth
-  const vertical = hasVerticalScrollbar
-    ? scrollbarGutterOrFallback(
-        measuredVerticalScrollbarGutter(viewport, border.x, reservedOverlayWidth),
-        fallback.vertical,
-      )
-    : 0
-  const horizontal = hasHorizontalScrollbar
-    ? scrollbarGutterOrFallback(
-        measuredHorizontalScrollbarGutter(viewport, border.y),
-        fallback.horizontal,
-      )
-    : 0
 
-  return { vertical, horizontal }
+  return {
+    vertical: hasVerticalScrollbar(snapshot)
+      ? scrollbarGutterOrFallback(measured.vertical, fallback.vertical)
+      : 0,
+    horizontal: hasHorizontalScrollbar
+      ? scrollbarGutterOrFallback(measured.horizontal, fallback.horizontal)
+      : 0,
+  }
+}
+
+function hasVerticalScrollbar(snapshot: EditorViewSnapshot): boolean {
+  const viewport = snapshot.viewport
+  return (
+    viewport.clientHeight > 0 &&
+    Math.max(viewport.scrollHeight, snapshot.totalHeight) > viewport.clientHeight
+  )
 }
 
 function scrollbarGutterOrFallback(measured: number, fallback: number): number {
   if (measured > 0) return measured
-  return fallback
+  if (fallback > 0) return fallback
+  // Reached only when the scroller scrolls and every reading is still zero, which is
+  // what an overlay scrollbar looks like from here.
+  return OVERLAY_SCROLLBAR_GUTTER
 }
 
 function nativeScrollbarGutterSignature(
   snapshot: EditorViewSnapshot,
-  reservedOverlayWidth: number,
+  appliedOverlayWidth: number,
 ): string {
   const viewport = snapshot.viewport
   return [
@@ -469,30 +531,8 @@ function nativeScrollbarGutterSignature(
     viewport.borderBoxHeight ?? '',
     viewport.borderBoxWidth ?? '',
     snapshot.totalHeight,
-    reservedOverlayWidth,
+    appliedOverlayWidth,
   ].join(':')
-}
-
-function measuredVerticalScrollbarGutter(
-  viewport: EditorViewSnapshot['viewport'],
-  borderWidth: number,
-  reservedOverlayWidth: number,
-): number {
-  if (viewport.clientWidth <= 0) return 0
-
-  const clientWidth = viewport.clientWidth + Math.max(0, reservedOverlayWidth)
-  const borderBoxWidth = viewport.borderBoxWidth ?? clientWidth + borderWidth
-  return Math.max(0, borderBoxWidth - clientWidth - borderWidth)
-}
-
-function measuredHorizontalScrollbarGutter(
-  viewport: EditorViewSnapshot['viewport'],
-  borderWidth: number,
-): number {
-  if (viewport.clientHeight <= 0) return 0
-
-  const borderBoxHeight = viewport.borderBoxHeight ?? viewport.clientHeight + borderWidth
-  return Math.max(0, borderBoxHeight - viewport.clientHeight - borderWidth)
 }
 
 function readScrollElementBorderMetrics(element: HTMLElement): ScrollElementBorderMetrics {

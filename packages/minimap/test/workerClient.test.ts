@@ -20,6 +20,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
 
@@ -64,6 +65,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
 
@@ -101,6 +103,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
 
@@ -139,6 +142,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
 
@@ -180,6 +184,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
 
@@ -219,6 +224,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
 
@@ -254,6 +260,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: initialSnapshot,
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       const openDocument = worker.postMessage.mock.calls
@@ -289,6 +296,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({}, { fullText: 'abcdefghi\nshort' }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       const openDocument = worker.postMessage.mock.calls
@@ -323,6 +331,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({ clientHeight: 0, clientWidth: 0, scrollHeight: 0, scrollWidth: 0 }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       const layoutRequest = worker.postMessage.mock.calls
@@ -359,6 +368,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({ scrollTop: 0 }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -389,6 +399,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -428,6 +439,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({ scrollTop: 0 }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -475,6 +487,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({}, { tokens: [{ start: 0, end: 6, style: { color: '#ff0000' } }] }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -527,6 +540,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshotWithThrowingFullText('line 1\nline 2\nline 3'),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -567,6 +581,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({}, { fullText: 'abc' }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -602,6 +617,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({}, { fullText: 'line 1\nline 2\nline 3' }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -641,6 +657,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({}, { fullText: 'a\nb' }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -688,6 +705,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -755,6 +773,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshotWithThrowingFullText('line 1\nline 2\nline 3'),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -814,6 +833,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot({}, { fullText: 'abc def ghi' }),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -874,6 +894,7 @@ describe('MinimapWorkerClient', () => {
         ),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -935,6 +956,7 @@ describe('MinimapWorkerClient', () => {
         snapshot: snapshot(),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))
@@ -989,6 +1011,7 @@ describe('MinimapWorkerClient', () => {
         ),
         decorations: [],
         onLayoutWidth: vi.fn(),
+        reservedLane: () => 0,
       })
       const worker = runtime.workers[0]!
       worker.send(renderedResponse(1))

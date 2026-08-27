@@ -51,6 +51,7 @@ export type MinimapWorkerClientOptions = {
   readonly snapshot: EditorViewSnapshot
   readonly decorations: readonly EditorMinimapDecoration[]
   readonly onLayoutWidth: (width: number) => void
+  readonly reservedLane: () => number
 }
 
 export type MinimapWorkerLifecycleState = 'ready' | 'disposing' | 'disposed' | 'crashed'
@@ -212,6 +213,7 @@ export class MinimapWorkerClient {
   private readonly colorResolver: ColorResolver
   private readonly scheduler = new EditorSecondaryViewScheduler()
   private readonly onLayoutWidth: (width: number) => void
+  private readonly reservedLane: () => number
   private externalDecorations: readonly EditorMinimapDecoration[]
   private pendingUpdate: PendingMinimapUpdate | null = null
   private activeRenderToken = 0
@@ -234,6 +236,7 @@ export class MinimapWorkerClient {
     this.host = options.host
     this.options = options.options
     this.onLayoutWidth = options.onLayoutWidth
+    this.reservedLane = options.reservedLane
     this.externalDecorations = options.decorations
     this.latestSnapshot = options.snapshot
     this.latestTokenSource = options.snapshot.tokens
@@ -679,6 +682,7 @@ export class MinimapWorkerClient {
       scrollWidth: Math.max(snapshotViewport.scrollWidth, fallbackScrollWidth, clientWidth),
       clientHeight,
       clientWidth,
+      reservedWidth: Math.max(0, this.reservedLane()),
       visibleStart: snapshotViewport.visibleRange.start,
       visibleEnd: snapshotViewport.visibleRange.end,
     }

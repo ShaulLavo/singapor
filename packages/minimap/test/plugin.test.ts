@@ -11,6 +11,7 @@ import type {
 import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
 import { MINIMAP_DECORATION_MERGE_LIMIT } from '../src/decorationMerge'
 import { createMinimapPlugin } from '../src/plugin'
+import { RenderMinimap } from '../src/types'
 import type {
   MinimapDocumentPayload,
   MinimapWorkerRequest,
@@ -111,7 +112,7 @@ describe('createMinimapPlugin', () => {
     expect(registration?.createContribution(context())).toBeNull()
   })
 
-  it('uses viewport border-box metrics for native scrollbar gutters', () => {
+  it('measures the native scrollbar gutter off the scroll element', () => {
     const restoreRuntime = installMinimapRuntime()
     try {
       let registration: EditorViewContributionProvider | undefined
@@ -143,11 +144,9 @@ describe('createMinimapPlugin', () => {
         scrollWidth: 80,
       })
       const testContext = context(snapshotWithScrollbar)
-      defineThrowingLayoutProperty(testContext.scrollElement, 'offsetHeight')
-      defineThrowingLayoutProperty(testContext.scrollElement, 'offsetWidth')
+      defineScrollbar(testContext.scrollElement, 30)
       defineThrowingLayoutProperty(testContext.scrollElement, 'scrollHeight')
       defineThrowingLayoutProperty(testContext.scrollElement, 'scrollWidth')
-      defineThrowingLayoutProperty(testContext.scrollElement, 'clientWidth')
 
       const contribution = registration?.createContribution(testContext)
       const host = testContext.container.querySelector<HTMLElement>('.editor-minimap-right')
@@ -156,8 +155,20 @@ describe('createMinimapPlugin', () => {
       expect(host?.style.right).toBe('30px')
       expect(testContext.reserveOverlayWidth).toHaveBeenCalledWith('right', 30)
 
+      // Reserving the lane took 30px of padding out of the content box, so the
+      // snapshot the browser reports next is 50 wide, not 80.
       vi.mocked(testContext.reserveOverlayWidth).mockClear()
-      contribution?.update(snapshotWithScrollbar, 'viewport')
+      contribution?.update(
+        snapshot({
+          borderBoxWidth: 110,
+          clientHeight: 20,
+          clientWidth: 50,
+          scrollHeight: 80,
+          scrollWidth: 80,
+        }),
+        'viewport',
+      )
+      expect(host?.style.right).toBe('30px')
       expect(testContext.reserveOverlayWidth).not.toHaveBeenCalled()
 
       const getComputedStyle = vi.spyOn(window, 'getComputedStyle')
@@ -165,7 +176,7 @@ describe('createMinimapPlugin', () => {
         snapshot({
           borderBoxWidth: 112,
           clientHeight: 20,
-          clientWidth: 80,
+          clientWidth: 50,
           scrollHeight: 80,
           scrollWidth: 80,
         }),
@@ -246,7 +257,10 @@ describe('createMinimapPlugin', () => {
     }
   })
 
-  it('does not reserve an overlay scrollbar lane when native gutters measure zero', () => {
+  // An overlay scrollbar is painted over the scroller but occupies no layout width, so
+  // every reading is zero and there is nothing to distinguish it from having no scrollbar
+  // except whether the scroller scrolls at all. Sitting on it makes it ungrabbable.
+  it('clears an overlay scrollbar, and only when the scroller actually scrolls', () => {
     const restoreRuntime = installMinimapRuntime()
     try {
       let registration: EditorViewContributionProvider | undefined
@@ -270,7 +284,7 @@ describe('createMinimapPlugin', () => {
         registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
       })
 
-      const hiddenNativeScrollSnapshot = {
+      const overlayScrollbar = {
         ...snapshot({
           borderBoxWidth: 80,
           clientHeight: 20,
@@ -279,16 +293,184 @@ describe('createMinimapPlugin', () => {
         }),
         totalHeight: 80,
       }
-      const testContext = context(hiddenNativeScrollSnapshot)
+      const testContext = context(overlayScrollbar)
       const contribution = registration?.createContribution(testContext)
       const host = testContext.container.querySelector<HTMLElement>('.editor-minimap-right')
 
       expect(contribution).not.toBeNull()
+      expect(host?.style.right).toBe('15px')
+
+      // Nothing overflows, so there is no scrollbar to clear and no lane to give up.
+      contribution?.update(
+        {
+          ...snapshot({
+            borderBoxWidth: 80,
+            clientHeight: 80,
+            clientWidth: 80,
+            scrollHeight: 20,
+          }),
+          totalHeight: 20,
+        },
+        'viewport',
+      )
       expect(host?.style.right).toBe('0px')
-      expect(testContext.reserveOverlayWidth).not.toHaveBeenCalledWith('right', 7)
 
       contribution?.dispose()
     } finally {
+      restoreRuntime()
+    }
+  })
+
+  // The reserved lane is padding on the scroll element, and padding is outside the
+  // content box the viewport reports. Read back as scrollbar it gets reserved on
+  // top of itself every frame, and the minimap crawls off the left of the screen.
+  it('holds the gutter still once the reserved lane shrinks the content box', () => {
+    const restoreRuntime = installMinimapRuntime()
+    try {
+      let registration: EditorViewContributionProvider | undefined
+      const registerViewContribution: EditorPluginContext['registerViewContribution'] = (
+        provider,
+      ) => {
+        registration = provider
+        return { dispose: vi.fn() }
+      }
+      const plugin = createMinimapPlugin({ enabled: true })
+
+      plugin.activate({
+        registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
+        registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
+        registerViewContribution,
+        registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      })
+
+      const borderBoxWidth = 110
+      const scrollbarWidth = 30
+      let reservedLane = 0
+      const testContext = context(
+        snapshot({
+          borderBoxWidth,
+          clientHeight: 20,
+          clientWidth: borderBoxWidth - scrollbarWidth,
+          scrollHeight: 80,
+          scrollWidth: 80,
+        }),
+      )
+      // The element keeps reporting the same scrollbar however wide the lane grows,
+      // because its `clientWidth` grows with the padding.
+      defineScrollbar(testContext.scrollElement, scrollbarWidth)
+      vi.mocked(testContext.reserveOverlayWidth).mockImplementation((_side, width) => {
+        reservedLane = width
+      })
+
+      const contribution = registration?.createContribution(testContext)
+      const host = testContext.container.querySelector<HTMLElement>('.editor-minimap-right')
+      expect(host?.style.right).toBe(`${scrollbarWidth}px`)
+
+      // What the browser does next: padding leaves the content box, a resize lands,
+      // and the plugin measures again. The content box lags a frame behind the lane,
+      // so half of these snapshots describe the lane that was applied before this one.
+      let staleLane = reservedLane
+      for (let frame = 0; frame < 6; frame += 1) {
+        const lane = frame % 2 === 0 ? staleLane : reservedLane
+        staleLane = reservedLane
+        contribution?.update(
+          snapshot({
+            borderBoxWidth,
+            clientHeight: 20,
+            clientWidth: borderBoxWidth - scrollbarWidth - lane,
+            scrollHeight: 80,
+            scrollWidth: 80,
+          }),
+          'viewport',
+        )
+        expect(host?.style.right).toBe(`${scrollbarWidth}px`)
+      }
+
+      expect(reservedLane).toBe(scrollbarWidth)
+
+      contribution?.dispose()
+    } finally {
+      restoreRuntime()
+    }
+  })
+
+  // A tab restored in the background mounts with every box at zero. Keeping that zero
+  // once the lane is applied leaves the minimap sitting on top of the native scrollbar,
+  // which on Linux is a scrollbar the user can no longer grab.
+  it('finds the scrollbar an editor first measured while hidden', async () => {
+    const restoreRuntime = installMinimapRuntime()
+    const frames = installAnimationFrames()
+    try {
+      let registration: EditorViewContributionProvider | undefined
+      const registerViewContribution: EditorPluginContext['registerViewContribution'] = (
+        provider,
+      ) => {
+        registration = provider
+        return { dispose: vi.fn() }
+      }
+      const plugin = createMinimapPlugin({ enabled: true })
+
+      plugin.activate({
+        registerHighlighter: vi.fn(() => ({ dispose: vi.fn() })),
+        registerSyntaxProvider: vi.fn(() => ({ dispose: vi.fn() })),
+        registerViewContribution,
+        registerCommandContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerCapabilityContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerEditContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerDecorationContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerGutterContribution: vi.fn(() => ({ dispose: vi.fn() })),
+        registerInjectedTextRowProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      })
+
+      // Mounted hidden: nothing has a size, so the scrollbar measures zero.
+      const hidden = {
+        ...snapshot({ borderBoxWidth: 0, clientHeight: 0, clientWidth: 0, scrollHeight: 0 }),
+        totalHeight: 0,
+      }
+      const testContext = context(hidden)
+      let lane = 0
+      vi.mocked(testContext.reserveOverlayWidth).mockImplementation((_side, width) => {
+        lane = width
+      })
+
+      const contribution = registration?.createContribution(testContext)
+      const host = testContext.container.querySelector<HTMLElement>('.editor-minimap-right')
+      expect(host?.style.right).toBe('0px')
+
+      // The worker still reports a width while hidden, so a lane is reserved off a
+      // snapshot that never saw a scrollbar.
+      sendLayoutWidth(120)
+      expect(lane).toBe(120)
+
+      // Shown: 15px of scrollbar appears, and a lane is already reserved.
+      const scrollbarWidth = 15
+      const borderBoxWidth = 400
+      const visible = () => ({
+        ...snapshot({
+          borderBoxWidth,
+          clientHeight: 100,
+          clientWidth: borderBoxWidth - scrollbarWidth - lane,
+          scrollHeight: 100,
+          scrollWidth: 100,
+        }),
+        totalHeight: 4000,
+      })
+
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        contribution?.update(visible(), 'viewport')
+        frames.flush()
+      }
+
+      expect(host?.style.right).toBe(`${scrollbarWidth}px`)
+
+      contribution?.dispose()
+    } finally {
+      frames.restore()
       restoreRuntime()
     }
   })
@@ -612,6 +794,30 @@ function externalDecorations(): readonly EditorMinimapDecoration[] | null {
 
 // Nothing else reaches the worker until the render it is already waiting on comes
 // back, so a case that wants to see a later message has to answer this one.
+function sendLayoutWidth(width: number): void {
+  const worker = mockWorkers.at(-1)
+  if (!worker) throw new Error('missing minimap worker')
+
+  worker.send({
+    type: 'layout',
+    sequence: 1,
+    layout: {
+      width,
+      height: 100,
+      canvasInnerWidth: width,
+      canvasInnerHeight: 100,
+      canvasOuterWidth: width,
+      canvasOuterHeight: 100,
+      lineHeight: 2,
+      charWidth: 1,
+      scale: 1,
+      isSampling: false,
+      heightIsEditorHeight: false,
+      renderMinimap: RenderMinimap.Text,
+    },
+  })
+}
+
 function acknowledgeRender(): void {
   const worker = mockWorkers.at(-1)
   const render = postedRequests().findLast(
@@ -635,6 +841,23 @@ function postedRequests(): readonly MinimapWorkerRequest[] {
   if (!worker) return []
 
   return worker.postMessage.mock.calls.map(([request]) => request as MinimapWorkerRequest)
+}
+
+// The scrollbar is measured as offsetWidth - clientWidth - border, so a scroll element
+// with a scrollbar is one whose two widths differ by it. `clientWidth` includes padding,
+// which is what makes the reading independent of the lane the minimap reserves.
+function defineScrollbar(element: HTMLElement, vertical: number, horizontal = 0): void {
+  const box = { width: 110, height: 110 }
+  Object.defineProperty(element, 'offsetWidth', { configurable: true, get: () => box.width })
+  Object.defineProperty(element, 'clientWidth', {
+    configurable: true,
+    get: () => box.width - vertical,
+  })
+  Object.defineProperty(element, 'offsetHeight', { configurable: true, get: () => box.height })
+  Object.defineProperty(element, 'clientHeight', {
+    configurable: true,
+    get: () => box.height - horizontal,
+  })
 }
 
 function defineThrowingLayoutProperty(

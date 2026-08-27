@@ -50,7 +50,7 @@ export function computeRenderLayout(options: {
   const width = computeMinimapWidth({
     charWidth: layoutCharWidth,
     maxColumn: options.minimap.maxColumn,
-    viewportWidth: options.viewport.clientWidth,
+    viewportWidth: options.viewport.clientWidth + Math.max(0, options.viewport.reservedWidth),
     characterWidth: options.metrics.characterWidth,
   })
   const baseCanvasInnerWidth = Math.floor(pixelRatio * width)
@@ -81,6 +81,7 @@ export function computeRenderLayout(options: {
 
 export function computeFrameLayout(options: {
   readonly renderLayout: MinimapRenderLayout
+  readonly metrics: MinimapMetrics
   readonly viewport: MinimapViewport
   readonly lineCount: number
   readonly realLineCount: number
@@ -96,6 +97,13 @@ export function yForLineNumber(
   minimapLineHeight: number,
 ): number {
   return (lineNumber - frame.startLineNumber + frame.topPaddingLineCount) * minimapLineHeight
+}
+
+// How many document lines the viewport actually shows. Both slider heights need this,
+// and both used to divide the viewport's pixels by the *minimap's* line height instead
+// of the editor's row height — so the slider grew to the size of the whole minimap.
+function visibleLineCount(viewport: MinimapViewport, metrics: MinimapMetrics): number {
+  return viewport.clientHeight / Math.max(1, metrics.rowHeight)
 }
 
 function computeFittedScale(options: {
@@ -186,15 +194,16 @@ function computeMinimapWidth(options: {
 
 function containedFrameLayout(options: {
   readonly renderLayout: MinimapRenderLayout
+  readonly metrics: MinimapMetrics
   readonly viewport: MinimapViewport
   readonly lineCount: number
   readonly realLineCount: number
 }): MinimapFrameLayout {
-  const logicalScrollHeight = Math.max(1, options.realLineCount * options.renderLayout.lineHeight)
   const sliderHeight = Math.max(
     1,
     Math.floor(
-      (options.viewport.clientHeight * options.viewport.clientHeight) / logicalScrollHeight,
+      (visibleLineCount(options.viewport, options.metrics) / Math.max(1, options.realLineCount)) *
+        options.renderLayout.height,
     ),
   )
   const maxSliderTop = Math.max(0, options.renderLayout.height - sliderHeight)
@@ -219,6 +228,7 @@ function containedFrameLayout(options: {
 
 function proportionalFrameLayout(options: {
   readonly renderLayout: MinimapRenderLayout
+  readonly metrics: MinimapMetrics
   readonly viewport: MinimapViewport
   readonly lineCount: number
   readonly previous: MinimapFrameLayout | null
@@ -227,8 +237,10 @@ function proportionalFrameLayout(options: {
   const pixelRatio =
     options.renderLayout.canvasInnerHeight / Math.max(1, options.renderLayout.canvasOuterHeight)
   const minimapLinesFitting = Math.floor(options.renderLayout.canvasInnerHeight / lineHeight)
-  const viewportLineCount = options.viewport.clientHeight / Math.max(1, lineHeight)
-  const sliderHeight = Math.floor((viewportLineCount * lineHeight) / pixelRatio)
+  const sliderHeight = Math.max(
+    1,
+    Math.floor((visibleLineCount(options.viewport, options.metrics) * lineHeight) / pixelRatio),
+  )
   const maxSliderTop = Math.max(0, options.renderLayout.height - sliderHeight)
   const ratio =
     maxSliderTop / Math.max(1, options.viewport.scrollHeight - options.viewport.clientHeight)

@@ -14,6 +14,7 @@ describe.skipIf(!canUseMinimapWorker())('MinimapWorkerClient', () => {
       onLayoutWidth: (width) => {
         host.root.dataset.width = String(width)
       },
+      reservedLane: () => 0,
     })
 
     await waitFor(() => Number(host.root.dataset.width) > 0 && host.slider.style.display !== '')

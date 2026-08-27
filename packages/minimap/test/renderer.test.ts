@@ -20,6 +20,7 @@ describe('MinimapWorkerRenderer', () => {
       clientHeight: 20,
       clientWidth: 20,
       visibleStart: 0,
+      reservedWidth: 0,
       visibleEnd: 1,
     })
 

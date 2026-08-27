@@ -228,6 +228,7 @@ export class MinimapWorkerRenderer {
 
     const frame = computeFrameLayout({
       renderLayout: layout,
+      metrics: this.state.metrics,
       viewport: this.state.viewport,
       lineCount: this.minimapLineCount(layout),
       realLineCount: this.state.document.lineStarts.length,
@@ -738,6 +739,7 @@ function defaultViewport(): MinimapViewport {
     clientHeight: 0,
     clientWidth: 0,
     visibleStart: 0,
+    reservedWidth: 0,
     visibleEnd: 1,
   }
 }

@@ -1,6 +1,6 @@
 # Progress
 
-Last reconciled: 2026-08-23
+Last reconciled: 2026-08-27
 
 ## Status
 
@@ -36,13 +36,15 @@ does not define another sequence.
   [`docs/display/browser-virtualization.md`](docs/display/browser-virtualization.md).
 - Broad block-surface APIs and temporary recovery bridges were deliberately
   removed. They are not compatibility targets.
+- Typed transactional WorkspaceEdit parsing, planning, inversion, and document application are live
+  and consumed by Platform's transaction coordinator.
 
 ## Active Executable Work
 
-Shared Platform/Editor LSP routing work continues in the
-[Platform roadmap](../platform/PLAN.md). It changes cross-project contracts and
-must be verified in both repositories in one milestone. There is no active
-standalone Editor plan.
+The remaining shared work is scheduled by the [Platform roadmap](../platform/PLAN.md): visible
+snapshot persistence, prepared editor opens, the diagnostic-peek composition gate, and the final
+editor-native keymap takeover. Each relevant milestone must verify both repositories in lockstep.
+There is no active standalone Editor plan.
 
 No other item in [`TODO.md`](TODO.md) is executable merely because it appears in
 the backlog.

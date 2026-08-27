@@ -39,7 +39,7 @@
       "file": "packages/editor/src/editor/mouseSelection.ts",
       "id": "packages/editor/src/editor/mouseSelection.ts:requestAnimationFrame:e2ace6097b",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 111,
+      "line": 123,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -47,7 +47,7 @@
       "file": "packages/editor/src/editor/mouseSelection.ts",
       "id": "packages/editor/src/editor/mouseSelection.ts:setTimeout:ed35f29fb4",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 112,
+      "line": 124,
       "snippet": "return setTimeout(() => callback(nowMs()), 0) as unknown as number"
     },
     {
@@ -63,7 +63,7 @@
       "file": "packages/editor/src/semanticTokenLayer.ts",
       "id": "packages/editor/src/semanticTokenLayer.ts:setTimeout:7075ce6e49",
       "justification": "Coalesces the demand signal against the viewport rather than against rendering. `'viewport'` is fired once per scroll event and is not throttled at source, so a flung scroll is one update per frame; `cancel()` on every input is what turns that into one question per pause. The delay itself is the host's number — this editor names none.",
-      "line": 175,
+      "line": 176,
       "snippet": "demandTimer = setTimeout(() => {"
     },
     {
@@ -71,7 +71,7 @@
       "file": "packages/editor/src/shiki/shiki.worker.ts",
       "id": "packages/editor/src/shiki/shiki.worker.ts:setTimeout:cc9ba8ae30",
       "justification": "Runs once per highlighter after a one-second delay so background grammar preload stays behind latency-sensitive tokenization and its first paint. `backgroundLoaded` prevents duplicate schedules; worker teardown safely discards pending work.",
-      "line": 184,
+      "line": 189,
       "snippet": "setTimeout(() => void ensureLanguages(highlighter, langs).catch(() => undefined), 1_000)"
     },
     {
@@ -111,7 +111,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 900,
+      "line": 1053,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -119,7 +119,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 909,
+      "line": 1062,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -127,7 +127,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1303,
+      "line": 1308,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {
@@ -135,7 +135,7 @@
       "file": "packages/lsp-plugin/src/codeActions.ts",
       "id": "packages/lsp-plugin/src/codeActions.ts:setTimeout:add08e7112",
       "justification": "Debounces a question to the language server against the caret and the diagnostics, not against rendering, and `clear()` withdraws it on every further change — so a fix is never computed against text the reader has already moved past.",
-      "line": 177,
+      "line": 179,
       "snippet": "this.timer = setTimeout(() => {"
     },
     {
@@ -143,7 +143,7 @@
       "file": "packages/lsp-plugin/src/completionController.ts",
       "id": "packages/lsp-plugin/src/completionController.ts:setTimeout:af6e0495c6",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 275,
+      "line": 277,
       "snippet": "this.completionTimer = setTimeout(() => {"
     },
     {
@@ -191,7 +191,7 @@
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:queueMicrotask:1d59545f0f",
       "justification": "Replays pooled connection state after `acquire` returns so callbacks cannot run inside the contribution constructor. The closure verifies that the lease is still active, and each acquisition schedules at most one replay.",
-      "line": 200,
+      "line": 223,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -199,7 +199,7 @@
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:setTimeout:ad7334dc0b",
       "justification": "Keeps a connection reusable for the configured grace period after its final lease releases. A new acquisition cancels the timer, and `#closeIdle` rechecks both the lease count and pool identity before disposal.",
-      "line": 215,
+      "line": 238,
       "snippet": "entry.idleTimer = setTimeout(() => this.#closeIdle(entry), this.#idleGraceMs)"
     },
     {
@@ -223,7 +223,7 @@
       "file": "packages/lsp/src/client.ts",
       "id": "packages/lsp/src/client.ts:setTimeout:373e9c94c5",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 386,
+      "line": 390,
       "snippet": "const timeout = setTimeout(() => this.timeoutRequest(id), options.timeoutMs ?? this.timeoutMs)"
     },
     {

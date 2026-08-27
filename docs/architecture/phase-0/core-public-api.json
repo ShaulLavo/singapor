@@ -4,6 +4,12 @@
       "exports": [
         {
           "kind": "type",
+          "name": "AcquireDocumentMutationLeaseResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "AnchorBias",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -11,6 +17,12 @@
         {
           "kind": "type",
           "name": "AnchorLiveness",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "BeginReverseDocumentTransactionSequenceResult",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -34,8 +46,50 @@
         },
         {
           "kind": "type",
+          "name": "CompletePreparedDocumentSequenceResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "CompleteReverseDocumentTransactionSequenceResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "CreateMergeConflictDocumentTextOptions",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentChangesSinceSyncPoint",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentLogicalRevisionScope",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentMutationLease",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentMutationLeaseState",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentMutationLeaseStateListener",
+          "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -88,7 +142,67 @@
         },
         {
           "kind": "type",
+          "name": "DocumentSyncPoint",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentSyncSegment",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTextRoundTripIssue",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTextRoundTripStatus",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "DocumentTextSnapshot",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionCommitOptions",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionCommitTarget",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionHistory",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionReceipt",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionSequenceReverseCursor",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionSequenceSegmentInput",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -988,6 +1102,12 @@
         },
         {
           "kind": "type",
+          "name": "PieceTableDocumentTextOptions",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "PieceTableEdit",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -1018,7 +1138,67 @@
         },
         {
           "kind": "type",
+          "name": "PreparedDocumentCommitResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PreparedDocumentSequenceSegmentCommitResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PreparedDocumentTransaction",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PreparedDocumentTransactionSequence",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ReleaseDocumentMutationLeaseResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ReleaseDocumentTransactionResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "ResolvedAnchor",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ReverseDocumentTransactionResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ReverseDocumentTransactionSequenceSegmentResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "RotateDocumentSyncSegmentResult",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SealDocumentTransactionResult",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -1126,6 +1306,12 @@
         },
         {
           "kind": "unknown",
+          "name": "acquireDocumentMutationLease",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "Anchor",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -1162,8 +1348,38 @@
         },
         {
           "kind": "unknown",
+          "name": "beginReverseDocumentTransactionSequence",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "bracketJumpTargetOffset",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "commitPreparedDocumentTransaction",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "commitPreparedDocumentTransactionSequenceSegment",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "completePreparedDocumentTransactionSequence",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "completeReverseDocumentTransactionSequence",
+          "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1176,6 +1392,12 @@
           "kind": "unknown",
           "name": "createDocumentLinkPlugin",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createDocumentLogicalRevisionScope",
+          "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1378,6 +1600,12 @@
         },
         {
           "kind": "unknown",
+          "name": "documentTextRoundTripStatus",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "EDITOR_BRACKET_MATCH_PLUGIN_ID",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
@@ -1540,6 +1768,12 @@
         },
         {
           "kind": "unknown",
+          "name": "getDocumentMutationLeaseState",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "getPieceTableLength",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -1594,6 +1828,12 @@
         },
         {
           "kind": "unknown",
+          "name": "pieceTableDocumentText",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "pieceTableSnapshotsHaveSameText",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -1601,6 +1841,18 @@
         {
           "kind": "unknown",
           "name": "pointToOffset",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "prepareDocumentTransaction",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "prepareDocumentTransactionSequence",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -1636,6 +1888,18 @@
         },
         {
           "kind": "unknown",
+          "name": "releaseDocumentMutationLease",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "releaseDocumentTransactionReceipt",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "resolveAnchor",
           "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
@@ -1644,6 +1908,30 @@
           "kind": "unknown",
           "name": "resolveMergeConflict",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "reverseDocumentTransaction",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "reverseNextDocumentTransactionSequenceSegment",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "rotateDocumentSyncSegment",
+          "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "sealDocumentTransactionReceipt",
+          "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1674,6 +1962,12 @@
           "kind": "unknown",
           "name": "styleForTreeSitterCapture",
           "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "subscribeDocumentMutationLeaseState",
+          "source": "packages/editor/src/public/document.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1726,6 +2020,12 @@
       "exports": [
         {
           "kind": "type",
+          "name": "AcquireDocumentMutationLeaseResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "AnchorBias",
           "source": "packages/editor/src/pieceTable/index.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -1734,6 +2034,54 @@
           "kind": "type",
           "name": "AnchorLiveness",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "BeginReverseDocumentTransactionSequenceResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "CompletePreparedDocumentSequenceResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "CompleteReverseDocumentTransactionSequenceResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentChangesSinceSyncPoint",
+          "source": "packages/editor/src/editor/editChain.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentLogicalRevisionScope",
+          "source": "packages/editor/src/editor/editChain.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentMutationLease",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentMutationLeaseState",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentMutationLeaseStateListener",
+          "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -1786,6 +2134,30 @@
         },
         {
           "kind": "type",
+          "name": "DocumentSyncPoint",
+          "source": "packages/editor/src/editor/editChain.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentSyncSegment",
+          "source": "packages/editor/src/editor/editChain.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTextRoundTripIssue",
+          "source": "packages/editor/src/pieceTable/lineEndings.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTextRoundTripStatus",
+          "source": "packages/editor/src/pieceTable/lineEndings.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "DocumentTextSnapshot",
           "source": "packages/editor/src/documentTextSnapshot.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -1798,7 +2170,43 @@
         },
         {
           "kind": "type",
+          "name": "DocumentTransactionCommitOptions",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionCommitTarget",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionHistory",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "DocumentTransactionMetadata",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionReceipt",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionSequenceReverseCursor",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "DocumentTransactionSequenceSegmentInput",
           "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
         },
@@ -1864,6 +2272,12 @@
         },
         {
           "kind": "type",
+          "name": "PieceTableDocumentTextOptions",
+          "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "PieceTableEdit",
           "source": "packages/editor/src/pieceTable/index.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -1894,8 +2308,68 @@
         },
         {
           "kind": "type",
+          "name": "PreparedDocumentCommitResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PreparedDocumentSequenceSegmentCommitResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PreparedDocumentTransaction",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PreparedDocumentTransactionSequence",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ReleaseDocumentMutationLeaseResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ReleaseDocumentTransactionResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
           "name": "ResolvedAnchor",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ReverseDocumentTransactionResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ReverseDocumentTransactionSequenceSegmentResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "RotateDocumentSyncSegmentResult",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "type",
+          "name": "SealDocumentTransactionResult",
+          "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -1930,6 +2404,12 @@
         },
         {
           "kind": "unknown",
+          "name": "acquireDocumentMutationLease",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "Anchor",
           "source": "packages/editor/src/pieceTable/index.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -1960,6 +2440,12 @@
         },
         {
           "kind": "unknown",
+          "name": "beginReverseDocumentTransactionSequence",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "characterClassAt",
           "source": "packages/editor/src/textRanges.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -1984,8 +2470,38 @@
         },
         {
           "kind": "unknown",
+          "name": "commitPreparedDocumentTransaction",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "commitPreparedDocumentTransactionSequenceSegment",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "compareTextOffsetRanges",
           "source": "packages/editor/src/textRanges.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "completePreparedDocumentTransactionSequence",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "completeReverseDocumentTransactionSequence",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createDocumentLogicalRevisionScope",
+          "source": "packages/editor/src/editor/editChain.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2056,8 +2572,20 @@
         },
         {
           "kind": "unknown",
+          "name": "documentTextRoundTripStatus",
+          "source": "packages/editor/src/pieceTable/lineEndings.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "forEachPieceTableTextChunk",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "getDocumentMutationLeaseState",
+          "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2134,6 +2662,12 @@
         },
         {
           "kind": "unknown",
+          "name": "pieceTableDocumentText",
+          "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "pieceTableSnapshotsHaveSameText",
           "source": "packages/editor/src/pieceTable/index.ts",
           "via": "packages/editor/src/public/document.ts"
@@ -2142,6 +2676,18 @@
           "kind": "unknown",
           "name": "pointToOffset",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "prepareDocumentTransaction",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "prepareDocumentTransactionSequence",
+          "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2170,8 +2716,44 @@
         },
         {
           "kind": "unknown",
+          "name": "releaseDocumentMutationLease",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "releaseDocumentTransactionReceipt",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "resolveAnchor",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "reverseDocumentTransaction",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "reverseNextDocumentTransactionSequenceSegment",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "rotateDocumentSyncSegment",
+          "source": "packages/editor/src/documentSession.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "sealDocumentTransactionReceipt",
+          "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {
@@ -2184,6 +2766,12 @@
           "kind": "unknown",
           "name": "streamPieceTableTextChunks",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/public/document.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "subscribeDocumentMutationLeaseState",
+          "source": "packages/editor/src/documentSession.ts",
           "via": "packages/editor/src/public/document.ts"
         },
         {

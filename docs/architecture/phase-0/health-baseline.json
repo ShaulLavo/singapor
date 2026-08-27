@@ -80,8 +80,15 @@
     "lsp-core": [],
     "lsp-plugin": [
       [
+        "packages/lsp-plugin/src/documentSync.ts",
+        "packages/lsp-plugin/src/documentSyncController.ts",
         "packages/lsp-plugin/src/lspConnection.ts",
+        "packages/lsp-plugin/src/pluginTypes.ts",
         "packages/lsp-plugin/src/types.ts"
+      ],
+      [
+        "packages/lsp-plugin/src/workspaceEdit.ts",
+        "packages/lsp-plugin/src/workspaceTextEdits.ts"
       ]
     ],
     "typescript-lsp": []

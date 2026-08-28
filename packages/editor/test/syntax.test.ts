@@ -352,26 +352,32 @@ describe('authoritative initial paint', () => {
       onInitialPaint: (event) => events.push(event),
     })
     editor.openDocument({ documentId: 'overlap.ts', text: TEXT })
-    expect(events.filter(isHighlightSettled)).toHaveLength(1)
+    const [textPaint] = events.filter(isTextPaint)
+    if (!textPaint) throw new Error('initial text paint missing')
+    expect(events.filter(isTextPaint)).toHaveLength(1)
+    expect(events.filter(isHighlightSettled).map((event) => event.status)).toEqual(['plain'])
 
     editor.addPlugin(highlighterPlugin(highlighterSession(replacement)))
     await nextTask()
     const loadingSnapshot = snapshots.lastIndexOf('loading')
     editor.setTheme({ foregroundColor: '#abcdef' })
+    editor.edit({ from: 0, to: 0, text: 'x' })
     await new Promise((resolve) => setTimeout(resolve, 375))
 
     expect(editor.getState().initialHighlightStatus).toBe('loading')
     expect(snapshots.slice(loadingSnapshot + 1)).not.toContain('plain')
     expect(snapshots.slice(loadingSnapshot + 1)).not.toContain('painted')
+    expect(events.filter(isTextPaint)).toHaveLength(1)
     expect(events.filter(isHighlightSettled)).toHaveLength(1)
 
     replacement.resolve({ tokens: [] })
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('painted')
-    expect(events.filter(isHighlightSettled).map((event) => event.status)).toEqual([
-      'plain',
-      'painted',
-    ])
+    expect(events.filter(isTextPaint)).toHaveLength(1)
+    const settled = events.filter(isHighlightSettled)
+    expect(settled.map((event) => event.status)).toEqual(['plain', 'painted'])
+    expect(settled[1]?.documentGeneration).toBe(textPaint.documentGeneration)
+    expect(settled[1]?.textVersion).toBe(textPaint.textVersion + 1)
 
     editor.dispose()
     container.remove()

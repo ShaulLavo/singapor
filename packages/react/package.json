@@ -30,6 +30,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
+    "@shikijs/langs": "4.2.0",
+    "@shikijs/themes": "4.2.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",

@@ -1,6 +1,5 @@
 import type { TextEdit } from '../tokens'
-import { createHighlighter } from 'shiki'
-import type { GrammarState, HighlighterGeneric, ThemedToken } from 'shiki'
+import type { GrammarState, HighlighterGeneric, ThemedToken } from 'shiki/core'
 
 export interface TokenLineSnapshot {
   text: string
@@ -30,9 +29,7 @@ export interface CreateIncrementalTokenizerOptions {
   lang: string
   theme: string
   code?: string
-  highlighter?: HighlighterGeneric<string, string>
-  langs?: string[]
-  themes?: string[]
+  highlighter: HighlighterGeneric<string, string>
 }
 
 export interface CreateIncrementalTokenizerResult {
@@ -57,10 +54,6 @@ interface LineState {
 
 function splitLines(code: string): string[] {
   return code.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line))
-}
-
-function unique(items: readonly string[]): string[] {
-  return Array.from(new Set(items))
 }
 
 function cloneSnapshot(lines: readonly LineState[]): TokenLineSnapshot[] {
@@ -375,12 +368,7 @@ function createShikiStatesEqualFn(theme: string): StatesEqualFn {
 export async function createIncrementalTokenizer(
   options: CreateIncrementalTokenizerOptions,
 ): Promise<CreateIncrementalTokenizerResult> {
-  const highlighter =
-    options.highlighter ??
-    ((await createHighlighter({
-      themes: unique([options.theme, ...(options.themes ?? [])]),
-      langs: unique([options.lang, ...(options.langs ?? [])]),
-    })) as HighlighterGeneric<string, string>)
+  const { highlighter } = options
 
   const tokenizeLine = createShikiLineFn(highlighter, options.lang, options.theme)
   const statesEqual = createShikiStatesEqualFn(options.theme)

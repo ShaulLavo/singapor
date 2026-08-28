@@ -2,7 +2,25 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { createHighlighter } from 'shiki'
 
-import { createIncrementalTokenizer } from '../../src/shiki'
+import { createIncrementalTokenizer as createCoreIncrementalTokenizer } from '../../src/shiki'
+
+type TestTokenizerOptions = Omit<
+  Parameters<typeof createCoreIncrementalTokenizer>[0],
+  'highlighter'
+> & {
+  highlighter?: Parameters<typeof createCoreIncrementalTokenizer>[0]['highlighter']
+}
+
+async function createIncrementalTokenizer(options: TestTokenizerOptions) {
+  const highlighter =
+    options.highlighter ??
+    ((await createHighlighter({
+      themes: [options.theme],
+      langs: [options.lang],
+    })) as unknown as Parameters<typeof createCoreIncrementalTokenizer>[0]['highlighter'])
+
+  return createCoreIncrementalTokenizer({ ...options, highlighter })
+}
 
 function flattenTokens(line: readonly { content: string }[]): string {
   return line.map((token) => token.content).join('')

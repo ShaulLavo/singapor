@@ -5452,12 +5452,6 @@
         },
         {
           "kind": "unknown",
-          "name": "loadVscodeThemeRegistration",
-          "source": "packages/editor/src/shiki/vscode-themes.ts",
-          "via": "packages/editor/src/shiki/index.ts"
-        },
-        {
-          "kind": "unknown",
           "name": "ShikiWorkerOwner",
           "source": "packages/editor/src/shiki/workerClient.ts",
           "via": "packages/editor/src/shiki/index.ts"

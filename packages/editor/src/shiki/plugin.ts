@@ -7,17 +7,26 @@ import type { EditorSyntaxLanguageId } from '../syntax/session'
 import {
   createShikiWorkerOwner,
   type ShikiHighlighterSessionOptions,
+  type ShikiPreloadRegistrations,
+  type ShikiResolvedRegistrations,
   type ShikiWorkerOwner,
 } from './workerClient'
-import type { ShikiWorkerThemeRegistration } from './workerTypes'
+import type { ShikiWorkerLanguageRegistration, ShikiWorkerThemeRegistration } from './workerTypes'
 
 export type ShikiLanguageMap = Partial<Record<EditorSyntaxLanguageId, string>>
 
+export type ShikiLanguageRegistrationResolver = (
+  language: string,
+) => Promise<readonly ShikiWorkerLanguageRegistration[]>
+
+export type ShikiThemeRegistrationResolver = (
+  theme: string,
+) => Promise<ShikiWorkerThemeRegistration>
+
 export type ShikiHighlighterPluginOptions = {
+  readonly resolveLanguage: ShikiLanguageRegistrationResolver
+  readonly resolveTheme: ShikiThemeRegistrationResolver
   readonly theme?: string | (() => string)
-  readonly themeRegistration?:
-    | ShikiWorkerThemeRegistration
-    | (() => ShikiWorkerThemeRegistration | undefined)
   readonly languages?: ShikiLanguageMap
   readonly preloadLanguages?: readonly string[]
   /**
@@ -46,9 +55,7 @@ const DEFAULT_LANGUAGE_MAP: ShikiLanguageMap = {
   typescript: 'typescript',
 }
 
-export function createShikiHighlighterPlugin(
-  options: ShikiHighlighterPluginOptions = {},
-): EditorPlugin {
+export function createShikiHighlighterPlugin(options: ShikiHighlighterPluginOptions): EditorPlugin {
   return {
     name: 'shiki-highlighter',
     activate(context) {
@@ -81,12 +88,13 @@ export function createShikiHighlighterPlugin(
  * highlighter, worker owner, language map and theme resolver used by regular editor documents.
  */
 export function createShikiHighlighterProvider(
-  options: ShikiHighlighterPluginOptions = {},
+  options: ShikiHighlighterPluginOptions,
 ): EditorHighlighterProvider {
   const owner = options.workerOwner ?? defaultShikiWorkerOwner()
+  const registrations = createRegistrationCache(options)
   return {
-    loadTheme: () => loadConfiguredTheme(options, owner),
-    createSession: (sessionOptions) => createSession(sessionOptions, options, owner),
+    loadTheme: () => loadConfiguredTheme(options, registrations, owner),
+    createSession: (sessionOptions) => createSession(sessionOptions, options, registrations, owner),
   }
 }
 
@@ -103,6 +111,7 @@ const defaultShikiWorkerOwner = (): ShikiWorkerOwner => {
 const createSession = (
   sessionOptions: EditorHighlighterSessionOptions,
   pluginOptions: ShikiHighlighterPluginOptions,
+  registrations: ShikiRegistrationCache,
   owner: ShikiWorkerOwner,
 ) => {
   if (!owner.canUseWorker()) return null
@@ -110,22 +119,30 @@ const createSession = (
   const lang = shikiLanguageForSession(sessionOptions, pluginOptions.languages)
   if (!lang) return null
 
+  const theme = shikiThemeName(pluginOptions)
+
   return owner.createSession({
     ...sessionOptions,
     lang,
-    theme: shikiThemeName(pluginOptions),
-    themeRegistration: shikiThemeRegistration(pluginOptions),
-    langs: preloadLanguages(lang, pluginOptions),
-    themes: preloadThemes(pluginOptions),
+    theme,
+    registrations: resolveDocumentRegistrations(lang, theme, pluginOptions, registrations),
+    preloadRegistrations: () =>
+      resolvePreloadRegistrations(lang, theme, pluginOptions, registrations),
   } satisfies ShikiHighlighterSessionOptions)
 }
 
-const loadConfiguredTheme = (options: ShikiHighlighterPluginOptions, owner: ShikiWorkerOwner) =>
-  owner.loadTheme({
-    theme: shikiThemeName(options),
-    themeRegistration: shikiThemeRegistration(options),
-    themes: preloadThemes(options),
+const loadConfiguredTheme = (
+  options: ShikiHighlighterPluginOptions,
+  registrations: ShikiRegistrationCache,
+  owner: ShikiWorkerOwner,
+) => {
+  const theme = shikiThemeName(options)
+  return owner.loadTheme({
+    theme,
+    registrations: resolveDocumentRegistrations(null, theme, options, registrations),
+    preloadRegistrations: () => resolveThemePreload(theme, options, registrations),
   })
+}
 
 const preloadThemes = (options: ShikiHighlighterPluginOptions): readonly string[] | undefined => {
   const themes = options.preloadThemes
@@ -139,18 +156,6 @@ const shikiThemeName = (options: ShikiHighlighterPluginOptions): string => {
   if (typeof theme === 'function') return theme()
 
   return theme ?? DEFAULT_THEME
-}
-
-const shikiThemeRegistration = (
-  options: ShikiHighlighterPluginOptions,
-): ShikiWorkerThemeRegistration | undefined => {
-  const themeRegistration = options.themeRegistration
-  const registration =
-    typeof themeRegistration === 'function' ? themeRegistration() : themeRegistration
-  if (!registration) return undefined
-  if (!registration.name) throw new Error('Shiki theme registrations require a non-empty name')
-
-  return registration
 }
 
 const shikiLanguageForSession = (
@@ -170,6 +175,152 @@ const preloadLanguages = (
   lang: string,
   options: ShikiHighlighterPluginOptions,
 ): readonly string[] => [lang, ...Array.from(options.preloadLanguages ?? [])]
+
+type ShikiRegistrationCache = {
+  readonly loadedLanguages: (
+    languages: readonly string[],
+  ) => readonly ShikiWorkerLanguageRegistration[]
+  readonly loadedThemes: (themes: readonly string[]) => readonly ShikiWorkerThemeRegistration[]
+  readonly resolveLanguage: ShikiLanguageRegistrationResolver
+  readonly resolveTheme: ShikiThemeRegistrationResolver
+}
+
+const createRegistrationCache = (
+  options: ShikiHighlighterPluginOptions,
+): ShikiRegistrationCache => {
+  const languagePromises = new Map<string, Promise<readonly ShikiWorkerLanguageRegistration[]>>()
+  const themePromises = new Map<string, Promise<ShikiWorkerThemeRegistration>>()
+  const loadedLanguages = new Map<string, readonly ShikiWorkerLanguageRegistration[]>()
+  const loadedThemes = new Map<string, ShikiWorkerThemeRegistration>()
+
+  const resolveLanguage = (language: string) => {
+    const existing = languagePromises.get(language)
+    if (existing) return existing
+
+    const pending = options.resolveLanguage(language).then((registrations) => {
+      assertLanguageRegistrations(language, registrations)
+      loadedLanguages.set(language, registrations)
+      return registrations
+    })
+    languagePromises.set(language, pending)
+    void pending.catch(() => languagePromises.delete(language))
+    return pending
+  }
+
+  const resolveTheme = (theme: string) => {
+    const existing = themePromises.get(theme)
+    if (existing) return existing
+
+    const pending = options.resolveTheme(theme).then((registration) => {
+      if (!registration.name) {
+        throw new Error('Shiki theme registrations require a non-empty name')
+      }
+      loadedThemes.set(theme, registration)
+      return registration
+    })
+    themePromises.set(theme, pending)
+    void pending.catch(() => themePromises.delete(theme))
+    return pending
+  }
+
+  return {
+    loadedLanguages: (languages) =>
+      uniqueLanguageRegistrations(
+        languages.flatMap((language) => loadedLanguages.get(language) ?? []),
+      ),
+    loadedThemes: (themes) =>
+      uniqueThemeRegistrations(themes.flatMap((theme) => loadedThemes.get(theme) ?? [])),
+    resolveLanguage,
+    resolveTheme,
+  }
+}
+
+const resolveDocumentRegistrations = async (
+  language: string | null,
+  theme: string,
+  options: ShikiHighlighterPluginOptions,
+  cache: ShikiRegistrationCache,
+): Promise<ShikiResolvedRegistrations> => {
+  const languageRegistrations = language ? await cache.resolveLanguage(language) : []
+  const themeRegistration = await cache.resolveTheme(theme)
+  const preloadLanguageNames = language ? preloadLanguages(language, options) : []
+  const preloadThemeNames = [theme, ...(preloadThemes(options) ?? [])]
+
+  return {
+    languageRegistrations: uniqueLanguageRegistrations([
+      ...languageRegistrations,
+      ...cache.loadedLanguages(preloadLanguageNames),
+    ]),
+    themeRegistration,
+    themeRegistrations: uniqueThemeRegistrations([
+      themeRegistration,
+      ...cache.loadedThemes(preloadThemeNames),
+    ]),
+  }
+}
+
+const resolvePreloadRegistrations = async (
+  language: string,
+  theme: string,
+  options: ShikiHighlighterPluginOptions,
+  cache: ShikiRegistrationCache,
+): Promise<ShikiPreloadRegistrations> => {
+  const [languageRegistrations, themeRegistrations] = await Promise.all([
+    Promise.all(preloadLanguages(language, options).map(cache.resolveLanguage)),
+    Promise.all([theme, ...(preloadThemes(options) ?? [])].map(cache.resolveTheme)),
+  ])
+
+  return {
+    languageRegistrations: uniqueLanguageRegistrations(languageRegistrations.flat()),
+    themeRegistrations: uniqueThemeRegistrations(themeRegistrations),
+  }
+}
+
+const resolveThemePreload = async (
+  theme: string,
+  options: ShikiHighlighterPluginOptions,
+  cache: ShikiRegistrationCache,
+): Promise<ShikiPreloadRegistrations> => ({
+  languageRegistrations: [],
+  themeRegistrations: uniqueThemeRegistrations(
+    await Promise.all([theme, ...(preloadThemes(options) ?? [])].map(cache.resolveTheme)),
+  ),
+})
+
+const assertLanguageRegistrations = (
+  language: string,
+  registrations: readonly ShikiWorkerLanguageRegistration[],
+): void => {
+  if (registrations.length === 0) {
+    throw new Error(`Shiki language resolver returned no registrations for ${language}`)
+  }
+  if (registrations.every((registration) => registration.name && registration.scopeName)) return
+
+  throw new Error(`Shiki language resolver returned an invalid registration for ${language}`)
+}
+
+const uniqueLanguageRegistrations = (
+  registrations: readonly ShikiWorkerLanguageRegistration[],
+): readonly ShikiWorkerLanguageRegistration[] =>
+  uniqueBy(registrations, (registration) => `${registration.name}\u0000${registration.scopeName}`)
+
+const uniqueThemeRegistrations = (
+  registrations: readonly ShikiWorkerThemeRegistration[],
+): readonly ShikiWorkerThemeRegistration[] =>
+  uniqueBy(registrations, (registration) => JSON.stringify(registration))
+
+const uniqueBy = <T>(items: readonly T[], keyFor: (item: T) => string): readonly T[] => {
+  const seen = new Set<string>()
+  const unique: T[] = []
+  for (const item of items) {
+    const key = keyFor(item)
+    if (seen.has(key)) continue
+
+    seen.add(key)
+    unique.push(item)
+  }
+  return unique
+}
 
 const shikiLanguageForDocumentExtension = (
   documentId: string,

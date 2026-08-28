@@ -19,40 +19,8 @@ import { installHighlightPolyfill } from './support/highlightPolyfill'
  * layout, which is host work now (§3.1).
  */
 
-const shikiMock = vi.hoisted(() => ({
-  canUseShikiWorker: vi.fn(() => true),
-  createShikiWorkerOwner: vi.fn(),
-  owner: {
-    createSession: vi.fn(),
-    dispose: vi.fn(async () => undefined),
-  },
-  refreshTexts: [] as string[],
-}))
-
-vi.mock('@singapor/core/shiki', () => ({
-  canUseShikiWorker: shikiMock.canUseShikiWorker,
-  createShikiWorkerOwner: shikiMock.createShikiWorkerOwner,
-}))
-
 beforeAll(() => {
   installHighlightPolyfill()
-})
-
-beforeEach(() => {
-  shikiMock.refreshTexts.length = 0
-  shikiMock.canUseShikiWorker.mockReset()
-  shikiMock.canUseShikiWorker.mockReturnValue(true)
-  shikiMock.createShikiWorkerOwner.mockReset()
-  shikiMock.createShikiWorkerOwner.mockReturnValue(shikiMock.owner)
-  shikiMock.owner.dispose.mockClear()
-  shikiMock.owner.createSession.mockReset()
-  shikiMock.owner.createSession.mockImplementation(() => ({
-    dispose: vi.fn(),
-    refresh: vi.fn(async (_snapshot, fullText?: string) => {
-      shikiMock.refreshTexts.push(fullText ?? '')
-      return { tokens: [{ start: 0, end: 3, style: { color: 'gold' } }] }
-    }),
-  }))
 })
 
 const mounted: { editor: Editor; host: HTMLElement }[] = []
@@ -332,10 +300,6 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
 
   it('defaults syntax highlighting to tree-sitter instead of shiki', () => {
     expect(diffSyntaxBackend(undefined)).toEqual({ kind: 'tree-sitter' })
-    expect(diffSyntaxBackend({ kind: 'shiki', shikiTheme: 'github-light' })).toEqual({
-      kind: 'shiki',
-      shikiTheme: 'github-light',
-    })
   })
 
   it('passes full file text to the tree-sitter syntax backend', async () => {
@@ -349,25 +313,6 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
     await flushPromises()
 
     expect(parsedTexts).toContain('one\ntwo\n')
-  })
-
-  it('disposes a shiki worker owner even when the parse is cancelled mid-flight', async () => {
-    // The tree-sitter backend has no `dispose` at all, which is why every other syntax test here
-    // is blind to this: only the shiki path owns a worker. Superseding the file while
-    // `createShikiWorkerOwner` is still in flight used to strand the owner, because its disposal
-    // was registered *after* the staleness check that bails. `setFile` cancels on every call, so
-    // clicking through a file tree leaked one owner per click.
-    const { plugin } = mountDiff({
-      file: typescriptDiff(),
-      syntaxBackend: { kind: 'shiki', shikiTheme: 'github-light' },
-      syntaxHighlight: true,
-    })
-
-    // Supersede before the awaited service resolves.
-    plugin.setFile(otherPathDiff())
-    await flushUntil(() => shikiMock.owner.dispose.mock.calls.length > 0)
-
-    expect(shikiMock.owner.dispose).toHaveBeenCalled()
   })
 
   it('creates tree-sitter sessions from diff syntax service requests', async () => {
@@ -416,29 +361,6 @@ describe('diff plugin — syntax (§C10, §C11)', () => {
         languageId: 'typescript',
       }),
     )
-    expect(shikiMock.createShikiWorkerOwner).not.toHaveBeenCalled()
-  })
-
-  it('routes shiki highlighting through full-file syntax service documents', async () => {
-    mountDiff({
-      file: typescriptDiff(),
-      syntaxBackend: { kind: 'shiki', shikiTheme: 'github-light' },
-      syntaxHighlight: true,
-    })
-
-    await flushUntil(() => shikiMock.refreshTexts.length >= 2)
-
-    expect(shikiMock.owner.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        documentId: 'note.ts#diff-old',
-        fullText: 'keep\nold\nskip\n',
-        lang: 'typescript',
-        languageId: 'typescript',
-        theme: 'github-light',
-      }),
-    )
-    expect(shikiMock.refreshTexts).toContain('keep\nold\nskip\n')
-    expect(shikiMock.refreshTexts).toContain('keep\nnew\nskip\n')
   })
 
   it('exposes projected tokens for the host to re-apply after setText', async () => {

@@ -100,13 +100,15 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@shikijs/themes": "4.2.0",
+    "@shikijs/engine-oniguruma": "4.2.0",
     "@tanstack/hotkeys": "0.8.0",
     "diff": "^9.0.0",
     "evlog": "^2.19.1",
     "shiki": "^4.2.0"
   },
   "devDependencies": {
+    "@shikijs/langs": "4.2.0",
+    "@shikijs/themes": "4.2.0",
     "@playwright/test": "^1.60.0",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "@vitest/browser-playwright": "^4.1.8",

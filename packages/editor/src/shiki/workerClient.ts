@@ -12,6 +12,7 @@ import type {
 import type { EditorTheme } from '../theme'
 import type {
   ShikiWorkerDocumentOptions,
+  ShikiWorkerLanguageRegistration,
   ShikiWorkerRequest,
   ShikiWorkerRequestPayload,
   ShikiWorkerResponse,
@@ -20,6 +21,22 @@ import type {
   ShikiWorkerTransportResult,
 } from './workerTypes'
 
+export type ShikiResolvedRegistrations = {
+  readonly languageRegistrations: readonly ShikiWorkerLanguageRegistration[]
+  readonly themeRegistration: ShikiWorkerThemeRegistration
+  readonly themeRegistrations: readonly ShikiWorkerThemeRegistration[]
+}
+
+export type ShikiPreloadRegistrations = {
+  readonly languageRegistrations: readonly ShikiWorkerLanguageRegistration[]
+  readonly themeRegistrations: readonly ShikiWorkerThemeRegistration[]
+}
+
+export type ShikiPreloadRegistrationSource =
+  | ShikiPreloadRegistrations
+  | Promise<ShikiPreloadRegistrations>
+  | (() => Promise<ShikiPreloadRegistrations> | ShikiPreloadRegistrations)
+
 export type ShikiHighlighterSessionOptions = Omit<
   EditorHighlighterSessionOptions,
   'textSnapshot'
@@ -27,15 +44,14 @@ export type ShikiHighlighterSessionOptions = Omit<
   readonly textSnapshot?: DocumentTextSnapshot
   readonly lang: string
   readonly theme: string
-  readonly themeRegistration?: ShikiWorkerThemeRegistration
-  readonly langs?: readonly string[]
-  readonly themes?: readonly string[]
+  readonly registrations: Promise<ShikiResolvedRegistrations> | ShikiResolvedRegistrations
+  readonly preloadRegistrations?: ShikiPreloadRegistrationSource
 }
 
 export type ShikiThemeOptions = {
   readonly theme: string
-  readonly themeRegistration?: ShikiWorkerThemeRegistration
-  readonly themes?: readonly string[]
+  readonly registrations: Promise<ShikiResolvedRegistrations> | ShikiResolvedRegistrations
+  readonly preloadRegistrations?: ShikiPreloadRegistrationSource
 }
 
 type PendingRequest = {
@@ -103,20 +119,34 @@ export class ShikiWorkerOwner {
   public async loadTheme(options: ShikiThemeOptions): Promise<EditorTheme | null | undefined> {
     if (!this.canUseWorker()) return undefined
 
-    const key = shikiThemeRequestKey(options)
+    const registrations = await options.registrations
+    const key = shikiThemeRequestKey(options.theme, registrations)
     const existing = this.themeRequests.get(key)
     if (existing) return existing
 
-    const request = requestShikiTheme(this, options).catch((error) => {
+    const request = requestShikiTheme(this, options.theme, registrations).catch((error) => {
       this.themeRequests.delete(key)
       throw error
     })
     this.themeRequests.set(key, request)
-    return request
+    const theme = await request
+    scheduleRegistrationPreload(this, options.preloadRegistrations)
+    return theme
   }
 
   public request(payload: ShikiWorkerRequestPayload): Promise<ShikiWorkerResult | undefined> {
     return this.postRequest(payload, true)
+  }
+
+  public preload(registrations: ShikiPreloadRegistrations): Promise<void> {
+    return this.postRequest(
+      {
+        type: 'preload',
+        languageRegistrations: registrations.languageRegistrations,
+        themeRegistrations: registrations.themeRegistrations,
+      },
+      false,
+    ).then(() => undefined)
   }
 
   public disposeDocument(documentId: string): void {
@@ -241,11 +271,11 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
   private readonly documentId: string
   private readonly lang: string
   private readonly theme: string
-  private readonly themeRegistration: ShikiWorkerThemeRegistration | undefined
-  private readonly langs: readonly string[]
-  private readonly themes: readonly string[]
+  private readonly registrations: Promise<ShikiResolvedRegistrations>
+  private readonly preloadRegistrations: ShikiPreloadRegistrationSource | null
   private snapshot: PieceTableSnapshot
   private textSnapshot: DocumentTextSnapshot
+  private preloadScheduled = false
   private opened = false
   private disposed = false
   private task: Promise<void> = Promise.resolve()
@@ -257,9 +287,8 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     this.documentId = options.documentId
     this.lang = options.lang
     this.theme = options.theme
-    this.themeRegistration = options.themeRegistration
-    this.langs = options.langs ?? []
-    this.themes = options.themes ?? []
+    this.registrations = Promise.resolve(options.registrations)
+    this.preloadRegistrations = options.preloadRegistrations ?? null
     this.snapshot = options.snapshot
     this.textSnapshot =
       options.textSnapshot ?? createDocumentTextSnapshot(options.snapshot, options.fullText)
@@ -276,11 +305,12 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       const documentText = textSnapshot.materializeFullText()
       const result = await this.owner.request({
         type: 'open',
-        ...this.documentOptions(documentText),
+        ...(await this.documentOptions(documentText)),
         text: documentText,
       })
       if (this.disposed) return emptyHighlightResult()
 
+      this.schedulePreload()
       this.snapshot = snapshot
       this.textSnapshot = textSnapshot
       this.opened = true
@@ -294,10 +324,11 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
     return this.enqueueRequest(async () => {
       const nextTextSnapshot = documentSessionChangeTextSnapshot(change)
-      const payload = this.editPayloadForChange(change, nextTextSnapshot)
+      const payload = await this.editPayloadForChange(change, nextTextSnapshot)
       const result = await this.owner.request(payload)
       if (this.disposed) return emptyHighlightResult()
 
+      this.schedulePreload()
       this.snapshot = change.snapshot
       this.textSnapshot = nextTextSnapshot
       this.opened = true
@@ -325,15 +356,15 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     return result
   }
 
-  private editPayloadForChange(
+  private async editPayloadForChange(
     change: DocumentSessionChange,
     nextTextSnapshot: DocumentTextSnapshot,
-  ): ShikiWorkerRequestPayload {
+  ): Promise<ShikiWorkerRequestPayload> {
     const edit = incrementalEditForChange(this.snapshot, change)
     if (edit && this.opened && !this.disposed) {
       return {
         type: 'edit',
-        ...this.documentOptions(),
+        ...(await this.documentOptions()),
         edit,
       }
     }
@@ -343,21 +374,30 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       createTextDiffEdit(this.textSnapshot.materializeFullText(), text) ?? undefined
     return {
       type: 'edit',
-      ...this.documentOptions(text),
+      ...(await this.documentOptions(text)),
       edit: fallbackEdit,
     }
   }
 
-  private documentOptions(text?: string): ShikiWorkerDocumentOptions {
+  private async documentOptions(text?: string): Promise<ShikiWorkerDocumentOptions> {
+    const registrations = await this.registrations
     return {
       documentId: this.documentId,
       lang: this.lang,
       theme: this.theme,
-      themeRegistration: this.themeRegistration,
+      languageRegistrations: registrations.languageRegistrations,
+      themeRegistration: registrations.themeRegistration,
+      themeRegistrations: registrations.themeRegistrations,
       text,
-      langs: this.langs,
-      themes: this.themes,
     }
+  }
+
+  private schedulePreload(): void {
+    if (this.disposed) return
+    if (this.preloadScheduled) return
+
+    this.preloadScheduled = true
+    scheduleRegistrationPreload(this.owner, this.preloadRegistrations)
   }
 }
 
@@ -411,31 +451,43 @@ const incrementalEditForChange = (snapshot: PieceTableSnapshot, change: Document
 
 async function requestShikiTheme(
   owner: ShikiWorkerOwner,
-  options: ShikiThemeOptions,
+  theme: string,
+  registrations: ShikiResolvedRegistrations,
 ): Promise<EditorTheme | null | undefined> {
   const result = await owner.request({
     type: 'theme',
-    theme: options.theme,
-    themeRegistration: options.themeRegistration,
-    themes: options.themes ?? [],
+    theme,
+    themeRegistration: registrations.themeRegistration,
+    themeRegistrations: registrations.themeRegistrations,
   })
   return result?.theme
 }
 
-function shikiThemeRequestKey(options: ShikiThemeOptions): string {
+function shikiThemeRequestKey(theme: string, registrations: ShikiResolvedRegistrations): string {
   return JSON.stringify({
-    theme: options.theme,
-    themeRegistration: themeRegistrationKey(options.themeRegistration),
-    themes: (options.themes ?? []).toSorted(),
+    theme,
+    themeRegistration: themeRegistrationKey(registrations.themeRegistration),
+    themeRegistrations: registrations.themeRegistrations.map(themeRegistrationKey).toSorted(),
   })
 }
 
-function themeRegistrationKey(registration: ShikiWorkerThemeRegistration | undefined): string {
-  if (!registration) return ''
+function themeRegistrationKey(registration: ShikiWorkerThemeRegistration): string {
   if (!registration.name) {
     throw new Error('Shiki theme registrations require a non-empty name')
   }
-  return registration.name
+  return JSON.stringify(registration)
+}
+
+function scheduleRegistrationPreload(
+  owner: ShikiWorkerOwner,
+  registrations: ShikiPreloadRegistrationSource | null | undefined,
+): void {
+  if (!registrations) return
+
+  const resolved = typeof registrations === 'function' ? registrations() : registrations
+  void Promise.resolve(resolved)
+    .then((resolved) => owner.preload(resolved))
+    .catch(() => undefined)
 }
 
 function workerRequestError(error: unknown): Error {

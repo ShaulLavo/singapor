@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   editorThemeFromVscodeTheme,
-  loadVscodeThemeRegistration,
   VSCODE_THEMES,
   type VscodeThemeDefinition,
 } from '../../src/shiki'
@@ -30,21 +29,6 @@ describe('VSCODE_THEMES registry', () => {
     expect(themeById('min-light').type).toBe('light')
     expect(themeById('houston').type).toBe('dark')
     expect(themeById('vesper').type).toBe('dark')
-  })
-
-  it('loads a registration for a sampled theme by definition and by name', async () => {
-    const byDefinition = await loadVscodeThemeRegistration(themeById('dark-plus'))
-    const byName = await loadVscodeThemeRegistration('snazzy-light')
-
-    expect(byDefinition.name).toBe('dark-plus')
-    expect(byDefinition.colors?.['editor.background']).toBeDefined()
-    expect(byName.type).toBe('light')
-  })
-
-  it('throws a clear error for unknown theme names', () => {
-    expect(() => loadVscodeThemeRegistration('not-a-theme')).toThrow(
-      'Unknown VSCode theme: not-a-theme',
-    )
   })
 })
 

@@ -11,8 +11,16 @@ describe('Shiki worker message types', () => {
         text: 'const value = 1;',
         lang: 'typescript',
         theme: 'github-dark',
-        langs: ['typescript'],
-        themes: ['github-dark'],
+        languageRegistrations: [
+          {
+            name: 'typescript',
+            patterns: [],
+            repository: {},
+            scopeName: 'source.ts',
+          },
+        ],
+        themeRegistration: { name: 'github-dark' },
+        themeRegistrations: [],
       },
     }
     const response: ShikiWorkerResponse = {

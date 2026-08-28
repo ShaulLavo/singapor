@@ -1,4 +1,11 @@
-import { createHighlighter, type HighlighterGeneric, type ThemeRegistrationAny } from 'shiki'
+import { createOnigurumaEngine } from '@shikijs/engine-oniguruma'
+import wasm from '@shikijs/engine-oniguruma/wasm-inlined'
+import {
+  createHighlighterCore,
+  type HighlighterGeneric,
+  type LanguageRegistration,
+  type ThemeRegistrationAny,
+} from 'shiki/core'
 import { createIncrementalTokenizer, type IncrementalTokenizer } from './tokenizer'
 import { snapshotToPackedEditorTokens } from './editor-tokens'
 import type { EditorTheme } from '../theme'
@@ -7,7 +14,9 @@ import { editorThemeFromShikiTheme, type ShikiThemeLike } from './theme-extract'
 import type {
   ShikiWorkerDocumentOptions,
   ShikiWorkerEditRequest,
+  ShikiWorkerLanguageRegistration,
   ShikiWorkerOpenRequest,
+  ShikiWorkerPreloadRequest,
   ShikiWorkerRequest,
   ShikiWorkerResponse,
   ShikiWorkerTransportResult,
@@ -19,7 +28,7 @@ type DocumentState = {
   readonly documentId: string
   readonly lang: string
   readonly theme: string
-  readonly themeRegistration?: ShikiWorkerThemeRegistration
+  readonly themeRegistration: ShikiWorkerThemeRegistration
   readonly highlighter: HighlighterGeneric<string, string>
   readonly tokenizer: IncrementalTokenizer
 }
@@ -57,6 +66,9 @@ const runRequest = (
   }
   if (payload.type === 'theme') {
     return loadTheme(payload)
+  }
+  if (payload.type === 'preload') {
+    return preloadRegistrations(payload)
   }
 
   disposeAll()
@@ -102,10 +114,7 @@ const openDocument = async (
     tokenizer,
   }
   documents.set(payload.documentId, state)
-  const result = resultFromState(state)
-  scheduleBackgroundLanguages(highlighter, payload.langs)
-
-  return result
+  return resultFromState(state)
 }
 
 const editDocument = async (
@@ -135,10 +144,10 @@ const openRequestFromEdit = (payload: ShikiWorkerEditRequest, text: string) => (
   documentId: payload.documentId,
   lang: payload.lang,
   theme: payload.theme,
+  languageRegistrations: payload.languageRegistrations,
   themeRegistration: payload.themeRegistration,
+  themeRegistrations: payload.themeRegistrations,
   text,
-  langs: payload.langs,
-  themes: payload.themes,
   type: 'open' as const,
 })
 
@@ -152,22 +161,26 @@ const openRequestFromEdit = (payload: ShikiWorkerEditRequest, text: string) => (
 const ensureHighlighter = async (
   options: ShikiWorkerDocumentOptions,
 ): Promise<HighlighterGeneric<string, string>> => {
-  const themes = highlighterThemes([options.theme, ...options.themes], options.themeRegistration)
-  const highlighter = await ensureHighlighterFor([options.lang], themes)
-  await ensureLanguages(highlighter, [options.lang])
+  const languages = uniqueLanguageRegistrations(options.languageRegistrations)
+  const themes = uniqueThemeRegistrations([
+    options.themeRegistration,
+    ...options.themeRegistrations,
+  ])
+  const highlighter = await ensureHighlighterFor(languages, themes)
+  await ensureLanguages(highlighter, languages)
 
   return highlighter
 }
 
 const ensureLanguages = async (
   highlighter: HighlighterGeneric<string, string>,
-  langs: readonly string[],
+  registrations: readonly ShikiWorkerLanguageRegistration[],
 ): Promise<void> => {
   const loaded = new Set(highlighter.getLoadedLanguages())
-  const missing = unique(langs).filter((lang) => lang.length > 0 && !loaded.has(lang))
+  const missing = registrations.filter((registration) => !loaded.has(registration.name))
   if (missing.length === 0) return
 
-  await highlighter.loadLanguage(...(missing as Parameters<typeof highlighter.loadLanguage>))
+  await highlighter.loadLanguage(...(missing as unknown as LanguageRegistration[]))
 }
 
 /**
@@ -180,46 +193,51 @@ const ensureLanguages = async (
  */
 const scheduleBackgroundLanguages = (
   highlighter: HighlighterGeneric<string, string>,
-  langs: readonly string[],
+  registrations: readonly ShikiWorkerLanguageRegistration[],
 ): void => {
-  if (langs.length === 0) return
+  if (registrations.length === 0) return
   if (backgroundLoaded.has(highlighter)) return
 
   backgroundLoaded.add(highlighter)
-  setTimeout(() => void ensureLanguages(highlighter, langs).catch(() => undefined), 1_000)
+  setTimeout(() => void ensureLanguages(highlighter, registrations).catch(() => undefined), 1_000)
 }
 
 const ensureHighlighterFor = (
-  langs: readonly string[],
-  themes: readonly (string | ShikiWorkerThemeRegistration)[],
+  languages: readonly ShikiWorkerLanguageRegistration[],
+  themes: readonly ShikiWorkerThemeRegistration[],
 ): Promise<HighlighterGeneric<string, string>> => {
   const key = highlighterKey(themes)
   const existing = highlighterPromises.get(key)
   if (existing) return existing
 
-  const promise = createHighlighter({
-    langs: [...langs],
-    themes: themes.map(highlighterThemeInput),
+  const promise = createHighlighterCore({
+    engine: createOnigurumaEngine(wasm),
+    langs: languages as unknown as LanguageRegistration[],
+    themes: themes as unknown as ThemeRegistrationAny[],
   }) as Promise<HighlighterGeneric<string, string>>
   highlighterPromises.set(key, promise)
   return promise
 }
 
-const highlighterThemes = (
-  themeNames: readonly string[],
-  registration: ShikiWorkerThemeRegistration | undefined,
-): (string | ShikiWorkerThemeRegistration)[] => {
-  const names = unique(themeNames.filter((name) => name !== registration?.name))
-  if (!registration) return names
-  return [registration, ...names]
-}
-
 const loadTheme = async (payload: ShikiWorkerThemeRequest): Promise<ShikiWorkerTransportResult> => {
-  const themes = highlighterThemes([payload.theme, ...payload.themes], payload.themeRegistration)
+  const themes = uniqueThemeRegistrations([
+    payload.themeRegistration,
+    ...payload.themeRegistrations,
+  ])
   const highlighter = await ensureHighlighterFor([], themes)
   return {
     theme: editorThemeFromHighlighter(highlighter, payload.theme, payload.themeRegistration),
   }
+}
+
+const preloadRegistrations = async (payload: ShikiWorkerPreloadRequest): Promise<undefined> => {
+  const themes = uniqueThemeRegistrations(payload.themeRegistrations)
+  const highlighter = await ensureHighlighterFor([], themes)
+  scheduleBackgroundLanguages(
+    highlighter,
+    uniqueLanguageRegistrations(payload.languageRegistrations),
+  )
+  return undefined
 }
 
 const resultFromState = (state: DocumentState): ShikiWorkerTransportResult => ({
@@ -264,22 +282,35 @@ function responseTransfers(response: ShikiWorkerResponse): Transferable[] {
 }
 
 /**
- * Themes only. Languages are loaded into whichever highlighter a theme set already has, so keying on
- * them too would build a second highlighter — and reload every grammar — for each new language.
+ * Themes only. Languages are loaded into whichever highlighter a theme-registration set already
+ * has, so keying on them too would rebuild and reload the whole grammar set for each document.
  */
-const highlighterKey = (themes: readonly (string | ShikiWorkerThemeRegistration)[]): string =>
-  JSON.stringify(themes.map(highlighterThemeKey).toSorted())
+const highlighterKey = (themes: readonly ShikiWorkerThemeRegistration[]): string =>
+  JSON.stringify(themes.map(themeRegistrationKey).toSorted())
 
-const highlighterThemeKey = (theme: string | ShikiWorkerThemeRegistration): string =>
-  typeof theme === 'string' ? theme : theme.name
+const themeRegistrationKey = (theme: ShikiWorkerThemeRegistration): string => JSON.stringify(theme)
 
-// Registrations arrive as plain JSON over postMessage; shiki accepts the same shape at runtime.
-const highlighterThemeInput = (
-  theme: string | ShikiWorkerThemeRegistration,
-): string | ThemeRegistrationAny =>
-  typeof theme === 'string' ? theme : (theme as ThemeRegistrationAny)
+const uniqueLanguageRegistrations = (
+  registrations: readonly ShikiWorkerLanguageRegistration[],
+): ShikiWorkerLanguageRegistration[] =>
+  uniqueBy(registrations, (registration) => `${registration.name}\u0000${registration.scopeName}`)
 
-const unique = (items: readonly string[]): string[] => Array.from(new Set(items))
+const uniqueThemeRegistrations = (
+  registrations: readonly ShikiWorkerThemeRegistration[],
+): ShikiWorkerThemeRegistration[] => uniqueBy(registrations, themeRegistrationKey)
+
+const uniqueBy = <T>(items: readonly T[], keyFor: (item: T) => string): T[] => {
+  const seen = new Set<string>()
+  const unique: T[] = []
+  for (const item of items) {
+    const key = keyFor(item)
+    if (seen.has(key)) continue
+
+    seen.add(key)
+    unique.push(item)
+  }
+  return unique
+}
 
 const createErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message
@@ -289,7 +320,7 @@ const createErrorMessage = (error: unknown): string => {
 function editorThemeFromHighlighter(
   highlighter: HighlighterGeneric<string, string>,
   themeName: string,
-  registration: ShikiWorkerThemeRegistration | undefined,
+  registration: ShikiWorkerThemeRegistration,
 ): EditorTheme | undefined {
   const getTheme = (highlighter as Partial<Pick<HighlighterGeneric<string, string>, 'getTheme'>>)
     .getTheme
@@ -298,7 +329,7 @@ function editorThemeFromHighlighter(
     if (theme) return editorThemeFromShikiTheme(theme)
   }
 
-  if (registration && registration.name === themeName) {
+  if (registration.name === themeName) {
     return editorThemeFromShikiTheme(registration)
   }
   return undefined

@@ -2,28 +2,31 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ShikiWorkerRequest, ShikiWorkerResponse } from '../../src/shiki/workerTypes'
 import { unpackEditorTokens } from '../../src/syntax/packedTokens'
 
-const createHighlighter = vi.hoisted(() => vi.fn())
+const createHighlighterCore = vi.hoisted(() => vi.fn())
+const createOnigurumaEngine = vi.hoisted(() => vi.fn(() => Promise.resolve('oniguruma')))
 
 /** What a real shiki highlighter exposes for loading grammars after construction. */
 function languageApi() {
   const loaded: string[] = []
   return {
     getLoadedLanguages: () => [...loaded],
-    loadLanguage: vi.fn(async (...langs: string[]) => {
-      loaded.push(...langs)
+    loadLanguage: vi.fn(async (...registrations: { readonly name: string }[]) => {
+      loaded.push(...registrations.map((registration) => registration.name))
     }),
   }
 }
 const createIncrementalTokenizer = vi.hoisted(() => vi.fn())
 
-vi.mock('shiki', () => ({ createHighlighter }))
+vi.mock('shiki/core', () => ({ createHighlighterCore }))
+vi.mock('@shikijs/engine-oniguruma', () => ({ createOnigurumaEngine }))
+vi.mock('@shikijs/engine-oniguruma/wasm-inlined', () => ({ default: 'wasm' }))
 vi.mock('../../src/shiki/tokenizer', () => ({ createIncrementalTokenizer }))
 
 describe('shiki worker', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.resetModules()
-    createHighlighter.mockReset()
+    createHighlighterCore.mockReset()
     createIncrementalTokenizer.mockReset()
     delete (globalThis as { self?: unknown }).self
   })
@@ -31,7 +34,7 @@ describe('shiki worker', () => {
   it('serializes thrown errors into failed worker responses', async () => {
     const postMessage = vi.fn()
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockRejectedValue(new Error('load failed'))
+    createHighlighterCore.mockRejectedValue(new Error('load failed'))
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
@@ -43,8 +46,6 @@ describe('shiki worker', () => {
           text: 'const value = 1;',
           lang: 'typescript',
           theme: 'github-dark',
-          langs: [],
-          themes: [],
         }),
       }),
     )
@@ -61,7 +62,7 @@ describe('shiki worker', () => {
     const dispose = vi.fn()
     const postMessage = vi.fn()
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ dispose, ...languageApi() })
+    createHighlighterCore.mockResolvedValue({ dispose, ...languageApi() })
     createIncrementalTokenizer.mockResolvedValue({
       tokenizer: { getSnapshot: () => ({ lines: [] }) },
     })
@@ -76,8 +77,6 @@ describe('shiki worker', () => {
           text: '',
           lang: 'typescript',
           theme: 'github-dark',
-          langs: [],
-          themes: [],
         }),
       }),
     )
@@ -101,7 +100,7 @@ describe('shiki worker', () => {
       },
     }))
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
+    createHighlighterCore.mockResolvedValue({ getTheme, ...languageApi() })
     createIncrementalTokenizer.mockResolvedValue({
       tokenizer: {
         getSnapshot: () => ({
@@ -128,8 +127,6 @@ describe('shiki worker', () => {
           text: '',
           lang: 'typescript',
           theme: 'github-light',
-          langs: [],
-          themes: [],
         }),
       }),
     )
@@ -177,7 +174,7 @@ describe('shiki worker', () => {
       fg: '#24292e',
     }))
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
+    createHighlighterCore.mockResolvedValue({ getTheme, ...languageApi() })
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
@@ -186,13 +183,16 @@ describe('shiki worker', () => {
       new MessageEvent('message', {
         data: request('theme', {
           theme: 'github-light',
-          themes: [],
         }),
       }),
     )
     await waitFor(() => postMessage.mock.calls.length > 0)
 
-    expect(createHighlighter).toHaveBeenCalledWith({ langs: [], themes: ['github-light'] })
+    expect(createHighlighterCore).toHaveBeenCalledWith({
+      engine: expect.any(Promise),
+      langs: [],
+      themes: [{ name: 'github-light' }],
+    })
     expect(postMessage).toHaveBeenCalledWith({
       id: 1,
       ok: true,
@@ -227,7 +227,7 @@ describe('shiki worker', () => {
       ],
     }))
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
+    createHighlighterCore.mockResolvedValue({ getTheme, ...languageApi() })
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
@@ -236,7 +236,6 @@ describe('shiki worker', () => {
       new MessageEvent('message', {
         data: request('theme', {
           theme: 'github-dark',
-          themes: [],
         }),
       }),
     )
@@ -285,7 +284,7 @@ describe('shiki worker', () => {
       ],
     }))
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme, ...languageApi() })
+    createHighlighterCore.mockResolvedValue({ getTheme, ...languageApi() })
     await import('../../src/shiki/shiki.worker')
 
     const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
@@ -294,7 +293,6 @@ describe('shiki worker', () => {
       new MessageEvent('message', {
         data: request('theme', {
           theme: 'github-dark',
-          themes: [],
         }),
       }),
     )
@@ -336,8 +334,42 @@ function request(
   type: ShikiWorkerRequest['payload']['type'],
   payload: Omit<ShikiWorkerRequest['payload'], 'type'>,
 ): ShikiWorkerRequest {
+  const values = payload as { readonly lang?: string; readonly theme?: string }
+  if (type === 'open' || type === 'edit') {
+    return {
+      id: 1,
+      payload: {
+        type,
+        ...payload,
+        languageRegistrations: [languageRegistration(values.lang ?? 'typescript')],
+        themeRegistration: themeRegistration(values.theme ?? 'github-dark'),
+        themeRegistrations: [],
+      } as unknown as ShikiWorkerRequest['payload'],
+    }
+  }
+  if (type === 'theme') {
+    return {
+      id: 1,
+      payload: {
+        type,
+        ...payload,
+        themeRegistration: themeRegistration(values.theme ?? 'github-dark'),
+        themeRegistrations: [],
+      } as unknown as ShikiWorkerRequest['payload'],
+    }
+  }
+
   return { id: 1, payload: { type, ...payload } as ShikiWorkerRequest['payload'] }
 }
+
+const languageRegistration = (name: string) => ({
+  name,
+  patterns: [],
+  repository: {},
+  scopeName: `source.${name}`,
+})
+
+const themeRegistration = (name: string) => ({ name })
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1000
@@ -353,12 +385,12 @@ async function waitFor(predicate: () => boolean): Promise<void> {
  * grammars, against 49–104 ms for the one grammar the document actually needs.
  */
 describe('shiki worker grammar loading', () => {
-  it('builds the highlighter with only the document language, and loads the rest behind the paint', async () => {
+  it('builds the highlighter with only the document registration before preload', async () => {
     const postMessage = vi.fn()
     const getTheme = vi.fn(() => ({ bg: '#ffffff', fg: '#24292e', colors: {} }))
     const api = languageApi()
     ;(globalThis as { self?: unknown }).self = { postMessage }
-    createHighlighter.mockResolvedValue({ getTheme, ...api })
+    createHighlighterCore.mockResolvedValue({ getTheme, ...api })
     createIncrementalTokenizer.mockResolvedValue({
       tokenizer: { getSnapshot: () => ({ lines: [] }) },
     })
@@ -373,17 +405,14 @@ describe('shiki worker grammar loading', () => {
           text: '',
           lang: 'typescript',
           theme: 'github-light',
-          langs: ['python', 'rust', 'go'],
-          themes: [],
         }),
       }),
     )
     await waitFor(() => postMessage.mock.calls.length > 0)
 
-    expect(createHighlighter).toHaveBeenCalledWith(
-      expect.objectContaining({ langs: ['typescript'] }),
+    expect(createHighlighterCore).toHaveBeenCalledWith(
+      expect.objectContaining({ langs: [languageRegistration('typescript')] }),
     )
-    // The preload set is scheduled, not awaited: the answer goes out first.
-    expect(api.loadLanguage).not.toHaveBeenCalledWith('python', 'rust', 'go')
+    expect(api.loadLanguage).toHaveBeenCalledWith(languageRegistration('typescript'))
   })
 })

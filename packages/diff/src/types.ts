@@ -92,10 +92,6 @@ export type DiffSyntaxBackend =
       readonly provider?: EditorHighlighterProvider | null
     }
   | {
-      readonly kind: 'shiki'
-      readonly shikiTheme?: string | (() => string)
-    }
-  | {
       readonly kind: 'tree-sitter'
       readonly provider?: EditorSyntaxProvider | null
     }

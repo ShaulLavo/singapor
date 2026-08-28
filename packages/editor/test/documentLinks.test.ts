@@ -13,6 +13,7 @@ function rows(lines: readonly string[]): EditorVisibleRowSnapshot[] {
       index,
       kind: 'text',
       primaryText: true,
+      firstWrapSegment: true,
       source: 'document',
       startOffset: offset,
       text,
@@ -80,6 +81,15 @@ describe('documentLinksInRows', () => {
     if (!row) throw new Error('fixture row missing')
 
     expect(documentLinksInRows([{ ...row, primaryText: false }])).toEqual([])
+  })
+
+  it('finds a link on a soft-wrap continuation', () => {
+    const [row] = rows(['https://example.com'])
+    if (!row) throw new Error('fixture row missing')
+
+    expect(documentLinksInRows([{ ...row, firstWrapSegment: false }])).toEqual([
+      { end: 19, start: 0, url: 'https://example.com' },
+    ])
   })
 })
 

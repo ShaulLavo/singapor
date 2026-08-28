@@ -356,7 +356,9 @@ export class EditorSyntaxController {
         configurationGeneration,
       )
     }
-    this.refreshStructuralSyntax(this.options.getDocumentVersion(), null)
+    const documentVersion = this.options.getDocumentVersion()
+    if (resetInitialHighlight) this.refresh(documentVersion, null)
+    else this.refreshStructuralSyntax(documentVersion, null)
     this.options.notifyChange(null)
     this.settlePlainInitialHighlightIfNeeded()
   }
@@ -365,17 +367,18 @@ export class EditorSyntaxController {
     return this.beginInitialHighlightReplacement('theme')
   }
 
-  completeThemeReplacement(configurationGeneration: number): void {
-    if (!this.options.getSession()) return
-    if (!this.pendingReplacementMatches('theme', configurationGeneration)) return
+  completeThemeReplacement(configurationGeneration: number): boolean {
+    if (!this.options.getSession()) return false
+    if (!this.pendingReplacementMatches('theme', configurationGeneration)) return false
 
     const status = this.lastInitialHighlightTerminalStatus ?? this.currentApplicableTerminalStatus()
-    if (status === null) return
+    if (status === null) return false
     this.commitInitialHighlightStatus(
       status,
       () => this.setTokens(this.currentTokens),
       configurationGeneration,
     )
+    return true
   }
 
   refreshHighlighterTheme(): void {
@@ -1021,8 +1024,9 @@ export class EditorSyntaxController {
       this.highlighterSession &&
       this.pendingReplacementMatches('syntax', configurationGeneration)
     ) {
+      const terminalStatus = this.lastInitialHighlightTerminalStatus ?? 'painted'
       this.commitInitialHighlightStatus(
-        'error',
+        terminalStatus,
         () => this.setTokens(this.currentTokens),
         configurationGeneration,
       )
@@ -1210,6 +1214,7 @@ export class EditorSyntaxController {
     const generation = this.advanceInitialHighlightConfigurationGeneration()
     this.pendingInitialHighlightReplacement = { generation, kind: replacement }
     this.initialHighlightState = 'loading'
+    this.initialHighlightPaintEmitted = false
     this.options.notifyInitialHighlightStatusChanged()
     return generation
   }
@@ -1259,6 +1264,8 @@ export class EditorSyntaxController {
     if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
 
     if (this.highlighterThemePending) {
+      this.lastInitialHighlightTerminalStatus = status
+      this.pendingInitialHighlightReplacement = null
       publish()
       this.pendingInitialHighlightThemeTerminal = {
         configurationGeneration,

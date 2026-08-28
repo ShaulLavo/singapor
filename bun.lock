@@ -68,7 +68,7 @@
     },
     "packages/editor": {
       "name": "@singapor/core",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "dependencies": {
         "@shikijs/themes": "4.2.0",
         "@tanstack/hotkeys": "0.8.0",

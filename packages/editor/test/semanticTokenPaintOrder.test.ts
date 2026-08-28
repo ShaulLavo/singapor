@@ -115,6 +115,7 @@ function snapshot(): EditorViewSnapshot {
     text: '',
     kind: 'text' as const,
     primaryText: true,
+    firstWrapSegment: true,
     top: row * ROW_HEIGHT,
     height: ROW_HEIGHT,
     leftSpacerWidth: 0,

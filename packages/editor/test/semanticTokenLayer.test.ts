@@ -139,6 +139,7 @@ function visibleRows(from: number, to: number): readonly EditorVisibleRowSnapsho
       text: '',
       kind: 'text',
       primaryText: true,
+      firstWrapSegment: true,
       top: row * 20,
       height: 20,
       leftSpacerWidth: 0,

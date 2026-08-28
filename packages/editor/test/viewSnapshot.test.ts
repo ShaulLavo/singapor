@@ -504,11 +504,14 @@ describe('editor view snapshot serialization', () => {
     wrappedView.setText('abcdefghij')
     wrappedView.setScrollMetrics(0, 80, 72)
     wrappedView.setSelection(8, 8)
-    const wrappedRows = snapshotHarnessFromView(
-      wrappedView,
-      'abcdefghij',
-    ).snapshot.toVisibleSnapshot()!.rows
-    expect(wrappedRows.map((row) => row.primaryText)).toEqual([true, false])
+    const wrappedSnapshot = snapshotHarnessFromView(wrappedView, 'abcdefghij').snapshot
+    const wrappedRows = wrappedSnapshot.visibleRows
+    expect(wrappedRows.map((row) => row.primaryText)).toEqual([true, true])
+    expect(wrappedRows.map((row) => row.firstWrapSegment)).toEqual([true, false])
+    expect(wrappedSnapshot.toVisibleSnapshot()!.rows.map((row) => row.firstWrapSegment)).toEqual([
+      true,
+      false,
+    ])
     expect(wrappedRows.map((row) => row.contentCursorLine)).toEqual([false, true])
     expect(wrappedRows.map((row) => row.gutterNumberCursorLine)).toEqual([false, false])
 
@@ -689,6 +692,7 @@ function snapshotHarness(
     text: 'logical row text must not enter the compact DTO',
     kind: 'text',
     primaryText: true,
+    firstWrapSegment: true,
     top: 0,
     height: 20,
     leftSpacerWidth: 12,
@@ -786,7 +790,8 @@ function snapshotHarnessFromView(
     endOffset: row.endOffset,
     text: row.text,
     kind: 'text',
-    primaryText: row.primaryText,
+    primaryText: row.source === 'document',
+    firstWrapSegment: row.primaryText,
     top: row.top,
     height: row.height,
     leftSpacerWidth: row.leftSpacerWidth,

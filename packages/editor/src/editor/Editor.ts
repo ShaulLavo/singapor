@@ -1113,7 +1113,8 @@ export class Editor {
     const replacementGeneration = this.syntax.beginThemeReplacement()
     this.configuredTheme = nextTheme
     this.applyResolvedTheme()
-    this.syntax.completeThemeReplacement(replacementGeneration)
+    const notified = this.syntax.completeThemeReplacement(replacementGeneration)
+    if (!notified) this.notifyViewContributions('tokens', null)
     this.log({
       action: 'editor.theme.changed',
       level: 'info',
@@ -2646,7 +2647,8 @@ export class Editor {
           endOffset: row.endOffset,
           text: row.text,
           kind: row.kind,
-          primaryText: row.primaryText,
+          primaryText: row.source === 'document',
+          firstWrapSegment: row.primaryText,
           top: row.top,
           height: row.height,
           leftSpacerWidth: row.leftSpacerWidth,

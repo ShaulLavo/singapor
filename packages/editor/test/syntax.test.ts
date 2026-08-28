@@ -129,7 +129,7 @@ describe('authoritative initial paint', () => {
     container.remove()
   })
 
-  it('resets provider replacement to loading without duplicating an initial event', async () => {
+  it('re-emits the authoritative paint after an asynchronous provider replacement', async () => {
     const result = deferred<EditorHighlightResult>()
     const events: EditorInitialPaintEvent[] = []
     const order: string[] = []
@@ -157,7 +157,10 @@ describe('authoritative initial paint', () => {
     result.resolve({ tokens: [] })
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('painted')
-    expect(events).toHaveLength(2)
+    expect(events.filter(isHighlightSettled).map((event) => event.status)).toEqual([
+      'plain',
+      'painted',
+    ])
 
     editor.dispose()
     container.remove()
@@ -365,7 +368,10 @@ describe('authoritative initial paint', () => {
     replacement.resolve({ tokens: [] })
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('painted')
-    expect(events.filter(isHighlightSettled)).toHaveLength(1)
+    expect(events.filter(isHighlightSettled).map((event) => event.status)).toEqual([
+      'plain',
+      'painted',
+    ])
 
     editor.dispose()
     container.remove()
@@ -398,6 +404,7 @@ describe('authoritative initial paint', () => {
     expect(editor.getState().initialHighlightStatus).toBe('loading')
     expect(events.filter(isHighlightSettled)).toHaveLength(1)
 
+    editor.setTheme({ backgroundColor: '#abcdef' })
     editor.edit({ from: 0, to: 0, text: 'x' })
     editor.setTokens([{ start: 1, end: 6, style: { color: '#00ff00' } }])
 
@@ -409,7 +416,10 @@ describe('authoritative initial paint', () => {
       status: 'painted',
       tokens: [[1, 6]],
     })
-    expect(events.filter(isHighlightSettled)).toHaveLength(1)
+    expect(events.filter(isHighlightSettled).map((event) => event.status)).toEqual([
+      'plain',
+      'painted',
+    ])
 
     editor.dispose()
     container.remove()
@@ -453,10 +463,15 @@ describe('authoritative initial paint', () => {
   it('keeps an initial applicable result live across a theme update', async () => {
     const initial = deferred<EditorHighlightResult>()
     const events: EditorInitialPaintEvent[] = []
+    const snapshots: Array<{
+      readonly foregroundColor: string | null
+      readonly status: EditorInitialHighlightStatus
+      readonly tokens: readonly [number, number][]
+    }> = []
     const container = document.createElement('div')
     document.body.appendChild(container)
     const editor = new Editor(container, {
-      plugins: [highlighterPlugin(highlighterSession(initial))],
+      plugins: [highlighterPlugin(highlighterSession(initial)), themeSnapshotPlugin(snapshots)],
       onInitialPaint: (event) => events.push(event),
     })
     editor.openDocument({ documentId: 'initial-theme.ts', languageId: 'typescript', text: TEXT })
@@ -464,6 +479,7 @@ describe('authoritative initial paint', () => {
 
     editor.setTheme({ foregroundColor: '#abcdef' })
     expect(editor.getState().initialHighlightStatus).toBe('loading')
+    expect(snapshots.at(-1)?.foregroundColor).toBe('#abcdef')
     initial.resolve({ tokens: [] })
     await nextTask()
 
@@ -474,7 +490,7 @@ describe('authoritative initial paint', () => {
     container.remove()
   })
 
-  it('refreshes theme and syntax configuration snapshots without repeating the initial event', async () => {
+  it('refreshes theme and syntax snapshots and re-emits after provider replacement', async () => {
     const initial = deferred<EditorHighlightResult>()
     const syntax = deferred<EditorSyntaxResult>()
     const events: EditorInitialPaintEvent[] = []
@@ -497,11 +513,12 @@ describe('authoritative initial paint', () => {
 
     editor.addPlugin(syntaxPlugin(syntaxSession(syntax)))
     await nextTask()
-    expect(editor.getState().initialHighlightStatus).toBe('loading')
+    expect(editor.getState().initialHighlightStatus).toBe('painted')
+    expect(events.filter(isHighlightSettled)).toHaveLength(2)
     syntax.resolve(createEmptySyntaxResult())
     await nextTask()
     expect(editor.getState().initialHighlightStatus).toBe('painted')
-    expect(events.filter(isHighlightSettled)).toHaveLength(1)
+    expect(events.filter(isHighlightSettled)).toHaveLength(2)
 
     editor.dispose()
     container.remove()
@@ -531,7 +548,7 @@ describe('authoritative initial paint', () => {
 
     expect(editor.getState().initialHighlightStatus).toBe('painted')
     expect(snapshots.slice(-2)).toEqual(['loading', 'painted'])
-    expect(events.filter(isHighlightSettled)).toHaveLength(1)
+    expect(events.filter(isHighlightSettled)).toHaveLength(2)
 
     editor.dispose()
     container.remove()
@@ -564,6 +581,77 @@ describe('authoritative initial paint', () => {
 
     editor.dispose()
     warn.mockRestore()
+    container.remove()
+  })
+
+  it('keeps highlighter paint authoritative when a structural replacement fails', async () => {
+    const replacementHighlight = deferred<EditorHighlightResult>()
+    const structure = deferred<EditorSyntaxResult>()
+    const events: EditorInitialPaintEvent[] = []
+    let refreshCount = 0
+    const highlighter: EditorHighlighterSession = {
+      refresh: () => {
+        refreshCount += 1
+        if (refreshCount === 1) return Promise.resolve({ tokens: [] })
+        return replacementHighlight.promise
+      },
+      applyChange: () => replacementHighlight.promise,
+      dispose: () => undefined,
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, {
+      plugins: [highlighterPlugin(highlighter)],
+      onInitialPaint: (event) => events.push(event),
+    })
+    editor.openDocument({
+      documentId: 'structural-failure.ts',
+      languageId: 'typescript',
+      text: TEXT,
+    })
+    await nextTask()
+
+    editor.addPlugin(syntaxPlugin(syntaxSession(structure)))
+    await nextTask()
+    structure.reject(new Error('structural parse failed'))
+    await nextTask()
+
+    expect(editor.getState().initialHighlightStatus).toBe('painted')
+    expect(events.filter(isHighlightSettled).map((event) => event.status)).toEqual([
+      'painted',
+      'painted',
+    ])
+
+    replacementHighlight.resolve({ tokens: [] })
+    await nextTask()
+    expect(editor.getState().initialHighlightStatus).toBe('painted')
+
+    editor.dispose()
+    warn.mockRestore()
+    container.remove()
+  })
+
+  it('refreshes highlighter tokens when syntax providers change', async () => {
+    const refresh = vi.fn(async () => ({ tokens: [] }))
+    const highlighter: EditorHighlighterSession = {
+      refresh,
+      applyChange: refresh,
+      dispose: () => undefined,
+    }
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, { plugins: [highlighterPlugin(highlighter)] })
+    editor.openDocument({ documentId: 'provider-refresh.ts', languageId: 'typescript', text: TEXT })
+    await nextTask()
+    expect(refresh).toHaveBeenCalledTimes(1)
+
+    editor.addPlugin(syntaxPlugin(syntaxSession(deferred<EditorSyntaxResult>())))
+    await nextTask()
+
+    expect(refresh).toHaveBeenCalledTimes(2)
+
+    editor.dispose()
     container.remove()
   })
 })

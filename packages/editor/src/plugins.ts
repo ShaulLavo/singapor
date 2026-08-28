@@ -277,7 +277,10 @@ export type EditorVisibleRowSnapshot = {
   readonly endOffset: number
   readonly text: string
   readonly kind: 'text'
+  /** Document-backed text, including soft-wrap continuations. */
   readonly primaryText: boolean
+  /** The first display segment of a document row. */
+  readonly firstWrapSegment: boolean
   readonly top: number
   readonly height: number
   readonly leftSpacerWidth: number
@@ -298,7 +301,10 @@ export type EditorVisibleRowSnapshotJSON = {
   readonly endOffset: number
   readonly text: string
   readonly kind: 'text'
+  /** Document-backed text, including soft-wrap continuations. */
   readonly primaryText: boolean
+  /** The first display segment of a document row. */
+  readonly firstWrapSegment: boolean
   readonly top: number
   readonly height: number
   readonly leftSpacerWidth: number
@@ -336,7 +342,8 @@ export type EditorVisiblePaintRowJSON = {
   readonly bufferRow: number
   readonly source: DisplayTextRowSource
   readonly injectedTextRowId: string | null
-  readonly primaryText: boolean
+  /** The first display segment of a document row. */
+  readonly firstWrapSegment: boolean
   readonly top: number
   readonly height: number
   readonly leftSpacerWidth: number

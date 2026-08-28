@@ -388,6 +388,7 @@ class EditorFixture {
       text: '',
       kind: 'text' as const,
       primaryText: true,
+      firstWrapSegment: true,
       top: index * ROW_HEIGHT,
       height: ROW_HEIGHT,
       leftSpacerWidth: 0,

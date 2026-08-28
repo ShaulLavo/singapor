@@ -116,6 +116,7 @@ function visibleRows(): EditorVisibleRowSnapshot[] {
       index,
       kind: 'text',
       primaryText: true,
+      firstWrapSegment: true,
       source: 'document',
       startOffset: offset,
       text,

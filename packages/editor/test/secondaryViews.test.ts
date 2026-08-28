@@ -100,6 +100,7 @@ function editorViewSnapshot(text: string): EditorViewSnapshot {
         text: 'alpha',
         kind: 'text',
         primaryText: true,
+        firstWrapSegment: true,
         top: 0,
         height: 20,
         leftSpacerWidth: 0,

@@ -14,6 +14,7 @@ function rows(lines: readonly string[]): EditorVisibleRowSnapshot[] {
       index,
       kind: 'text',
       primaryText: true,
+      firstWrapSegment: true,
       source: 'document',
       startOffset: offset,
       text,
@@ -76,6 +77,21 @@ describe('occurrenceHighlightRanges', () => {
     const ranges = occurrenceHighlightRanges([first, { ...second, primaryText: false }], 1)
 
     expect(ranges).toEqual([{ end: 5, start: 0 }])
+  })
+
+  it('finds the caret query and matches on soft-wrap continuations', () => {
+    const [first, second] = rows(['value', 'value'])
+    if (!first || !second) throw new Error('fixture rows missing')
+
+    const wrappedRows = [
+      { ...first, firstWrapSegment: false },
+      { ...second, firstWrapSegment: false },
+    ]
+
+    expect(occurrenceHighlightRanges(wrappedRows, 1)).toEqual([
+      { end: 5, start: 0 },
+      { end: 11, start: 6 },
+    ])
   })
 
   it('returns nothing when the caret is not on a word', () => {

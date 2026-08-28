@@ -308,6 +308,7 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
         text,
         kind: 'text',
         primaryText: true,
+        firstWrapSegment: true,
         top: 0,
         height: 20,
         leftSpacerWidth: 0,

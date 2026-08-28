@@ -433,6 +433,7 @@ function visibleRows(text: string): EditorViewSnapshot['visibleRows'] {
       text: text.slice(start, end),
       kind: 'text',
       primaryText: true,
+      firstWrapSegment: true,
       top: index * 20,
       height: 20,
       leftSpacerWidth: 0,

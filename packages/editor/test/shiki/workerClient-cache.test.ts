@@ -6,7 +6,12 @@ type ShikiWorkerOwner = ReturnType<WorkerClientModule['createShikiWorkerOwner']>
 
 type FakeWorkerRequest = {
   readonly id: number
-  readonly payload: { readonly theme?: string; readonly type: string }
+  readonly payload: {
+    readonly languageRegistrations?: readonly unknown[]
+    readonly theme?: string
+    readonly themeRegistrations?: readonly unknown[]
+    readonly type: string
+  }
 }
 
 const fakeWorkers: FakeWorker[] = []
@@ -65,14 +70,14 @@ describe('Shiki worker client theme cache', () => {
 
   it('shares in-flight and resolved theme requests', async () => {
     const owner = await loadWorkerOwner()
-    const first = owner.loadTheme({ theme: 'github-dark' })
-    const second = owner.loadTheme({ theme: 'github-dark' })
+    const first = owner.loadTheme(themeOptions())
+    const second = owner.loadTheme(themeOptions())
 
     await expect(Promise.all([first, second])).resolves.toEqual([
       { backgroundColor: 'github-dark' },
       { backgroundColor: 'github-dark' },
     ])
-    await owner.loadTheme({ theme: 'github-dark' })
+    await owner.loadTheme(themeOptions())
 
     expect(themeRequests()).toHaveLength(1)
   }, 20_000)
@@ -80,11 +85,11 @@ describe('Shiki worker client theme cache', () => {
   it('clears theme cache when the worker is disposed', async () => {
     const owner = await loadWorkerOwner()
 
-    await owner.loadTheme({ theme: 'github-dark' })
+    await owner.loadTheme(themeOptions())
     await owner.dispose()
     currentOwner = null
     const nextOwner = await loadWorkerOwner()
-    await nextOwner.loadTheme({ theme: 'github-dark' })
+    await nextOwner.loadTheme(themeOptions())
 
     expect(themeRequests()).toHaveLength(2)
   }, 20_000)
@@ -99,7 +104,7 @@ describe('Shiki worker client theme cache', () => {
       workerGeneration: 0,
     })
 
-    await owner.loadTheme({ theme: 'github-dark' })
+    await owner.loadTheme(themeOptions())
 
     expect(owner.inspect()).toMatchObject({
       lifecycle: 'ready',
@@ -122,7 +127,8 @@ describe('Shiki worker client theme cache', () => {
   it('creates a fresh worker after a worker error rejects in-flight requests', async () => {
     FakeWorker.autoResolve = false
     const owner = await loadWorkerOwner()
-    const theme = owner.loadTheme({ theme: 'github-dark' })
+    const theme = owner.loadTheme(themeOptions())
+    await flushMicrotasks()
     const firstWorker = fakeWorkerAt(0)
 
     firstWorker.onerror?.({ message: 'boom' } as ErrorEvent)
@@ -131,11 +137,57 @@ describe('Shiki worker client theme cache', () => {
     expect(firstWorker.isTerminated).toBe(true)
 
     FakeWorker.autoResolve = true
-    await expect(owner.loadTheme({ theme: 'github-dark' })).resolves.toEqual({
+    await expect(owner.loadTheme(themeOptions())).resolves.toEqual({
       backgroundColor: 'github-dark',
     })
 
     expect(fakeWorkers).toHaveLength(2)
+  }, 20_000)
+
+  it('posts resolved preloads only after the first document result', async () => {
+    FakeWorker.autoResolve = false
+    const owner = await loadWorkerOwner()
+    const preloadRegistrations = {
+      languageRegistrations: [
+        {
+          name: 'javascript',
+          patterns: [],
+          repository: {},
+          scopeName: 'source.js',
+        },
+      ],
+      themeRegistrations: [{ name: 'github-light' }],
+    }
+    const resolvePreload = vi.fn(() => preloadRegistrations)
+    const snapshot = createPieceTableSnapshot('const value = 1;')
+    const session = owner.createSession({
+      documentId: 'file.ts',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: resolvedRegistrations(),
+      preloadRegistrations: resolvePreload,
+      snapshot,
+      fullText: 'const value = 1;',
+    })
+    if (!session) throw new Error('missing Shiki highlighter session')
+
+    const highlight = session.refresh(snapshot, 'const value = 1;')
+    await flushMicrotasks()
+
+    const openRequest = requestOfType('open')
+    expect(openRequest.payload.languageRegistrations).toEqual(
+      resolvedRegistrations().languageRegistrations,
+    )
+    expect(resolvePreload).not.toHaveBeenCalled()
+    expect(fakeWorkerAt(0).messages).toHaveLength(1)
+
+    fakeWorkerAt(0).resolveRequest(openRequest, { tokens: [] })
+    await highlight
+    await flushMicrotasks()
+
+    expect(resolvePreload).toHaveBeenCalledOnce()
+    expect(requestOfType('preload').payload).toMatchObject(preloadRegistrations)
   }, 20_000)
 
   it('unpacks worker token buffers into indexed EditorToken arrays', async () => {
@@ -147,6 +199,7 @@ describe('Shiki worker client theme cache', () => {
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
+      registrations: resolvedRegistrations(),
       snapshot,
       fullText: 'const value = 1;',
     })
@@ -192,6 +245,7 @@ describe('Shiki worker client theme cache', () => {
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
+      registrations: resolvedRegistrations(),
       snapshot,
       fullText: 'const value = 1;',
     })
@@ -244,6 +298,25 @@ async function loadWorkerOwner(): Promise<ShikiWorkerOwner> {
   const client = await import('../../src/shiki/workerClient')
   currentOwner = client.createShikiWorkerOwner()
   return currentOwner
+}
+
+function themeOptions() {
+  return { theme: 'github-dark', registrations: resolvedRegistrations() }
+}
+
+function resolvedRegistrations() {
+  return {
+    languageRegistrations: [
+      {
+        name: 'typescript',
+        patterns: [],
+        repository: {},
+        scopeName: 'source.ts',
+      },
+    ],
+    themeRegistration: { name: 'github-dark' },
+    themeRegistrations: [],
+  }
 }
 
 function themeRequests(): FakeWorkerRequest[] {

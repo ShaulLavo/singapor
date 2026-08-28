@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { createHighlighter } from 'shiki'
 import { getEditorTokenIndex } from '../../src/editor/tokenIndex'
 
 import {
@@ -160,10 +161,15 @@ describe('shiki-to-editor integration', () => {
 
   it('tokenizes code through Shiki and produces valid EditorToken offsets', async () => {
     const code = 'const x = 1;\nconst y = 2;'
-    const { tokenizer, highlighter } = await createIncrementalTokenizer({
+    const highlighter = (await createHighlighter({
+      langs: ['typescript'],
+      themes: ['github-dark'],
+    })) as unknown as Parameters<typeof createIncrementalTokenizer>[0]['highlighter']
+    const { tokenizer } = await createIncrementalTokenizer({
       lang: 'typescript',
       theme: 'github-dark',
       code,
+      highlighter,
     })
     highlighters.push(highlighter)
 

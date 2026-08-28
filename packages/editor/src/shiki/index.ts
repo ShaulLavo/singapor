@@ -6,11 +6,7 @@ export {
   editorThemeToShikiTokenColors,
 } from './theme'
 export { editorThemeFromShikiTheme } from './theme-extract'
-export {
-  editorThemeFromVscodeTheme,
-  loadVscodeThemeRegistration,
-  VSCODE_THEMES,
-} from './vscode-themes'
+export { editorThemeFromVscodeTheme, VSCODE_THEMES } from './vscode-themes'
 export { canUseShikiWorker, createShikiWorkerOwner, ShikiWorkerOwner } from './workerClient'
 
 export { snapshotToEditorTokens, tokenLinesToEditorTokens } from './editor-tokens'
@@ -26,7 +22,12 @@ export type {
   TokenLineSnapshot,
   TokenPatch,
 } from './tokenizer'
-export type { ShikiHighlighterPluginOptions, ShikiLanguageMap } from './plugin'
+export type {
+  ShikiHighlighterPluginOptions,
+  ShikiLanguageMap,
+  ShikiLanguageRegistrationResolver,
+  ShikiThemeRegistrationResolver,
+} from './plugin'
 export type {
   EditorShikiSyntaxScopeMapping,
   EditorShikiTheme,
@@ -36,9 +37,11 @@ export type {
 } from './theme'
 export type { ShikiThemeLike } from './theme-extract'
 export type { VscodeThemeDefinition, VscodeThemeRegistration } from './vscode-themes'
-export type { ShikiWorkerThemeRegistration } from './workerTypes'
+export type { ShikiWorkerLanguageRegistration, ShikiWorkerThemeRegistration } from './workerTypes'
 export type {
   ShikiHighlighterSessionOptions,
+  ShikiPreloadRegistrations,
+  ShikiResolvedRegistrations,
   ShikiThemeOptions,
   ShikiWorkerCacheSnapshot,
   ShikiWorkerLifecycleState,

@@ -12,14 +12,22 @@ export type ShikiWorkerThemeRegistration = {
   readonly settings?: readonly EditorShikiThemeSettingLike[]
 }
 
+export type ShikiWorkerLanguageRegistration = {
+  readonly name: string
+  readonly scopeName: string
+  readonly aliases?: readonly string[]
+  readonly patterns?: readonly unknown[]
+  readonly repository?: Readonly<Record<string, unknown>>
+}
+
 export type ShikiWorkerDocumentOptions = {
   readonly documentId: string
   readonly lang: string
   readonly theme: string
-  readonly themeRegistration?: ShikiWorkerThemeRegistration
+  readonly languageRegistrations: readonly ShikiWorkerLanguageRegistration[]
+  readonly themeRegistration: ShikiWorkerThemeRegistration
+  readonly themeRegistrations: readonly ShikiWorkerThemeRegistration[]
   readonly text?: string
-  readonly langs: readonly string[]
-  readonly themes: readonly string[]
 }
 
 export type ShikiWorkerOpenRequest = ShikiWorkerDocumentOptions & {
@@ -44,8 +52,14 @@ type ShikiWorkerDisposeRequest = {
 export type ShikiWorkerThemeRequest = {
   readonly type: 'theme'
   readonly theme: string
-  readonly themeRegistration?: ShikiWorkerThemeRegistration
-  readonly themes: readonly string[]
+  readonly themeRegistration: ShikiWorkerThemeRegistration
+  readonly themeRegistrations: readonly ShikiWorkerThemeRegistration[]
+}
+
+export type ShikiWorkerPreloadRequest = {
+  readonly type: 'preload'
+  readonly languageRegistrations: readonly ShikiWorkerLanguageRegistration[]
+  readonly themeRegistrations: readonly ShikiWorkerThemeRegistration[]
 }
 
 export type ShikiWorkerRequestPayload =
@@ -53,6 +67,7 @@ export type ShikiWorkerRequestPayload =
   | ShikiWorkerEditRequest
   | ShikiWorkerDisposeDocumentRequest
   | ShikiWorkerDisposeRequest
+  | ShikiWorkerPreloadRequest
   | ShikiWorkerThemeRequest
 
 export type ShikiWorkerResult = {

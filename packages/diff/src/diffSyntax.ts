@@ -20,8 +20,6 @@ import type { DiffFile, DiffRenderRow, DiffSyntaxBackend } from './types'
 type DiffSyntaxSide = 'old' | 'new' | 'stacked'
 type DiffSyntaxSourceSide = 'old' | 'new'
 
-const DEFAULT_THEME = 'github-dark'
-let shikiModulePromise: Promise<typeof import('@singapor/core/shiki')> | null = null
 let nextSyntaxControllerId = 0
 
 export type DiffSyntaxTokenSource = {
@@ -133,7 +131,7 @@ export class DiffSyntaxController {
     context: EditorSecondaryWorkContext,
     sessions: { dispose(): void }[],
   ): Promise<readonly DiffSyntaxTokenSource[] | null> {
-    const service = await diffSyntaxService(diffSyntaxBackend(this.options.backend), file)
+    const service = await diffSyntaxService(diffSyntaxBackend(this.options.backend))
     if (!service) return null
 
     // Registered before the staleness check, and disposed here if the check fails. Creating a
@@ -257,13 +255,9 @@ type DiffSyntaxServiceSession = {
   dispose(): void
 }
 
-async function diffSyntaxService(
-  backend: DiffSyntaxBackend,
-  file: DiffFile,
-): Promise<DiffSyntaxService | null> {
+function diffSyntaxService(backend: DiffSyntaxBackend): DiffSyntaxService | null {
   if (backend.kind === 'tree-sitter') return treeSitterDiffSyntaxService(backend.provider ?? null)
-  if (backend.kind === 'highlighter') return highlighterDiffSyntaxService(backend.provider ?? null)
-  return shikiDiffSyntaxService(file, backend)
+  return highlighterDiffSyntaxService(backend.provider ?? null)
 }
 
 function highlighterDiffSyntaxService(
@@ -307,49 +301,6 @@ function treeSitterDiffSyntaxSession(
     dispose: () => session.dispose(),
     refresh: () => session.refresh(document.request.snapshot, document.text),
   }
-}
-
-async function shikiDiffSyntaxService(
-  file: DiffFile,
-  backend: Extract<DiffSyntaxBackend, { readonly kind: 'shiki' }>,
-): Promise<DiffSyntaxService | null> {
-  const shiki = await loadShikiModule()
-  if (!shiki.canUseShikiWorker()) return null
-
-  const lang = shikiLanguageForFile(file)
-  if (!lang) return null
-
-  const themeName = shikiThemeName(backend.shikiTheme)
-  const owner = shiki.createShikiWorkerOwner()
-
-  return {
-    dispose: () => {
-      void owner.dispose().catch(() => undefined)
-    },
-    createSession: async (document) => {
-      const session = owner.createSession({
-        ...highlighterSessionOptions(document),
-        lang,
-        langs: [lang],
-        theme: themeName,
-        themes: [themeName],
-      })
-      if (!session) return null
-
-      return tokenHighlighterDiffSyntaxSession(document, session)
-    },
-  }
-}
-
-function loadShikiModule(): Promise<typeof import('@singapor/core/shiki')> {
-  // A rejected promise must not be what the cache holds. One failed chunk load would otherwise be
-  // replayed to every later `setFile` for the lifetime of the page, so a transient network blip
-  // would turn shiki highlighting off permanently rather than for one file.
-  shikiModulePromise ??= import('@singapor/core/shiki').catch((error: unknown) => {
-    shikiModulePromise = null
-    throw error
-  })
-  return shikiModulePromise
 }
 
 function tokenHighlighterDiffSyntaxSession(
@@ -408,11 +359,6 @@ function syntaxResultFromTokens(
     }),
     tokens,
   }
-}
-
-function shikiThemeName(theme: string | (() => string) | undefined): string {
-  if (typeof theme === 'function') return theme()
-  return theme ?? DEFAULT_THEME
 }
 
 /**

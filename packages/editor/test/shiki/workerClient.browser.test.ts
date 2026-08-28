@@ -5,7 +5,11 @@ import {
   type DocumentSessionChange,
 } from '../../src'
 
-import { createShikiWorkerOwner, type ShikiWorkerOwner } from '../../src/shiki'
+import {
+  createShikiWorkerOwner,
+  type ShikiResolvedRegistrations,
+  type ShikiWorkerOwner,
+} from '../../src/shiki'
 
 const createChange = (text: string, edit: { from: number; to: number; text: string }) =>
   ((snapshot = createPieceTableSnapshot(text)) => ({
@@ -41,6 +45,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
+      registrations: resolveRegistrations(),
       fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
@@ -55,7 +60,10 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
   })
 
   it('loads theme colors without a highlighter session', async () => {
-    const theme = await workerOwner.loadTheme({ theme: 'github-dark' })
+    const theme = await workerOwner.loadTheme({
+      theme: 'github-dark',
+      registrations: resolveRegistrations(),
+    })
 
     expect(theme?.backgroundColor).toBeTruthy()
     expect(theme?.foregroundColor).toBeTruthy()
@@ -69,6 +77,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
+      registrations: resolveRegistrations(),
       fullText: initialText,
       snapshot: createPieceTableSnapshot(initialText),
     })
@@ -93,6 +102,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
+      registrations: resolveRegistrations(),
       fullText: initialText,
       snapshot: createPieceTableSnapshot(initialText),
     })
@@ -115,6 +125,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
+      registrations: resolveRegistrations(),
       fullText: text,
       snapshot: createPieceTableSnapshot(text),
     })
@@ -130,6 +141,7 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
       languageId: 'typescript',
       lang: 'typescript',
       theme: 'github-dark',
+      registrations: resolveRegistrations(),
       fullText: nextText,
       snapshot: createPieceTableSnapshot(nextText),
     })
@@ -142,3 +154,15 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     nextSession!.dispose()
   })
 })
+
+async function resolveRegistrations(): Promise<ShikiResolvedRegistrations> {
+  const [language, theme] = await Promise.all([
+    import('@shikijs/langs/typescript'),
+    import('@shikijs/themes/github-dark'),
+  ])
+  return {
+    languageRegistrations: language.default,
+    themeRegistration: theme.default,
+    themeRegistrations: [],
+  }
+}

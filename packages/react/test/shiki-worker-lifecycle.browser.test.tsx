@@ -12,7 +12,13 @@ type WorkerKind = 'shiki' | 'tree-sitter' | 'unknown'
 
 const liveWorkers = new Map<Worker, WorkerKind>()
 const createdWorkers = new Map<WorkerKind, number>()
-const STRICT_MODE_PLUGINS = [createTypeScriptPlugin(), createShikiHighlighterPlugin()]
+const STRICT_MODE_PLUGINS = [
+  createTypeScriptPlugin(),
+  createShikiHighlighterPlugin({
+    resolveLanguage: async () => (await import('@shikijs/langs/typescript')).default,
+    resolveTheme: async () => (await import('@shikijs/themes/github-dark')).default,
+  }),
+]
 let root: Root | null = null
 
 describe('Shiki worker ownership', () => {

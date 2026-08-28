@@ -80,6 +80,7 @@ function entryName(exportPath: string, source: string): string {
 }
 
 async function buildJavaScript(): Promise<void> {
+  const inlineWorkerEntries = new Set<string>()
   await build({
     assetsInclude: ['**/*.wasm'],
     build: {
@@ -106,7 +107,7 @@ async function buildJavaScript(): Promise<void> {
     },
     configFile: false,
     logLevel: 'warn',
-    plugins: [externalizeCssImports(), inlineModuleWorkers()],
+    plugins: [externalizeCssImports(), inlineModuleWorkers(inlineWorkerEntries)],
     publicDir: false,
     root: packageDir,
     worker: {
@@ -116,6 +117,7 @@ async function buildJavaScript(): Promise<void> {
       },
     },
   })
+  await assertInlineWorkersHaveNoSiblingChunks(inlineWorkerEntries)
 }
 
 function externalDependency(id: string, importer?: string): boolean {
@@ -169,16 +171,52 @@ function externalizeCssImports(): Plugin {
   }
 }
 
-function inlineModuleWorkers(): Plugin {
+function inlineModuleWorkers(inlineWorkerEntries: Set<string>): Plugin {
   return {
     name: 'singapor-inline-module-workers',
     enforce: 'pre',
     transform(code, id) {
       if (!isTypeScriptModule(id)) return null
 
-      return inlineModuleWorkerImports(code)
+      const transformed = inlineModuleWorkerImports(code)
+      if (!transformed) return null
+
+      for (const workerPath of moduleWorkerPaths(code)) {
+        inlineWorkerEntries.add(`${id} -> ${workerPath}`)
+      }
+      return transformed
     },
   }
+}
+
+async function assertInlineWorkersHaveNoSiblingChunks(
+  inlineWorkerEntries: ReadonlySet<string>,
+): Promise<void> {
+  if (manifest.name !== '@singapor/core') return
+  if (inlineWorkerEntries.size === 0) return
+
+  const assetsDirectory = path.join(distRoot, 'assets')
+  const chunks = await readdir(assetsDirectory, { withFileTypes: true })
+    .then((entries) =>
+      entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.js'))
+        .map((entry) => path.join('assets', entry.name))
+        .toSorted(),
+    )
+    .catch((error: unknown) => {
+      if (isMissingPathError(error)) return []
+      throw error
+    })
+  if (chunks.length === 0) return
+
+  const workers = Array.from(inlineWorkerEntries).toSorted()
+  throw new Error(
+    `Inline workers must be self-contained.\nWorkers:\n${workers.join('\n')}\nSibling chunks:\n${chunks.join('\n')}`,
+  )
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
 }
 
 function isTypeScriptModule(id: string): boolean {
@@ -206,6 +244,10 @@ function inlineModuleWorkerImports(
 
 function workerConstructorPattern(): RegExp {
   return /new\s+Worker\s*\(\s*new\s+URL\s*\(\s*['"](\.\/[^'"]+\.worker\.ts)['"]\s*,\s*import\.meta\.url\s*\)\s*,\s*\{\s*type\s*:\s*['"]module['"]\s*,?\s*\}\s*\)/g
+}
+
+function moduleWorkerPaths(code: string): readonly string[] {
+  return Array.from(code.matchAll(workerConstructorPattern()), (match) => match[1]!).filter(Boolean)
 }
 
 function workerIdentifier(index: number): string {

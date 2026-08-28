@@ -10,6 +10,8 @@ import type {
 import {
   createShikiHighlighterPlugin,
   createShikiHighlighterProvider,
+  type ShikiHighlighterPluginOptions,
+  type ShikiHighlighterSessionOptions,
   type ShikiWorkerOwner,
 } from '../../src/shiki'
 
@@ -56,7 +58,7 @@ describe('createShikiHighlighterPlugin', () => {
   })
 
   it('keeps the source extension when a secondary view adds a document fragment', () => {
-    const provider = createShikiHighlighterProvider()
+    const provider = createShikiHighlighterProvider(pluginOptions())
     const text = 'const el = <div />'
 
     provider.createSession({
@@ -70,7 +72,7 @@ describe('createShikiHighlighterPlugin', () => {
   })
 
   it('creates a provider that can be shared without activating an editor plugin', () => {
-    const provider = createShikiHighlighterProvider()
+    const provider = createShikiHighlighterProvider(pluginOptions())
     const text = 'const value = 1'
 
     provider.createSession({
@@ -163,12 +165,14 @@ describe('createShikiHighlighterPlugin', () => {
     }
 
     const disposables = toDisposables(
-      createShikiHighlighterPlugin({
-        onThemeChanged: (nextListener) => {
-          listener = nextListener
-          return unsubscribe
-        },
-      }).activate(context as EditorPluginContext),
+      createShikiHighlighterPlugin(
+        pluginOptions({
+          onThemeChanged: (nextListener) => {
+            listener = nextListener
+            return unsubscribe
+          },
+        }),
+      ).activate(context as EditorPluginContext),
     )
 
     expect(registrations).toHaveLength(1)
@@ -228,14 +232,15 @@ describe('createShikiHighlighterPlugin', () => {
     expect(workerOwner.dispose).not.toHaveBeenCalled()
   })
 
-  it('passes inline theme registrations through to worker sessions', () => {
+  it('passes resolved theme registrations through to worker sessions', async () => {
+    const themeRegistration = {
+      name: 'my-custom-theme',
+      colors: { 'editor.background': '#101010' },
+      tokenColors: [],
+    }
     const provider = activateHighlighterProvider({
       theme: 'my-custom-theme',
-      themeRegistration: {
-        name: 'my-custom-theme',
-        colors: { 'editor.background': '#101010' },
-        tokenColors: [],
-      },
+      resolveTheme: async () => themeRegistration,
     })
     const text = 'const value = 1'
 
@@ -246,33 +251,41 @@ describe('createShikiHighlighterPlugin', () => {
       snapshot: createPieceTableSnapshot(text),
     })
 
-    expect(workerOwner.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        theme: 'my-custom-theme',
-        themeRegistration: expect.objectContaining({ name: 'my-custom-theme' }),
-      }),
-    )
+    const call = workerOwner.createSession.mock.calls.at(-1) as unknown as
+      | [ShikiHighlighterSessionOptions]
+      | undefined
+    const options = call?.[0]
+    expect(options?.theme).toBe('my-custom-theme')
+    await expect(options?.registrations).resolves.toMatchObject({
+      themeRegistration: { name: 'my-custom-theme' },
+    })
   })
 
-  it('requires a non-empty name on inline theme registrations', () => {
+  it('requires a non-empty name on resolved theme registrations', async () => {
     const provider = activateHighlighterProvider({
-      themeRegistration: { name: '' },
+      resolveTheme: async () => ({ name: '' }),
     })
     const text = 'const value = 1'
 
-    expect(() =>
-      provider.createSession({
-        documentId: 'index.ts',
-        languageId: 'typescript',
-        fullText: text,
-        snapshot: createPieceTableSnapshot(text),
-      }),
-    ).toThrow('Shiki theme registrations require a non-empty name')
+    provider.createSession({
+      documentId: 'index.ts',
+      languageId: 'typescript',
+      fullText: text,
+      snapshot: createPieceTableSnapshot(text),
+    })
+
+    const call = workerOwner.createSession.mock.calls.at(-1) as unknown as
+      | [ShikiHighlighterSessionOptions]
+      | undefined
+    const options = call?.[0]
+    await expect(options?.registrations).rejects.toThrow(
+      'Shiki theme registrations require a non-empty name',
+    )
   })
 })
 
 function activateHighlighterProvider(
-  options: Parameters<typeof createShikiHighlighterPlugin>[0] = {},
+  options: Partial<ShikiHighlighterPluginOptions> = {},
 ): EditorHighlighterProvider {
   let provider: EditorHighlighterProvider | null = null
   const context: Partial<EditorPluginContext> = {
@@ -282,21 +295,40 @@ function activateHighlighterProvider(
     },
   }
 
-  createShikiHighlighterPlugin(options).activate(context as EditorPluginContext)
+  createShikiHighlighterPlugin(pluginOptions(options)).activate(context as EditorPluginContext)
   if (!provider) throw new Error('Expected Shiki plugin to register a highlighter')
   return provider
 }
 
 function activateWithDisposables(
-  options: Parameters<typeof createShikiHighlighterPlugin>[0] = {},
+  options: Partial<ShikiHighlighterPluginOptions> = {},
 ): readonly EditorDisposable[] {
   const context: Partial<EditorPluginContext> = {
     registerHighlighter: () => ({ dispose: () => undefined }),
   }
 
   return toDisposables(
-    createShikiHighlighterPlugin(options).activate(context as EditorPluginContext),
+    createShikiHighlighterPlugin(pluginOptions(options)).activate(context as EditorPluginContext),
   )
+}
+
+function pluginOptions(
+  overrides: Partial<ShikiHighlighterPluginOptions> = {},
+): ShikiHighlighterPluginOptions {
+  return {
+    resolveLanguage: async (language) => [languageRegistration(language)],
+    resolveTheme: async (theme) => ({ name: theme }),
+    ...overrides,
+  }
+}
+
+function languageRegistration(name: string) {
+  return {
+    name,
+    patterns: [],
+    repository: {},
+    scopeName: `source.${name}`,
+  }
 }
 
 function toDisposables(result: ReturnType<EditorPlugin['activate']>): readonly EditorDisposable[] {

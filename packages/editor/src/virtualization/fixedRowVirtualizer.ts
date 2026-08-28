@@ -1297,9 +1297,7 @@ function createNativeScrollTopAccess(element: HTMLElement): {
       // now. Caching the request rather than the result strands a restored
       // offset at 0 forever: the spacer grows a frame later, and every retry
       // short-circuits because the cache already claims the write landed.
-      lastKnownValue = normalizeNativeScrollTop(
-        readNativeScrollTop(element, descriptor, nextValue),
-      )
+      lastKnownValue = normalizeNativeScrollTop(readNativeScrollTop(element, descriptor, nextValue))
     },
   }
 }

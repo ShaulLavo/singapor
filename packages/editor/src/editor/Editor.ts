@@ -21,6 +21,7 @@ import { EditorKeymapController } from './keymap'
 import { InputSelectionController } from './inputSelectionController'
 import { defaultRtlMoveVisually } from './navigationTargets'
 import { EditorSyntaxController } from './syntaxController'
+import { createEditorViewSnapshot } from './viewSnapshot'
 import {
   DocumentEditChain,
   type DocumentLogicalRevisionScope,
@@ -468,6 +469,8 @@ export class Editor {
     this.syntax = new EditorSyntaxController({
       pluginHost: this.pluginHost,
       getDocumentVersion: () => this.documentVersion,
+      getDocumentId: () => this.documentId,
+      getTextVersion: () => this.textVersion,
       getCurrentSessionDocumentId: () => this.currentSessionDocumentId(),
       getLanguageId: () => this.languageId,
       getSession: () => this.session,
@@ -481,6 +484,8 @@ export class Editor {
       setSyntaxCaptures: (captures) => this.setSyntaxCaptures(captures),
       needsSyntaxCaptures: () => this.inlineReplacementProviders().length > 0,
       notifyChange: (change) => this.notifyChange(change),
+      notifyInitialHighlightStatusChanged: () => this.notifyViewContributions('tokens', null),
+      onInitialPaint: (event) => this.options.onInitialPaint?.(event),
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
     })
@@ -976,6 +981,7 @@ export class Editor {
       editability: this.editability,
       languageId: this.languageId,
       syntaxStatus: this.syntaxStatus,
+      initialHighlightStatus: this.syntax.initialHighlightStatus,
       cursor: {
         row: point?.row ?? 0,
         column: point?.column ?? 0,
@@ -1104,9 +1110,11 @@ export class Editor {
     const nextTheme = theme ?? null
     if (editorThemesEqual(this.configuredTheme, nextTheme)) return
 
+    const replacementGeneration = this.syntax.beginThemeReplacement()
     this.configuredTheme = nextTheme
     this.applyResolvedTheme()
-    this.notifyViewContributions('tokens', null)
+    const notified = this.syntax.completeThemeReplacement(replacementGeneration)
+    if (!notified) this.notifyViewContributions('tokens', null)
     this.log({
       action: 'editor.theme.changed',
       level: 'info',
@@ -1301,6 +1309,7 @@ export class Editor {
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
+    this.syntax.notifyBaseTextPainted()
     this.notifyChange(null)
     this.refreshSyntax(attachment.documentVersion, null)
     this.lifecycleSummary.document.attachedCount += 1
@@ -1386,6 +1395,7 @@ export class Editor {
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
+    this.syntax.notifyBaseTextPainted()
     return attachment.documentVersion
   }
 
@@ -2594,51 +2604,71 @@ export class Editor {
         : this.view.getLineStartsView()
     this.lineStartsViewCache = { textVersion: this.textVersion, view: lineStartsView }
     const sync = this.currentDocumentEditChain()
-    return defineLazyFullTextProperty({
-      documentId: this.documentId,
-      languageId: this.languageId,
-      theme: this.resolvedTheme(),
-      textSnapshot,
-      textVersion: this.textVersion,
-      documentSyncPoint: sync.point,
-      changesSinceDocumentSyncPoint: (
-        point: DocumentSyncPoint,
-        scope: DocumentLogicalRevisionScope | null,
-      ) => sync.changesSince(point, scope),
-      // Materializing per snapshot costs O(lines) on every keystroke for
-      // large documents; consumers that need the array pay lazily instead.
-      get lineStarts() {
-        return lineStartsView.toArray()
-      },
-      lineStartsView,
-      tokens: this.tokens,
-      brackets: this.brackets,
-      selections: this.inputSelection.resolveViewSelections(),
-      metrics: viewState.metrics,
-      lineCount: viewState.lineCount,
-      contentWidth: viewState.contentWidth,
-      totalHeight: viewState.totalHeight,
-      // The width in effect, not the one the view lays tab characters out on: contributions divide
-      // an indent column by this to get a nesting level, so a guide has to be drawn one per level
-      // the document actually writes.
-      tabSize: this.tabSize,
-      foldMarkers: viewState.foldMarkers,
-      visibleRows: viewState.mountedRows.map((row) => ({
-        index: row.index,
-        bufferRow: row.bufferRow,
-        source: row.source,
-        injectedTextRowId: row.injectedTextRowId,
-        metadata: row.metadata,
-        startOffset: row.startOffset,
-        endOffset: row.endOffset,
-        text: row.text,
-        kind: row.kind,
-        primaryText: row.source === 'document',
-        top: row.top,
-        height: row.height,
-      })),
-      viewport,
-    })
+    return createEditorViewSnapshot(
+      defineLazyFullTextProperty({
+        documentId: this.documentId,
+        languageId: this.languageId,
+        theme: this.resolvedTheme(),
+        textSnapshot,
+        textVersion: this.textVersion,
+        initialHighlightStatus: this.syntax.initialHighlightStatus,
+        documentSyncPoint: sync.point,
+        changesSinceDocumentSyncPoint: (
+          point: DocumentSyncPoint,
+          scope: DocumentLogicalRevisionScope | null,
+        ) => sync.changesSince(point, scope),
+        // Materializing per snapshot costs O(lines) on every keystroke for
+        // large documents; consumers that need the array pay lazily instead.
+        get lineStarts() {
+          return lineStartsView.toArray()
+        },
+        lineStartsView,
+        tokens: this.tokens,
+        brackets: this.brackets,
+        selections: this.inputSelection.resolveViewSelections(),
+        metrics: viewState.metrics,
+        lineCount: viewState.lineCount,
+        contentWidth: viewState.contentWidth,
+        totalHeight: viewState.totalHeight,
+        gutterWidth: viewState.gutterWidth,
+        gutterLayout: viewState.gutterLayout,
+        // The width in effect, not the one the view lays tab characters out on: contributions divide
+        // an indent column by this to get a nesting level, so a guide has to be drawn one per level
+        // the document actually writes.
+        tabSize: this.tabSize,
+        foldMarkers: viewState.foldMarkers,
+        visibleRows: viewState.mountedRows.map((row) => ({
+          index: row.index,
+          bufferRow: row.bufferRow,
+          source: row.source,
+          injectedTextRowId: row.injectedTextRowId,
+          metadata: row.metadata,
+          startOffset: row.startOffset,
+          endOffset: row.endOffset,
+          text: row.text,
+          kind: row.kind,
+          primaryText: row.source === 'document',
+          firstWrapSegment: row.primaryText,
+          top: row.top,
+          height: row.height,
+          leftSpacerWidth: row.leftSpacerWidth,
+          contentCursorLine: row.cursorLineContentActive,
+          gutterNumberCursorLine: row.gutterNumberCursorLine,
+          gutterCursorLineBackgroundLaneIds: [...row.gutterCursorLineBackgroundLaneIds],
+          mountedPaintSupport: row.mountedPaintSupport,
+          chunks: row.chunks.map((chunk) => ({
+            sourceStartOffset: chunk.startOffset,
+            sourceEndOffset: chunk.endOffset,
+            rowLocalStart: chunk.localStart,
+            rowLocalEnd: chunk.localEnd,
+            text: chunk.text,
+            mountedPaint: chunk.mountedPaint,
+          })),
+          foldMarker: row.foldMarker,
+        })),
+        viewport,
+      }),
+    )
   }
 
   private notifyViewContributions(

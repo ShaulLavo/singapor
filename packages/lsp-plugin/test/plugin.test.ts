@@ -29,7 +29,7 @@ import type {
   LanguageServerRenamePrompt,
 } from '../src/types'
 import { connectedEditor, DOCUMENT_URI } from './connectedEditor'
-import { documentSyncSnapshotFields } from './documentSyncSnapshot'
+import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
 
 type JsonMessage = Record<string, unknown>
 type Listener = (event: Event) => void
@@ -782,6 +782,7 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
   }
   return {
     ...documentSyncSnapshotFields(1),
+    ...viewSnapshotStructuralFields(),
     documentId,
     languageId: 'markdown',
     fullText,

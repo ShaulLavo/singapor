@@ -1,12 +1,12 @@
 import { Editor } from '@singapor/core/editor'
-import type { EditorPlugin } from '@singapor/core/extensions'
+import type { EditorInitialPaintEvent, EditorPlugin } from '@singapor/core/extensions'
 import {
   createDocumentSession,
   createEditorTextBuffer,
   createEditorViewSession,
 } from '@singapor/core/document'
 import type { EditorResolvedSelection } from '@singapor/core/extensions'
-import { act, createElement, useLayoutEffect, type ReactElement } from 'react'
+import { act, createElement, StrictMode, useLayoutEffect, type ReactElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -76,6 +76,54 @@ describe('useEditor', () => {
     expect(mounted.controller.getState()).toBeNull()
     expect(mounted.controller.getSnapshot()).toBeNull()
     expect(mounted.controller.materializeFullText()).toBe('')
+  })
+
+  it('forwards each initial paint phase once per generation through the latest callback', async () => {
+    const firstEvents: EditorInitialPaintEvent[] = []
+    const secondEvents: EditorInitialPaintEvent[] = []
+    const mounted = mountReactEditor({
+      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      onInitialPaint: (event) => firstEvents.push(event),
+    })
+    await flushInitialPaintCallbacks()
+
+    expect(firstEvents.map((event) => event.phase)).toEqual(['text', 'highlight-settled'])
+    const firstGeneration = firstEvents[0]?.documentGeneration
+    expect(new Set(firstEvents.map((event) => event.documentGeneration))).toEqual(
+      new Set([firstGeneration]),
+    )
+
+    mounted.render({
+      document: { text: 'beta', documentId: 'b.ts', revision: 1 },
+      onInitialPaint: (event) => secondEvents.push(event),
+    })
+    await flushInitialPaintCallbacks()
+
+    expect(firstEvents).toHaveLength(2)
+    expect(secondEvents.map((event) => event.phase)).toEqual(['text', 'highlight-settled'])
+    expect(secondEvents[0]?.documentGeneration).not.toBe(firstGeneration)
+    expect(new Set(secondEvents.map((event) => event.documentGeneration))).toEqual(
+      new Set([secondEvents[0]?.documentGeneration]),
+    )
+
+    mounted.dispose()
+  })
+
+  it('drops paint callbacks from the disposable StrictMode editor incarnation', async () => {
+    const events: EditorInitialPaintEvent[] = []
+    const mounted = mountReactEditor(
+      {
+        document: { text: 'alpha', documentId: 'strict.ts', revision: 1 },
+        onInitialPaint: (event) => events.push(event),
+      },
+      true,
+    )
+    await flushInitialPaintCallbacks()
+
+    expect(events.map((event) => event.phase)).toEqual(['text', 'highlight-settled'])
+    expect(new Set(events.map((event) => event.documentGeneration)).size).toBe(1)
+
+    mounted.dispose()
   })
 
   it('syncs state and last change after editor commands', () => {
@@ -713,7 +761,7 @@ function SelectionProbe({
   return null
 }
 
-function mountReactEditor(options: ReactEditorOptions = {}): MountedEditor {
+function mountReactEditor(options: ReactEditorOptions = {}, strict = false): MountedEditor {
   let controller!: ReactEditorController
   const host = document.createElement('div')
   const root = createRoot(host)
@@ -721,14 +769,13 @@ function mountReactEditor(options: ReactEditorOptions = {}): MountedEditor {
 
   const render = (nextOptions: ReactEditorOptions): void => {
     act(() => {
-      root.render(
-        createElement(ReactEditorHarness, {
-          options: nextOptions,
-          onController: (nextController) => {
-            controller = nextController
-          },
-        }),
-      )
+      const harness = createElement(ReactEditorHarness, {
+        options: nextOptions,
+        onController: (nextController) => {
+          controller = nextController
+        },
+      })
+      root.render(strict ? createElement(StrictMode, null, harness) : harness)
     })
   }
 
@@ -745,6 +792,10 @@ function mountReactEditor(options: ReactEditorOptions = {}): MountedEditor {
       host.remove()
     },
   }
+}
+
+async function flushInitialPaintCallbacks(): Promise<void> {
+  await new Promise<void>((resolve) => queueMicrotask(resolve))
 }
 
 function editorElement(host: HTMLElement): HTMLElement | null {

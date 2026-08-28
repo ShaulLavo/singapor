@@ -43,9 +43,12 @@ import {
 } from '@singapor/core/document'
 import {
   Editor,
+  type EditorInitialPaintEvent as EditorInitialPaintEventFromEditor,
   type EditorSelectionRevealOptions,
   type EditorSelectionRevealTarget,
   type EditorSetSelectionOptions,
+  type EditorViewSnapshotJSON as EditorViewSnapshotJSONFromEditor,
+  type EditorVisibleSnapshotJSON as EditorVisibleSnapshotJSONFromEditor,
 } from '@singapor/core/editor'
 import {
   createEditorCapabilityToken,
@@ -85,6 +88,9 @@ import {
   type EditorSnippetMirror,
   type EditorSnippetStop,
   type EditorTrackedRanges,
+  type EditorInitialPaintEvent as EditorInitialPaintEventFromExtensions,
+  type EditorViewSnapshotJSON as EditorViewSnapshotJSONFromExtensions,
+  type EditorVisibleSnapshotJSON as EditorVisibleSnapshotJSONFromExtensions,
   type EditorViewContributionContext,
   projectDecorationRangeThroughEdits,
   reindentEditsForRanges,
@@ -120,6 +126,30 @@ type RequiredFields<T> = {
 type OptionalFields<T> = Exclude<keyof T, RequiredFields<T>>
 
 describe('public API facade', () => {
+  it('exports explicit JSON snapshot and authoritative-paint contracts from every facade', () => {
+    type SnapshotContracts = [
+      core.EditorViewSnapshotJSON,
+      core.EditorVisibleSnapshotJSON,
+      core.EditorInitialPaintEvent,
+      EditorViewSnapshotJSONFromEditor,
+      EditorVisibleSnapshotJSONFromEditor,
+      EditorInitialPaintEventFromEditor,
+      EditorViewSnapshotJSONFromExtensions,
+      EditorVisibleSnapshotJSONFromExtensions,
+      EditorInitialPaintEventFromExtensions,
+    ]
+    const contracts = null as unknown as SnapshotContracts
+    const fullJSON = (snapshot: core.EditorViewSnapshot): core.EditorViewSnapshotJSON =>
+      snapshot.toJSON()
+    const visibleJSON = (
+      snapshot: core.EditorViewSnapshot,
+    ): core.EditorVisibleSnapshotJSON | null => snapshot.toVisibleSnapshot()?.toJSON() ?? null
+
+    expect(contracts).toBeNull()
+    expect(fullJSON).toBeTypeOf('function')
+    expect(visibleJSON).toBeTypeOf('function')
+  })
+
   it('exports the exact document transaction and sync surface from root and document', () => {
     type DocumentTransactionTypes = [
       DocumentChangesSinceSyncPoint,

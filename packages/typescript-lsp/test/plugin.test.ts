@@ -1620,6 +1620,15 @@ function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSn
       visibleRange: { start: 0, end: 1 } as EditorViewSnapshot['viewport']['visibleRange'],
     },
     ...options,
+    initialHighlightStatus: options.initialHighlightStatus ?? 'painted',
+    gutterWidth: options.gutterWidth ?? 0,
+    gutterLayout: options.gutterLayout ?? { fixedWidth: 0, lanes: [] },
+    toJSON:
+      options.toJSON ??
+      (() => {
+        throw new Error('not used by this fixture')
+      }),
+    toVisibleSnapshot: options.toVisibleSnapshot ?? (() => null),
     documentSyncPoint,
     changesSinceDocumentSyncPoint:
       options.changesSinceDocumentSyncPoint ?? noChangesSince(documentSyncPoint),

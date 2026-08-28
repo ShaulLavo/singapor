@@ -39,7 +39,7 @@
       "file": "packages/editor/src/editor/mouseSelection.ts",
       "id": "packages/editor/src/editor/mouseSelection.ts:requestAnimationFrame:e2ace6097b",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 123,
+      "line": 147,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -47,7 +47,7 @@
       "file": "packages/editor/src/editor/mouseSelection.ts",
       "id": "packages/editor/src/editor/mouseSelection.ts:setTimeout:ed35f29fb4",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 124,
+      "line": 148,
       "snippet": "return setTimeout(() => callback(nowMs()), 0) as unknown as number"
     },
     {
@@ -111,7 +111,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 1053,
+      "line": 1076,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -119,7 +119,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 1062,
+      "line": 1085,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -127,7 +127,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1308,
+      "line": 1351,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {
@@ -231,7 +231,7 @@
       "file": "packages/minimap/src/plugin.ts",
       "id": "packages/minimap/src/plugin.ts:requestAnimationFrame:cac4e5564e",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 410,
+      "line": 470,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -239,8 +239,16 @@
       "file": "packages/minimap/src/plugin.ts",
       "id": "packages/minimap/src/plugin.ts:setTimeout:32fb906cca",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 411,
+      "line": 471,
       "snippet": "return setTimeout(callback, 16) as unknown as number"
+    },
+    {
+      "api": "queueMicrotask",
+      "file": "packages/react/src/index.ts",
+      "id": "packages/react/src/index.ts:queueMicrotask:b12c138a85",
+      "justification": "Defers delivery until the mount survives React's synchronous StrictMode replay; the incarnation guard cancels disposed mounts, and no editor work is scheduled.",
+      "line": 410,
+      "snippet": "queueMicrotask(() => {"
     },
     {
       "api": "requestAnimationFrame",

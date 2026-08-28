@@ -1104,6 +1104,7 @@ function snapshot(
     textSnapshot: createStringTextSnapshot(text),
     fullText: text,
     textVersion: 1,
+    initialHighlightStatus: 'painted',
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
@@ -1118,6 +1119,8 @@ function snapshot(
     lineCount: starts.length,
     contentWidth,
     totalHeight: 60,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 4,
     foldMarkers: [],
     visibleRows: [],
@@ -1132,6 +1135,12 @@ function snapshot(
       borderBoxWidth: 240,
       visibleRange: { start: 0, end: 3 },
       ...viewport,
+    },
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
     },
   }
 }

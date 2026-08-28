@@ -95,6 +95,7 @@ function baseSnapshot(): EditorViewSnapshot {
     languageId: 'typescript',
     fullText: TEXT,
     textVersion: 7,
+    initialHighlightStatus: 'painted',
     lineStarts: Array.from({ length: LINE_COUNT }, (_, row) => row * LINE_LENGTH),
     tokens: [],
     brackets: [],
@@ -103,6 +104,8 @@ function baseSnapshot(): EditorViewSnapshot {
     lineCount: LINE_COUNT,
     contentWidth: 0,
     totalHeight: 0,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 4,
     foldMarkers: [],
     visibleRows: visibleRows(0, 2),
@@ -114,6 +117,12 @@ function baseSnapshot(): EditorViewSnapshot {
       clientHeight: 0,
       clientWidth: 0,
       visibleRange: { start: 0, end: LINE_COUNT } as EditorViewSnapshot['viewport']['visibleRange'],
+    },
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
     },
   }
 }
@@ -130,8 +139,16 @@ function visibleRows(from: number, to: number): readonly EditorVisibleRowSnapsho
       text: '',
       kind: 'text',
       primaryText: true,
+      firstWrapSegment: true,
       top: row * 20,
       height: 20,
+      leftSpacerWidth: 0,
+      contentCursorLine: false,
+      gutterNumberCursorLine: false,
+      gutterCursorLineBackgroundLaneIds: [],
+      mountedPaintSupport: 'replayable',
+      chunks: [],
+      foldMarker: null,
     })
   }
   return rows

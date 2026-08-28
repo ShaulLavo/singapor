@@ -696,6 +696,7 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
     languageId: 'typescript',
     fullText: '',
     textVersion: 1,
+    initialHighlightStatus: 'painted',
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
@@ -710,6 +711,8 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
     lineCount: 1,
     contentWidth: 0,
     totalHeight: 20,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 4,
     foldMarkers: [],
     visibleRows: [],
@@ -724,6 +727,12 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
       borderBoxWidth: 80,
       visibleRange: { start: 0, end: 1 },
       ...viewport,
+    },
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
     },
   }
 }

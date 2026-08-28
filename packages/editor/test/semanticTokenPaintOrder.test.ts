@@ -115,8 +115,16 @@ function snapshot(): EditorViewSnapshot {
     text: '',
     kind: 'text' as const,
     primaryText: true,
+    firstWrapSegment: true,
     top: row * ROW_HEIGHT,
     height: ROW_HEIGHT,
+    leftSpacerWidth: 0,
+    contentCursorLine: false,
+    gutterNumberCursorLine: false,
+    gutterCursorLineBackgroundLaneIds: [],
+    mountedPaintSupport: 'replayable',
+    chunks: [],
+    foldMarker: null,
   }))
 
   return {
@@ -126,6 +134,7 @@ function snapshot(): EditorViewSnapshot {
     languageId: 'typescript',
     fullText: TEXT,
     textVersion: 1,
+    initialHighlightStatus: 'painted',
     lineStarts: [0, LINE_LENGTH, LINE_LENGTH * 2],
     tokens: [],
     brackets: [],
@@ -134,6 +143,8 @@ function snapshot(): EditorViewSnapshot {
     lineCount: 3,
     contentWidth: 0,
     totalHeight: 0,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 4,
     foldMarkers: [],
     visibleRows: rows,
@@ -145,6 +156,12 @@ function snapshot(): EditorViewSnapshot {
       clientHeight: 0,
       clientWidth: 0,
       visibleRange: { start: 0, end: 3 } as EditorViewSnapshot['viewport']['visibleRange'],
+    },
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
     },
   }
 }

@@ -255,6 +255,7 @@ function snapshot(): EditorViewSnapshot {
     languageId: null,
     fullText: 'foo bar foo',
     textVersion: 1,
+    initialHighlightStatus: 'painted',
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],
@@ -271,6 +272,8 @@ function snapshot(): EditorViewSnapshot {
     lineCount: 1,
     contentWidth: 88,
     totalHeight: 20,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 2,
     foldMarkers: [],
     visibleRows: [],
@@ -282,6 +285,12 @@ function snapshot(): EditorViewSnapshot {
       clientHeight: 20,
       clientWidth: 88,
       visibleRange: { start: 0, end: 1 },
+    },
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
     },
   }
 }

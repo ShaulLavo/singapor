@@ -65,6 +65,7 @@ function editorViewSnapshot(text: string): EditorViewSnapshot {
     textSnapshot: createStringTextSnapshot(text),
     fullText: text,
     textVersion: 7,
+    initialHighlightStatus: 'painted',
     lineStarts: [0, 6],
     tokens: [{ start: 0, end: 5, style: { color: '#ff0000' } }],
     // 'alpha\nbeta' carries no bracket pairs, so the parse this stands in for published none.
@@ -76,6 +77,8 @@ function editorViewSnapshot(text: string): EditorViewSnapshot {
     lineCount: 2,
     contentWidth: 80,
     totalHeight: 40,
+    gutterWidth: 0,
+    gutterLayout: { fixedWidth: 0, lanes: [] },
     tabSize: 4,
     foldMarkers: [
       {
@@ -97,8 +100,16 @@ function editorViewSnapshot(text: string): EditorViewSnapshot {
         text: 'alpha',
         kind: 'text',
         primaryText: true,
+        firstWrapSegment: true,
         top: 0,
         height: 20,
+        leftSpacerWidth: 0,
+        contentCursorLine: false,
+        gutterNumberCursorLine: false,
+        gutterCursorLineBackgroundLaneIds: [],
+        mountedPaintSupport: 'replayable',
+        chunks: [],
+        foldMarker: null,
       },
     ],
     viewport: {
@@ -111,6 +122,12 @@ function editorViewSnapshot(text: string): EditorViewSnapshot {
       borderBoxHeight: 20,
       borderBoxWidth: 80,
       visibleRange: { start: 0, end: 1 },
+    },
+    toJSON() {
+      throw new Error('not used by this fixture')
+    },
+    toVisibleSnapshot() {
+      return null
     },
   }
 }

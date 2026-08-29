@@ -431,11 +431,13 @@ export class VirtualizedTextView {
     text: string,
     textSnapshot = createStringTextSnapshot(text),
     preparedLineStarts?: readonly number[],
+    preparedTokens?: readonly EditorToken[],
   ): void {
     const view = this.view
     view.sameLineTokenEdit = null
     view.tokenProjectionDirtyStartRow = null
     view.tokenRenderIndexDirty = true
+    if (preparedTokens) view.tokens = preparedTokens
     const { lineCountChanged } = setTextLayoutState(view, text, textSnapshot, preparedLineStarts)
     this.finishTextReplacement(lineCountChanged)
   }

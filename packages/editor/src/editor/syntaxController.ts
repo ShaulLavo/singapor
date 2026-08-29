@@ -51,6 +51,7 @@ export type EditorSyntaxDocumentStartOptions = {
 }
 
 export type EditorPreparedDocumentClaimOptions = {
+  readonly configuredTabSize: number
   readonly documentConfigurationTag: readonly EditorPreparedTagValue[]
   readonly highlighterConfigurationTag: readonly EditorPreparedTagValue[]
   readonly structuralConfigurationTag: readonly EditorPreparedTagValue[]
@@ -92,6 +93,7 @@ type EditorSyntaxLoadResult = {
   readonly result: EditorSyntaxResult
   readonly source: EditorSyntaxLoadSource
   readonly skipApply?: boolean
+  readonly suppressWarm?: boolean
   readonly updatesDocument?: boolean
 }
 
@@ -165,6 +167,7 @@ export class EditorSyntaxController {
   private highlighterSession: EditorHighlighterSession | null = null
   private preparedSyntaxDisposer: (() => void) | null = null
   private preparedHighlighterDisposer: (() => void) | null = null
+  private preparedInitialTokensInstalled = false
   private skipNextStructuralRefresh = false
   private skipNextHighlighterRefresh = false
   private providerHighlighterTheme: EditorTheme | null = null
@@ -247,7 +250,23 @@ export class EditorSyntaxController {
 
   setTokens(tokens: readonly EditorToken[]): void {
     this.currentTokens = tokens
+    if (this.preparedInitialTokensInstalled) {
+      this.preparedInitialTokensInstalled = false
+      return
+    }
     this.options.adoptTokens(tokens)
+  }
+
+  stagePreparedReadyTokens(prepared: EditorPreparedDocumentPayload | null): readonly EditorToken[] {
+    const highlighterResult = prepared?.highlighter?.readyResult
+    const structuralResult = prepared?.structural?.readyResult
+    const structuralTokens = prepared?.highlighter ? undefined : structuralResult?.tokens
+    const tokens = highlighterResult?.tokens ?? structuralTokens ?? []
+
+    this.currentTokens = tokens
+    this.preparedInitialTokensInstalled = Boolean(highlighterResult || structuralTokens)
+    if (highlighterResult?.theme !== undefined) this.setHighlighterTheme(highlighterResult.theme)
+    return tokens
   }
 
   claimPreparedDocument(
@@ -263,6 +282,7 @@ export class EditorSyntaxController {
       highlighterProvider !== null,
     )
     return preparedDocument.take({
+      configuredTabSize: tags.configuredTabSize,
       documentId: document.documentId,
       languageId: document.languageId,
       snapshot: document.snapshot,
@@ -312,6 +332,7 @@ export class EditorSyntaxController {
     this.initialTextPaintEmitted = false
     this.initialHighlightPaintEmitted = false
     this.pendingInitialHighlightReplacement = null
+    this.preparedInitialTokensInstalled = false
     this.initialHighlightState =
       this.highlighterSession || this.syntaxSession || this.highlighterThemePending
         ? 'loading'
@@ -367,6 +388,7 @@ export class EditorSyntaxController {
     this.initialTextPaintEmitted = false
     this.initialHighlightPaintEmitted = false
     this.pendingInitialHighlightReplacement = null
+    this.preparedInitialTokensInstalled = false
     this.lastInitialHighlightTerminalStatus = 'plain'
     this.clearSyntaxRangeCache()
     this.resetSyntaxContentVersion()
@@ -528,7 +550,16 @@ export class EditorSyntaxController {
     if (this.repaintCachedVisibleSyntaxRange(range)) return
     if (!this.canQueryCurrentSyntaxRange()) return
 
-    this.scheduleSyntaxRangeRequest(this.rangeRequests, documentVersion, range, options, 'visible')
+    const uncoveredRange = firstUncoveredSyntaxRange(range, this.cachedSyntaxRanges)
+    if (!uncoveredRange) return
+
+    this.scheduleSyntaxRangeRequest(
+      this.rangeRequests,
+      documentVersion,
+      uncoveredRange,
+      options,
+      'visible',
+    )
   }
 
   prefetchVisibleRange(
@@ -705,18 +736,22 @@ export class EditorSyntaxController {
   ): void {
     if (this.syntaxSession !== transfer.session) return
 
-    this.applySyntaxResult(
+    const applied = this.applySyntaxResult(
       {
         contentVersion,
         range: transfer.range,
         result,
         source: 'visible',
+        suppressWarm: true,
         updatesDocument: true,
       },
       documentVersion,
       nowMs(),
       configurationGeneration,
     )
+    if (!applied) return
+
+    this.refreshVisibleRange(documentVersion, { delayMs: 0 })
   }
 
   private recoverPreparedStructural(
@@ -836,8 +871,17 @@ export class EditorSyntaxController {
           startedAt,
           configurationGeneration,
         )
-        if (applied && kind === 'visible' && !this.flushPendingPrefetch()) {
-          this.flushPendingWarm()
+        if (applied && kind === 'visible') {
+          const visibleRange = this.options.getVisibleSyntaxRange()
+          if (
+            visibleRange &&
+            syntaxRangeCoverage(visibleRange, this.cachedSyntaxRanges) !== 'full'
+          ) {
+            this.refreshVisibleRange(documentVersion, { delayMs: 0 })
+            return
+          }
+          if (visibleRange) this.applyCachedSyntaxFolds(visibleRange)
+          if (!this.flushPendingPrefetch()) this.flushPendingWarm()
         }
         if (applied && kind === 'prefetch') this.flushPendingWarm()
       },
@@ -1050,7 +1094,12 @@ export class EditorSyntaxController {
       )
     }
     if (loadResult.range) this.rememberSyntaxRange(loadResult.range, result)
-    if (!this.highlighterSession && loadResult.range && !this.pendingWarm) {
+    if (
+      !this.highlighterSession &&
+      loadResult.range &&
+      !loadResult.suppressWarm &&
+      !this.pendingWarm
+    ) {
       this.warmSyntaxAroundRange(documentVersion, loadResult.range)
     }
     if (applyScopeFacts) {
@@ -1881,6 +1930,25 @@ const syntaxRangeCoverage = (
   }
 
   return overlaps ? 'partial' : 'none'
+}
+
+const firstUncoveredSyntaxRange = (
+  range: EditorSyntaxRange,
+  cachedRanges: readonly EditorSyntaxRange[],
+): EditorSyntaxRange | null => {
+  let cursor = range.startIndex
+  for (const cachedRange of cachedRanges) {
+    if (cachedRange.endIndex <= cursor) continue
+    if (cachedRange.startIndex >= range.endIndex) break
+    if (cachedRange.startIndex > cursor) {
+      return { startIndex: cursor, endIndex: Math.min(cachedRange.startIndex, range.endIndex) }
+    }
+
+    cursor = Math.max(cursor, cachedRange.endIndex)
+    if (cursor >= range.endIndex) return null
+  }
+
+  return { startIndex: cursor, endIndex: range.endIndex }
 }
 
 const compareSyntaxRanges = (left: EditorSyntaxRange, right: EditorSyntaxRange): number =>

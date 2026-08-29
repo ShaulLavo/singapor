@@ -123,20 +123,24 @@ export class ShikiWorkerOwner {
     )
   }
 
-  public async loadTheme(options: ShikiThemeOptions): Promise<EditorTheme | null | undefined> {
-    if (!this.canUseWorker()) return undefined
+  public loadTheme(options: ShikiThemeOptions): Promise<EditorTheme | null | undefined> {
+    if (!this.canUseWorker()) return Promise.resolve(undefined)
 
+    return this.trackClientTask(this.finishLoadTheme(options))
+  }
+
+  private async finishLoadTheme(
+    options: ShikiThemeOptions,
+  ): Promise<EditorTheme | null | undefined> {
     const registrations = await options.registrations
     const key = shikiThemeRequestKey(options.theme, registrations)
     const existing = this.themeRequests.get(key)
     if (existing) return existing
 
-    const request = this.trackClientTask(
-      requestShikiTheme(this, options.theme, registrations).catch((error) => {
-        this.themeRequests.delete(key)
-        throw error
-      }),
-    )
+    const request = requestShikiTheme(this, options.theme, registrations).catch((error) => {
+      this.themeRequests.delete(key)
+      throw error
+    })
     this.themeRequests.set(key, request)
     const theme = await request
     const preload = scheduleRegistrationPreload(this, options.preloadRegistrations)

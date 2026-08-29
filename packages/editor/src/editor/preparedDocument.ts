@@ -27,6 +27,7 @@ export type EditorPreparedStructuralConfiguration = {
 }
 
 export type EditorPreparedDocumentMatch = {
+  readonly configuredTabSize: number
   readonly documentId: string
   readonly languageId: EditorSyntaxLanguageId | null
   readonly snapshot: PieceTableSnapshot
@@ -92,9 +93,15 @@ export type EditorPreparedDocumentPayload = {
 
 export type EditorPreparedDocument = {
   startStage(request: EditorPreparedStageRequest): Promise<EditorPreparedStageOutcome> | null
+  runtimeSessionIds(): EditorPreparedRuntimeSessionIds
   take(expected: EditorPreparedDocumentMatch): EditorPreparedDocumentPayload | null
   dispose(): void
   readonly estimatedBytes: number
+}
+
+export type EditorPreparedRuntimeSessionIds = {
+  readonly highlighter: readonly string[]
+  readonly structural: readonly string[]
 }
 
 export type CreateEditorPreparedDocumentOptions = {
@@ -141,12 +148,18 @@ export function createEditorPreparedDocument(
       if (consumed || disposed) return null
       if (request.family === 'structural') {
         if (structural) return null
-        structural = createStructuralStage(options, snapshot, textSnapshot, request)
+        structural = createStructuralStage(options, snapshot, textSnapshot, fullText, request)
         return structural.outcome
       }
       if (highlighter) return null
-      highlighter = createHighlighterStage(options, snapshot, textSnapshot, request)
+      highlighter = createHighlighterStage(options, snapshot, textSnapshot, fullText, request)
       return highlighter.outcome
+    },
+    runtimeSessionIds() {
+      return {
+        highlighter: highlighter?.runtimeSessionId ? [highlighter.runtimeSessionId] : [],
+        structural: structural?.runtimeSessionId ? [structural.runtimeSessionId] : [],
+      }
     },
     take(expected) {
       if (consumed || disposed) return null
@@ -174,6 +187,7 @@ function createStructuralStage(
   options: CreateEditorPreparedDocumentOptions,
   snapshot: PieceTableSnapshot,
   textSnapshot: ReturnType<EditorTextBuffer['getTextSnapshot']>,
+  fullText: string,
   request: Extract<EditorPreparedStageRequest, { readonly family: 'structural' }>,
 ) {
   const runtimeSessionId = createEditorRuntimeSessionId()
@@ -187,12 +201,12 @@ function createStructuralStage(
     syntaxMode: request.configuration.syntaxMode,
     snapshot,
     textSnapshot,
-    fullText: '',
+    fullText,
   })
   if (!session) return createMissingStructuralStage(request.abortSignal)
 
   const stage = createStageOwner<EditorSyntaxResult>(session, request.abortSignal)
-  const result = session.refresh(snapshot).then(() => {
+  const result = session.refresh(snapshot, fullText).then(() => {
     if (!session.queryRange) return session.getResult()
     return session.queryRange(request.range)
   })
@@ -214,6 +228,7 @@ function createHighlighterStage(
   options: CreateEditorPreparedDocumentOptions,
   snapshot: PieceTableSnapshot,
   textSnapshot: ReturnType<EditorTextBuffer['getTextSnapshot']>,
+  fullText: string,
   request: Extract<EditorPreparedStageRequest, { readonly family: 'highlighter' }>,
 ) {
   const runtimeSessionId = createEditorRuntimeSessionId()
@@ -224,12 +239,12 @@ function createHighlighterStage(
     languageId: options.languageId,
     snapshot,
     textSnapshot,
-    fullText: '',
+    fullText,
   })
   if (!session) return createMissingHighlighterStage(request.abortSignal)
 
   const stage = createStageOwner<EditorHighlightResult>(session, request.abortSignal)
-  const tracked = stage.track(session.refresh(snapshot))
+  const tracked = stage.track(session.refresh(snapshot, fullText))
   return {
     ...stage,
     configurationTag,
@@ -409,6 +424,7 @@ function matchesDocument(
   snapshot: PieceTableSnapshot,
   tag: readonly EditorPreparedTagValue[],
 ): boolean {
+  if (expected.configuredTabSize !== options.configuredTabSize) return false
   if (expected.documentId !== options.documentId) return false
   if (expected.languageId !== options.languageId) return false
   if (expected.snapshot !== snapshot) return false

@@ -56,12 +56,30 @@ describe('prepared editor documents', () => {
 
     await expect(structuralOutcome).resolves.toBe('ready')
     await expect(highlighterOutcome).resolves.toBe('ready')
+    expect(prepared.runtimeSessionIds()).toMatchObject({
+      highlighter: [expect.any(String)],
+      structural: [expect.any(String)],
+    })
     const claimed = prepared.take(match(buffer, structuralProvider, highlighterProvider))
 
     expect(claimed?.lineStarts).toEqual([0, 17])
     expect(claimed?.structural?.runtimeSessionId).not.toBe(claimed?.highlighter?.runtimeSessionId)
     expect(claimed?.structural?.readyResult).toBe(structuralSession.getResult())
     expect(claimed?.highlighter?.readyResult?.tokens).toEqual([])
+    expect(structuralProvider.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ fullText: 'const value = 1;\n' }),
+    )
+    expect(structuralSession.refresh).toHaveBeenCalledWith(
+      buffer.getSnapshot(),
+      'const value = 1;\n',
+    )
+    expect(highlighterProvider.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ fullText: 'const value = 1;\n' }),
+    )
+    expect(highlighterSession.refresh).toHaveBeenCalledWith(
+      buffer.getSnapshot(),
+      'const value = 1;\n',
+    )
     expect(prepared.take(match(buffer, structuralProvider, highlighterProvider))).toBeNull()
 
     prepared.dispose()
@@ -96,7 +114,7 @@ describe('prepared editor documents', () => {
     })
 
     const claimed = prepared.take({
-      ...match(buffer, provider, null),
+      ...match(buffer, provider, null, 2),
       snapshot: createPieceTableSnapshot('alpha\n'),
     })
 
@@ -138,7 +156,7 @@ describe('prepared editor documents', () => {
     })
 
     const claimed = prepared.take({
-      ...match(buffer, structuralProvider, highlighterProvider),
+      ...match(buffer, structuralProvider, highlighterProvider, 2),
       highlighterConfigurationTag: ['shiki', 'light'],
     })
     await Promise.resolve()
@@ -218,6 +236,257 @@ describe('prepared editor documents', () => {
     container.remove()
     expect(structuralSession.dispose).toHaveBeenCalledTimes(1)
     expect(highlighterSession.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('installs ready prepared tokens without publishing an empty initial token state', async () => {
+    const buffer = createEditorTextBuffer('const value = 1;\n')
+    const readyTokens = [{ start: 0, end: 5, style: { color: 'prepared-token' } }] as const
+    const highlighterSession = highlightSession()
+    highlighterSession.refresh = vi.fn(async () => ({ tokens: readyTokens }))
+    const highlighterProvider: EditorHighlighterProvider = {
+      createSession: vi.fn(() => highlighterSession),
+    }
+    const observedTokenColors: Array<readonly (string | undefined)[]> = []
+    const plugin: EditorPlugin = {
+      activate: (context) => [
+        context.registerHighlighter(highlighterProvider),
+        context.registerViewContribution({
+          createContribution: () => ({
+            update: (snapshot) => {
+              observedTokenColors.push(snapshot.tokens.map((token) => token.style.color))
+            },
+            dispose: () => undefined,
+          }),
+        }),
+      ],
+    }
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+    const outcome = prepared.startStage({
+      abortSignal: new AbortController().signal,
+      configurationTag: ['shiki', 'dark'],
+      family: 'highlighter',
+      provider: highlighterProvider,
+      range: 'full',
+    })
+    await expect(outcome).resolves.toBe('ready')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, { plugins: [plugin] })
+    observedTokenColors.length = 0
+
+    editor.attachSession(
+      createEditorBufferSession(buffer, createEditorViewSession(buffer, 'ready-highlight-view')),
+      {
+        documentConfigurationTag: [],
+        documentId: 'file.ts',
+        highlighterConfigurationTag: ['shiki', 'dark'],
+        languageId: 'typescript',
+        preparedDocument: prepared,
+      },
+    )
+
+    expect(observedTokenColors[0]).toEqual(['prepared-token'])
+    expect(observedTokenColors).not.toContainEqual([])
+    editor.dispose()
+    container.remove()
+  })
+
+  it('publishes prepared tab size and fallback folds with the first document snapshot', () => {
+    const buffer = createEditorTextBuffer('root\n  child\n    grandchild\nnext\n')
+    const snapshots: Array<{
+      readonly foldCount: number
+      readonly tabSize: number
+    }> = []
+    const plugin: EditorPlugin = {
+      activate: (context) =>
+        context.registerViewContribution({
+          createContribution: () => ({
+            dispose: () => undefined,
+            update: (snapshot, kind) => {
+              if (kind !== 'content') return
+
+              snapshots.push({
+                foldCount: snapshot.foldMarkers.length,
+                tabSize: snapshot.tabSize,
+              })
+            },
+          }),
+        }),
+    }
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, { plugins: [plugin] })
+    snapshots.length = 0
+
+    editor.attachSession(
+      createEditorBufferSession(buffer, createEditorViewSession(buffer, 'prepared-layout-view')),
+      {
+        documentConfigurationTag: [],
+        documentId: 'file.ts',
+        languageId: 'typescript',
+        preparedDocument: prepared,
+      },
+    )
+
+    expect(snapshots[0]).toEqual({ foldCount: 2, tabSize: 2 })
+    editor.dispose()
+    container.remove()
+  })
+
+  it('publishes a ready prepared structural fold in the first document snapshot', async () => {
+    const buffer = createEditorTextBuffer('a\nb\nc\n')
+    const structuralResult = {
+      ...createEmptySyntaxResult(),
+      folds: [
+        {
+          endIndex: 3,
+          endLine: 1,
+          startIndex: 1,
+          startLine: 0,
+          type: 'syntax' as const,
+        },
+      ],
+    }
+    const structuralSession = syntaxSession()
+    structuralSession.refresh = vi.fn(async () => structuralResult)
+    structuralSession.queryRange = vi.fn(async () => structuralResult)
+    const structuralProvider: EditorSyntaxProvider = {
+      createSession: vi.fn(() => structuralSession),
+    }
+    const foldCounts: number[] = []
+    const plugin: EditorPlugin = {
+      activate: (context) => [
+        context.registerSyntaxProvider(structuralProvider),
+        context.registerViewContribution({
+          createContribution: () => ({
+            dispose: () => undefined,
+            update: (snapshot, kind) => {
+              if (kind === 'content') foldCounts.push(snapshot.foldMarkers.length)
+            },
+          }),
+        }),
+      ],
+    }
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+    const outcome = prepared.startStage({
+      abortSignal: new AbortController().signal,
+      configuration: { ...structuralConfiguration, includeHighlights: true },
+      configurationTag: ['tree-sitter', 1],
+      family: 'structural',
+      provider: structuralProvider,
+      range: { startIndex: 0, endIndex: buffer.getSnapshot().length },
+    })
+    await expect(outcome).resolves.toBe('ready')
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, { plugins: [plugin] })
+    foldCounts.length = 0
+
+    editor.attachSession(
+      createEditorBufferSession(buffer, createEditorViewSession(buffer, 'prepared-fold-view')),
+      {
+        documentConfigurationTag: [],
+        documentId: 'file.ts',
+        languageId: 'typescript',
+        preparedDocument: prepared,
+        structuralConfigurationTag: ['tree-sitter', 1],
+      },
+    )
+
+    expect(foldCounts[0]).toBe(1)
+    editor.dispose()
+    container.remove()
+  })
+
+  it('queries only the uncovered visible range after partial structural adoption', async () => {
+    const text = Array.from({ length: 200 }, (_, index) => `const value${index} = ${index};`).join(
+      '\n',
+    )
+    const buffer = createEditorTextBuffer(text)
+    const structuralSession = syntaxSession()
+    const structuralProvider: EditorSyntaxProvider = {
+      createSession: vi.fn(() => structuralSession),
+    }
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+    const outcome = prepared.startStage({
+      abortSignal: new AbortController().signal,
+      configuration: { ...structuralConfiguration, includeHighlights: true },
+      configurationTag: ['tree-sitter', 1],
+      family: 'structural',
+      provider: structuralProvider,
+      range: { startIndex: 0, endIndex: 5 },
+    })
+    await expect(outcome).resolves.toBe('ready')
+    const plugin: EditorPlugin = {
+      activate: (context) => context.registerSyntaxProvider(structuralProvider),
+    }
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, { plugins: [plugin] })
+    const viewport = container.querySelector('.editor-virtualized')
+    if (!(viewport instanceof HTMLElement)) throw new TypeError('missing editor viewport')
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 80 })
+    Object.defineProperty(viewport, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 80,
+        height: 80,
+        left: 0,
+        right: 400,
+        top: 0,
+        width: 400,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    })
+
+    editor.attachSession(
+      createEditorBufferSession(buffer, createEditorViewSession(buffer, 'partial-range-view')),
+      {
+        documentConfigurationTag: [],
+        documentId: 'file.ts',
+        languageId: 'typescript',
+        preparedDocument: prepared,
+        structuralConfigurationTag: ['tree-sitter', 1],
+      },
+    )
+
+    await vi.waitFor(() => expect(structuralSession.queryRange).toHaveBeenCalledTimes(2))
+    expect(structuralSession.queryRange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ endIndex: expect.any(Number) }),
+    )
+    const uncoveredRange = vi.mocked(structuralSession.queryRange!).mock.calls.at(-1)?.[0]
+    expect(uncoveredRange?.startIndex).toBe(5)
+    expect(uncoveredRange?.endIndex).toBeGreaterThan(5)
+    expect(structuralProvider.createSession).toHaveBeenCalledOnce()
+    editor.dispose()
+    container.remove()
   })
 
   it('adopts an in-flight structural session without opening a replacement', async () => {
@@ -366,6 +635,24 @@ describe('prepared editor documents', () => {
     prepared.dispose()
     expect(session.dispose).toHaveBeenCalledOnce()
   })
+
+  it('rejects prepared layout computed with a different configured tab size', () => {
+    const buffer = createEditorTextBuffer('\talpha\n')
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 2,
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+
+    const claimed = prepared.take({
+      ...match(buffer, null, null, 2),
+      configuredTabSize: 4,
+    })
+
+    expect(claimed).toBeNull()
+  })
 })
 
 const structuralConfiguration = {
@@ -378,8 +665,10 @@ function match(
   buffer: ReturnType<typeof createEditorTextBuffer>,
   structuralProvider: EditorSyntaxProvider | null,
   highlighterProvider: EditorHighlighterProvider | null,
+  configuredTabSize = 4,
 ) {
   return {
+    configuredTabSize,
     documentConfigurationTag: [] as const,
     documentId: 'file.ts',
     highlighterConfigurationTag: ['shiki', 'dark'] as const,

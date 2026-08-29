@@ -100,7 +100,10 @@ describe('tree-sitter worker client language registration cache', () => {
 
     await client.registerLanguages([descriptor])
     await client.dispose()
-    await client.registerLanguages([descriptor])
+    const workerClientModule = await import('../src/treeSitter/workerClient.ts')
+    const nextClient = new workerClientModule.TreeSitterWorkerClient()
+    currentClient = nextClient
+    await nextClient.registerLanguages([descriptor])
 
     expect(registerLanguageRequests()).toHaveLength(2)
   })
@@ -358,6 +361,53 @@ describe('tree-sitter worker client language registration cache', () => {
     await expect(parse).resolves.toMatchObject({ snapshotVersion: 1 })
     await expect(firstRange).resolves.toMatchObject({ range: { startIndex: 0, endIndex: 5 } })
     await expect(secondRange).resolves.toMatchObject({ range: { startIndex: 5, endIndex: 12 } })
+  })
+
+  it('keeps runtime disposal and its barrier behind a parse waiting on initialization', async () => {
+    FakeWorker.autoResolve = false
+    const client = await loadWorkerClient()
+    const snapshot = createPieceTableSnapshot('const answer = 1;')
+    const parse = client.parse(parsePayload(snapshot, 1))
+    const worker = fakeWorkerAt(0)
+
+    client.disposeDocument('runtime-doc.ts')
+    let idle = false
+    const barrier = client.awaitRuntimeSessionIdle('runtime-doc.ts').then(() => {
+      idle = true
+    })
+    await flushMicrotasks()
+
+    expect(worker.messages.map((message) => message.payload.type)).toEqual(['init'])
+    expect(idle).toBe(false)
+
+    worker.resolveRequest(requestOfType(worker, 'init'))
+    await flushMicrotasks()
+    expect(worker.messages.map((message) => message.payload.type)).toEqual(['init', 'parse'])
+
+    worker.resolveRequest(requestOfType(worker, 'parse'), parseResult(1))
+    await expect(parse).resolves.toMatchObject({ snapshotVersion: 1 })
+    await flushMicrotasks()
+    expect(worker.messages.map((message) => message.payload.type)).toEqual([
+      'init',
+      'parse',
+      'disposeDocument',
+    ])
+    expect(idle).toBe(false)
+
+    worker.resolveRequest(requestOfType(worker, 'disposeDocument'))
+    await flushMicrotasks()
+    await flushMicrotasks()
+    expect(worker.messages.map((message) => message.payload.type)).toEqual([
+      'init',
+      'parse',
+      'disposeDocument',
+      'runtimeBarrier',
+    ])
+    expect(idle).toBe(false)
+
+    worker.resolveRequest(requestOfType(worker, 'runtimeBarrier'))
+    await barrier
+    expect(idle).toBe(true)
   })
 })
 

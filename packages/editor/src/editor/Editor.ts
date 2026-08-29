@@ -1301,6 +1301,7 @@ export class Editor {
     }
     const prepared = options.preparedDocument
       ? this.syntax.claimPreparedDocument(syntaxDocument, options.preparedDocument, {
+          configuredTabSize: this.configuredTabSize,
           documentConfigurationTag: options.documentConfigurationTag ?? [],
           highlighterConfigurationTag: options.highlighterConfigurationTag ?? [],
           structuralConfigurationTag: options.structuralConfigurationTag ?? [],
@@ -1331,6 +1332,7 @@ export class Editor {
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.syntax.adoptPreparedReadyResults(prepared)
+    if (prepared) this.notifyViewContributions('content', null)
     this.notifyViewContributions('document', null)
     this.syntax.notifyBaseTextPainted()
     this.notifyChange(null)
@@ -1467,14 +1469,13 @@ export class Editor {
     prepared: EditorPreparedDocumentPayload,
   ): void {
     this.text = text
-    this.view.setText(text, textSnapshot, prepared.lineStarts)
+    const tokens = this.syntax.stagePreparedReadyTokens(prepared)
+    this.view.setText(text, textSnapshot, prepared.lineStarts, tokens)
     this.retagDisplayProjectionSources()
     this.syncInjectedTextRows()
-    this.setTokens([])
     this.dropManualFolds()
     this.installPreparedFallbackFolds(prepared.fallbackFolds)
     this.applyRangeDecorations()
-    this.notifyViewContributions('content', null)
     this.recordContentSet()
   }
 

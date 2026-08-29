@@ -292,6 +292,31 @@ describe('Shiki worker client theme cache', () => {
     })
   }, 20_000)
 
+  it('keeps the idle fence behind a theme request waiting on registrations', async () => {
+    const owner = await loadWorkerOwner()
+    const registrations = deferred<ReturnType<typeof resolvedRegistrations>>()
+    const theme = owner.loadTheme({
+      theme: 'github-dark',
+      registrations: registrations.promise,
+    })
+    let idle = false
+    const fence = owner.awaitIdleFence().then(() => {
+      idle = true
+    })
+
+    await flushMicrotasks()
+
+    expect(idle).toBe(false)
+    expect(fakeWorkers).toHaveLength(0)
+
+    registrations.resolve(resolvedRegistrations())
+    await expect(theme).resolves.toEqual({ backgroundColor: 'github-dark' })
+    await fence
+
+    expect(themeRequests()).toHaveLength(1)
+    expect(requestsOfType('idleFence')).toHaveLength(1)
+  })
+
   it('keeps the idle fence behind a disposed refresh waiting on registrations', async () => {
     const owner = await loadWorkerOwner()
     const registrations = deferred<ReturnType<typeof resolvedRegistrations>>()

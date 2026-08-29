@@ -131,6 +131,7 @@ export const canUseTreeSitterWorker = (): boolean => supportsWorkers()
 
 export class TreeSitterWorkerClient implements TreeSitterBackend {
   private worker: Worker | null = null
+  private disposeTask: Promise<void> | null = null
   private nextRequestId = 1
   private nextGeneration = 1
   private workerGeneration = 0
@@ -138,6 +139,8 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   private lastError: Error | null = null
   private initPromise: Promise<void> | null = null
   private readonly pendingRequests = new Map<number, PendingRequest>()
+  private readonly clientTasks = new Set<Promise<unknown>>()
+  private readonly runtimeTasks = new Map<string, Set<Promise<unknown>>>()
   private readonly sourceChunkRetention = new TreeSitterSourceChunkRetention()
   private readonly registeredLanguageSignatures = new Map<TreeSitterLanguageId, string>()
 
@@ -154,7 +157,11 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     }
   }
 
-  public async registerLanguages(
+  public registerLanguages(languages: readonly TreeSitterLanguageDescriptor[]): Promise<void> {
+    return this.trackClientTask(this.finishRegisterLanguages(languages))
+  }
+
+  private async finishRegisterLanguages(
     languages: readonly TreeSitterLanguageDescriptor[],
   ): Promise<void> {
     const nextLanguages = this.unregisteredLanguages(languages)
@@ -176,7 +183,13 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   public parse(
     payload: TreeSitterBackendParsePayload,
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined>
-  public async parse(
+  public parse(
+    payload: TreeSitterBackendParsePayload,
+  ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
+    return this.trackRuntimeTask(payload.runtimeSessionId, this.finishParse(payload))
+  }
+
+  private async finishParse(
     payload: TreeSitterBackendParsePayload,
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
     const handle = await this.ensureWorkerReady()
@@ -206,7 +219,13 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   public edit(
     payload: TreeSitterBackendEditPayload,
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined>
-  public async edit(
+  public edit(
+    payload: TreeSitterBackendEditPayload,
+  ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
+    return this.trackRuntimeTask(payload.runtimeSessionId, this.finishEdit(payload))
+  }
+
+  private async finishEdit(
     payload: TreeSitterBackendEditPayload,
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
     const handle = await this.ensureWorkerReady()
@@ -231,7 +250,11 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     return undefined
   }
 
-  public async queryRange(
+  public queryRange(payload: TreeSitterRangePayload): Promise<TreeSitterRangeResult | undefined> {
+    return this.trackRuntimeTask(payload.runtimeSessionId, this.finishQueryRange(payload))
+  }
+
+  private async finishQueryRange(
     payload: TreeSitterRangePayload,
   ): Promise<TreeSitterRangeResult | undefined> {
     const handle = await this.ensureWorkerReady()
@@ -249,7 +272,13 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     return isTreeSitterRangeResult(result) ? result : undefined
   }
 
-  public async select(
+  public select(
+    payload: TreeSitterSelectionPayload,
+  ): Promise<TreeSitterSelectionResult | undefined> {
+    return this.trackRuntimeTask(payload.runtimeSessionId, this.finishSelect(payload))
+  }
+
+  private async finishSelect(
     payload: TreeSitterSelectionPayload,
   ): Promise<TreeSitterSelectionResult | undefined> {
     const handle = await this.ensureWorkerReady()
@@ -261,31 +290,44 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   public disposeDocument(runtimeSessionId: string): void {
     this.cancelRuntimeRequests(runtimeSessionId)
     this.sourceChunkRetention.invalidateDocument(runtimeSessionId)
-    void this.postRequest({ type: 'disposeDocument', runtimeSessionId }, false).catch(
-      () => undefined,
-    )
+    const precedingTasks = [...(this.runtimeTasks.get(runtimeSessionId) ?? [])]
+    const disposal = Promise.allSettled(precedingTasks).then(async () => {
+      this.sourceChunkRetention.invalidateDocument(runtimeSessionId)
+      if (!this.worker) return
+
+      await this.postRequest({ type: 'disposeDocument', runtimeSessionId }, false)
+    })
+    void this.trackRuntimeTask(runtimeSessionId, disposal).catch(() => undefined)
   }
 
-  public awaitRuntimeSessionIdle(runtimeSessionId: string): Promise<void> {
+  public async awaitRuntimeSessionIdle(runtimeSessionId: string): Promise<void> {
+    await this.awaitRuntimeTasks(runtimeSessionId)
     if (!this.worker) return Promise.resolve()
-    return this.postRequest({ type: 'runtimeBarrier', runtimeSessionId }, false).then(
-      () => undefined,
-    )
+
+    await this.postRequest({ type: 'runtimeBarrier', runtimeSessionId }, false)
   }
 
-  public awaitIdleFence(): Promise<void> {
+  public async awaitIdleFence(): Promise<void> {
+    await this.awaitClientTasks()
     if (!this.worker) return Promise.resolve()
-    return this.postRequest({ type: 'idleFence' }, false).then(() => undefined)
+
+    await this.postRequest({ type: 'idleFence' }, false)
   }
 
-  public async dispose(): Promise<void> {
+  public dispose(): Promise<void> {
+    if (this.disposeTask) return this.disposeTask
+
+    this.lifecycle = 'disposing'
+    this.disposeTask = this.finishDispose()
+    return this.disposeTask
+  }
+
+  private async finishDispose(): Promise<void> {
     const handle = this.worker
     if (!handle) {
       this.clearRetainedState('disposed')
       return
     }
-
-    this.lifecycle = 'disposing'
     try {
       await this.postRequest({ type: 'dispose' }, false)
     } finally {
@@ -297,6 +339,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   }
 
   private getWorker(): Worker | null {
+    if (this.lifecycle === 'disposing' || this.lifecycle === 'disposed') return null
     if (!supportsWorkers()) return null
     if (this.worker) return this.worker
 
@@ -323,6 +366,8 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     }
 
     await this.initPromise
+    if (this.lifecycle === 'disposing' || this.lifecycle === 'disposed') return null
+    if (this.worker !== handle) return null
     return handle
   }
 
@@ -493,6 +538,41 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   ): TreeSitterSourceChunkRequest | null {
     if (!('source' in payload)) return null
     return this.sourceChunkRetention.createRequest(payload.runtimeSessionId, payload.source)
+  }
+
+  private trackClientTask<T>(task: Promise<T>): Promise<T> {
+    this.clientTasks.add(task)
+    void task.finally(() => this.clientTasks.delete(task)).catch(() => undefined)
+    return task
+  }
+
+  private trackRuntimeTask<T>(runtimeSessionId: string, task: Promise<T>): Promise<T> {
+    const tasks = this.runtimeTasks.get(runtimeSessionId) ?? new Set<Promise<unknown>>()
+    tasks.add(task)
+    this.runtimeTasks.set(runtimeSessionId, tasks)
+    this.trackClientTask(task)
+    void task
+      .finally(() => {
+        tasks.delete(task)
+        if (tasks.size === 0) this.runtimeTasks.delete(runtimeSessionId)
+      })
+      .catch(() => undefined)
+    return task
+  }
+
+  private async awaitClientTasks(): Promise<void> {
+    while (this.clientTasks.size > 0) {
+      await Promise.allSettled(this.clientTasks)
+    }
+  }
+
+  private async awaitRuntimeTasks(runtimeSessionId: string): Promise<void> {
+    while (this.runtimeTasks.has(runtimeSessionId)) {
+      const tasks = this.runtimeTasks.get(runtimeSessionId)
+      if (!tasks) return
+
+      await Promise.allSettled(tasks)
+    }
   }
 
   private clearRetainedState(lifecycle: TreeSitterWorkerLifecycleState): void {

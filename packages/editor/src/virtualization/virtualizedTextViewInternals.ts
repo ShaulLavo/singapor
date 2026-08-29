@@ -120,7 +120,7 @@ export interface VirtualizedTextViewInternal {
   tokenRenderEntryMaxEnds: readonly number[]
   tokenRenderStyles: ReadonlyMap<string, EditorTokenStyle>
   tokenRenderIndexDirty: boolean
-  lineStarts: number[]
+  lineStarts: readonly number[]
   lineStartOffsetIndex: LineStartOffsetIndex | null
   foldMarkers: readonly VirtualizedFoldMarker[]
   rowDecorations: ReadonlyMap<number, VirtualizedTextRowDecoration>

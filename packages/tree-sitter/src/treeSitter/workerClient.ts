@@ -23,7 +23,7 @@ import type {
 import type { PieceTableSnapshot } from '@singapor/core/document'
 
 type PendingRequest = {
-  readonly documentId: string | null
+  readonly runtimeSessionId: string | null
   readonly cancellationFlag: Int32Array | null
   readonly payload: TreeSitterWorkerRequestPayload
   readonly sourceRequest: TreeSitterSourceChunkRequest | null
@@ -46,6 +46,7 @@ type TreeSitterRangeDocumentRequest = Omit<
 
 export type TreeSitterParsePayload = {
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
   readonly includeHighlights?: boolean
@@ -60,6 +61,7 @@ export type TreeSitterBackendParsePayload = TreeSitterParsePayload | TreeSitterP
 
 export type TreeSitterEditPayload = {
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly previousSnapshotVersion: number
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
@@ -76,6 +78,7 @@ export type TreeSitterEditOnlyPayload = Omit<TreeSitterEditPayload, 'resultMode'
 export type TreeSitterBackendEditPayload = TreeSitterEditPayload | TreeSitterEditOnlyPayload
 export type TreeSitterRangePayload = {
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
   readonly includeHighlights?: boolean
@@ -115,7 +118,9 @@ export type TreeSitterBackend = {
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined>
   queryRange?(payload: TreeSitterRangePayload): Promise<TreeSitterRangeResult | undefined>
   select(payload: TreeSitterSelectionPayload): Promise<TreeSitterSelectionResult | undefined>
-  disposeDocument(documentId: string): void
+  disposeDocument(runtimeSessionId: string): void
+  awaitRuntimeSessionIdle?(runtimeSessionId: string): Promise<void>
+  awaitIdleFence?(): Promise<void>
   dispose?(): Promise<void>
 }
 
@@ -176,10 +181,11 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
     const handle = await this.ensureWorkerReady()
     if (!handle) return undefined
-    const source = this.createSourceDescriptor(payload.documentId, payload.snapshot)
+    const source = this.createSourceDescriptor(payload.runtimeSessionId, payload.snapshot)
     const request: TreeSitterParseDocumentRequest = {
       type: 'parse',
       documentId: payload.documentId,
+      runtimeSessionId: payload.runtimeSessionId,
       snapshotVersion: payload.snapshotVersion,
       languageId: payload.languageId,
       includeHighlights: payload.includeHighlights ?? true,
@@ -205,10 +211,11 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
   ): Promise<TreeSitterParseResult | TreeSitterParseAckResult | undefined> {
     const handle = await this.ensureWorkerReady()
     if (!handle) return undefined
-    const source = this.createSourceDescriptor(payload.documentId, payload.snapshot)
+    const source = this.createSourceDescriptor(payload.runtimeSessionId, payload.snapshot)
     const result = await this.postDocumentRequest({
       type: 'edit',
       documentId: payload.documentId,
+      runtimeSessionId: payload.runtimeSessionId,
       previousSnapshotVersion: payload.previousSnapshotVersion,
       snapshotVersion: payload.snapshotVersion,
       languageId: payload.languageId,
@@ -232,6 +239,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const result = await this.postRangeRequest({
       type: 'queryRange',
       documentId: payload.documentId,
+      runtimeSessionId: payload.runtimeSessionId,
       snapshotVersion: payload.snapshotVersion,
       languageId: payload.languageId,
       includeHighlights: payload.includeHighlights ?? true,
@@ -250,9 +258,24 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     return isTreeSitterSelectionResult(result) ? result : undefined
   }
 
-  public disposeDocument(documentId: string): void {
-    this.sourceChunkRetention.invalidateDocument(documentId)
-    void this.postRequest({ type: 'disposeDocument', documentId }, false).catch(() => undefined)
+  public disposeDocument(runtimeSessionId: string): void {
+    this.cancelRuntimeRequests(runtimeSessionId)
+    this.sourceChunkRetention.invalidateDocument(runtimeSessionId)
+    void this.postRequest({ type: 'disposeDocument', runtimeSessionId }, false).catch(
+      () => undefined,
+    )
+  }
+
+  public awaitRuntimeSessionIdle(runtimeSessionId: string): Promise<void> {
+    if (!this.worker) return Promise.resolve()
+    return this.postRequest({ type: 'runtimeBarrier', runtimeSessionId }, false).then(
+      () => undefined,
+    )
+  }
+
+  public awaitIdleFence(): Promise<void> {
+    if (!this.worker) return Promise.resolve()
+    return this.postRequest({ type: 'idleFence' }, false).then(() => undefined)
   }
 
   public async dispose(): Promise<void> {
@@ -313,10 +336,11 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const id = this.nextRequestId
     this.nextRequestId += 1
     const request: TreeSitterWorkerRequest = { id, payload }
+    markEditorWorkerRequest('tree-sitter', payload.type)
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, {
-        documentId: documentIdForPayload(payload),
+        runtimeSessionId: runtimeSessionIdForPayload(payload),
         cancellationFlag: cancellationFlagForPayload(payload),
         payload,
         sourceRequest: this.sourceRequestForPayload(payload),
@@ -336,7 +360,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     payload: TreeSitterParseDocumentRequest | TreeSitterEditDocumentRequest,
   ): Promise<TreeSitterWorkerResult> {
     return this.postRequest(
-      this.withCancellation(this.cancelPreviousDocumentRequests(payload.documentId), payload),
+      this.withCancellation(this.cancelPreviousDocumentRequests(payload.runtimeSessionId), payload),
     )
   }
 
@@ -344,29 +368,36 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     payload: TreeSitterRangeDocumentRequest,
   ): Promise<TreeSitterWorkerResult> {
     return this.postRequest(
-      this.withCancellation(this.cancelPreviousRangeRequests(payload.documentId), payload),
+      this.withCancellation(this.cancelPreviousRangeRequests(payload.runtimeSessionId), payload),
     )
   }
 
-  private cancelPreviousDocumentRequests(documentId: string): Int32Array | null {
+  private cancelPreviousDocumentRequests(runtimeSessionId: string): Int32Array | null {
     const cancellationFlag = this.createCancellationFlag()
     for (const pending of this.pendingRequests.values()) {
-      if (pending.documentId !== documentId) continue
+      if (pending.runtimeSessionId !== runtimeSessionId) continue
       if (pending.cancellationFlag) Atomics.store(pending.cancellationFlag, 0, 1)
     }
 
     return cancellationFlag
   }
 
-  private cancelPreviousRangeRequests(documentId: string): Int32Array | null {
+  private cancelPreviousRangeRequests(runtimeSessionId: string): Int32Array | null {
     const cancellationFlag = this.createCancellationFlag()
     for (const pending of this.pendingRequests.values()) {
-      if (pending.documentId !== documentId) continue
+      if (pending.runtimeSessionId !== runtimeSessionId) continue
       if (pending.payload.type !== 'queryRange') continue
       if (pending.cancellationFlag) Atomics.store(pending.cancellationFlag, 0, 1)
     }
 
     return cancellationFlag
+  }
+
+  private cancelRuntimeRequests(runtimeSessionId: string): void {
+    for (const pending of this.pendingRequests.values()) {
+      if (pending.runtimeSessionId !== runtimeSessionId) continue
+      if (pending.cancellationFlag) Atomics.store(pending.cancellationFlag, 0, 1)
+    }
   }
 
   private createCancellationFlag(): Int32Array | null {
@@ -405,8 +436,8 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
       return
     }
 
-    if (pending.documentId && shouldInvalidateDocumentSourceState(response.error)) {
-      this.sourceChunkRetention.invalidateDocument(pending.documentId)
+    if (pending.runtimeSessionId && shouldInvalidateDocumentSourceState(response.error)) {
+      this.sourceChunkRetention.invalidateDocument(pending.runtimeSessionId)
     }
     pending.reject(new Error(response.error))
   }
@@ -461,7 +492,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     payload: TreeSitterWorkerRequestPayload,
   ): TreeSitterSourceChunkRequest | null {
     if (!('source' in payload)) return null
-    return this.sourceChunkRetention.createRequest(payload.documentId, payload.source)
+    return this.sourceChunkRetention.createRequest(payload.runtimeSessionId, payload.source)
   }
 
   private clearRetainedState(lifecycle: TreeSitterWorkerLifecycleState): void {
@@ -490,8 +521,8 @@ function sortedItems(items: readonly string[]): readonly string[] {
   return items.toSorted()
 }
 
-const documentIdForPayload = (payload: TreeSitterWorkerRequestPayload): string | null => {
-  if ('documentId' in payload) return payload.documentId
+const runtimeSessionIdForPayload = (payload: TreeSitterWorkerRequestPayload): string | null => {
+  if ('runtimeSessionId' in payload) return payload.runtimeSessionId
   return null
 }
 
@@ -510,6 +541,13 @@ const shouldInvalidateDocumentSourceState = (error: string): boolean => {
 const workerRequestError = (error: unknown): Error => {
   if (error instanceof Error) return error
   return new Error(String(error))
+}
+
+function markEditorWorkerRequest(family: string, type: string): void {
+  const traceGlobal = globalThis as typeof globalThis & { readonly __editorPerfTrace?: unknown }
+  if (!traceGlobal.__editorPerfTrace) return
+
+  globalThis.performance?.mark('editor.worker.request', { detail: { family, type } })
 }
 
 const isTreeSitterParseResult = (result: TreeSitterWorkerResult): result is TreeSitterParseResult =>

@@ -330,6 +330,7 @@ function request(snapshot: Snapshot) {
   return {
     backend,
     documentId: 'file.ts',
+    runtimeSessionId: 'runtime-file.ts',
     languageId: 'typescript' as const,
     snapshotVersion: 1,
     snapshot,

@@ -39,6 +39,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot('const answer = 1;\n')
     const parsed = await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot,
@@ -52,6 +53,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const nextSnapshot = applyBatchToPieceTable(snapshot, edits)
     const payload = createTreeSitterEditPayload({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
       languageId: 'typescript',
@@ -64,6 +66,45 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     expect(edited?.documentId).toBe(documentId)
     expect(edited?.snapshotVersion).toBe(2)
     expect(edited?.captures.length).toBeGreaterThan(0)
+  })
+
+  it('isolates equal logical documents by runtime session', async () => {
+    const documentId = 'shared.ts'
+    const firstRuntime = 'runtime-tree-first'
+    const secondRuntime = 'runtime-tree-second'
+    const firstText = 'const first = 1;\n'
+    const secondText = 'const second = 2;\n'
+    await Promise.all([
+      workerClient.parse({
+        documentId,
+        runtimeSessionId: firstRuntime,
+        snapshotVersion: 1,
+        languageId: 'typescript',
+        snapshot: createPieceTableSnapshot(firstText),
+      }),
+      workerClient.parse({
+        documentId,
+        runtimeSessionId: secondRuntime,
+        snapshotVersion: 1,
+        languageId: 'typescript',
+        snapshot: createPieceTableSnapshot(secondText),
+      }),
+    ])
+
+    workerClient.disposeDocument(firstRuntime)
+    await workerClient.awaitRuntimeSessionIdle(firstRuntime)
+    const result = await workerClient.queryRange({
+      documentId,
+      runtimeSessionId: secondRuntime,
+      snapshotVersion: 1,
+      languageId: 'typescript',
+      includeHighlights: true,
+      includeCaptures: true,
+      range: { startIndex: 0, endIndex: secondText.length },
+    })
+
+    expect(result?.documentId).toBe(documentId)
+    expect(result?.captures.length).toBeGreaterThan(0)
   })
 
   it('highlights PascalCase TSX component tag names and reports JSX folds', async () => {
@@ -80,6 +121,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     const parsed = await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot,
@@ -124,6 +166,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       resultMode: 'parseOnly',
@@ -133,6 +176,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const topTarget = text.indexOf('value10')
     const topResult = await workerClient.queryRange({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       includeHighlights: true,
@@ -142,6 +186,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const target = text.indexOf('value10000')
     const result = await workerClient.queryRange({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       includeHighlights: true,
@@ -160,6 +205,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const nextSnapshot = applyBatchToPieceTable(snapshot, [edit])
     const payload = createTreeSitterEditPayload({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       previousSnapshotVersion: 99,
       snapshotVersion: 100,
       languageId: 'typescript',
@@ -187,6 +233,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot,
@@ -197,6 +244,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const nextSnapshot = applyBatchToPieceTable(snapshot, [edit])
     const payload = createTreeSitterEditPayload({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
       languageId: 'typescript',
@@ -207,6 +255,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const incremental = payload ? await workerClient.edit(payload) : undefined
     const full = await workerClient.parse({
       documentId: `${documentId}:full`,
+      runtimeSessionId: `runtime-${documentId}:full`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot: nextSnapshot,
@@ -230,6 +279,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot,
@@ -240,6 +290,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const nextSnapshot = applyBatchToPieceTable(snapshot, [edit])
     const payload = createTreeSitterEditPayload({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
       languageId: 'typescript',
@@ -250,6 +301,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const incremental = payload ? await workerClient.edit(payload) : undefined
     const full = await workerClient.parse({
       documentId: `${documentId}:full`,
+      runtimeSessionId: `runtime-${documentId}:full`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot: nextSnapshot,
@@ -265,6 +317,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(documentSessionSource)
     await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot,
@@ -278,6 +331,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const nextSnapshot = applyBatchToPieceTable(snapshot, [edit])
     const payload = createTreeSitterEditPayload({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
       languageId: 'typescript',
@@ -288,6 +342,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const incremental = payload ? await workerClient.edit(payload) : undefined
     const full = await workerClient.parse({
       documentId: `${documentId}:full`,
+      runtimeSessionId: `runtime-${documentId}:full`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot: nextSnapshot,
@@ -304,6 +359,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     const parsed = await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'html',
       snapshot,
@@ -332,6 +388,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     const parsed = await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'html',
       includeHighlights: false,
@@ -366,6 +423,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     const parsed = await workerClient.parse({
       documentId: 'file.consumer-js',
+      runtimeSessionId: 'runtime-file.consumer-js',
       snapshotVersion: 1,
       languageId: 'consumer-javascript',
       snapshot,
@@ -387,6 +445,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     const parsed = await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot,
@@ -407,6 +466,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'html',
       snapshot,
@@ -416,6 +476,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const nextSnapshot = applyBatchToPieceTable(snapshot, edits)
     const payload = createTreeSitterEditPayload({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
       languageId: 'html',
@@ -435,6 +496,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'html',
       snapshot,
@@ -447,6 +509,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const nextSnapshot = applyBatchToPieceTable(snapshot, edits)
     const payload = createTreeSitterEditPayload({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
       languageId: 'html',
@@ -495,6 +558,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     const parsed = await workerClient.parse({
       documentId: 'style.combined-ts',
+      runtimeSessionId: 'runtime-style.combined-ts',
       snapshotVersion: 1,
       languageId: 'combined-typescript',
       snapshot,
@@ -650,6 +714,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot('const answer = 1;\n')
     await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'typescript',
       snapshot,
@@ -659,6 +724,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const token = await selectTreeSitterToken({
       backend: workerClient,
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       languageId: 'typescript',
       snapshotVersion: 1,
       snapshot,
@@ -667,6 +733,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const expanded = await expandTreeSitterSelection({
       backend: workerClient,
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       languageId: 'typescript',
       snapshotVersion: 1,
       snapshot,
@@ -676,6 +743,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const shrunk = shrinkTreeSitterSelection({
       backend: workerClient,
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       languageId: 'typescript',
       snapshotVersion: 1,
       snapshot,
@@ -697,6 +765,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const snapshot = createPieceTableSnapshot(text)
     await workerClient.parse({
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       snapshotVersion: 1,
       languageId: 'html',
       snapshot,
@@ -707,6 +776,7 @@ describe.skipIf(typeof Worker === 'undefined')('tree-sitter worker client', () =
     const token = await selectTreeSitterToken({
       backend: workerClient,
       documentId,
+      runtimeSessionId: `runtime-${documentId}`,
       languageId: 'html',
       snapshotVersion: 1,
       snapshot,
@@ -766,6 +836,7 @@ async function compareIncrementalInjectionsWithFullParse(
   const snapshot = createPieceTableSnapshot(scenario.text)
   const initial = await workerClient.parse({
     documentId: scenario.documentId,
+    runtimeSessionId: `runtime-${scenario.documentId}`,
     snapshotVersion: 1,
     languageId: scenario.languageId,
     snapshot,
@@ -775,6 +846,7 @@ async function compareIncrementalInjectionsWithFullParse(
   const nextSnapshot = applyBatchToPieceTable(snapshot, [scenario.edit])
   const payload = createTreeSitterEditPayload({
     documentId: scenario.documentId,
+    runtimeSessionId: `runtime-${scenario.documentId}`,
     previousSnapshotVersion: 1,
     snapshotVersion: 2,
     languageId: scenario.languageId,
@@ -789,6 +861,7 @@ async function compareIncrementalInjectionsWithFullParse(
 
   const full = await workerClient.parse({
     documentId: `${scenario.documentId}:full`,
+    runtimeSessionId: `runtime-${scenario.documentId}:full`,
     snapshotVersion: 1,
     languageId: scenario.languageId,
     snapshot: nextSnapshot,

@@ -121,10 +121,12 @@ const measureSyntax = async (
   const text = buildText(lines)
   const snapshot = createPieceTableSnapshot(text)
   const documentId = `bench-${lines}.ts`
+  const runtimeSessionId = `runtime-${documentId}`
 
   const parseStart = performance.now()
   const parsed = await workerClient.parse({
     documentId,
+    runtimeSessionId,
     snapshotVersion: 1,
     languageId: 'typescript',
     snapshot,
@@ -137,6 +139,7 @@ const measureSyntax = async (
   const nextSnapshot = applyBatchToPieceTable(snapshot, [edit])
   const payload = createTreeSitterEditPayload({
     documentId,
+    runtimeSessionId,
     languageId: 'typescript',
     previousSnapshotVersion: 1,
     snapshotVersion: 2,
@@ -179,8 +182,10 @@ const measureInjectionEdit = async (
   const text = buildMarkdownWithFences(fences)
   const snapshot = createPieceTableSnapshot(text)
   const documentId = `bench-injections-${fences}.md`
+  const runtimeSessionId = `runtime-${documentId}`
   const parsed = await workerClient.parse({
     documentId,
+    runtimeSessionId,
     snapshotVersion: 1,
     languageId: 'markdown',
     snapshot,
@@ -192,6 +197,7 @@ const measureInjectionEdit = async (
   const nextSnapshot = applyBatchToPieceTable(snapshot, [edit])
   const payload = createTreeSitterEditPayload({
     documentId,
+    runtimeSessionId,
     languageId: 'markdown',
     previousSnapshotVersion: 1,
     snapshotVersion: 2,

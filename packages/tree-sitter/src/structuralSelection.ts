@@ -21,6 +21,7 @@ export type TreeSitterSelectionExpansionState = {
 
 export type TreeSitterSelectionCommandOptions = {
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly languageId: TreeSitterLanguageId
   readonly snapshotVersion: number
   readonly snapshot: PieceTableSnapshot
@@ -109,6 +110,7 @@ const requestSelectionRanges = (
 ): Promise<TreeSitterSelectionResult | undefined> =>
   options.backend.select({
     documentId: options.documentId,
+    runtimeSessionId: options.runtimeSessionId,
     languageId: options.languageId,
     snapshotVersion: options.snapshotVersion,
     action,

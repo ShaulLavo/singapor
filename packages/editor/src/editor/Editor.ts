@@ -31,7 +31,10 @@ import type { LineStartsView } from '../virtualization/lineStartIndex'
 import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
 import { appendTiming, nowMs } from './timing'
 import { copyTokenProjectionMetadata, projectTokensThroughEdit } from './tokenProjection'
-import { measureEditorPerformance } from './performanceDiagnostics'
+import {
+  measureEditorPerformance,
+  recordEditorPerformanceDiagnostic,
+} from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
 import { EditorCommandRouter } from './commandRouter'
@@ -182,6 +185,7 @@ import {
 import { normalizeSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { observeBrowserTextMetricsInvalidation } from '../virtualization/browserMetrics'
 import { EditorDisposableStore } from './disposables'
+import type { EditorPreparedDocumentPayload } from './preparedDocument'
 
 const RAPID_INPUT_SECONDARY_WORK_DELAY_MS = 150
 // A sustained typing run never leaves a 150ms gap, so a pure debounce would
@@ -1289,25 +1293,44 @@ export class Editor {
     this.disposeBufferSubscriptions()
     const attachment = this.document.attachSession(session, options)
     this.subscribeToBufferSession(session)
-    this.syntax.startDocument({
+    const syntaxDocument = {
       documentId: attachment.internalDocumentId,
       languageId: attachment.languageId,
       textSnapshot: attachment.textSnapshot,
       snapshot: attachment.session.getSnapshot(),
+    }
+    const prepared = options.preparedDocument
+      ? this.syntax.claimPreparedDocument(syntaxDocument, options.preparedDocument, {
+          documentConfigurationTag: options.documentConfigurationTag ?? [],
+          highlighterConfigurationTag: options.highlighterConfigurationTag ?? [],
+          structuralConfigurationTag: options.structuralConfigurationTag ?? [],
+        })
+      : null
+    recordEditorPerformanceDiagnostic('editor.document.attach', {
+      prepared: prepared !== null,
+      structural: preparedTransferStage(prepared?.structural),
+      highlighter: preparedTransferStage(prepared?.highlighter),
     })
+    this.syntax.startDocument(syntaxDocument, prepared)
     this.lifecycleSummary.document.startedCount += 1
     this.syncViewEditability()
-    this.adoptDocumentTabSize(attachment.fullText)
+    if (prepared) this.adoptPreparedDocumentTabSize(prepared.tabSize)
+    else this.adoptDocumentTabSize(attachment.fullText)
     // Asked for before the text lands so the replacement renders the restored viewport directly.
     // Setting it afterwards drew the outgoing offset first and every row twice.
     this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
-    this.renderDocument({ text: attachment.fullText, tokens: [] })
+    if (prepared) {
+      this.renderPreparedDocument(attachment.fullText, attachment.textSnapshot, prepared)
+    } else {
+      this.renderDocument({ text: attachment.fullText, tokens: [] })
+    }
     // A host handing over its own session is replacing the document just as much as opening one is.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()
     // Still applied: it settles the horizontal offset, and clamps the vertical one against the
     // rows that actually rendered. A match with the request above makes it a no-op.
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
+    this.syntax.adoptPreparedReadyResults(prepared)
     this.notifyViewContributions('document', null)
     this.syntax.notifyBaseTextPainted()
     this.notifyChange(null)
@@ -1430,6 +1453,49 @@ export class Editor {
     if (this.options.tabSize !== undefined) return
 
     this.tabSize = guessedTabSize(text, this.configuredTabSize)
+  }
+
+  private adoptPreparedDocumentTabSize(tabSize: number): void {
+    if (this.options.tabSize !== undefined) return
+
+    this.tabSize = tabSize
+  }
+
+  private renderPreparedDocument(
+    text: string,
+    textSnapshot: TextSnapshot,
+    prepared: EditorPreparedDocumentPayload,
+  ): void {
+    this.text = text
+    this.view.setText(text, textSnapshot, prepared.lineStarts)
+    this.retagDisplayProjectionSources()
+    this.syncInjectedTextRows()
+    this.setTokens([])
+    this.dropManualFolds()
+    this.installPreparedFallbackFolds(prepared.fallbackFolds)
+    this.applyRangeDecorations()
+    this.notifyViewContributions('content', null)
+    this.recordContentSet()
+  }
+
+  private installPreparedFallbackFolds(folds: readonly FoldRange[]): void {
+    this.grammarDescribedFolds = false
+    this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
+    this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
+    this.foldState.clear()
+    if (folds.length > 0) {
+      this.displayProjections.set({
+        kind: 'folds',
+        owner: FALLBACK_FOLD_PROJECTION_OWNER,
+        source: this.currentDisplayProjectionSource(),
+        invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
+        layer: 0,
+        priority: 1,
+        disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
+        value: [...folds],
+      })
+    }
+    this.foldState.setFoldProjections(this.foldProjections())
   }
 
   private initializeDefaultText(): void {
@@ -3730,6 +3796,13 @@ function joinClassNames(left: string | undefined, right: string | undefined): st
   if (!left) return right
   if (!right) return left
   return `${left} ${right}`
+}
+
+function preparedTransferStage(
+  transfer: { readonly readyResult: unknown } | null | undefined,
+): 'absent' | 'pending' | 'ready' {
+  if (!transfer) return 'absent'
+  return transfer.readyResult ? 'ready' : 'pending'
 }
 
 /**

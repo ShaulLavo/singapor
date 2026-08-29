@@ -39,9 +39,21 @@ export default defineConfig({
 
 function dependencyAllowRoot(packageName: string): string | null {
   const packageJsonPath = resolveDependency(`${packageName}/package.json`)
-  if (!packageJsonPath) return null
-  const packageRoot = dirname(packageJsonPath)
+  const resolvedPath = packageJsonPath ?? resolveDependency(packageName)
+  if (!resolvedPath) return null
+
+  const packageRoot = packageJsonPath
+    ? dirname(packageJsonPath)
+    : packageRootForResolvedPath(resolvedPath, packageName)
   return bunStoreRoot(packageRoot) ?? packageRoot
+}
+
+function packageRootForResolvedPath(resolvedPath: string, packageName: string): string {
+  const marker = `${sep}node_modules${sep}${packageName}${sep}`
+  const index = resolvedPath.lastIndexOf(marker)
+  if (index === -1) return dirname(resolvedPath)
+
+  return resolvedPath.slice(0, index + marker.length - 1)
 }
 
 function resolveDependency(specifier: string): string | null {

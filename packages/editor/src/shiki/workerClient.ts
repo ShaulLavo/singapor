@@ -9,6 +9,7 @@ import type {
   EditorHighlighterSession,
   EditorHighlighterSessionOptions,
 } from '../plugins'
+import { createEditorRuntimeSessionId } from '../syntax/session'
 import type { EditorTheme } from '../theme'
 import type {
   ShikiWorkerDocumentOptions,
@@ -149,10 +150,26 @@ export class ShikiWorkerOwner {
     ).then(() => undefined)
   }
 
-  public disposeDocument(documentId: string): void {
-    if (!this.worker) return
+  public disposeDocument(runtimeSessionId: string): Promise<void> {
+    if (!this.worker) return Promise.resolve()
 
-    void this.postRequest({ type: 'disposeDocument', documentId }, false).catch(() => undefined)
+    return this.postRequest({ type: 'disposeDocument', runtimeSessionId }, false).then(
+      () => undefined,
+    )
+  }
+
+  public awaitRuntimeSessionIdle(runtimeSessionId: string): Promise<void> {
+    if (!this.worker) return Promise.resolve()
+
+    return this.postRequest({ type: 'runtimeBarrier', runtimeSessionId }, false).then(
+      () => undefined,
+    )
+  }
+
+  public awaitIdleFence(): Promise<void> {
+    if (!this.worker) return Promise.resolve()
+
+    return this.postRequest({ type: 'idleFence' }, false).then(() => undefined)
   }
 
   public async dispose(): Promise<void> {
@@ -205,6 +222,7 @@ export class ShikiWorkerOwner {
     const id = this.nextRequestId
     this.nextRequestId += 1
     const request: ShikiWorkerRequest = { id, payload }
+    markEditorWorkerRequest('shiki', payload.type)
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject })
@@ -269,6 +287,7 @@ function unpackShikiWorkerResult(
 
 class ShikiHighlighterSession implements EditorHighlighterSession {
   private readonly documentId: string
+  private readonly runtimeSessionId: string
   private readonly lang: string
   private readonly theme: string
   private readonly registrations: Promise<ShikiResolvedRegistrations>
@@ -285,6 +304,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     private readonly owner: ShikiWorkerOwner,
   ) {
     this.documentId = options.documentId
+    this.runtimeSessionId = options.runtimeSessionId ?? createEditorRuntimeSessionId()
     this.lang = options.lang
     this.theme = options.theme
     this.registrations = Promise.resolve(options.registrations)
@@ -342,7 +362,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
     this.disposed = true
     this.opened = false
-    this.owner.disposeDocument(this.documentId)
+    void this.owner.disposeDocument(this.runtimeSessionId).catch(() => undefined)
   }
 
   private enqueueRequest(
@@ -383,6 +403,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     const registrations = await this.registrations
     return {
       documentId: this.documentId,
+      runtimeSessionId: this.runtimeSessionId,
       lang: this.lang,
       theme: this.theme,
       languageRegistrations: registrations.languageRegistrations,
@@ -493,4 +514,11 @@ function scheduleRegistrationPreload(
 function workerRequestError(error: unknown): Error {
   if (error instanceof Error) return error
   return new Error(String(error))
+}
+
+function markEditorWorkerRequest(family: string, type: string): void {
+  const traceGlobal = globalThis as typeof globalThis & { readonly __editorPerfTrace?: unknown }
+  if (!traceGlobal.__editorPerfTrace) return
+
+  globalThis.performance?.mark('editor.worker.request', { detail: { family, type } })
 }

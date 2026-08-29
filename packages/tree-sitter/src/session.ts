@@ -11,6 +11,7 @@ import {
 } from '@singapor/core/document'
 import {
   createEmptySyntaxResult,
+  createEditorRuntimeSessionId,
   type EditorSyntaxDegradedState,
   type EditorToken,
   type EditorSyntaxRange,
@@ -41,6 +42,7 @@ import {
 
 export type TreeSitterSyntaxSessionOptions = {
   readonly documentId: string
+  readonly runtimeSessionId?: string
   readonly languageId: TreeSitterLanguageId
   readonly languageResolver?: TreeSitterLanguageResolver
   readonly includeHighlights?: boolean
@@ -54,6 +56,7 @@ export type TreeSitterSyntaxSessionOptions = {
 
 export class TreeSitterSyntaxSession implements EditorSyntaxSession {
   private readonly documentId: string
+  private readonly runtimeSessionId: string
   private readonly languageId: TreeSitterLanguageId
   private readonly languageResolver: TreeSitterLanguageResolver | undefined
   private readonly includeHighlights: boolean
@@ -70,6 +73,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
 
   public constructor(options: TreeSitterSyntaxSessionOptions) {
     this.documentId = options.documentId
+    this.runtimeSessionId = options.runtimeSessionId ?? createEditorRuntimeSessionId()
     this.languageId = options.languageId
     this.languageResolver = options.languageResolver
     this.includeHighlights = options.includeHighlights ?? true
@@ -103,6 +107,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
 
     const parsePayload = {
       documentId: this.documentId,
+      runtimeSessionId: this.runtimeSessionId,
       snapshotVersion,
       languageId: this.languageId,
       includeHighlights: this.includeHighlights,
@@ -147,6 +152,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
 
     const editPayloadOptions = {
       documentId: this.documentId,
+      runtimeSessionId: this.runtimeSessionId,
       languageId: this.languageId,
       previousSnapshotVersion: this.parsedSnapshotVersion,
       snapshotVersion: ++this.snapshotVersion,
@@ -179,6 +185,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
 
     const result = await this.backend.queryRange({
       documentId: this.documentId,
+      runtimeSessionId: this.runtimeSessionId,
       snapshotVersion: this.parsedSnapshotVersion,
       languageId: this.languageId,
       includeHighlights: this.includeHighlights,
@@ -209,7 +216,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     if (this.disposed) return
 
     this.disposed = true
-    this.backend.disposeDocument(this.documentId)
+    this.backend.disposeDocument(this.runtimeSessionId)
   }
 
   private async applyIncrementalEdit(
@@ -253,7 +260,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     if (this.disposed) return Promise.resolve(this.result)
 
     this.parsedSnapshotVersion = 0
-    this.backend.disposeDocument(this.documentId)
+    this.backend.disposeDocument(this.runtimeSessionId)
     return this.refresh(snapshot)
   }
 
@@ -431,6 +438,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
 
 type TreeSitterBaseEditPayloadOptions = {
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly languageId: TreeSitterLanguageId
   readonly previousSnapshotVersion: number
   readonly snapshotVersion: number
@@ -462,6 +470,7 @@ export function createTreeSitterEditPayload(
 
   return {
     documentId: options.documentId,
+    runtimeSessionId: options.runtimeSessionId,
     previousSnapshotVersion: options.previousSnapshotVersion,
     snapshotVersion: options.snapshotVersion,
     languageId: options.languageId,

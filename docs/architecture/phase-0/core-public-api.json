@@ -58,6 +58,12 @@
         },
         {
           "kind": "type",
+          "name": "CreateEditorPreparedDocumentOptions",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "CreateMergeConflictDocumentTextOptions",
           "source": "packages/editor/src/editor.ts",
           "via": "packages/editor/src/index.ts"
@@ -750,6 +756,60 @@
           "kind": "type",
           "name": "EditorPluginLifecycleState",
           "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedDocument",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedDocumentMatch",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedDocumentPayload",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedHighlighterTransfer",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedStageOutcome",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedStageRequest",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedStructuralConfiguration",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedStructuralTransfer",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedTagValue",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1554,6 +1614,18 @@
           "kind": "unknown",
           "name": "createEditorOptionSync",
           "source": "packages/editor/src/editor/optionDescriptors.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createEditorPreparedDocument",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createEditorRuntimeSessionId",
+          "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -2908,6 +2980,12 @@
         },
         {
           "kind": "type",
+          "name": "CreateEditorPreparedDocumentOptions",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "CreateMergeConflictDocumentTextOptions",
           "source": "packages/editor/src/mergeConflicts.ts",
           "via": "packages/editor/src/editor.ts"
@@ -3274,6 +3352,60 @@
         },
         {
           "kind": "type",
+          "name": "EditorPreparedDocument",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedDocumentMatch",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedDocumentPayload",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedHighlighterTransfer",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedStageOutcome",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedStageRequest",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedStructuralConfiguration",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedStructuralTransfer",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedTagValue",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorRangeDecoration",
           "source": "packages/editor/src/editor/types.ts",
           "via": "packages/editor/src/editor.ts"
@@ -3606,6 +3738,12 @@
           "kind": "unknown",
           "name": "createEditorLoggingPlugin",
           "source": "packages/editor/src/logging/index.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createEditorPreparedDocument",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
           "via": "packages/editor/src/editor.ts"
         },
         {
@@ -5314,6 +5452,24 @@
         },
         {
           "kind": "type",
+          "name": "ShikiLanguageRegistrationResolver",
+          "source": "packages/editor/src/shiki/plugin.ts",
+          "via": "packages/editor/src/shiki/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ShikiPreloadRegistrations",
+          "source": "packages/editor/src/shiki/workerClient.ts",
+          "via": "packages/editor/src/shiki/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ShikiResolvedRegistrations",
+          "source": "packages/editor/src/shiki/workerClient.ts",
+          "via": "packages/editor/src/shiki/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "ShikiThemeLike",
           "source": "packages/editor/src/shiki/theme-extract.ts",
           "via": "packages/editor/src/shiki/index.ts"
@@ -5326,8 +5482,20 @@
         },
         {
           "kind": "type",
+          "name": "ShikiThemeRegistrationResolver",
+          "source": "packages/editor/src/shiki/plugin.ts",
+          "via": "packages/editor/src/shiki/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "ShikiWorkerCacheSnapshot",
           "source": "packages/editor/src/shiki/workerClient.ts",
+          "via": "packages/editor/src/shiki/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "ShikiWorkerLanguageRegistration",
+          "source": "packages/editor/src/shiki/workerTypes.ts",
           "via": "packages/editor/src/shiki/index.ts"
         },
         {
@@ -5668,6 +5836,12 @@
         {
           "kind": "type",
           "name": "SemanticTokenStyles",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createEditorRuntimeSessionId",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
         },

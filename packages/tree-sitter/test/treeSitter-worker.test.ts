@@ -427,9 +427,10 @@ describe('parse document reuse', () => {
       lastUsed: 0,
     }) as unknown as WorkerParsedDocument
 
-  const parseRequest = (snapshotVersion: number): WorkerParseRequest =>
+  const parseRequest = (runtimeSessionId: string, snapshotVersion: number): WorkerParseRequest =>
     ({
       documentId: 'doc',
+      runtimeSessionId,
       languageId: 'typescript',
       snapshotVersion,
     }) as unknown as WorkerParseRequest
@@ -438,33 +439,38 @@ describe('parse document reuse', () => {
     ({ length, chunks: [] }) as unknown as WorkerSource
 
   it('reuses the cached document for an identical document version', () => {
+    const runtimeSessionId = 'runtime-reuse'
     const deleted: string[] = []
     const document = fakeParsedDocument(10, deleted)
-    replaceCachedDocument('doc', document)
+    replaceCachedDocument(runtimeSessionId, document)
 
-    expect(reusableParsedDocument(parseRequest(1), sourceOfLength(10))).toBe(document)
+    expect(reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(10))).toBe(
+      document,
+    )
     expect(deleted).toEqual([])
-    disposeDocument('doc')
+    disposeDocument(runtimeSessionId)
   })
 
   it('drops the same-version snapshot before reparsing when content length differs', () => {
+    const runtimeSessionId = 'runtime-length-mismatch'
     const deleted: string[] = []
-    replaceCachedDocument('doc', fakeParsedDocument(10, deleted))
+    replaceCachedDocument(runtimeSessionId, fakeParsedDocument(10, deleted))
 
-    expect(reusableParsedDocument(parseRequest(1), sourceOfLength(12))).toBeNull()
+    expect(reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(12))).toBeNull()
     expect(deleted).toEqual(['root'])
-    expect(reusableParsedDocument(parseRequest(1), sourceOfLength(12))).toBeNull()
+    expect(reusableParsedDocument(parseRequest(runtimeSessionId, 1), sourceOfLength(12))).toBeNull()
     expect(deleted).toEqual(['root'])
-    disposeDocument('doc')
+    disposeDocument(runtimeSessionId)
   })
 
   it('does not reuse across snapshot versions', () => {
+    const runtimeSessionId = 'runtime-version-mismatch'
     const deleted: string[] = []
     const document = fakeParsedDocument(10, deleted)
-    replaceCachedDocument('doc', document)
+    replaceCachedDocument(runtimeSessionId, document)
 
-    expect(reusableParsedDocument(parseRequest(2), sourceOfLength(10))).toBeNull()
+    expect(reusableParsedDocument(parseRequest(runtimeSessionId, 2), sourceOfLength(10))).toBeNull()
     expect(deleted).toEqual([])
-    disposeDocument('doc')
+    disposeDocument(runtimeSessionId)
   })
 })

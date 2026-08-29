@@ -112,6 +112,7 @@ type TreeSitterRegisterLanguagesRequest = {
 export type TreeSitterParseRequest = {
   readonly type: 'parse'
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
   readonly includeHighlights: boolean
@@ -125,6 +126,7 @@ export type TreeSitterParseRequest = {
 export type TreeSitterEditRequest = {
   readonly type: 'edit'
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly previousSnapshotVersion: number
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
@@ -141,6 +143,7 @@ export type TreeSitterEditRequest = {
 export type TreeSitterRangeRequest = {
   readonly type: 'queryRange'
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
   readonly includeHighlights: boolean
@@ -160,6 +163,7 @@ type TreeSitterSelectionAction = 'selectToken' | 'expand'
 export type TreeSitterSelectionRequest = {
   readonly type: 'selection'
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly snapshotVersion: number
   readonly languageId: TreeSitterLanguageId
   readonly action: TreeSitterSelectionAction
@@ -176,7 +180,16 @@ export type TreeSitterSelectionResult = {
 
 type TreeSitterDisposeDocumentRequest = {
   readonly type: 'disposeDocument'
-  readonly documentId: string
+  readonly runtimeSessionId: string
+}
+
+type TreeSitterRuntimeBarrierRequest = {
+  readonly type: 'runtimeBarrier'
+  readonly runtimeSessionId: string
+}
+
+type TreeSitterIdleFenceRequest = {
+  readonly type: 'idleFence'
 }
 
 type TreeSitterDisposeRequest = {
@@ -191,6 +204,8 @@ export type TreeSitterWorkerRequestPayload =
   | TreeSitterRangeRequest
   | TreeSitterSelectionRequest
   | TreeSitterDisposeDocumentRequest
+  | TreeSitterRuntimeBarrierRequest
+  | TreeSitterIdleFenceRequest
   | TreeSitterDisposeRequest
 
 export type TreeSitterWorkerResult =

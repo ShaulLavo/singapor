@@ -21,6 +21,7 @@ import type { EditorKeymapOptions } from './keymap'
 import type { EditorSuspiciousCharactersOptions } from '../unicodeHighlight'
 import type { TextEdit } from '../tokens'
 import type { SelectionAffinity } from '../selections'
+import type { EditorPreparedDocument, EditorPreparedTagValue } from './preparedDocument'
 
 /** Minimal interface for the CSS Custom Highlight API registry. */
 export interface HighlightRegistry {
@@ -60,9 +61,13 @@ export type EditorScrollPosition = {
 
 export type EditorSessionOptions = {
   readonly documentId?: string | null
+  readonly documentConfigurationTag?: readonly EditorPreparedTagValue[]
+  readonly highlighterConfigurationTag?: readonly EditorPreparedTagValue[]
   readonly languageId?: EditorSyntaxLanguageId | null
   readonly onChange?: EditorSessionChangeHandler
+  readonly preparedDocument?: EditorPreparedDocument | null
   readonly scrollPosition?: EditorScrollPosition
+  readonly structuralConfigurationTag?: readonly EditorPreparedTagValue[]
 }
 
 export type EditorSyntaxStatus = 'plain' | 'loading' | 'ready' | 'degraded' | 'error'

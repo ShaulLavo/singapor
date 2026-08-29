@@ -22,6 +22,7 @@ export type ShikiWorkerLanguageRegistration = {
 
 export type ShikiWorkerDocumentOptions = {
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly lang: string
   readonly theme: string
   readonly languageRegistrations: readonly ShikiWorkerLanguageRegistration[]
@@ -42,7 +43,16 @@ export type ShikiWorkerEditRequest = ShikiWorkerDocumentOptions & {
 
 type ShikiWorkerDisposeDocumentRequest = {
   readonly type: 'disposeDocument'
-  readonly documentId: string
+  readonly runtimeSessionId: string
+}
+
+type ShikiWorkerRuntimeBarrierRequest = {
+  readonly type: 'runtimeBarrier'
+  readonly runtimeSessionId: string
+}
+
+type ShikiWorkerIdleFenceRequest = {
+  readonly type: 'idleFence'
 }
 
 type ShikiWorkerDisposeRequest = {
@@ -66,6 +76,8 @@ export type ShikiWorkerRequestPayload =
   | ShikiWorkerOpenRequest
   | ShikiWorkerEditRequest
   | ShikiWorkerDisposeDocumentRequest
+  | ShikiWorkerRuntimeBarrierRequest
+  | ShikiWorkerIdleFenceRequest
   | ShikiWorkerDisposeRequest
   | ShikiWorkerPreloadRequest
   | ShikiWorkerThemeRequest

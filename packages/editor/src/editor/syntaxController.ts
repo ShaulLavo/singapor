@@ -32,12 +32,28 @@ import {
 import { LatestAsyncRequest } from './latestAsyncRequest'
 import { getEditorSyntaxSessionFactory } from './runtime'
 import { syntaxRefreshDelay, SYNTAX_REFRESH_MAX_DELAY_MS } from './editorUtils'
+import type {
+  EditorPreparedDocument,
+  EditorPreparedDocumentPayload,
+  EditorPreparedHighlighterTransfer,
+  EditorPreparedStructuralConfiguration,
+  EditorPreparedStructuralTransfer,
+  EditorPreparedTagValue,
+} from './preparedDocument'
+import { nowMs } from './timing'
+import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
 
 export type EditorSyntaxDocumentStartOptions = {
   readonly documentId: string
   readonly languageId: EditorSyntaxLanguageId | null
   readonly snapshot: PieceTableSnapshot
   readonly textSnapshot: DocumentTextSnapshot
+}
+
+export type EditorPreparedDocumentClaimOptions = {
+  readonly documentConfigurationTag: readonly EditorPreparedTagValue[]
+  readonly highlighterConfigurationTag: readonly EditorPreparedTagValue[]
+  readonly structuralConfigurationTag: readonly EditorPreparedTagValue[]
 }
 
 export type EditorSyntaxControllerOptions = {
@@ -147,6 +163,10 @@ export class EditorSyntaxController {
   private syntaxSession: EditorSyntaxSession | null = null
   private syntaxSessionIncludesCaptures = false
   private highlighterSession: EditorHighlighterSession | null = null
+  private preparedSyntaxDisposer: (() => void) | null = null
+  private preparedHighlighterDisposer: (() => void) | null = null
+  private skipNextStructuralRefresh = false
+  private skipNextHighlighterRefresh = false
   private providerHighlighterTheme: EditorTheme | null = null
   private highlighterTheme: EditorTheme | null = null
   private cachedSyntaxRanges: readonly EditorSyntaxRange[] = []
@@ -230,7 +250,35 @@ export class EditorSyntaxController {
     this.options.adoptTokens(tokens)
   }
 
-  startDocument(document: EditorSyntaxDocumentStartOptions): void {
+  claimPreparedDocument(
+    document: EditorSyntaxDocumentStartOptions,
+    preparedDocument: EditorPreparedDocument,
+    tags: EditorPreparedDocumentClaimOptions,
+  ): EditorPreparedDocumentPayload | null {
+    const highlighterProvider = this.options.pluginHost.getHighlighterProvider()
+    const structuralProvider = this.options.pluginHost.getSyntaxProvider()
+    const structuralConfiguration = this.preparedStructuralConfiguration(
+      document.languageId,
+      structuralProvider !== null,
+      highlighterProvider !== null,
+    )
+    return preparedDocument.take({
+      documentId: document.documentId,
+      languageId: document.languageId,
+      snapshot: document.snapshot,
+      documentConfigurationTag: tags.documentConfigurationTag,
+      structuralProvider,
+      highlighterProvider,
+      structuralConfiguration,
+      structuralConfigurationTag: tags.structuralConfigurationTag,
+      highlighterConfigurationTag: tags.highlighterConfigurationTag,
+    })
+  }
+
+  startDocument(
+    document: EditorSyntaxDocumentStartOptions,
+    prepared: EditorPreparedDocumentPayload | null = null,
+  ): void {
     if (this.disposed) return
 
     this.advanceInitialHighlightConfigurationGeneration()
@@ -240,13 +288,24 @@ export class EditorSyntaxController {
     this.resetSyntaxContentVersion()
     this.currentBrackets = []
     this.currentInjections = []
-    this.highlighterSession = this.createHighlighterSession(
-      document.documentId,
-      document.languageId,
-      document.textSnapshot,
-      document.snapshot,
-    )
-    this.syntaxSession = this.createSyntaxSession(document)
+    this.highlighterSession =
+      prepared?.highlighter?.session ??
+      this.createHighlighterSession(
+        document.documentId,
+        document.languageId,
+        document.textSnapshot,
+        document.snapshot,
+      )
+    this.preparedHighlighterDisposer = prepared?.highlighter?.dispose ?? null
+    this.syntaxSession = prepared?.structural?.session ?? this.createSyntaxSession(document)
+    this.preparedSyntaxDisposer = prepared?.structural?.dispose ?? null
+    this.skipNextStructuralRefresh =
+      prepared?.structural !== null && prepared?.structural !== undefined
+    this.skipNextHighlighterRefresh =
+      prepared?.highlighter !== null && prepared?.highlighter !== undefined
+    if (prepared?.structural) {
+      this.syntaxSessionIncludesCaptures = prepared.structural.configuration.includeCaptures
+    }
     this.syntaxStatus = this.syntaxSession ? 'loading' : 'plain'
     this.initialPaintDocumentVersion = this.options.getDocumentVersion()
     this.initialTextPainted = false
@@ -259,7 +318,33 @@ export class EditorSyntaxController {
         : 'plain'
     this.lastInitialHighlightTerminalStatus =
       this.initialHighlightState === 'plain' ? 'plain' : null
+    this.observePreparedResults(prepared)
     this.logSyntaxStatus('editor.syntax.document_started')
+  }
+
+  adoptPreparedReadyResults(prepared: EditorPreparedDocumentPayload | null): void {
+    if (!prepared) return
+
+    const documentVersion = this.options.getDocumentVersion()
+    const configurationGeneration = this.initialHighlightConfigurationGeneration
+    const contentVersion = this.syntaxContentVersion
+    if (prepared.structural?.readyResult) {
+      this.applyPreparedStructuralResult(
+        prepared.structural,
+        prepared.structural.readyResult,
+        documentVersion,
+        configurationGeneration,
+        contentVersion,
+      )
+    }
+    if (prepared.highlighter?.readyResult) {
+      this.applyHighlightResult(
+        prepared.highlighter.readyResult,
+        documentVersion,
+        nowMs(),
+        configurationGeneration,
+      )
+    }
   }
 
   notifyBaseTextPainted(): void {
@@ -419,8 +504,10 @@ export class EditorSyntaxController {
         range: options.range ?? null,
       },
     })
-    this.refreshStructuralSyntax(documentVersion, change, options)
-    this.refreshHighlightTokens(documentVersion, change, options)
+    if (this.skipNextStructuralRefresh) this.skipNextStructuralRefresh = false
+    else this.refreshStructuralSyntax(documentVersion, change, options)
+    if (this.skipNextHighlighterRefresh) this.skipNextHighlighterRefresh = false
+    else this.refreshHighlightTokens(documentVersion, change, options)
   }
 
   projectCacheForChange(change: DocumentSessionChange): void {
@@ -531,11 +618,139 @@ export class EditorSyntaxController {
       snapshot: document.snapshot,
     }
     const sessionOptions = defineLazyFullTextProperty(options)
-    return (
+    const session =
       this.options.pluginHost.createSyntaxSession(sessionOptions) ??
       getEditorSyntaxSessionFactory()?.(sessionOptions) ??
       null
+    if (session) {
+      recordEditorPerformanceDiagnostic('editor.syntax.session_created', {
+        family: 'structural',
+      })
+    }
+    return session
+  }
+
+  private preparedStructuralConfiguration(
+    languageId: EditorSyntaxLanguageId | null,
+    hasStructuralProvider: boolean,
+    hasHighlighterProvider: boolean,
+  ): EditorPreparedStructuralConfiguration | null {
+    if (!languageId || !hasStructuralProvider) return null
+
+    return {
+      includeCaptures: this.options.needsSyntaxCaptures?.() ?? false,
+      includeHighlights: !hasHighlighterProvider,
+      syntaxMode: 'range',
+    }
+  }
+
+  private observePreparedResults(prepared: EditorPreparedDocumentPayload | null): void {
+    if (!prepared) return
+
+    const documentVersion = this.options.getDocumentVersion()
+    const configurationGeneration = this.initialHighlightConfigurationGeneration
+    const contentVersion = this.syntaxContentVersion
+    const structural = prepared.structural
+    if (structural && !structural.readyResult) {
+      void structural.result.then(
+        (result) =>
+          this.applyPreparedStructuralResult(
+            structural,
+            result,
+            documentVersion,
+            configurationGeneration,
+            contentVersion,
+          ),
+        () => this.recoverPreparedStructural(structural, documentVersion, configurationGeneration),
+      )
+    }
+    const highlighter = prepared.highlighter
+    if (!highlighter || highlighter.readyResult) return
+    void highlighter.result.then(
+      (result) =>
+        this.applyHighlightResult(result, documentVersion, nowMs(), configurationGeneration),
+      () => this.recoverPreparedHighlighter(highlighter, documentVersion, configurationGeneration),
     )
+  }
+
+  private applyPreparedStructuralResult(
+    transfer: EditorPreparedStructuralTransfer,
+    result: EditorSyntaxResult,
+    documentVersion: number,
+    configurationGeneration: number,
+    contentVersion: number,
+  ): void {
+    if (this.syntaxSession !== transfer.session) return
+
+    this.applySyntaxResult(
+      {
+        contentVersion,
+        range: transfer.range,
+        result,
+        source: 'visible',
+        updatesDocument: true,
+      },
+      documentVersion,
+      nowMs(),
+      configurationGeneration,
+    )
+  }
+
+  private recoverPreparedStructural(
+    transfer: EditorPreparedStructuralTransfer,
+    documentVersion: number,
+    configurationGeneration: number,
+  ): void {
+    if (
+      !this.preparedResultStillCurrent(transfer.session, documentVersion, configurationGeneration)
+    ) {
+      return
+    }
+
+    this.disposeSyntaxSession()
+    const session = this.options.getSession()
+    if (!session) return
+    this.syntaxSession = this.createSyntaxSession({
+      documentId: this.options.getCurrentSessionDocumentId(),
+      languageId: this.options.getLanguageId(),
+      textSnapshot: session.getTextSnapshot(),
+      snapshot: session.getSnapshot(),
+    })
+    this.syntaxStatus = this.syntaxSession ? 'loading' : 'plain'
+    this.refreshStructuralSyntax(documentVersion, null)
+  }
+
+  private recoverPreparedHighlighter(
+    transfer: EditorPreparedHighlighterTransfer,
+    documentVersion: number,
+    configurationGeneration: number,
+  ): void {
+    if (
+      !this.preparedResultStillCurrent(transfer.session, documentVersion, configurationGeneration)
+    ) {
+      return
+    }
+
+    this.disposeHighlighterSession()
+    const session = this.options.getSession()
+    if (!session) return
+    this.highlighterSession = this.createHighlighterSession(
+      this.options.getCurrentSessionDocumentId(),
+      this.options.getLanguageId(),
+      session.getTextSnapshot(),
+      session.getSnapshot(),
+    )
+    this.refreshHighlightTokens(documentVersion, null)
+  }
+
+  private preparedResultStillCurrent(
+    session: EditorSyntaxSession | EditorHighlighterSession,
+    documentVersion: number,
+    configurationGeneration: number,
+  ): boolean {
+    if (documentVersion !== this.options.getDocumentVersion()) return false
+    if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return false
+    return this.syntaxSession === session || this.highlighterSession === session
   }
 
   private createHighlighterSession(
@@ -544,7 +759,7 @@ export class EditorSyntaxController {
     textSnapshot: DocumentTextSnapshot,
     snapshot: PieceTableSnapshot,
   ): EditorHighlighterSession | null {
-    return this.options.pluginHost.createHighlighterSession(
+    const session = this.options.pluginHost.createHighlighterSession(
       defineLazyFullTextProperty({
         documentId,
         languageId,
@@ -552,6 +767,12 @@ export class EditorSyntaxController {
         snapshot,
       }),
     )
+    if (session) {
+      recordEditorPerformanceDiagnostic('editor.syntax.session_created', {
+        family: 'highlighter',
+      })
+    }
+    return session
   }
 
   private disposeSyntaxSession(): void {
@@ -564,7 +785,10 @@ export class EditorSyntaxController {
     this.clearSyntaxRangeCache()
     this.parsedSyntaxContentVersion = null
     this.pendingSyntaxContentVersion = null
-    this.syntaxSession?.dispose()
+    if (this.preparedSyntaxDisposer) this.preparedSyntaxDisposer()
+    else this.syntaxSession?.dispose()
+    this.preparedSyntaxDisposer = null
+    this.skipNextStructuralRefresh = false
     this.syntaxSession = null
     this.syntaxSessionIncludesCaptures = false
   }
@@ -613,7 +837,10 @@ export class EditorSyntaxController {
 
   private disposeHighlighterSession(): void {
     this.highlightRequests.cancel()
-    this.highlighterSession?.dispose()
+    if (this.preparedHighlighterDisposer) this.preparedHighlighterDisposer()
+    else this.highlighterSession?.dispose()
+    this.preparedHighlighterDisposer = null
+    this.skipNextHighlighterRefresh = false
     this.highlighterSession = null
     this.setHighlighterTheme(null)
   }

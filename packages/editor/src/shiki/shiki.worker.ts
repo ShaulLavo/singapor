@@ -26,6 +26,7 @@ import type {
 
 type DocumentState = {
   readonly documentId: string
+  readonly runtimeSessionId: string
   readonly lang: string
   readonly theme: string
   readonly themeRegistration: ShikiWorkerThemeRegistration
@@ -35,11 +36,18 @@ type DocumentState = {
 
 const documents = new Map<string, DocumentState>()
 const documentTasks = new Map<string, Promise<ShikiWorkerTransportResult | undefined>>()
+const disposedRuntimeSessions = new Set<string>()
+const activeWorkerTasks = new Set<Promise<void>>()
 const highlighterPromises = new Map<string, Promise<HighlighterGeneric<string, string>>>()
 const backgroundLoaded = new WeakSet<HighlighterGeneric<string, string>>()
+const MAX_DISPOSED_RUNTIME_SESSIONS = 1_024
 
 self.onmessage = (event: MessageEvent<ShikiWorkerRequest>): void => {
-  void handleRequest(event.data)
+  const task = handleRequest(event.data)
+  if (event.data.payload.type === 'idleFence') return
+
+  activeWorkerTasks.add(task)
+  void task.finally(() => activeWorkerTasks.delete(task)).catch(() => undefined)
 }
 
 const handleRequest = async (request: ShikiWorkerRequest): Promise<void> => {
@@ -55,14 +63,22 @@ const runRequest = (
   payload: ShikiWorkerRequest['payload'],
 ): Promise<ShikiWorkerTransportResult | undefined> => {
   if (payload.type === 'open') {
-    return runDocumentTask(payload.documentId, () => openDocument(payload))
+    return runDocumentTask(payload.runtimeSessionId, () => openDocument(payload))
   }
   if (payload.type === 'edit') {
-    return runDocumentTask(payload.documentId, () => editDocument(payload))
+    return runDocumentTask(payload.runtimeSessionId, () => editDocument(payload))
   }
   if (payload.type === 'disposeDocument') {
-    disposeDocument(payload.documentId)
-    return Promise.resolve(undefined)
+    return runDocumentTask(payload.runtimeSessionId, () => {
+      disposeDocument(payload.runtimeSessionId)
+      return Promise.resolve(undefined)
+    })
+  }
+  if (payload.type === 'runtimeBarrier') {
+    return runDocumentTask(payload.runtimeSessionId, () => Promise.resolve(undefined))
+  }
+  if (payload.type === 'idleFence') {
+    return Promise.allSettled(Array.from(activeWorkerTasks)).then(() => undefined)
   }
   if (payload.type === 'theme') {
     return loadTheme(payload)
@@ -71,32 +87,38 @@ const runRequest = (
     return preloadRegistrations(payload)
   }
 
-  disposeAll()
-  return Promise.resolve(undefined)
+  return Promise.allSettled(Array.from(activeWorkerTasks)).then(() => {
+    disposeAll()
+    return undefined
+  })
 }
 
 const runDocumentTask = (
-  documentId: string,
-  task: () => Promise<ShikiWorkerTransportResult>,
-): Promise<ShikiWorkerTransportResult> => {
-  const previous = documentTasks.get(documentId) ?? Promise.resolve(undefined)
+  runtimeSessionId: string,
+  task: () => Promise<ShikiWorkerTransportResult | undefined>,
+): Promise<ShikiWorkerTransportResult | undefined> => {
+  const previous = documentTasks.get(runtimeSessionId) ?? Promise.resolve(undefined)
   const next = previous.catch(() => undefined).then(task)
-  documentTasks.set(documentId, next)
-  void next.finally(() => clearDocumentTask(documentId, next)).catch(() => undefined)
+  documentTasks.set(runtimeSessionId, next)
+  void next.finally(() => clearDocumentTask(runtimeSessionId, next)).catch(() => undefined)
   return next
 }
 
 const clearDocumentTask = (
-  documentId: string,
+  runtimeSessionId: string,
   task: Promise<ShikiWorkerTransportResult | undefined>,
 ): void => {
-  if (documentTasks.get(documentId) !== task) return
-  documentTasks.delete(documentId)
+  if (documentTasks.get(runtimeSessionId) !== task) return
+  documentTasks.delete(runtimeSessionId)
 }
 
 const openDocument = async (
   payload: ShikiWorkerOpenRequest,
 ): Promise<ShikiWorkerTransportResult> => {
+  if (disposedRuntimeSessions.has(payload.runtimeSessionId)) {
+    return { documentId: payload.documentId }
+  }
+
   const highlighter = await ensureHighlighter(payload)
   const { tokenizer } = await createIncrementalTokenizer({
     lang: payload.lang,
@@ -107,20 +129,23 @@ const openDocument = async (
 
   const state = {
     documentId: payload.documentId,
+    runtimeSessionId: payload.runtimeSessionId,
     lang: payload.lang,
     theme: payload.theme,
     themeRegistration: payload.themeRegistration,
     highlighter,
     tokenizer,
   }
-  documents.set(payload.documentId, state)
+  if (!disposedRuntimeSessions.has(payload.runtimeSessionId)) {
+    documents.set(payload.runtimeSessionId, state)
+  }
   return resultFromState(state)
 }
 
 const editDocument = async (
   payload: ShikiWorkerEditRequest,
 ): Promise<ShikiWorkerTransportResult> => {
-  const existing = documents.get(payload.documentId)
+  const existing = documents.get(payload.runtimeSessionId)
   if (!existing && payload.text !== undefined)
     return openDocument(openRequestFromEdit(payload, payload.text))
   if (!existing) throw new Error('Unable to edit unopened Shiki document without text')
@@ -142,6 +167,7 @@ const editDocument = async (
 
 const openRequestFromEdit = (payload: ShikiWorkerEditRequest, text: string) => ({
   documentId: payload.documentId,
+  runtimeSessionId: payload.runtimeSessionId,
   lang: payload.lang,
   theme: payload.theme,
   languageRegistrations: payload.languageRegistrations,
@@ -249,14 +275,24 @@ const resultFromState = (state: DocumentState): ShikiWorkerTransportResult => ({
 const documentMatches = (state: DocumentState, payload: ShikiWorkerDocumentOptions): boolean =>
   state.lang === payload.lang && state.theme === payload.theme
 
-const disposeDocument = (documentId: string): void => {
-  documents.delete(documentId)
-  documentTasks.delete(documentId)
+const disposeDocument = (runtimeSessionId: string): void => {
+  markRuntimeSessionDisposed(runtimeSessionId)
+  documents.delete(runtimeSessionId)
+}
+
+const markRuntimeSessionDisposed = (runtimeSessionId: string): void => {
+  disposedRuntimeSessions.add(runtimeSessionId)
+  if (disposedRuntimeSessions.size <= MAX_DISPOSED_RUNTIME_SESSIONS) return
+
+  const oldest = disposedRuntimeSessions.values().next().value
+  if (oldest) disposedRuntimeSessions.delete(oldest)
 }
 
 const disposeAll = (): void => {
   documents.clear()
   documentTasks.clear()
+  activeWorkerTasks.clear()
+  disposedRuntimeSessions.clear()
   for (const promise of highlighterPromises.values()) {
     void promise.then((highlighter) => highlighter.dispose()).catch(() => undefined)
   }

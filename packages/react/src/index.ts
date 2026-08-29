@@ -14,6 +14,8 @@ import {
   type EditorEditOptions,
   type EditorOpenDocumentOptions,
   type EditorOptions,
+  type EditorPreparedDocument,
+  type EditorPreparedTagValue,
   type EditorScrollPosition,
   type EditorSetSelectionOptions,
   type EditorSetTextOptions,
@@ -55,9 +57,13 @@ export type ReactEditorDocument = {
   readonly session?: DocumentSession | null
   readonly text: string
   readonly documentMode?: EditorDocumentMode
+  readonly documentConfigurationTag?: readonly EditorPreparedTagValue[]
+  readonly highlighterConfigurationTag?: readonly EditorPreparedTagValue[]
   readonly languageId?: EditorSyntaxLanguageId | null
+  readonly preparedDocument?: EditorPreparedDocument | null
   readonly scrollPosition?: EditorScrollPosition
   readonly textSyncMode?: ReactEditorDocumentTextSyncMode
+  readonly structuralConfigurationTag?: readonly EditorPreparedTagValue[]
 }
 
 export type ReactEditorDocumentTextSyncMode = 'open' | 'incremental'
@@ -196,7 +202,10 @@ export function useEditor(options: ReactEditorOptions = {}): ReactEditorControll
   const controller = controllerRef.current
   controller.setOptions(options)
   useControlledOptionSync(controller, options)
-  useEffect(() => () => controller.dispose(), [controller])
+  useEffect(() => {
+    controller.retainReactOwner()
+    return () => controller.scheduleReactDispose()
+  }, [controller])
 
   return controller
 }
@@ -209,7 +218,7 @@ export function EditorHost({ controller, className, style }: EditorHostProps): R
     if (!element) return
 
     controller.mount(element)
-    return () => controller.dispose()
+    return () => internalController(controller).scheduleReactDispose()
   }, [controller])
 
   return createElement('div', { ref: hostRef, className, style })
@@ -249,6 +258,10 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   private syncedPlugins: readonly EditorPlugin[] | null = null
   private syncedStoreSyncMode: ReactEditorStoreSyncMode | null = null
   private editorIncarnation = 0
+  private mountedElement: HTMLElement | null = null
+  private scheduledDisposeGeneration: number | null = null
+  private nextDisposeGeneration = 0
+  private suspendedStoreFields: ReactEditorStoreSnapshotFields | null = null
   private options: ReactEditorOptions
 
   public constructor(options: ReactEditorOptions) {
@@ -258,20 +271,68 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   }
 
   public mount(element: HTMLElement): void {
+    this.retainReactOwner()
+    if (this.mountedElement === element && this.getEditor()) return
+
     this.store.batch(() => {
-      this.dispose()
+      this.disposeImmediately()
+      this.mountedElement = element
       this.mountEditor(element)
     })
   }
 
   public dispose(): void {
+    this.retainReactOwner()
+    this.disposeImmediately()
+  }
+
+  public retainReactOwner(): void {
+    this.scheduledDisposeGeneration = null
+    this.resumeSuspendedEditor()
+  }
+
+  public scheduleReactDispose(): void {
+    if (this.scheduledDisposeGeneration !== null) return
+
+    this.nextDisposeGeneration += 1
+    const generation = this.nextDisposeGeneration
+    this.scheduledDisposeGeneration = generation
+    this.suspendEditor()
+    queueMicrotask(() => {
+      if (this.scheduledDisposeGeneration !== generation) return
+
+      this.scheduledDisposeGeneration = null
+      this.disposeImmediately()
+    })
+  }
+
+  private disposeImmediately(): void {
     this.store.batch(() => {
       this.editorIncarnation += 1
+      this.suspendedStoreFields?.editor?.dispose()
+      this.suspendedStoreFields = null
       disposeEditor(this.store)
+      this.mountedElement = null
       this.documentState.clear()
       this.optionSync.reset()
       this.clearSyncedPlugins()
     })
+  }
+
+  private suspendEditor(): void {
+    const snapshot = this.store.read()
+    if (!snapshot.editor) return
+
+    this.suspendedStoreFields = storeSnapshotFields(snapshot)
+    this.store.update(createEmptyStoreSnapshotFields())
+  }
+
+  private resumeSuspendedEditor(): void {
+    const suspended = this.suspendedStoreFields
+    if (!suspended) return
+
+    this.suspendedStoreFields = null
+    this.store.update(suspended)
   }
 
   public setOptions(options: ReactEditorOptions): void {
@@ -555,13 +616,13 @@ function useControlledOptionSync(
 ): void {
   const documentIdentity = documentKey(options.document)
 
-  useEditorLayoutEffect(() => controller.syncDocumentOption(), [controller, documentIdentity])
-  // Runs on every render because the descriptors, not a dependency list, decide what moved.
-  useEditorLayoutEffect(() => controller.syncControlledOptions())
   useEditorLayoutEffect(
     () => controller.syncPluginsOption(),
     [controller, options.plugins, options.storeSync],
   )
+  useEditorLayoutEffect(() => controller.syncDocumentOption(), [controller, documentIdentity])
+  // Runs on every render because the descriptors, not a dependency list, decide what moved.
+  useEditorLayoutEffect(() => controller.syncControlledOptions())
 }
 
 function createReactSyncPlugin(controller: ReactEditorControllerImplementation): EditorPlugin {
@@ -600,8 +661,12 @@ function syncDocument(
   if (session) {
     editor.attachSession(session, {
       documentId: document.documentId,
+      documentConfigurationTag: document.documentConfigurationTag,
+      highlighterConfigurationTag: document.highlighterConfigurationTag,
       languageId: document.languageId,
+      preparedDocument: document.preparedDocument,
       scrollPosition: reactEditorDocumentScrollPosition(document),
+      structuralConfigurationTag: document.structuralConfigurationTag,
     })
     return
   }
@@ -724,11 +789,15 @@ function documentKey(
         readonly buffer?: EditorTextBuffer | null
         readonly documentId?: string
         readonly documentMode?: EditorDocumentMode
+        readonly documentConfigurationTag?: readonly EditorPreparedTagValue[]
+        readonly highlighterConfigurationTag?: readonly EditorPreparedTagValue[]
         readonly languageId?: EditorSyntaxLanguageId | null
+        readonly preparedDocument?: EditorPreparedDocument | null
         readonly revision?: string | number
         readonly session?: DocumentSession | null
         readonly text?: string
         readonly textSyncMode?: ReactEditorDocumentTextSyncMode
+        readonly structuralConfigurationTag?: readonly EditorPreparedTagValue[]
         readonly view?: EditorViewSession | null
       }> &
         object)
@@ -744,7 +813,9 @@ function documentKey(
   const identityKey = documentIdentityKey(document)
   if (identityKey === NO_DOCUMENT) return NO_DOCUMENT
 
-  return `${identityKey}\u0000${revision}\u0000${textVersion}`
+  return `${identityKey}\u0000${revision}\u0000${textVersion}\u0000${preparedDocumentIdentity(
+    document.preparedDocument,
+  )}\u0000${preparedTagsKey(document)}`
 }
 
 function documentRevisionKey(
@@ -789,6 +860,7 @@ function documentIdentityKey(
 }
 
 const sessionKeys = new WeakMap<DocumentSession, number>()
+const preparedDocumentKeys = new WeakMap<EditorPreparedDocument, number>()
 const bufferKeys = new WeakMap<EditorTextBuffer, number>()
 const viewKeys = new WeakMap<EditorViewSession, number>()
 const bufferViewSessions = new WeakMap<
@@ -796,6 +868,7 @@ const bufferViewSessions = new WeakMap<
   WeakMap<EditorViewSession, EditorBufferSession>
 >()
 let nextSessionKey = 1
+let nextPreparedDocumentKey = 1
 let nextBufferKey = 1
 let nextViewKey = 1
 
@@ -809,6 +882,32 @@ function sessionIdentity(session: DocumentSession | null | undefined): string {
   nextSessionKey += 1
   sessionKeys.set(session, key)
   return `${key}`
+}
+
+function preparedDocumentIdentity(
+  preparedDocument: EditorPreparedDocument | null | undefined,
+): string {
+  if (!preparedDocument) return ''
+
+  const existing = preparedDocumentKeys.get(preparedDocument)
+  if (existing !== undefined) return `${existing}`
+
+  const key = nextPreparedDocumentKey
+  nextPreparedDocumentKey += 1
+  preparedDocumentKeys.set(preparedDocument, key)
+  return `${key}`
+}
+
+function preparedTagsKey(document: {
+  readonly documentConfigurationTag?: readonly EditorPreparedTagValue[]
+  readonly highlighterConfigurationTag?: readonly EditorPreparedTagValue[]
+  readonly structuralConfigurationTag?: readonly EditorPreparedTagValue[]
+}): string {
+  return JSON.stringify([
+    document.documentConfigurationTag ?? [],
+    document.highlighterConfigurationTag ?? [],
+    document.structuralConfigurationTag ?? [],
+  ])
 }
 
 function bufferViewIdentity(
@@ -908,6 +1007,17 @@ function createEmptyStoreSnapshotFields(): ReactEditorStoreSnapshotFields {
     textSnapshot: null,
     lastChange: null,
     updateKind: null,
+  }
+}
+
+function storeSnapshotFields(snapshot: ReactEditorStoreSnapshot): ReactEditorStoreSnapshotFields {
+  return {
+    editor: snapshot.editor,
+    state: snapshot.state,
+    snapshot: snapshot.snapshot,
+    textSnapshot: snapshot.textSnapshot,
+    lastChange: snapshot.lastChange,
+    updateKind: snapshot.updateKind,
   }
 }
 

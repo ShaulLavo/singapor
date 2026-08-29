@@ -8,6 +8,7 @@ describe('Shiki worker message types', () => {
       payload: {
         type: 'open',
         documentId: 'doc',
+        runtimeSessionId: 'runtime-doc',
         text: 'const value = 1;',
         lang: 'typescript',
         theme: 'github-dark',

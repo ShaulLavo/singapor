@@ -260,7 +260,7 @@ describe('Shiki worker client theme cache', () => {
     session.dispose()
 
     expect(requestOfType('disposeDocument').payload).toMatchObject({
-      documentId: 'file.ts',
+      runtimeSessionId: expect.any(String),
       type: 'disposeDocument',
     })
 

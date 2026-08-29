@@ -157,6 +157,7 @@ export type EditorHighlightResult = {
 
 export type EditorHighlighterSessionOptions = {
   readonly documentId: string
+  readonly runtimeSessionId?: string
   readonly languageId: EditorSyntaxLanguageId | null
   readonly fullText: string
   readonly textSnapshot?: DocumentTextSnapshot
@@ -1168,6 +1169,10 @@ export class EditorPluginHost implements EditorDisposable {
     return this.highlighters.length > 0
   }
 
+  public getHighlighterProvider(): EditorHighlighterProvider | null {
+    return this.highlighters[0] ?? null
+  }
+
   public async loadHighlighterTheme(): Promise<EditorTheme | null | undefined> {
     for (const provider of this.highlighters) {
       if (!provider.loadTheme) continue
@@ -1190,6 +1195,10 @@ export class EditorPluginHost implements EditorDisposable {
 
   public hasSyntaxProviders(): boolean {
     return this.syntaxProviders.length > 0
+  }
+
+  public getSyntaxProvider(): EditorSyntaxProvider | null {
+    return this.syntaxProviders[0] ?? null
   }
 
   public createViewContributions(context: EditorViewContributionContext): EditorViewContribution[] {

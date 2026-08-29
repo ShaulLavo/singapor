@@ -83,8 +83,7 @@ describe('shiki worker', () => {
     await Promise.resolve()
     await Promise.resolve()
     onmessage(new MessageEvent('message', { data: request('dispose', {}) }))
-    await Promise.resolve()
-    await Promise.resolve()
+    await waitFor(() => dispose.mock.calls.length === 1)
 
     expect(dispose).toHaveBeenCalledOnce()
   })

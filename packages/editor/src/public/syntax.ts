@@ -1,5 +1,6 @@
 export {
   createEditorSyntaxSession,
+  createEditorRuntimeSessionId,
   createEmptySyntaxResult,
   createEmptySyntaxSession,
   createSyntaxLanguageConfiguration,

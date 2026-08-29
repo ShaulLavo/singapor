@@ -227,7 +227,7 @@ describe('tree-sitter worker client language registration cache', () => {
     const staleRequest = parseRequests(worker)[0]!
     expect(staleRequest.payload.source.chunks.length).toBeGreaterThan(0)
 
-    client.disposeDocument('doc.ts')
+    client.disposeDocument('runtime-doc.ts')
     worker.resolveRequest(staleRequest, parseResult(1))
     await expect(parse).resolves.toMatchObject({ snapshotVersion: 1 })
 
@@ -455,6 +455,7 @@ function parsePayload(
 ): TreeSitterParsePayload {
   return {
     documentId: 'doc.ts',
+    runtimeSessionId: 'runtime-doc.ts',
     includeHighlights: true,
     languageId: 'typescript',
     snapshot,
@@ -494,6 +495,7 @@ function rangePayload(
 ): Parameters<WorkerClient['queryRange']>[0] {
   return {
     documentId: 'doc.ts',
+    runtimeSessionId: 'runtime-doc.ts',
     includeHighlights: true,
     languageId: 'typescript',
     range: { startIndex, endIndex },

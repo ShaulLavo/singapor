@@ -31,6 +31,19 @@ export type {
   SuspiciousCharacterRange,
 } from './editor'
 export { suspiciousCharacterRanges } from './editor'
+export { createEditorPreparedDocument } from './editor/preparedDocument'
+export type {
+  CreateEditorPreparedDocumentOptions,
+  EditorPreparedDocument,
+  EditorPreparedDocumentMatch,
+  EditorPreparedDocumentPayload,
+  EditorPreparedHighlighterTransfer,
+  EditorPreparedStageOutcome,
+  EditorPreparedStageRequest,
+  EditorPreparedStructuralConfiguration,
+  EditorPreparedStructuralTransfer,
+  EditorPreparedTagValue,
+} from './editor/preparedDocument'
 export { createEditorOptionSync, EDITOR_OPTION_DESCRIPTORS } from './editor/optionDescriptors'
 export type {
   EditorControlledOptionName,
@@ -133,6 +146,7 @@ export {
 } from './public/extensions'
 export {
   createEditorScopeStyles,
+  createEditorRuntimeSessionId,
   createEditorSyntaxSession,
   createEmptySyntaxResult,
   createEmptySyntaxSession,

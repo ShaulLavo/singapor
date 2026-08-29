@@ -129,6 +129,7 @@ export type EditorSyntaxResultOptions = {
 
 export type EditorSyntaxSessionOptions = {
   readonly documentId: string
+  readonly runtimeSessionId?: string
   readonly languageId: EditorSyntaxLanguageId | null
   readonly includeHighlights?: boolean
   readonly includeCaptures?: boolean
@@ -136,6 +137,18 @@ export type EditorSyntaxSessionOptions = {
   readonly fullText: string
   readonly textSnapshot?: DocumentTextSnapshot
   readonly snapshot: PieceTableSnapshot
+}
+
+let nextRuntimeSessionId = 1
+
+export function createEditorRuntimeSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  const id = nextRuntimeSessionId
+  nextRuntimeSessionId += 1
+  return `editor-runtime-${id}`
 }
 
 export type EditorSyntaxSession = {

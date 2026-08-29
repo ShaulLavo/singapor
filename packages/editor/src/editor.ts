@@ -28,6 +28,19 @@ export {
 } from './mergeConflictPlugin'
 export type { EditorFindFeature } from './editor/findFeature'
 export { Editor } from './editor/Editor'
+export { createEditorPreparedDocument } from './editor/preparedDocument'
+export type {
+  CreateEditorPreparedDocumentOptions,
+  EditorPreparedDocument,
+  EditorPreparedDocumentMatch,
+  EditorPreparedDocumentPayload,
+  EditorPreparedHighlighterTransfer,
+  EditorPreparedStageOutcome,
+  EditorPreparedStageRequest,
+  EditorPreparedStructuralConfiguration,
+  EditorPreparedStructuralTransfer,
+  EditorPreparedTagValue,
+} from './editor/preparedDocument'
 export {
   observeEditorMountTiming,
   resetEditorInstanceCount,

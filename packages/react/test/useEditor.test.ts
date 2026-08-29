@@ -1,4 +1,4 @@
-import { Editor } from '@singapor/core/editor'
+import { Editor, observeEditorMountTiming } from '@singapor/core/editor'
 import type { EditorInitialPaintEvent, EditorPlugin } from '@singapor/core/extensions'
 import {
   createDocumentSession,
@@ -124,6 +124,31 @@ describe('useEditor', () => {
     expect(new Set(events.map((event) => event.documentGeneration)).size).toBe(1)
 
     mounted.dispose()
+  })
+
+  it('reuses one editor through StrictMode replay and disposes it on true unmount', async () => {
+    const mountDurations: number[] = []
+    const dispose = vi.fn()
+    const unsubscribe = observeEditorMountTiming((duration) => mountDurations.push(duration))
+    const plugin: EditorPlugin = {
+      activate: () => ({ dispose }),
+    }
+    const mounted = mountReactEditor(
+      {
+        document: { text: 'alpha', documentId: 'strict.ts', revision: 1 },
+        plugins: [plugin],
+      },
+      true,
+    )
+
+    expect(mountDurations).toHaveLength(1)
+    expect(dispose).not.toHaveBeenCalled()
+
+    mounted.dispose()
+    await flushInitialPaintCallbacks()
+
+    expect(dispose).toHaveBeenCalledTimes(1)
+    unsubscribe()
   })
 
   it('syncs state and last change after editor commands', () => {

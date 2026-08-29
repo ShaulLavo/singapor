@@ -206,6 +206,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     const nextSnapshot = applyBatchToPieceTable(previousSnapshot, edits)
     const payload = createTreeSitterEditPayload({
       documentId: 'file.ts',
+      runtimeSessionId: 'runtime-file.ts',
       languageId: 'typescript',
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
@@ -237,6 +238,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     const parseRequest: TreeSitterParseRequest = {
       type: 'parse',
       documentId: 'file.ts',
+      runtimeSessionId: 'runtime-file.ts',
       snapshotVersion: 1,
       languageId: 'typescript',
       includeHighlights: true,
@@ -246,6 +248,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     const editRequest: TreeSitterEditRequest = {
       type: 'edit',
       documentId: 'file.ts',
+      runtimeSessionId: 'runtime-file.ts',
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
       languageId: 'typescript',
@@ -277,6 +280,7 @@ describe('Tree-sitter syntax capture conversion', () => {
     const nextSnapshot = applyBatchToPieceTable(previousSnapshot, edits)
     const payload = createTreeSitterEditPayload({
       documentId: 'file.ts',
+      runtimeSessionId: 'runtime-file.ts',
       languageId: 'typescript',
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
@@ -334,6 +338,7 @@ describe('Tree-sitter syntax capture conversion', () => {
 
     const payload = createTreeSitterEditPayload({
       documentId: 'file.ts',
+      runtimeSessionId: 'runtime-file.ts',
       languageId: 'typescript',
       previousSnapshotVersion: 1,
       snapshotVersion: 2,
@@ -865,6 +870,7 @@ describe('Tree-sitter syntax capture conversion', () => {
   it('falls back to a full refresh when incremental parsing fails', async () => {
     const parseVersions: number[] = []
     const disposedDocuments: string[] = []
+    let runtimeSessionId: string | undefined
     const backend = {
       disposeDocument: (documentId) => {
         disposedDocuments.push(documentId)
@@ -873,6 +879,7 @@ describe('Tree-sitter syntax capture conversion', () => {
         throw new Error('incremental parse failed')
       },
       parse: async (payload) => {
+        runtimeSessionId = payload.runtimeSessionId
         parseVersions.push(payload.snapshotVersion)
         return createParseResult(payload)
       },
@@ -896,7 +903,8 @@ describe('Tree-sitter syntax capture conversion', () => {
     const result = await session.applyChange(change)
 
     expect(parseVersions).toEqual([1, 3])
-    expect(disposedDocuments).toEqual(['file.ts'])
+    expect(disposedDocuments).toEqual([runtimeSessionId])
+    expect(runtimeSessionId).not.toBe('file.ts')
     expect(session.getSnapshotVersion()).toBe(3)
     expect(session.getResult()).toBe(result)
   })
@@ -934,19 +942,22 @@ describe('Tree-sitter syntax capture conversion', () => {
     )
     await expect(refresh).resolves.toBe(initialResult)
 
-    expect(disposedDocuments).toEqual(['file.ts'])
+    expect(disposedDocuments).toHaveLength(1)
+    expect(disposedDocuments[0]).not.toBe('file.ts')
     expect(session.getResult()).toBe(initialResult)
   })
 
   it('falls back to a full refresh when current incremental parsing is cancelled', async () => {
     const parseVersions: number[] = []
     const disposedDocuments: string[] = []
+    let runtimeSessionId: string | undefined
     const backend = {
       disposeDocument: (documentId) => {
         disposedDocuments.push(documentId)
       },
       edit: async () => undefined,
       parse: async (payload) => {
+        runtimeSessionId = payload.runtimeSessionId
         parseVersions.push(payload.snapshotVersion)
         return createParseResult(payload)
       },
@@ -970,7 +981,8 @@ describe('Tree-sitter syntax capture conversion', () => {
     const result = await session.applyChange(change)
 
     expect(parseVersions).toEqual([1, 3])
-    expect(disposedDocuments).toEqual(['file.ts'])
+    expect(disposedDocuments).toEqual([runtimeSessionId])
+    expect(runtimeSessionId).not.toBe('file.ts')
     expect(session.getSnapshotVersion()).toBe(3)
     expect(session.getResult()).toBe(result)
   })

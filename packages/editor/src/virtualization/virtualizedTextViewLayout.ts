@@ -11,6 +11,7 @@ import type { TextSnapshot } from '../documentTextSnapshot'
 import type { SelectionAffinity } from '../selections'
 import type { TextEdit } from '../tokens'
 import { clamp } from '../style-utils'
+import { recordEditorPerformanceDiagnostic } from '../editor/performanceDiagnostics'
 import { createLineStartOffsetIndex } from './lineStartIndex'
 import {
   asFoldPoint,
@@ -47,13 +48,20 @@ export function setTextLayoutState(
   view: VirtualizedTextViewInternal,
   text: string,
   textSnapshot: TextSnapshot,
+  preparedLineStarts?: readonly number[],
 ): { readonly lineCountChanged: boolean } {
   const previousLineCount = view.lineStarts.length
   view.text = text
   view.model.textSnapshot = textSnapshot
   view.model.textLength = text.length
   view.textRevision += 1
-  view.lineStarts = computeLineStarts(text)
+  if (preparedLineStarts) {
+    view.lineStarts = preparedLineStarts
+  } else {
+    recordEditorPerformanceDiagnostic('editor.line_starts.scan')
+    view.lineStarts = computeLineStarts(text)
+  }
+  assertPreparedLineStarts(text, view.lineStarts, preparedLineStarts !== undefined)
   view.lineStartOffsetIndex = null
   view.model.lineCount = view.lineStarts.length
   view.model.foldMap = foldMapMatchesText(view.model.foldMap, view.model.textLength)
@@ -63,6 +71,22 @@ export function setTextLayoutState(
     ? view.model.inlineMap
     : null
   return { lineCountChanged: previousLineCount !== view.lineStarts.length }
+}
+
+function assertPreparedLineStarts(
+  text: string,
+  lineStarts: readonly number[],
+  prepared: boolean,
+): void {
+  const environment = (import.meta as ImportMeta & { readonly env?: { readonly DEV?: boolean } })
+    .env
+  if (!prepared || !environment?.DEV) return
+
+  const first = lineStarts[0]
+  const last = lineStarts.at(-1)
+  if (first === 0 && last !== undefined && last <= text.length) return
+
+  throw new RangeError('Prepared line starts do not match the attached document')
 }
 
 export function setTextSnapshotLayoutState(

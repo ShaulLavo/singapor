@@ -144,11 +144,20 @@ const languageDescriptorOrder: TreeSitterLanguageId[] = []
 const runtimePromises = new Map<TreeSitterLanguageId, Promise<Runtime>>()
 const documentCaches = new Map<string, DocumentCache>()
 const sourceCache: TreeSitterSourceCache = new Map()
+const activeRuntimeTasks = new Map<string, Set<Promise<TreeSitterWorkerResult>>>()
+const activeWorkerTasks = new Set<Promise<TreeSitterWorkerResult>>()
+const disposedRuntimeSessions = new Set<string>()
+const MAX_DISPOSED_RUNTIME_SESSIONS = 1_024
 
 class SyntaxRequestCancelled extends Error {
   public constructor() {
     super('Tree-sitter request cancelled')
   }
+}
+
+const assertRuntimeSessionActive = (runtimeSessionId: string): void => {
+  if (!disposedRuntimeSessions.has(runtimeSessionId)) return
+  throw new SyntaxRequestCancelled()
 }
 
 const createErrorMessage = (error: unknown): string => {
@@ -253,7 +262,7 @@ const parseDocument = async (
       ensureRuntime(request.languageId),
     )
     const source = runWorkerPhase('resolve source', () =>
-      resolveTreeSitterSourceDescriptor(sourceCache, request.documentId, request.source),
+      resolveTreeSitterSourceDescriptor(sourceCache, request.runtimeSessionId, request.source),
     )
     const parseStart = nowMs()
     const parsedDocument =
@@ -300,7 +309,7 @@ const parseDocument = async (
     }
   })
 
-// One document state exists per documentId, so a cached snapshot with the
+// One document state exists per runtime session, so a cached snapshot with the
 // same language and snapshotVersion is the same content (the source length
 // check guards against upstream bugs). Reparsing it would briefly hold two
 // full trees for one document — the dev StrictMode double-mount OOM'd the
@@ -310,7 +319,7 @@ const reusableParsedDocument = (
   source: TreeSitterPieceTableInput,
 ): ParsedDocument | null => {
   const cached = cachedDocumentForVersion(
-    request.documentId,
+    request.runtimeSessionId,
     request.languageId,
     request.snapshotVersion,
   )
@@ -319,7 +328,7 @@ const reusableParsedDocument = (
 
   // Same version with different content is stale state; free the old tree
   // before reparsing so peak memory stays at one tree per document.
-  dropCachedDocument(request.documentId, cached)
+  dropCachedDocument(request.runtimeSessionId, cached)
   return null
 }
 
@@ -359,7 +368,8 @@ const parseFullDocument = async (
     }),
   )
   assertNotCancelled(context)
-  replaceCachedDocument(request.documentId, parsedDocument)
+  assertRuntimeSessionActive(request.runtimeSessionId)
+  replaceCachedDocument(request.runtimeSessionId, parsedDocument)
   return parsedDocument
 }
 
@@ -371,7 +381,7 @@ const editDocument = async (
       ensureRuntime(request.languageId),
     )
     const cached = cachedDocumentForVersion(
-      request.documentId,
+      request.runtimeSessionId,
       request.languageId,
       request.previousSnapshotVersion,
     )
@@ -384,7 +394,7 @@ const editDocument = async (
     )
     const editMs = nowMs() - editStart
     const source = runWorkerPhase('resolve source', () =>
-      resolveTreeSitterSourceDescriptor(sourceCache, request.documentId, request.source),
+      resolveTreeSitterSourceDescriptor(sourceCache, request.runtimeSessionId, request.source),
     )
     const parseStart = nowMs()
     const rootLayer = runWorkerPhase('parse root', () =>
@@ -412,7 +422,8 @@ const editDocument = async (
     const parseMs = nowMs() - parseStart
     reusableTree.delete()
     assertNotCancelled(context)
-    replaceCachedDocument(request.documentId, parsedDocument)
+    assertRuntimeSessionActive(request.runtimeSessionId)
+    replaceCachedDocument(request.runtimeSessionId, parsedDocument)
     if (request.resultMode === 'parseOnly') {
       return parseAckResult(
         request,
@@ -474,7 +485,7 @@ const queryDocumentRangeWithContext = async (
   context: CancellationContext,
 ): Promise<TreeSitterRangeResult | undefined> => {
   const cached = cachedDocumentForVersion(
-    request.documentId,
+    request.runtimeSessionId,
     request.languageId,
     request.snapshotVersion,
   )
@@ -1901,7 +1912,7 @@ const selectDocument = async (
   request: TreeSitterSelectionRequest,
 ): Promise<TreeSitterSelectionResult> => {
   const cached = cachedDocumentForVersion(
-    request.documentId,
+    request.runtimeSessionId,
     request.languageId,
     request.snapshotVersion,
   )
@@ -2095,13 +2106,22 @@ const disposeCachedSnapshot = (snapshot: ParsedDocument): void => {
   for (const layer of snapshot.layers) layer.tree.delete()
 }
 
-const disposeDocument = (documentId: string): void => {
-  const cache = documentCaches.get(documentId)
-  disposeTreeSitterSourceDocument(sourceCache, documentId)
+const disposeDocument = (runtimeSessionId: string): void => {
+  markRuntimeSessionDisposed(runtimeSessionId)
+  const cache = documentCaches.get(runtimeSessionId)
+  disposeTreeSitterSourceDocument(sourceCache, runtimeSessionId)
   if (!cache) return
 
   for (const snapshot of cache.snapshots) disposeCachedSnapshot(snapshot)
-  documentCaches.delete(documentId)
+  documentCaches.delete(runtimeSessionId)
+}
+
+const markRuntimeSessionDisposed = (runtimeSessionId: string): void => {
+  disposedRuntimeSessions.add(runtimeSessionId)
+  if (disposedRuntimeSessions.size <= MAX_DISPOSED_RUNTIME_SESSIONS) return
+
+  const oldest = disposedRuntimeSessions.values().next().value
+  if (oldest) disposedRuntimeSessions.delete(oldest)
 }
 
 const disposeCachedSnapshotsForLanguage = (languageId: TreeSitterLanguageId): void => {
@@ -2142,6 +2162,9 @@ const disposeAll = (): void => {
     void promise.then(disposeRuntime).catch(() => undefined)
   }
   runtimePromises.clear()
+  activeRuntimeTasks.clear()
+  activeWorkerTasks.clear()
+  disposedRuntimeSessions.clear()
   parserInitPromise = null
 }
 
@@ -2279,14 +2302,72 @@ const handleRequest = async (request: TreeSitterWorkerRequest): Promise<TreeSitt
   if (payload.type === 'queryRange') return queryDocumentRange(payload)
   if (payload.type === 'selection') return selectDocument(payload)
 
-  if (payload.type === 'disposeDocument') {
-    disposeDocument(payload.documentId)
-    return undefined
-  }
-
   disposeAll()
   return undefined
 }
+
+const executeRequest = (request: TreeSitterWorkerRequest): Promise<TreeSitterWorkerResult> => {
+  const { payload } = request
+  if (payload.type === 'runtimeBarrier') {
+    return awaitRuntimeTasks(payload.runtimeSessionId)
+  }
+  if (payload.type === 'idleFence') return awaitAllWorkerTasks()
+  if (payload.type === 'disposeDocument') {
+    markRuntimeSessionDisposed(payload.runtimeSessionId)
+    return awaitRuntimeTasks(payload.runtimeSessionId).then(() => {
+      disposeDocument(payload.runtimeSessionId)
+      return undefined
+    })
+  }
+  if (payload.type === 'dispose') {
+    return awaitAllWorkerTasks().then(() => handleRequest(request))
+  }
+
+  const runtimeSessionId = runtimeSessionIdForRequest(payload)
+  const task = handleRequest(request)
+  trackWorkerTask(task)
+  if (runtimeSessionId) trackRuntimeTask(runtimeSessionId, task)
+  return task
+}
+
+const trackWorkerTask = (task: Promise<TreeSitterWorkerResult>): void => {
+  activeWorkerTasks.add(task)
+  void task.finally(() => activeWorkerTasks.delete(task)).catch(() => undefined)
+}
+
+const runtimeSessionIdForRequest = (payload: TreeSitterWorkerRequest['payload']): string | null => {
+  if (!('runtimeSessionId' in payload)) return null
+  return payload.runtimeSessionId
+}
+
+const trackRuntimeTask = (
+  runtimeSessionId: string,
+  task: Promise<TreeSitterWorkerResult>,
+): void => {
+  const tasks = activeRuntimeTasks.get(runtimeSessionId) ?? new Set()
+  tasks.add(task)
+  activeRuntimeTasks.set(runtimeSessionId, tasks)
+  void task.finally(() => clearRuntimeTask(runtimeSessionId, task)).catch(() => undefined)
+}
+
+const clearRuntimeTask = (
+  runtimeSessionId: string,
+  task: Promise<TreeSitterWorkerResult>,
+): void => {
+  const tasks = activeRuntimeTasks.get(runtimeSessionId)
+  if (!tasks) return
+
+  tasks.delete(task)
+  if (tasks.size === 0) activeRuntimeTasks.delete(runtimeSessionId)
+}
+
+const awaitRuntimeTasks = (runtimeSessionId: string): Promise<TreeSitterWorkerResult> => {
+  const tasks = [...(activeRuntimeTasks.get(runtimeSessionId) ?? [])]
+  return Promise.allSettled(tasks).then(() => undefined)
+}
+
+const awaitAllWorkerTasks = (): Promise<TreeSitterWorkerResult> =>
+  Promise.allSettled(Array.from(activeWorkerTasks)).then(() => undefined)
 
 const workerScope = globalThis as typeof globalThis & {
   readonly importScripts?: unknown
@@ -2302,7 +2383,7 @@ const shouldInstallWorkerHandler = (): boolean => {
 if (shouldInstallWorkerHandler()) {
   workerScope.onmessage = (event: MessageEvent<TreeSitterWorkerRequest>): void => {
     const request = event.data
-    void handleRequest(request)
+    void executeRequest(request)
       .then((result) => postResponse({ id: request.id, ok: true, result }))
       .catch((error) => {
         postResponse({ id: request.id, ok: false, error: createErrorMessage(error) })

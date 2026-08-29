@@ -427,12 +427,16 @@ export class VirtualizedTextView {
     this.view.virtualizer.requestScrollTop(value)
   }
 
-  public setText(text: string, textSnapshot = createStringTextSnapshot(text)): void {
+  public setText(
+    text: string,
+    textSnapshot = createStringTextSnapshot(text),
+    preparedLineStarts?: readonly number[],
+  ): void {
     const view = this.view
     view.sameLineTokenEdit = null
     view.tokenProjectionDirtyStartRow = null
     view.tokenRenderIndexDirty = true
-    const { lineCountChanged } = setTextLayoutState(view, text, textSnapshot)
+    const { lineCountChanged } = setTextLayoutState(view, text, textSnapshot, preparedLineStarts)
     this.finishTextReplacement(lineCountChanged)
   }
 
@@ -795,7 +799,7 @@ export class VirtualizedTextView {
         if (offsetIndex.revision !== revision) return
 
         // Freshly built by toArray when deltas exist; never the shared base.
-        this.view.lineStarts = materialized as number[]
+        this.view.lineStarts = materialized
         this.view.lineStartOffsetIndex = null
       },
     )

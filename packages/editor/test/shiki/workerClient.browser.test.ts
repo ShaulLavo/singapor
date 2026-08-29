@@ -153,6 +153,49 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     expect(next.tokens.length).toBeGreaterThan(0)
     nextSession!.dispose()
   })
+
+  it('isolates equal logical documents by runtime session', async () => {
+    const firstText = 'const first = 1;'
+    const secondText = 'const second = 2;'
+    const first = workerOwner.createSession({
+      documentId: 'shared.ts',
+      runtimeSessionId: 'runtime-shiki-first',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: resolveRegistrations(),
+      fullText: firstText,
+      snapshot: createPieceTableSnapshot(firstText),
+    })
+    const second = workerOwner.createSession({
+      documentId: 'shared.ts',
+      runtimeSessionId: 'runtime-shiki-second',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: resolveRegistrations(),
+      fullText: secondText,
+      snapshot: createPieceTableSnapshot(secondText),
+    })
+
+    expect(first).not.toBeNull()
+    expect(second).not.toBeNull()
+
+    await Promise.all([
+      first!.refresh(createPieceTableSnapshot(firstText), firstText),
+      second!.refresh(createPieceTableSnapshot(secondText), secondText),
+    ])
+    first!.dispose()
+    await workerOwner.awaitRuntimeSessionIdle('runtime-shiki-first')
+
+    const nextText = 'const secondValue = 2;'
+    const result = await second!.applyChange(
+      createChange(nextText, { from: 6, to: 12, text: 'secondValue' }),
+    )
+
+    expect(result.tokens.some((token) => token.end > secondText.length)).toBe(true)
+    second!.dispose()
+  })
 })
 
 async function resolveRegistrations(): Promise<ShikiResolvedRegistrations> {

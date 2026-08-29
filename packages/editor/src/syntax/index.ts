@@ -2,6 +2,7 @@ export {
   createEmptySyntaxResult,
   createEmptySyntaxSession,
   createEditorSyntaxSession,
+  createEditorRuntimeSessionId,
   createSyntaxLanguageConfiguration,
   createSyntaxProjectionTag,
   createSyntaxSnapshotTag,

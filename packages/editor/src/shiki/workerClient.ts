@@ -89,16 +89,20 @@ export function createShikiWorkerOwner(options: ShikiWorkerOwnerOptions = {}): S
 
 export class ShikiWorkerOwner {
   private worker: Worker | null = null
+  private disposeTask: Promise<void> | null = null
   private nextRequestId = 1
   private workerGeneration = 0
   private lifecycle: ShikiWorkerLifecycleState = 'idle'
   private lastError: Error | null = null
   private readonly pendingRequests = new Map<number, PendingRequest>()
+  private readonly clientTasks = new Set<Promise<unknown>>()
+  private readonly runtimeTasks = new Map<string, Set<Promise<unknown>>>()
   private readonly themeRequests = new Map<string, Promise<EditorTheme | null | undefined>>()
 
   public constructor(private readonly options: ShikiWorkerOwnerOptions = {}) {}
 
   public canUseWorker(): boolean {
+    if (this.lifecycle === 'disposing' || this.lifecycle === 'disposed') return false
     return Boolean(this.options.workerFactory) || supportsWorkers()
   }
 
@@ -114,7 +118,9 @@ export class ShikiWorkerOwner {
 
   public createSession(options: ShikiHighlighterSessionOptions): EditorHighlighterSession | null {
     if (!this.canUseWorker()) return null
-    return new ShikiHighlighterSession(options, this)
+    return new ShikiHighlighterSession(options, this, (runtimeSessionId, task) =>
+      this.trackRuntimeTask(runtimeSessionId, task),
+    )
   }
 
   public async loadTheme(options: ShikiThemeOptions): Promise<EditorTheme | null | undefined> {
@@ -125,61 +131,78 @@ export class ShikiWorkerOwner {
     const existing = this.themeRequests.get(key)
     if (existing) return existing
 
-    const request = requestShikiTheme(this, options.theme, registrations).catch((error) => {
-      this.themeRequests.delete(key)
-      throw error
-    })
+    const request = this.trackClientTask(
+      requestShikiTheme(this, options.theme, registrations).catch((error) => {
+        this.themeRequests.delete(key)
+        throw error
+      }),
+    )
     this.themeRequests.set(key, request)
     const theme = await request
-    scheduleRegistrationPreload(this, options.preloadRegistrations)
+    const preload = scheduleRegistrationPreload(this, options.preloadRegistrations)
+    if (preload) this.trackClientTask(preload)
     return theme
   }
 
   public request(payload: ShikiWorkerRequestPayload): Promise<ShikiWorkerResult | undefined> {
-    return this.postRequest(payload, true)
+    const request = this.postRequest(payload, true)
+    if ('runtimeSessionId' in payload) {
+      return this.trackRuntimeTask(payload.runtimeSessionId, request)
+    }
+    return this.trackClientTask(request)
   }
 
   public preload(registrations: ShikiPreloadRegistrations): Promise<void> {
-    return this.postRequest(
-      {
-        type: 'preload',
-        languageRegistrations: registrations.languageRegistrations,
-        themeRegistrations: registrations.themeRegistrations,
-      },
-      false,
-    ).then(() => undefined)
+    return this.trackClientTask(
+      this.postRequest(
+        {
+          type: 'preload',
+          languageRegistrations: registrations.languageRegistrations,
+          themeRegistrations: registrations.themeRegistrations,
+        },
+        false,
+      ).then(() => undefined),
+    )
   }
 
   public disposeDocument(runtimeSessionId: string): Promise<void> {
     if (!this.worker) return Promise.resolve()
 
-    return this.postRequest({ type: 'disposeDocument', runtimeSessionId }, false).then(
-      () => undefined,
+    return this.trackRuntimeTask(
+      runtimeSessionId,
+      this.postRequest({ type: 'disposeDocument', runtimeSessionId }, false).then(() => undefined),
     )
   }
 
-  public awaitRuntimeSessionIdle(runtimeSessionId: string): Promise<void> {
-    if (!this.worker) return Promise.resolve()
+  public async awaitRuntimeSessionIdle(runtimeSessionId: string): Promise<void> {
+    await this.awaitRuntimeTasks(runtimeSessionId)
+    if (!this.worker) return
 
-    return this.postRequest({ type: 'runtimeBarrier', runtimeSessionId }, false).then(
-      () => undefined,
-    )
+    await this.postRequest({ type: 'runtimeBarrier', runtimeSessionId }, false)
   }
 
-  public awaitIdleFence(): Promise<void> {
-    if (!this.worker) return Promise.resolve()
+  public async awaitIdleFence(): Promise<void> {
+    await this.awaitClientTasks()
+    if (!this.worker) return
 
-    return this.postRequest({ type: 'idleFence' }, false).then(() => undefined)
+    await this.postRequest({ type: 'idleFence' }, false)
   }
 
-  public async dispose(): Promise<void> {
+  public dispose(): Promise<void> {
+    if (this.disposeTask) return this.disposeTask
+
+    this.lifecycle = 'disposing'
+    this.disposeTask = this.finishDispose()
+    return this.disposeTask
+  }
+
+  private async finishDispose(): Promise<void> {
     const handle = this.worker
     if (!handle) {
       this.clearRetainedState('disposed')
       return
     }
 
-    this.lifecycle = 'disposing'
     try {
       await this.postRequest({ type: 'dispose' }, false)
     } finally {
@@ -191,6 +214,9 @@ export class ShikiWorkerOwner {
   }
 
   private getWorker(createIfMissing: boolean): Worker | null {
+    if (createIfMissing && (this.lifecycle === 'disposing' || this.lifecycle === 'disposed')) {
+      return null
+    }
     if (this.worker) return this.worker
     if (!createIfMissing) return null
     if (!this.canUseWorker()) return null
@@ -271,6 +297,41 @@ export class ShikiWorkerOwner {
     this.lifecycle = lifecycle
     this.themeRequests.clear()
   }
+
+  private trackClientTask<T>(task: Promise<T>): Promise<T> {
+    this.clientTasks.add(task)
+    void task.finally(() => this.clientTasks.delete(task)).catch(() => undefined)
+    return task
+  }
+
+  private trackRuntimeTask<T>(runtimeSessionId: string, task: Promise<T>): Promise<T> {
+    const tasks = this.runtimeTasks.get(runtimeSessionId) ?? new Set<Promise<unknown>>()
+    tasks.add(task)
+    this.runtimeTasks.set(runtimeSessionId, tasks)
+    this.trackClientTask(task)
+    void task
+      .finally(() => {
+        tasks.delete(task)
+        if (tasks.size === 0) this.runtimeTasks.delete(runtimeSessionId)
+      })
+      .catch(() => undefined)
+    return task
+  }
+
+  private async awaitClientTasks(): Promise<void> {
+    while (this.clientTasks.size > 0) {
+      await Promise.allSettled(this.clientTasks)
+    }
+  }
+
+  private async awaitRuntimeTasks(runtimeSessionId: string): Promise<void> {
+    while (this.runtimeTasks.has(runtimeSessionId)) {
+      const tasks = this.runtimeTasks.get(runtimeSessionId)
+      if (!tasks) return
+
+      await Promise.allSettled(tasks)
+    }
+  }
 }
 
 function unpackShikiWorkerResult(
@@ -302,6 +363,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
   public constructor(
     options: ShikiHighlighterSessionOptions,
     private readonly owner: ShikiWorkerOwner,
+    private readonly trackTask: <T>(runtimeSessionId: string, task: Promise<T>) => Promise<T>,
   ) {
     this.documentId = options.documentId
     this.runtimeSessionId = options.runtimeSessionId ?? createEditorRuntimeSessionId()
@@ -321,11 +383,16 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     if (this.disposed) return emptyHighlightResult()
 
     return this.enqueueRequest(async () => {
+      if (this.disposed) return emptyHighlightResult()
+
       const textSnapshot = createDocumentTextSnapshot(snapshot, fullText)
       const documentText = textSnapshot.materializeFullText()
+      const documentOptions = await this.documentOptions(documentText)
+      if (this.disposed) return emptyHighlightResult()
+
       const result = await this.owner.request({
         type: 'open',
-        ...(await this.documentOptions(documentText)),
+        ...documentOptions,
         text: documentText,
       })
       if (this.disposed) return emptyHighlightResult()
@@ -343,8 +410,12 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     if (this.disposed) return emptyHighlightResult()
 
     return this.enqueueRequest(async () => {
+      if (this.disposed) return emptyHighlightResult()
+
       const nextTextSnapshot = documentSessionChangeTextSnapshot(change)
       const payload = await this.editPayloadForChange(change, nextTextSnapshot)
+      if (this.disposed) return emptyHighlightResult()
+
       const result = await this.owner.request(payload)
       if (this.disposed) return emptyHighlightResult()
 
@@ -362,7 +433,15 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
 
     this.disposed = true
     this.opened = false
-    void this.owner.disposeDocument(this.runtimeSessionId).catch(() => undefined)
+    const dispose = this.task.then(
+      () => this.owner.disposeDocument(this.runtimeSessionId),
+      () => this.owner.disposeDocument(this.runtimeSessionId),
+    )
+    this.task = dispose.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.trackTask(this.runtimeSessionId, this.task)
   }
 
   private enqueueRequest(
@@ -373,6 +452,7 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       () => undefined,
       () => undefined,
     )
+    this.trackTask(this.runtimeSessionId, this.task)
     return result
   }
 
@@ -418,7 +498,8 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     if (this.preloadScheduled) return
 
     this.preloadScheduled = true
-    scheduleRegistrationPreload(this.owner, this.preloadRegistrations)
+    const preload = scheduleRegistrationPreload(this.owner, this.preloadRegistrations)
+    if (preload) this.trackTask(this.runtimeSessionId, preload)
   }
 }
 
@@ -502,11 +583,11 @@ function themeRegistrationKey(registration: ShikiWorkerThemeRegistration): strin
 function scheduleRegistrationPreload(
   owner: ShikiWorkerOwner,
   registrations: ShikiPreloadRegistrationSource | null | undefined,
-): void {
-  if (!registrations) return
+): Promise<void> | null {
+  if (!registrations) return null
 
   const resolved = typeof registrations === 'function' ? registrations() : registrations
-  void Promise.resolve(resolved)
+  return Promise.resolve(resolved)
     .then((resolved) => owner.preload(resolved))
     .catch(() => undefined)
 }

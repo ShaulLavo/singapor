@@ -7,6 +7,7 @@ import {
 import { Editor } from '../src/editor/Editor'
 import { createEditorPreparedDocument } from '../src/editor/preparedDocument'
 import type {
+  EditorHighlightResult,
   EditorHighlighterProvider,
   EditorHighlighterSession,
   EditorPlugin,
@@ -267,6 +268,70 @@ describe('prepared editor documents', () => {
 
     expect(structuralProvider.createSession).toHaveBeenCalledOnce()
     expect(structuralSession.refresh).toHaveBeenCalledOnce()
+    editor.dispose()
+    container.remove()
+  })
+
+  it('does not paint an in-flight prepared highlight after the document is edited', async () => {
+    const buffer = createEditorTextBuffer('const value = 1;\n')
+    const completion = deferred<EditorHighlightResult>()
+    const highlighterSession = highlightSession()
+    highlighterSession.refresh = vi.fn(() => completion.promise)
+    const highlighterProvider: EditorHighlighterProvider = {
+      createSession: vi.fn(() => highlighterSession),
+    }
+    const observedTokenColors: Array<readonly (string | undefined)[]> = []
+    const plugin: EditorPlugin = {
+      activate: (context) => [
+        context.registerHighlighter(highlighterProvider),
+        context.registerViewContribution({
+          createContribution: () => ({
+            update: (snapshot) => {
+              observedTokenColors.push(snapshot.tokens.map((token) => token.style.color))
+            },
+            dispose: () => undefined,
+          }),
+        }),
+      ],
+    }
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+    prepared.startStage({
+      abortSignal: new AbortController().signal,
+      configurationTag: ['shiki', 'dark'],
+      family: 'highlighter',
+      provider: highlighterProvider,
+      range: 'full',
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, { plugins: [plugin] })
+
+    editor.attachSession(
+      createEditorBufferSession(buffer, createEditorViewSession(buffer, 'pending-highlight-view')),
+      {
+        documentConfigurationTag: [],
+        documentId: 'file.ts',
+        highlighterConfigurationTag: ['shiki', 'dark'],
+        languageId: 'typescript',
+        preparedDocument: prepared,
+      },
+    )
+    editor.edit({ from: 0, to: 0, text: 'x' })
+    completion.resolve({
+      tokens: [{ start: 0, end: 5, style: { color: 'stale-prepared-token' } }],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(observedTokenColors.flat()).not.toContain('stale-prepared-token')
+    expect(editor.getState().initialHighlightStatus).toBe('loading')
+
     editor.dispose()
     container.remove()
   })

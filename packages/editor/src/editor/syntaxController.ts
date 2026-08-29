@@ -668,9 +668,32 @@ export class EditorSyntaxController {
     if (!highlighter || highlighter.readyResult) return
     void highlighter.result.then(
       (result) =>
-        this.applyHighlightResult(result, documentVersion, nowMs(), configurationGeneration),
+        this.applyPreparedHighlighterResult(
+          highlighter,
+          result,
+          documentVersion,
+          configurationGeneration,
+          contentVersion,
+        ),
       () => this.recoverPreparedHighlighter(highlighter, documentVersion, configurationGeneration),
     )
+  }
+
+  private applyPreparedHighlighterResult(
+    transfer: EditorPreparedHighlighterTransfer,
+    result: EditorHighlightResult,
+    documentVersion: number,
+    configurationGeneration: number,
+    contentVersion: number,
+  ): void {
+    if (
+      !this.preparedResultStillCurrent(transfer.session, documentVersion, configurationGeneration)
+    ) {
+      return
+    }
+    if (contentVersion !== this.syntaxContentVersion) return
+
+    this.applyHighlightResult(result, documentVersion, nowMs(), configurationGeneration)
   }
 
   private applyPreparedStructuralResult(

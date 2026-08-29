@@ -258,11 +258,7 @@ describe('Shiki worker client theme cache', () => {
     const openRequest = requestOfType('open')
 
     session.dispose()
-
-    expect(requestOfType('disposeDocument').payload).toMatchObject({
-      runtimeSessionId: expect.any(String),
-      type: 'disposeDocument',
-    })
+    expect(requestsOfType('disposeDocument')).toHaveLength(0)
 
     worker.resolveRequest(openRequest, {
       tokensPacked: {
@@ -277,6 +273,11 @@ describe('Shiki worker client theme cache', () => {
     })
 
     await expect(highlight).resolves.toEqual({ tokens: [] })
+    await flushMicrotasks()
+    expect(requestOfType('disposeDocument').payload).toMatchObject({
+      runtimeSessionId: expect.any(String),
+      type: 'disposeDocument',
+    })
     expect(owner.inspect()).toMatchObject({
       lifecycle: 'ready',
       pendingRequests: 1,
@@ -290,6 +291,40 @@ describe('Shiki worker client theme cache', () => {
       pendingRequests: 0,
     })
   }, 20_000)
+
+  it('keeps the idle fence behind a disposed refresh waiting on registrations', async () => {
+    const owner = await loadWorkerOwner()
+    const registrations = deferred<ReturnType<typeof resolvedRegistrations>>()
+    const snapshot = createPieceTableSnapshot('const value = 1;')
+    const session = owner.createSession({
+      documentId: 'delayed.ts',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: registrations.promise,
+      snapshot,
+      fullText: 'const value = 1;',
+    })
+    if (!session) throw new Error('missing Shiki highlighter session')
+
+    const highlight = session.refresh(snapshot, 'const value = 1;')
+    session.dispose()
+    let idle = false
+    const fence = owner.awaitIdleFence().then(() => {
+      idle = true
+    })
+    await flushMicrotasks()
+
+    expect(idle).toBe(false)
+    expect(fakeWorkers).toHaveLength(0)
+
+    registrations.resolve(resolvedRegistrations())
+    await expect(highlight).resolves.toEqual({ tokens: [] })
+    await fence
+
+    expect(fakeWorkers).toHaveLength(0)
+    expect(owner.inspect()).toMatchObject({ lifecycle: 'idle', pendingRequests: 0 })
+  })
 })
 
 async function loadWorkerOwner(): Promise<ShikiWorkerOwner> {
@@ -332,13 +367,15 @@ function fakeWorkerAt(index: number): FakeWorker {
 }
 
 function requestOfType(type: string): FakeWorkerRequest {
-  const request = fakeWorkers
-    .flatMap((worker) => worker.messages)
-    .find((message) => {
-      return message.payload.type === type
-    })
+  const request = requestsOfType(type)[0]
   if (!request) throw new Error(`Expected ${type} request`)
   return request
+}
+
+function requestsOfType(type: string): FakeWorkerRequest[] {
+  return fakeWorkers
+    .flatMap((worker) => worker.messages)
+    .filter((message) => message.payload.type === type)
 }
 
 function defaultResult(message: FakeWorkerRequest): unknown {
@@ -348,4 +385,12 @@ function defaultResult(message: FakeWorkerRequest): unknown {
 async function flushMicrotasks(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
 }

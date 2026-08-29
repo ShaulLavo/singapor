@@ -2,24 +2,43 @@
   "duplicateModules": {
     "lsp-plugin-vs-typescript-lsp": [
       {
-        "files": ["packages/lsp-plugin/src/index.ts", "packages/typescript-lsp/src/index.ts"],
+        "files": [
+          "packages/lsp-plugin/src/index.ts",
+          "packages/typescript-lsp/src/index.ts"
+        ],
         "modulePath": "index.ts"
       },
       {
-        "files": ["packages/lsp-plugin/src/paths.ts", "packages/typescript-lsp/src/paths.ts"],
+        "files": [
+          "packages/lsp-plugin/src/paths.ts",
+          "packages/typescript-lsp/src/paths.ts"
+        ],
         "modulePath": "paths.ts"
       },
       {
-        "files": ["packages/lsp-plugin/src/plugin.ts", "packages/typescript-lsp/src/plugin.ts"],
+        "files": [
+          "packages/lsp-plugin/src/plugin.ts",
+          "packages/typescript-lsp/src/plugin.ts"
+        ],
         "modulePath": "plugin.ts"
       },
       {
-        "files": ["packages/lsp-plugin/src/types.ts", "packages/typescript-lsp/src/types.ts"],
+        "files": [
+          "packages/lsp-plugin/src/types.ts",
+          "packages/typescript-lsp/src/types.ts"
+        ],
         "modulePath": "types.ts"
       }
     ]
   },
-  "expectedPackageScripts": ["build", "test", "typecheck", "lint", "format", "format:check"],
+  "expectedPackageScripts": [
+    "build",
+    "test",
+    "typecheck",
+    "lint",
+    "format",
+    "format:check"
+  ],
   "ignoredRoots": [
     ".desloppify",
     ".git",
@@ -78,7 +97,10 @@
         "packages/lsp-plugin/src/pluginTypes.ts",
         "packages/lsp-plugin/src/types.ts"
       ],
-      ["packages/lsp-plugin/src/workspaceEdit.ts", "packages/lsp-plugin/src/workspaceTextEdits.ts"]
+      [
+        "packages/lsp-plugin/src/workspaceEdit.ts",
+        "packages/lsp-plugin/src/workspaceTextEdits.ts"
+      ]
     ],
     "typescript-lsp": []
   }

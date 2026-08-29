@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import githubDarkTheme from '@shikijs/themes/github-dark'
 import typeScriptWasmUrl from 'tree-sitter-typescript/tree-sitter-typescript.wasm?url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createShikiHighlighterPlugin } from '@singapor/core/shiki'
@@ -16,7 +17,7 @@ const STRICT_MODE_PLUGINS = [
   createTypeScriptPlugin(),
   createShikiHighlighterPlugin({
     resolveLanguage: async () => (await import('@shikijs/langs/typescript')).default,
-    resolveTheme: async () => (await import('@shikijs/themes/github-dark')).default,
+    resolveTheme: async () => githubDarkTheme,
   }),
 ]
 let root: Root | null = null

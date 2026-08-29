@@ -94,6 +94,25 @@ describe('Shiki worker client theme cache', () => {
     expect(themeRequests()).toHaveLength(2)
   }, 20_000)
 
+  it('does not retain a theme request whose registrations resolve after disposal', async () => {
+    const owner = await loadWorkerOwner()
+    const registrations = deferred<ReturnType<typeof resolvedRegistrations>>()
+    const theme = owner.loadTheme({
+      theme: 'github-dark',
+      registrations: registrations.promise,
+    })
+
+    await owner.dispose()
+    registrations.resolve(resolvedRegistrations())
+
+    await expect(theme).resolves.toBeUndefined()
+    expect(owner.inspect()).toMatchObject({
+      lifecycle: 'disposed',
+      cache: { themeRequests: 0 },
+      workerGeneration: 0,
+    })
+  })
+
   it('exposes owner lifecycle and cache accounting', async () => {
     const owner = await loadWorkerOwner()
 

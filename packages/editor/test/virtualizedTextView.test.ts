@@ -108,6 +108,18 @@ describe('VirtualizedTextView', () => {
     })
   })
 
+  it('rejects non-monotonic prepared line starts', () => {
+    view.setText('before')
+
+    expect(() => view.setText('alpha\nbeta', undefined, [0, 6, 3])).toThrow(
+      'Prepared line starts do not match the attached document',
+    )
+    expect(view.getState()).toMatchObject({
+      lineCount: 1,
+      mountedRows: [{ text: 'before' }],
+    })
+  })
+
   it('mounts all rows without vertical spacer churn in static scroll mode', () => {
     view.dispose()
     view = new VirtualizedTextView(container, {

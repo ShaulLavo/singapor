@@ -50,6 +50,8 @@ export function setTextLayoutState(
   textSnapshot: TextSnapshot,
   preparedLineStarts?: readonly number[],
 ): { readonly lineCountChanged: boolean } {
+  if (preparedLineStarts) assertPreparedLineStarts(text, preparedLineStarts)
+
   const previousLineCount = view.lineStarts.length
   view.text = text
   view.model.textSnapshot = textSnapshot
@@ -61,7 +63,6 @@ export function setTextLayoutState(
     recordEditorPerformanceDiagnostic('editor.line_starts.scan')
     view.lineStarts = computeLineStarts(text)
   }
-  assertPreparedLineStarts(text, view.lineStarts, preparedLineStarts !== undefined)
   view.lineStartOffsetIndex = null
   view.model.lineCount = view.lineStarts.length
   view.model.foldMap = foldMapMatchesText(view.model.foldMap, view.model.textLength)
@@ -73,20 +74,27 @@ export function setTextLayoutState(
   return { lineCountChanged: previousLineCount !== view.lineStarts.length }
 }
 
-function assertPreparedLineStarts(
-  text: string,
-  lineStarts: readonly number[],
-  prepared: boolean,
-): void {
+function assertPreparedLineStarts(text: string, lineStarts: readonly number[]): void {
   const environment = (import.meta as ImportMeta & { readonly env?: { readonly DEV?: boolean } })
     .env
-  if (!prepared || !environment?.DEV) return
+  if (!environment?.DEV) return
 
-  const first = lineStarts[0]
-  const last = lineStarts.at(-1)
-  if (first === 0 && last !== undefined && last <= text.length) return
+  if (preparedLineStartsMatchText(text, lineStarts)) return
 
   throw new RangeError('Prepared line starts do not match the attached document')
+}
+
+function preparedLineStartsMatchText(text: string, lineStarts: readonly number[]): boolean {
+  if (lineStarts[0] !== 0) return false
+
+  let lineIndex = 1
+  for (let offset = 0; offset < text.length; offset += 1) {
+    if (text.charCodeAt(offset) !== 10) continue
+    if (lineStarts[lineIndex] !== offset + 1) return false
+
+    lineIndex += 1
+  }
+  return lineIndex === lineStarts.length
 }
 
 export function setTextSnapshotLayoutState(

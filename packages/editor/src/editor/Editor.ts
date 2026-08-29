@@ -1322,7 +1322,10 @@ export class Editor {
     // Setting it afterwards drew the outgoing offset first and every row twice.
     this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
     if (prepared) {
-      this.renderPreparedDocument(attachment.fullText, attachment.textSnapshot, prepared)
+      this.view.runAtomicRender(() => {
+        this.renderPreparedDocument(attachment.fullText, attachment.textSnapshot, prepared)
+        this.syntax.adoptPreparedReadyResults(prepared)
+      })
     } else {
       this.renderDocument({ text: attachment.fullText, tokens: [] })
     }
@@ -1332,7 +1335,6 @@ export class Editor {
     // rows that actually rendered. A match with the request above makes it a no-op.
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
-    this.syntax.adoptPreparedReadyResults(prepared)
     if (prepared) this.notifyViewContributions('content', null)
     this.notifyViewContributions('document', null)
     this.syntax.notifyBaseTextPainted()

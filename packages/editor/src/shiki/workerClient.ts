@@ -133,6 +133,8 @@ export class ShikiWorkerOwner {
     options: ShikiThemeOptions,
   ): Promise<EditorTheme | null | undefined> {
     const registrations = await options.registrations
+    if (!this.canUseWorker()) return undefined
+
     const key = shikiThemeRequestKey(options.theme, registrations)
     const existing = this.themeRequests.get(key)
     if (existing) return existing

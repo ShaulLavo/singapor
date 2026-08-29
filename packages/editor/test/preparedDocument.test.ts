@@ -352,6 +352,48 @@ describe('prepared editor documents', () => {
     container.remove()
   })
 
+  it('installs prepared text and fallback folds in one render pass', () => {
+    const buffer = createEditorTextBuffer('root\n  child\n    grandchild\nnext\n')
+    const firstRowFoldStates: boolean[] = []
+    const plugin: EditorPlugin = {
+      activate: (context) =>
+        context.registerGutterContribution({
+          id: 'prepared-render-counter',
+          createCell: (document) => document.createElement('div'),
+          width: () => 10,
+          updateCell: (_element, row) => {
+            if (row.index === 0) firstRowFoldStates.push(row.foldMarker !== null)
+          },
+        }),
+    }
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const editor = new Editor(container, { plugins: [plugin] })
+    firstRowFoldStates.length = 0
+
+    editor.attachSession(
+      createEditorBufferSession(buffer, createEditorViewSession(buffer, 'atomic-layout-view')),
+      {
+        documentConfigurationTag: [],
+        documentId: 'file.ts',
+        languageId: 'typescript',
+        preparedDocument: prepared,
+      },
+    )
+
+    expect(firstRowFoldStates).toEqual([true])
+    editor.dispose()
+    container.remove()
+  })
+
   it('publishes a ready prepared structural fold in the first document snapshot', async () => {
     const buffer = createEditorTextBuffer('a\nb\nc\n')
     const structuralResult = {

@@ -257,6 +257,8 @@ export class VirtualizedTextView {
   private readonly view: VirtualizedTextViewInternal
   private readonly disposeForegroundHighlightRestore: () => void
   private cancelContentWidthMeasurement: (() => void) | null = null
+  private atomicRenderDepth = 0
+  private atomicRenderPending = false
 
   public constructor(container: HTMLElement, options: VirtualizedTextViewOptions = {}) {
     const overscan = options.overscan ?? DEFAULT_OVERSCAN
@@ -425,6 +427,16 @@ export class VirtualizedTextView {
   /** The offset the next text replacement should render at, so a restore costs one pass, not two. */
   public requestScrollTop(value: number): void {
     this.view.virtualizer.requestScrollTop(value)
+  }
+
+  public runAtomicRender<T>(update: () => T): T {
+    this.atomicRenderDepth += 1
+    try {
+      return update()
+    } finally {
+      this.atomicRenderDepth -= 1
+      this.flushAtomicRender()
+    }
   }
 
   public setText(
@@ -1016,6 +1028,11 @@ export class VirtualizedTextView {
   }
 
   private renderSnapshot(snapshot: FixedRowVirtualizerSnapshot): void {
+    if (this.atomicRenderDepth > 0) {
+      this.atomicRenderPending = true
+      return
+    }
+
     const view = this.view
     updateGutterWidthIfNeeded(view)
     updateSpacerHeight(view, snapshot)
@@ -1033,6 +1050,13 @@ export class VirtualizedTextView {
     for (const name of view.rangeHighlightGroups.keys()) renderRangeHighlight(view, name)
     renderSelectionHighlight(view)
     view.onViewportChange?.()
+  }
+
+  private flushAtomicRender(): void {
+    if (this.atomicRenderDepth > 0 || !this.atomicRenderPending) return
+
+    this.atomicRenderPending = false
+    this.renderSnapshot(this.view.virtualizer.getSnapshot())
   }
 
   /**

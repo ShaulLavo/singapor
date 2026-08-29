@@ -39,6 +39,7 @@ import type {
   EditorPreparedStructuralConfiguration,
   EditorPreparedStructuralTransfer,
   EditorPreparedTagValue,
+  EditorPreparedTabSizePolicy,
 } from './preparedDocument'
 import { nowMs } from './timing'
 import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
@@ -52,6 +53,7 @@ export type EditorSyntaxDocumentStartOptions = {
 
 export type EditorPreparedDocumentClaimOptions = {
   readonly configuredTabSize: number
+  readonly tabSizePolicy: EditorPreparedTabSizePolicy
   readonly documentConfigurationTag: readonly EditorPreparedTagValue[]
   readonly highlighterConfigurationTag: readonly EditorPreparedTagValue[]
   readonly structuralConfigurationTag: readonly EditorPreparedTagValue[]
@@ -283,6 +285,7 @@ export class EditorSyntaxController {
     )
     return preparedDocument.take({
       configuredTabSize: tags.configuredTabSize,
+      tabSizePolicy: tags.tabSizePolicy,
       documentId: document.documentId,
       languageId: document.languageId,
       snapshot: document.snapshot,

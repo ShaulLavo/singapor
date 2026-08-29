@@ -808,6 +808,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorPreparedTabSizePolicy",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorPreparedTagValue",
           "source": "packages/editor/src/editor/preparedDocument.ts",
           "via": "packages/editor/src/index.ts"
@@ -3395,6 +3401,12 @@
         {
           "kind": "type",
           "name": "EditorPreparedStructuralTransfer",
+          "source": "packages/editor/src/editor/preparedDocument.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorPreparedTabSizePolicy",
           "source": "packages/editor/src/editor/preparedDocument.ts",
           "via": "packages/editor/src/editor.ts"
         },

@@ -40,6 +40,7 @@ export type {
   EditorPreparedStructuralConfiguration,
   EditorPreparedStructuralTransfer,
   EditorPreparedTagValue,
+  EditorPreparedTabSizePolicy,
 } from './editor/preparedDocument'
 export {
   observeEditorMountTiming,

@@ -1302,6 +1302,7 @@ export class Editor {
     const prepared = options.preparedDocument
       ? this.syntax.claimPreparedDocument(syntaxDocument, options.preparedDocument, {
           configuredTabSize: this.configuredTabSize,
+          tabSizePolicy: this.options.tabSize === undefined ? 'detect-indentation' : 'fixed',
           documentConfigurationTag: options.documentConfigurationTag ?? [],
           highlighterConfigurationTag: options.highlighterConfigurationTag ?? [],
           structuralConfigurationTag: options.structuralConfigurationTag ?? [],

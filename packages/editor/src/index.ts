@@ -43,6 +43,7 @@ export type {
   EditorPreparedStructuralConfiguration,
   EditorPreparedStructuralTransfer,
   EditorPreparedTagValue,
+  EditorPreparedTabSizePolicy,
 } from './editor/preparedDocument'
 export { createEditorOptionSync, EDITOR_OPTION_DESCRIPTORS } from './editor/optionDescriptors'
 export type {

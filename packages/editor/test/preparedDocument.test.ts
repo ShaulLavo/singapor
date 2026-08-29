@@ -33,6 +33,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -100,6 +101,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 2,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -135,6 +137,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 2,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -180,6 +183,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -263,6 +267,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -322,6 +327,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -383,6 +389,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -429,6 +436,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -500,6 +508,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -566,6 +575,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -615,6 +625,7 @@ describe('prepared editor documents', () => {
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -636,11 +647,43 @@ describe('prepared editor documents', () => {
     expect(session.dispose).toHaveBeenCalledOnce()
   })
 
+  it('does not create or refresh a stage whose signal is already aborted', async () => {
+    const buffer = createEditorTextBuffer('alpha\n')
+    const session = highlightSession()
+    const provider: EditorHighlighterProvider = {
+      createSession: vi.fn(() => session),
+    }
+    const abortController = new AbortController()
+    abortController.abort()
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+
+    const outcome = prepared.startStage({
+      abortSignal: abortController.signal,
+      configurationTag: ['shiki', 'dark'],
+      family: 'highlighter',
+      provider,
+      range: 'full',
+    })
+
+    await expect(outcome).resolves.toBe('aborted')
+    expect(provider.createSession).not.toHaveBeenCalled()
+    expect(session.refresh).not.toHaveBeenCalled()
+    expect(session.dispose).not.toHaveBeenCalled()
+  })
+
   it('rejects prepared layout computed with a different configured tab size', () => {
     const buffer = createEditorTextBuffer('\talpha\n')
     const prepared = createEditorPreparedDocument({
       buffer,
       configuredTabSize: 2,
+      tabSizePolicy: 'detect-indentation',
       documentConfigurationTag: [],
       documentId: 'file.ts',
       languageId: 'typescript',
@@ -649,6 +692,25 @@ describe('prepared editor documents', () => {
     const claimed = prepared.take({
       ...match(buffer, null, null, 2),
       configuredTabSize: 4,
+    })
+
+    expect(claimed).toBeNull()
+  })
+
+  it('rejects guessed prepared layout for an editor with an explicit tab size', () => {
+    const buffer = createEditorTextBuffer('\talpha\n')
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+
+    const claimed = prepared.take({
+      ...match(buffer, null, null, 4),
+      tabSizePolicy: 'fixed',
     })
 
     expect(claimed).toBeNull()
@@ -669,6 +731,7 @@ function match(
 ) {
   return {
     configuredTabSize,
+    tabSizePolicy: 'detect-indentation' as const,
     documentConfigurationTag: [] as const,
     documentId: 'file.ts',
     highlighterConfigurationTag: ['shiki', 'dark'] as const,

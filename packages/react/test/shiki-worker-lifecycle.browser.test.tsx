@@ -17,7 +17,10 @@ const STRICT_MODE_PLUGINS = [
   createTypeScriptPlugin(),
   createShikiHighlighterPlugin({
     resolveLanguage: async () => (await import('@shikijs/langs/typescript')).default,
-    resolveTheme: async () => githubDarkTheme,
+    resolveTheme: async () => ({
+      ...githubDarkTheme,
+      name: githubDarkTheme.name ?? 'github-dark',
+    }),
   }),
 ]
 let root: Root | null = null

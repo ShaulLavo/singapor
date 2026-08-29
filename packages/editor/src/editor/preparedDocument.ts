@@ -28,6 +28,7 @@ export type EditorPreparedStructuralConfiguration = {
 
 export type EditorPreparedDocumentMatch = {
   readonly configuredTabSize: number
+  readonly tabSizePolicy: EditorPreparedTabSizePolicy
   readonly documentId: string
   readonly languageId: EditorSyntaxLanguageId | null
   readonly snapshot: PieceTableSnapshot
@@ -109,8 +110,11 @@ export type CreateEditorPreparedDocumentOptions = {
   readonly documentId: string
   readonly languageId: EditorSyntaxLanguageId | null
   readonly configuredTabSize: number
+  readonly tabSizePolicy: EditorPreparedTabSizePolicy
   readonly documentConfigurationTag: readonly EditorPreparedTagValue[]
 }
+
+export type EditorPreparedTabSizePolicy = 'detect-indentation' | 'fixed'
 
 type PreparedStructuralStage = ReturnType<typeof createStructuralStage>
 type PreparedHighlighterStage = ReturnType<typeof createHighlighterStage>
@@ -122,7 +126,10 @@ export function createEditorPreparedDocument(
   const textSnapshot = options.buffer.getTextSnapshot()
   const fullText = textSnapshot.materializeFullText()
   const lineStarts = computeLineStarts(textSnapshot)
-  const tabSize = guessedTabSize(fullText, options.configuredTabSize)
+  const tabSize =
+    options.tabSizePolicy === 'detect-indentation'
+      ? guessedTabSize(fullText, options.configuredTabSize)
+      : options.configuredTabSize
   const fallbackFolds = fallbackFoldRanges({
     text: fullText,
     languageId: options.languageId,
@@ -190,6 +197,10 @@ function createStructuralStage(
   fullText: string,
   request: Extract<EditorPreparedStageRequest, { readonly family: 'structural' }>,
 ) {
+  if (request.abortSignal.aborted) {
+    return createMissingStructuralStage(request.abortSignal, 'aborted')
+  }
+
   const runtimeSessionId = createEditorRuntimeSessionId()
   const configurationTag = checkedTag(request.configurationTag)
   const session = request.provider.createSession({
@@ -203,9 +214,11 @@ function createStructuralStage(
     textSnapshot,
     fullText,
   })
-  if (!session) return createMissingStructuralStage(request.abortSignal)
+  if (!session) return createMissingStructuralStage(request.abortSignal, 'failed')
 
   const stage = createStageOwner<EditorSyntaxResult>(session, request.abortSignal)
+  if (stage.disposed()) return createMissingStructuralStage(request.abortSignal, 'aborted')
+
   const result = session.refresh(snapshot, fullText).then(() => {
     if (!session.queryRange) return session.getResult()
     return session.queryRange(request.range)
@@ -231,6 +244,10 @@ function createHighlighterStage(
   fullText: string,
   request: Extract<EditorPreparedStageRequest, { readonly family: 'highlighter' }>,
 ) {
+  if (request.abortSignal.aborted) {
+    return createMissingHighlighterStage(request.abortSignal, 'aborted')
+  }
+
   const runtimeSessionId = createEditorRuntimeSessionId()
   const configurationTag = checkedTag(request.configurationTag)
   const session = request.provider.createSession({
@@ -241,9 +258,11 @@ function createHighlighterStage(
     textSnapshot,
     fullText,
   })
-  if (!session) return createMissingHighlighterStage(request.abortSignal)
+  if (!session) return createMissingHighlighterStage(request.abortSignal, 'failed')
 
   const stage = createStageOwner<EditorHighlightResult>(session, request.abortSignal)
+  if (stage.disposed()) return createMissingHighlighterStage(request.abortSignal, 'aborted')
+
   const tracked = stage.track(session.refresh(snapshot, fullText))
   return {
     ...stage,
@@ -308,7 +327,10 @@ function outcomeFor<T>(
   )
 }
 
-function createMissingStructuralStage(abortSignal: AbortSignal) {
+function createMissingStructuralStage(
+  abortSignal: AbortSignal,
+  outcome: EditorPreparedStageOutcome,
+) {
   return {
     abortSignal,
     configuration: null,
@@ -316,7 +338,7 @@ function createMissingStructuralStage(abortSignal: AbortSignal) {
     dispose: () => undefined,
     disposeIfOwned: () => undefined,
     disposed: () => true,
-    outcome: Promise.resolve<EditorPreparedStageOutcome>('failed'),
+    outcome: Promise.resolve(outcome),
     provider: null,
     range: null,
     readyResult: () => null,
@@ -328,14 +350,17 @@ function createMissingStructuralStage(abortSignal: AbortSignal) {
   }
 }
 
-function createMissingHighlighterStage(abortSignal: AbortSignal) {
+function createMissingHighlighterStage(
+  abortSignal: AbortSignal,
+  outcome: EditorPreparedStageOutcome,
+) {
   return {
     abortSignal,
     configurationTag: [] as readonly EditorPreparedTagValue[],
     dispose: () => undefined,
     disposeIfOwned: () => undefined,
     disposed: () => true,
-    outcome: Promise.resolve<EditorPreparedStageOutcome>('failed'),
+    outcome: Promise.resolve(outcome),
     provider: null,
     range: null,
     readyResult: () => null,
@@ -425,6 +450,7 @@ function matchesDocument(
   tag: readonly EditorPreparedTagValue[],
 ): boolean {
   if (expected.configuredTabSize !== options.configuredTabSize) return false
+  if (expected.tabSizePolicy !== options.tabSizePolicy) return false
   if (expected.documentId !== options.documentId) return false
   if (expected.languageId !== options.languageId) return false
   if (expected.snapshot !== snapshot) return false

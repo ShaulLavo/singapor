@@ -205,7 +205,10 @@ async function resolveRegistrations(): Promise<ShikiResolvedRegistrations> {
   ])
   return {
     languageRegistrations: language.default,
-    themeRegistration: theme.default,
+    themeRegistration: {
+      ...theme.default,
+      name: theme.default.name ?? 'github-dark',
+    },
     themeRegistrations: [],
   }
 }

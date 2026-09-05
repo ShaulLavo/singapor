@@ -73,7 +73,8 @@ Later layers precede earlier layers. Rows within a layer retain declaration orde
 including rows with the same chord and different `when` conditions. At each stroke,
 the runtime captures one context and tries eligible terminal candidates in order
 until one dispatch claims the event. A declined candidate runs once, then falls
-through. An eligible single stroke wins over a longer sequence with the same prefix.
+through. Explicit `preventDefault: true` or `stopPropagation: true` retains event
+ownership even when every eligible command declines. An eligible single stroke wins over a longer sequence with the same prefix.
 
 An available prefix consumes the event immediately and starts a five-second timer.
 After that prefix, completion and unmatched keys stay consumed even if availability

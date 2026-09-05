@@ -230,3 +230,35 @@ test('a completion that synchronously moves focus reports completed once', () =>
   expect(runtime.claimKeybinding(key('c', { ctrlKey: true }))).toBe(true)
   expect(outcomes).toEqual(['completed'])
 })
+
+test.each(['preventDefault', 'stopPropagation'] as const)(
+  'explicit %s owns a declined single and its release',
+  (option) => {
+    const h = setup([{ chord: ['F2'], payload: 'tab', [option]: true }])
+    const event = key('F2', { code: 'F2' })
+    expect(h.claim(event)).toBe(true)
+    expect(event.defaultPrevented).toBe(option === 'preventDefault')
+    expect(h.claim(key('F2', { code: 'F2' }, 'keyup'))).toBe(true)
+  },
+)
+
+test('explicit event ownership survives ordered fallback when every command declines', () => {
+  const calls: string[] = []
+  runtime = createKeymapRuntime({
+    root: document,
+    bindings: [
+      { chord: ['F2'], payload: 'first', preventDefault: true },
+      { chord: ['F2'], payload: 'second' },
+    ],
+    captureContext: () => null,
+    isAvailable: () => true,
+    dispatch: ({ payload }) => {
+      calls.push(payload)
+      return false
+    },
+  })
+  const event = key('F2', { code: 'F2' })
+  expect(runtime.claimKeybinding(event)).toBe(true)
+  expect(event.defaultPrevented).toBe(true)
+  expect(calls).toEqual(['first', 'second'])
+})

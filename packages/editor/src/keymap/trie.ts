@@ -75,6 +75,8 @@ function modifierMask(alt: boolean, ctrl: boolean, meta: boolean, shift: boolean
 const PHYSICAL_KEY_NAMES = physicalKeyNames()
 function physicalKeyNames(): ReadonlyMap<string, string> {
   const names = new Map(Object.entries(PUNCTUATION_CODE_MAP))
+  // TanStack omits Quote, but non-Latin layouts still need its physical key.
+  names.set('Quote', "'")
   for (const letter of LETTER_KEYS) names.set(`Key${letter}`, letter)
   for (const digit of NUMBER_KEYS) names.set(`Digit${digit}`, digit)
   return names

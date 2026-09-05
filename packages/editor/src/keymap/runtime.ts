@@ -5,7 +5,7 @@ import type { ChordOutcome, KeymapBinding, KeymapRuntime, KeymapRuntimeOptions }
 type Ownership = 'binding' | 'chord'
 type DispatchResult<Payload> =
   | { readonly kind: 'claimed'; readonly binding: KeymapBinding<Payload> }
-  | { readonly kind: 'declined' | 'unavailable' }
+  | { readonly kind: 'declined' | 'unavailable' | 'handled' }
   | { readonly kind: 'cancelled'; readonly outcome: ChordOutcome }
 type Pending<Payload> = {
   readonly node: KeymapNode<Payload>
@@ -85,6 +85,7 @@ export function createKeymapRuntime<Payload, Context>(
     event: KeyboardEvent,
   ): DispatchResult<Payload> {
     let eligible = false
+    let handled = false
     for (const binding of candidates) {
       if (!options.isAvailable(binding, context, event)) continue
       eligible = true
@@ -94,9 +95,11 @@ export function createKeymapRuntime<Payload, Context>(
         event.preventDefault()
       if (binding.stopPropagation === true || (claimed && binding.stopPropagation !== false))
         event.stopPropagation()
+      if (binding.preventDefault === true || binding.stopPropagation === true) handled = true
       if (result.kind !== 'declined') return result
     }
-    return { kind: eligible ? 'declined' : 'unavailable' }
+    if (!eligible) return { kind: 'unavailable' }
+    return { kind: handled ? 'handled' : 'declined' }
   }
   function dispatchBinding(
     binding: KeymapBinding<Payload>,
@@ -140,6 +143,8 @@ export function createKeymapRuntime<Payload, Context>(
       cancel('completed', result.binding)
       return fromChord ? 'chord' : 'binding'
     }
+    if (result.kind === 'handled')
+      return fromChord ? failContinuation(event, 'unavailable', true) : 'binding'
     if (result.kind === 'cancelled') return failContinuation(event, result.outcome, fromChord)
     if (result.kind === 'declined') return failContinuation(event, 'unavailable', fromChord)
     const count = availableCount(edge.node.descendants, context, event)

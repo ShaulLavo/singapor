@@ -59,3 +59,17 @@ test.each(Object.entries(PUNCTUATION_CODE_MAP))(
     expect(trieStep(trie, event)?.node.candidates[0]?.payload).toBe(key)
   },
 )
+
+test('preserves physical Quote fallback when a non-Latin layout prints another character', () => {
+  const trie = buildKeymapTrie([{ chord: [{ key: "'", ctrl: true }], payload: 'quote' }], 'linux')
+  expect(
+    trieStep(trie, {
+      key: 'ת',
+      code: 'Quote',
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+    })?.node.candidates[0]?.payload,
+  ).toBe('quote')
+})

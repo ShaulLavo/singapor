@@ -471,6 +471,23 @@ export type EditorTrackedRanges = {
   resolve(): readonly TextOffsetRange[]
 }
 
+export type EditorTextAnchor =
+  | { readonly kind: 'point'; readonly offset: number; readonly bias: 'left' | 'right' }
+  | {
+      readonly kind: 'range'
+      readonly start: number
+      readonly end: number
+      readonly startBias: 'left' | 'right'
+      readonly endBias: 'left' | 'right'
+    }
+
+export type EditorTrackedPoint = {
+  resolve():
+    | { readonly kind: 'live'; readonly offset: number }
+    | { readonly kind: 'deleted' }
+    | null
+}
+
 export type EditorViewContributionContext = {
   readonly container: HTMLElement
   readonly scrollElement: HTMLDivElement
@@ -541,6 +558,7 @@ export type EditorViewContributionContext = {
     ranges: readonly TextOffsetRange[],
     bias?: Pick<EditorDecorationRange, 'startBias' | 'endBias'>,
   ): EditorTrackedRanges
+  trackPoint?(anchor: Extract<EditorTextAnchor, { readonly kind: 'point' }>): EditorTrackedPoint
   setRangeHighlight?(
     name: string,
     ranges: readonly { readonly start: number; readonly end: number }[],

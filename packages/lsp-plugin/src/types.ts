@@ -1,5 +1,10 @@
 import type { DocumentLogicalRevisionScope } from '@singapor/core/document'
-import type { EditorDisposable, EditorPlugin, EditorViewSnapshot } from '@singapor/core/extensions'
+import type {
+  EditorDisposable,
+  EditorPlugin,
+  EditorTextAnchor,
+  EditorViewSnapshot,
+} from '@singapor/core/extensions'
 import type { LspClient, LspNotificationHandler, LspWebSocketTransportOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
@@ -52,6 +57,18 @@ export type LanguageServerDiagnosticSummary = {
   readonly diagnostics: readonly lsp.Diagnostic[]
   readonly counts: LanguageServerDiagnosticCounts
 }
+
+export type LanguageServerDiagnosticMarkerEvent = {
+  readonly direction: 'next' | 'previous'
+  readonly diagnostic: lsp.Diagnostic
+  readonly documentUri: lsp.DocumentUri
+  readonly textVersion: number
+  readonly anchor: EditorTextAnchor
+}
+
+export type LanguageServerDiagnosticMarkerClaim =
+  | { readonly kind: 'claimed'; dispose(): void }
+  | { readonly kind: 'ignored' }
 
 export type LanguageServerDefinitionTarget = {
   readonly uri: lsp.DocumentUri
@@ -179,6 +196,9 @@ export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
   onConnected?(context: LanguageServerConnectionContext): void
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
+  readonly onDidNavigateDiagnostic?: (
+    event: LanguageServerDiagnosticMarkerEvent,
+  ) => LanguageServerDiagnosticMarkerClaim
   readonly onInteractiveReady?: () => void
   readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onOpenDefinition?: (
@@ -216,6 +236,7 @@ export type LanguageServerSetPluginOptions = Pick<
   | 'hoverMarkdownCodeBackground'
   | 'documentSync'
   | 'onDiagnostics'
+  | 'onDidNavigateDiagnostic'
   | 'onInteractiveReady'
   | 'onRequestError'
   | 'onOpenDefinition'

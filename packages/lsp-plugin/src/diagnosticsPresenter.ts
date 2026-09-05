@@ -14,7 +14,11 @@ import {
 } from './diagnostics'
 import { DIAGNOSTIC_MARKER_COLORS, DIAGNOSTIC_STYLES } from './plugin.styles'
 import type { OffsetRange } from './definitionNavigation'
-import type { LanguageServerDiagnosticSummary } from './types'
+import type {
+  LanguageServerDiagnosticMarkerClaim,
+  LanguageServerDiagnosticMarkerEvent,
+  LanguageServerDiagnosticSummary,
+} from './types'
 
 const LSP_DIAGNOSTIC_ERROR = 1
 const LSP_DIAGNOSTIC_WARNING = 2
@@ -37,6 +41,8 @@ const DIAGNOSTIC_MINIMAP_Z_INDEX: Record<LanguageServerDiagnosticSeverity, numbe
 
 export type DiagnosticsPresenterActiveDocument = {
   readonly fullText: string
+  readonly textVersion: number
+  readonly uri: lsp.DocumentUri
 }
 
 export type DiagnosticsPresenterMarkerDirection = 'next' | 'previous'
@@ -46,10 +52,16 @@ export type DiagnosticsPresenterOptions = {
   readonly highlightNameNamespace: string
   readonly markerTimingNamePrefix: string
   readonly onDiagnostics?: (summary: ReturnType<typeof summarizeDiagnostics>) => void
+  readonly onDidNavigateDiagnostic?: (
+    event: LanguageServerDiagnosticMarkerEvent,
+  ) => LanguageServerDiagnosticMarkerClaim
+  readonly onError?: (error: unknown) => void
 }
 
 export class DiagnosticsPresenter {
   private readonly highlightNames: Record<LanguageServerDiagnosticSeverity, string>
+  private markerClaim: Extract<LanguageServerDiagnosticMarkerClaim, { kind: 'claimed' }> | null =
+    null
 
   public constructor(
     private readonly context: EditorViewContributionContext,
@@ -65,6 +77,7 @@ export class DiagnosticsPresenter {
   }
 
   public clear(): void {
+    this.releaseMarkerClaim()
     this.clearMinimapMarkers()
     if (!this.context.clearRangeHighlight) return
 
@@ -89,20 +102,49 @@ export class DiagnosticsPresenter {
     const selection = this.context.getSnapshot().selections[0]
     if (!selection) return false
 
-    const range = diagnosticMarkerTarget(
+    const target = diagnosticMarkerTarget(
       active.fullText,
       diagnostics,
       selection.headOffset,
       direction,
     )
-    if (!range) return false
+    if (!target) return false
 
     const timingName = `${this.options.markerTimingNamePrefix}.${direction}`
-    this.context.setSelection(range.start, range.end, timingName, {
-      revealOffset: range.start,
+    this.context.setSelection(target.range.start, target.range.end, timingName, {
+      revealOffset: target.range.start,
     })
     this.context.focusEditor()
+    this.publishMarker(active, target, direction)
     return true
+  }
+
+  private publishMarker(
+    active: DiagnosticsPresenterActiveDocument,
+    target: DiagnosticMarkerTarget,
+    direction: DiagnosticsPresenterMarkerDirection,
+  ): void {
+    this.releaseMarkerClaim()
+    if (!this.options.onDidNavigateDiagnostic) return
+
+    try {
+      const claim = this.options.onDidNavigateDiagnostic({
+        anchor: markerAnchor(target.range),
+        diagnostic: target.diagnostic,
+        direction,
+        documentUri: active.uri,
+        textVersion: active.textVersion,
+      })
+      if (claim.kind === 'claimed') this.markerClaim = claim
+    } catch (error) {
+      this.options.onError?.(error)
+    }
+  }
+
+  private releaseMarkerClaim(): void {
+    const claim = this.markerClaim
+    this.markerClaim = null
+    claim?.dispose()
   }
 
   private renderHighlights(text: string, diagnostics: readonly lsp.Diagnostic[]): void {
@@ -341,26 +383,50 @@ function clampLineNumber(lineNumber: number, lineCount: number): number {
   return Math.min(Math.max(1, lineNumber), lineCount)
 }
 
+type DiagnosticMarkerTarget = {
+  readonly diagnostic: lsp.Diagnostic
+  readonly range: OffsetRange
+}
+
 function diagnosticMarkerTarget(
   text: string,
   diagnostics: readonly lsp.Diagnostic[],
   offset: number,
   direction: DiagnosticsPresenterMarkerDirection,
-): OffsetRange | null {
-  const ranges = diagnostics
-    .flatMap((diagnostic) => diagnosticRange(text, diagnostic))
-    .sort(compareOffsetRanges)
-  if (ranges.length === 0) return null
-  if (direction === 'next') return ranges.find((range) => range.start > offset) ?? ranges[0] ?? null
+): DiagnosticMarkerTarget | null {
+  const targets = diagnostics
+    .flatMap((diagnostic) => diagnosticTarget(text, diagnostic))
+    .sort((left, right) => compareOffsetRanges(left.range, right.range))
+  if (targets.length === 0) return null
+  if (direction === 'next') {
+    return targets.find((target) => target.range.start > offset) ?? targets[0] ?? null
+  }
 
-  return ranges.toReversed().find((range) => range.start < offset) ?? ranges.at(-1) ?? null
+  return (
+    targets.toReversed().find((target) => target.range.start < offset) ?? targets.at(-1) ?? null
+  )
 }
 
-function diagnosticRange(text: string, diagnostic: lsp.Diagnostic): readonly OffsetRange[] {
+function diagnosticTarget(
+  text: string,
+  diagnostic: lsp.Diagnostic,
+): readonly DiagnosticMarkerTarget[] {
   const start = lspPositionToOffset(text, diagnostic.range.start)
   const end = lspPositionToOffset(text, diagnostic.range.end)
   if (end < start) return []
-  return [{ start, end }]
+  return [{ diagnostic, range: { start, end } }]
+}
+
+function markerAnchor(range: OffsetRange): LanguageServerDiagnosticMarkerEvent['anchor'] {
+  if (range.start === range.end) return { kind: 'point', offset: range.start, bias: 'right' }
+
+  return {
+    kind: 'range',
+    start: range.start,
+    end: range.end,
+    startBias: 'right',
+    endBias: 'left',
+  }
 }
 
 function compareOffsetRanges(left: OffsetRange, right: OffsetRange): number {

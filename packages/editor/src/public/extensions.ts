@@ -105,6 +105,8 @@ export type {
   EditorSelectionRange,
   EditorSelectionRangeContext,
   EditorSelectionRangeProvider,
+  EditorTextAnchor,
+  EditorTrackedPoint,
   EditorTrackedRanges,
   EditorThemeJSON,
   EditorTokenStyleJSON,

@@ -4,6 +4,8 @@ import type * as lsp from 'vscode-languageserver-protocol'
 
 import type {
   LanguageServerDefinitionTarget,
+  LanguageServerDiagnosticMarkerClaim,
+  LanguageServerDiagnosticMarkerEvent,
   LanguageServerDiagnosticSummary,
   LanguageServerNavigationKind,
   LanguageServerNavigationOpenMode,
@@ -22,6 +24,9 @@ export type LanguageServerResolvedOptions = {
   readonly webSocketTransportOptions?: LspWebSocketTransportOptions
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
+  readonly onDidNavigateDiagnostic?: (
+    event: LanguageServerDiagnosticMarkerEvent,
+  ) => LanguageServerDiagnosticMarkerClaim
   readonly onInteractiveReady?: () => void
   readonly onApplyWorkspaceEdit?: OnApplyWorkspaceEdit
   readonly onOpenDefinition?: (

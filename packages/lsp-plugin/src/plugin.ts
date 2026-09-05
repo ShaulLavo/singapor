@@ -67,6 +67,8 @@ import type { TextEdit } from '@singapor/core'
 import type {
   LanguageServerConnectionContext,
   LanguageServerDefinitionTarget,
+  LanguageServerDiagnosticMarkerClaim,
+  LanguageServerDiagnosticMarkerEvent,
   LanguageServerDiagnosticSummary,
   LanguageServerDocumentSyncOptions,
   LanguageServerNavigationOptions,
@@ -169,6 +171,9 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
   onConnected?(context: LanguageServerConnectionContext): void
   readonly onStatusChange?: (status: LanguageServerStatus) => void
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
+  readonly onDidNavigateDiagnostic?: (
+    event: LanguageServerDiagnosticMarkerEvent,
+  ) => LanguageServerDiagnosticMarkerClaim
   readonly onInteractiveReady?: () => void
   readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onOpenDefinition?: (
@@ -206,6 +211,9 @@ type LanguageServerResolvedAdapterOptions = {
   readonly commands: readonly LanguageServerCommandSpec[]
   readonly semanticTokens?: LanguageServerSemanticTokensFactory
   readonly onDiagnostics?: (summary: LanguageServerDiagnosticSummary) => void
+  readonly onDidNavigateDiagnostic?: (
+    event: LanguageServerDiagnosticMarkerEvent,
+  ) => LanguageServerDiagnosticMarkerClaim
   readonly onInteractiveReady?: () => void
   readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onApplyWorkspaceEdit?: LanguageServerLaneHostOptions['onApplyWorkspaceEdit']
@@ -227,6 +235,7 @@ export function createLanguageServerPlugin(
     documentSync: options.documentSync,
     semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
+    onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
     onRequestError: options.onRequestError,
@@ -421,7 +430,11 @@ class LanguageServerContribution implements EditorViewContribution {
     private readonly options: LanguageServerResolvedAdapterOptions,
   ) {
     const prefix = context.highlightPrefix ?? options.defaultHighlightPrefix
-    const presenter = new DiagnosticsPresenter(context, prefix, options.diagnostics)
+    const presenter = new DiagnosticsPresenter(context, prefix, {
+      ...options.diagnostics,
+      onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
+      onError: options.onError,
+    })
     this.diagnostics = new CompositeDiagnosticsPresenter(
       presenter,
       rankedLanguageServerLanes(options.lanes, 'diagnostics').map((lane) => lane.id),
@@ -1037,6 +1050,7 @@ function resolveAdapterOptions(
     commands: options.commands ?? LANGUAGE_SERVER_COMMANDS,
     semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
+    onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
     onRequestRenameName: options.onRequestRenameName,
@@ -1067,6 +1081,7 @@ function resolveLanguageServerSetOptions(
     commands: LANGUAGE_SERVER_COMMANDS,
     semanticTokens: options.semanticTokens,
     onDiagnostics: options.onDiagnostics,
+    onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
     onInteractiveReady: options.onInteractiveReady,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,

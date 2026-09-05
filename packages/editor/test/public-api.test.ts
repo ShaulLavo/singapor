@@ -87,6 +87,8 @@ import {
   type EditorSelectionRangeProvider,
   type EditorSnippetMirror,
   type EditorSnippetStop,
+  type EditorTextAnchor,
+  type EditorTrackedPoint,
   type EditorTrackedRanges,
   type EditorInitialPaintEvent as EditorInitialPaintEventFromExtensions,
   type EditorViewSnapshotJSON as EditorViewSnapshotJSONFromExtensions,
@@ -512,6 +514,16 @@ describe('public API facade', () => {
     expect(
       track([{ start: 1, end: 3 }], { startBias: 'right', endBias: 'left' }).resolve(),
     ).toEqual([{ start: 1, end: 3 }])
+  })
+
+  it('exports the text anchor and point tracking used by view contributions', () => {
+    const anchor: EditorTextAnchor = { kind: 'point', offset: 2, bias: 'right' }
+    const point: EditorTrackedPoint = {
+      resolve: () => ({ kind: 'live', offset: anchor.offset }),
+    }
+    const track: NonNullable<EditorViewContributionContext['trackPoint']> = () => point
+
+    expect(track(anchor).resolve()).toEqual({ kind: 'live', offset: 2 })
   })
 
   it('exports the snippet stops a completion source hands over for the editor to keep in step', () => {

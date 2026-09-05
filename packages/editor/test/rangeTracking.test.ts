@@ -4,23 +4,29 @@ import { Editor } from '../src/editor'
 import { resetEditorInstanceCount } from '../src/public/testing'
 import type {
   EditorPlugin,
+  EditorTrackedPoint,
   EditorTrackedRanges,
   EditorViewContributionContext,
 } from '../src/public/extensions'
 
 type TrackRanges = NonNullable<EditorViewContributionContext['trackRanges']>
+type TrackPoint = NonNullable<EditorViewContributionContext['trackPoint']>
 
 /**
  * A contribution only ever reaches the tracking through the context it is handed, so the test takes
  * the same door: what a plugin outside this package can hold is exactly what is under test.
  */
-function trackingPlugin(captured: { track: TrackRanges | null }): EditorPlugin {
+function trackingPlugin(captured: {
+  track: TrackRanges | null
+  trackPoint: TrackPoint | null
+}): EditorPlugin {
   return {
     name: 'test.range-tracking',
     activate: (context) =>
       context.registerViewContribution({
         createContribution: (viewContext) => {
           captured.track = viewContext.trackRanges ?? null
+          captured.trackPoint = viewContext.trackPoint ?? null
           return { dispose: () => undefined, update: () => undefined }
         },
       }),
@@ -30,10 +36,14 @@ function trackingPlugin(captured: { track: TrackRanges | null }): EditorPlugin {
 describe('tracked document ranges', () => {
   let container: HTMLElement
   let editor: Editor
-  const captured: { track: TrackRanges | null } = { track: null }
+  const captured: { track: TrackRanges | null; trackPoint: TrackPoint | null } = {
+    track: null,
+    trackPoint: null,
+  }
 
   beforeEach(() => {
     captured.track = null
+    captured.trackPoint = null
     resetEditorInstanceCount()
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -97,5 +107,42 @@ describe('tracked document ranges', () => {
     expect(text(region)).toEqual(['ABworldCD'])
     expect(found.resolve()).toEqual([{ start: 8, end: 13 }])
     expect(text(found)).toEqual(['world'])
+  })
+
+  it('tracks a biased point until its source position is deleted', () => {
+    const left = captured.trackPoint!({ kind: 'point', offset: 6, bias: 'left' })
+    const right = captured.trackPoint!({ kind: 'point', offset: 6, bias: 'right' })
+
+    editor.edit({ from: 6, to: 6, text: 'AB' })
+
+    expect(left.resolve()).toEqual({ kind: 'live', offset: 6 })
+    expect(right.resolve()).toEqual({ kind: 'live', offset: 8 })
+
+    editor.edit({ from: 5, to: 9, text: '' })
+
+    expect(left.resolve()).toEqual({ kind: 'deleted' })
+    expect(right.resolve()).toEqual({ kind: 'deleted' })
+  })
+
+  it('returns null when a point is tracked without an active document', () => {
+    const emptyContainer = document.createElement('div')
+    const emptyCapture: { track: TrackRanges | null; trackPoint: TrackPoint | null } = {
+      track: null,
+      trackPoint: null,
+    }
+    document.body.appendChild(emptyContainer)
+    const emptyEditor = new Editor(emptyContainer, { plugins: [trackingPlugin(emptyCapture)] })
+
+    try {
+      const point: EditorTrackedPoint = emptyCapture.trackPoint!({
+        kind: 'point',
+        offset: 0,
+        bias: 'right',
+      })
+      expect(point.resolve()).toBeNull()
+    } finally {
+      emptyEditor.dispose()
+      emptyContainer.remove()
+    }
   })
 })

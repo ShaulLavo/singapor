@@ -17,7 +17,7 @@ describe('DiagnosticsPresenter', () => {
     const diagnosticItem = diagnostic(1, 1, 2)
 
     presenter.render('abc', [diagnosticItem])
-    presenter.moveMarker({ fullText: 'abc' }, [diagnosticItem], 'next')
+    presenter.moveMarker(activeDocument('abc'), [diagnosticItem], 'next')
     presenter.clear()
 
     expect(context.setRangeHighlight).toHaveBeenCalledWith(
@@ -32,6 +32,83 @@ describe('DiagnosticsPresenter', () => {
       revealOffset: 1,
     })
     expect(minimap.clearDecorations).toHaveBeenCalledWith('editor.test.diagnostics')
+  })
+
+  it('publishes the selected diagnostic after navigation and revokes claims', () => {
+    const firstDispose = vi.fn()
+    const secondDispose = vi.fn()
+    const onDidNavigateDiagnostic = vi
+      .fn()
+      .mockReturnValueOnce({ kind: 'claimed', dispose: firstDispose })
+      .mockReturnValueOnce({ kind: 'claimed', dispose: secondDispose })
+    const context = editorContext(new TestMinimap())
+    const presenter = new DiagnosticsPresenter(context, 'editor-test', {
+      minimapSourceId: 'editor.test.diagnostics',
+      highlightNameNamespace: 'test-lsp',
+      markerTimingNamePrefix: 'testLsp.marker',
+      onDidNavigateDiagnostic,
+    })
+    const earlier = diagnostic(1, 0, 0, 'point')
+    const later = diagnostic(2, 2, 3, 'later')
+
+    expect(presenter.moveMarker(activeDocument('abc'), [earlier, later], 'next')).toBe(true)
+    expect(onDidNavigateDiagnostic).toHaveBeenLastCalledWith({
+      anchor: { kind: 'range', start: 2, end: 3, startBias: 'right', endBias: 'left' },
+      diagnostic: later,
+      direction: 'next',
+      documentUri: 'file:///src/index.ts',
+      textVersion: 7,
+    })
+    expect(context.focusEditor).toHaveBeenCalledBefore(onDidNavigateDiagnostic)
+
+    expect(presenter.moveMarker(activeDocument('abc'), [earlier, later], 'next')).toBe(true)
+    expect(firstDispose).toHaveBeenCalledOnce()
+    presenter.clear()
+    expect(secondDispose).toHaveBeenCalledOnce()
+  })
+
+  it('publishes a point anchor and reports callback errors without undoing navigation', () => {
+    const callbackError = new TypeError('consumer failed')
+    const onError = vi.fn()
+    const presenter = new DiagnosticsPresenter(editorContext(new TestMinimap()), 'editor-test', {
+      minimapSourceId: 'editor.test.diagnostics',
+      highlightNameNamespace: 'test-lsp',
+      markerTimingNamePrefix: 'testLsp.marker',
+      onDidNavigateDiagnostic: (event) => {
+        expect(event.anchor).toEqual({ kind: 'point', offset: 1, bias: 'right' })
+        throw callbackError
+      },
+      onError,
+    })
+
+    expect(
+      presenter.moveMarker(activeDocument('abc'), [diagnostic(1, 1, 1, 'point')], 'next'),
+    ).toBe(true)
+    expect(onError).toHaveBeenCalledWith(callbackError)
+  })
+
+  it('wraps marker navigation and publishes the diagnostic that was selected', () => {
+    const first = diagnostic(1, 1, 2, 'first')
+    const last = diagnostic(2, 3, 4, 'last')
+    const next = vi.fn(() => ({ kind: 'ignored' as const }))
+    const previous = vi.fn(() => ({ kind: 'ignored' as const }))
+    const nextPresenter = new DiagnosticsPresenter(
+      editorContext(new TestMinimap(), 3),
+      'editor-test',
+      presenterOptions(next),
+    )
+    const previousPresenter = new DiagnosticsPresenter(
+      editorContext(new TestMinimap(), 1),
+      'editor-test',
+      presenterOptions(previous),
+    )
+
+    expect(nextPresenter.moveMarker(activeDocument('abcde'), [first, last], 'next')).toBe(true)
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ diagnostic: first }))
+    expect(previousPresenter.moveMarker(activeDocument('abcde'), [first, last], 'previous')).toBe(
+      true,
+    )
+    expect(previous).toHaveBeenCalledWith(expect.objectContaining({ diagnostic: last }))
   })
 
   it('publishes summarized diagnostics through the configured callback', () => {
@@ -60,11 +137,11 @@ class TestMinimap {
   public readonly clearDecorations = vi.fn()
 }
 
-function editorContext(minimap: TestMinimap): EditorViewContributionContext {
+function editorContext(minimap: TestMinimap, headOffset = 0): EditorViewContributionContext {
   return {
     getSnapshot: () => ({
       lineCount: 1,
-      selections: [{ headOffset: 0 }],
+      selections: [{ headOffset }],
     }),
     getFeature: () => minimap,
     setRangeHighlight: vi.fn(),
@@ -74,10 +151,32 @@ function editorContext(minimap: TestMinimap): EditorViewContributionContext {
   } as unknown as EditorViewContributionContext
 }
 
-function diagnostic(severity: lsp.DiagnosticSeverity, start: number, end: number): lsp.Diagnostic {
+function presenterOptions(
+  onDidNavigateDiagnostic: NonNullable<
+    ConstructorParameters<typeof DiagnosticsPresenter>[2]['onDidNavigateDiagnostic']
+  >,
+) {
+  return {
+    minimapSourceId: 'editor.test.diagnostics',
+    highlightNameNamespace: 'test-lsp',
+    markerTimingNamePrefix: 'testLsp.marker',
+    onDidNavigateDiagnostic,
+  }
+}
+
+function activeDocument(fullText: string) {
+  return { fullText, textVersion: 7, uri: 'file:///src/index.ts' }
+}
+
+function diagnostic(
+  severity: lsp.DiagnosticSeverity,
+  start: number,
+  end: number,
+  message = 'message',
+): lsp.Diagnostic {
   return {
     severity,
-    message: 'message',
+    message,
     range: {
       start: { line: 0, character: start },
       end: { line: 0, character: end },

@@ -145,6 +145,8 @@ import {
   type EditorOverlaySide,
   type EditorPlugin,
   type EditorSelectionRange,
+  type EditorTextAnchor,
+  type EditorTrackedPoint,
   type EditorTrackedRanges,
   type EditorViewContribution,
   type EditorViewContributionContext,
@@ -2408,6 +2410,7 @@ export class Editor {
       textOffsetFromPoint: (clientX, clientY) =>
         this.inputSelection.textOffsetFromPoint(clientX, clientY),
       getRangeClientRect: (start, end) => this.inputSelection.rangeClientRect(start, end),
+      trackPoint: (anchor) => this.trackDocumentPoint(anchor),
       trackRanges: (ranges, bias) => this.trackDocumentRanges(ranges, bias),
       setRangeHighlight: (name, ranges, style) => this.view.setRangeHighlight(name, ranges, style),
       clearRangeHighlight: (name) => this.view.clearRangeHighlight(name),
@@ -2434,6 +2437,25 @@ export class Editor {
       : []
 
     return { resolve: () => this.resolveTrackedRanges(tracked) }
+  }
+
+  private trackDocumentPoint(
+    descriptor: Extract<EditorTextAnchor, { readonly kind: 'point' }>,
+  ): EditorTrackedPoint {
+    const snapshot = this.session?.getSnapshot()
+    const anchor = snapshot ? anchorAt(snapshot, descriptor.offset, descriptor.bias) : null
+
+    return {
+      resolve: () => {
+        const current = this.session?.getSnapshot()
+        if (!current || !anchor) return null
+
+        const resolved = resolveAnchor(current, anchor)
+        if (resolved.liveness === 'deleted') return { kind: 'deleted' }
+
+        return { kind: 'live', offset: resolved.offset }
+      },
+    }
   }
 
   private resolveTrackedRanges(tracked: readonly TrackedAnchorRange[]): readonly TextOffsetRange[] {

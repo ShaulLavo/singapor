@@ -196,3 +196,37 @@ test('declined eligible terminal candidates do not arm a longer sequence', () =>
   expect(h.claim(key('c', { ctrlKey: true }))).toBe(false)
   expect(h.events).toEqual([])
 })
+
+test('synchronous target cancellation during a declined completion retains event ownership', () => {
+  runtime = createKeymapRuntime({
+    root: document,
+    bindings,
+    captureContext: () => null,
+    isAvailable: () => true,
+    dispatch: () => {
+      runtime!.cancel()
+      return false
+    },
+  })
+  runtime.claimKeybinding(key('k', { ctrlKey: true }))
+  expect(runtime.claimKeybinding(key('c', { ctrlKey: true }))).toBe(true)
+  expect(runtime.claimKeybinding(key('c', {}, 'keyup'))).toBe(true)
+})
+
+test('a completion that synchronously moves focus reports completed once', () => {
+  const outcomes: string[] = []
+  runtime = createKeymapRuntime({
+    root: document,
+    bindings,
+    captureContext: () => null,
+    isAvailable: () => true,
+    dispatch: () => {
+      runtime!.cancel()
+      return true
+    },
+    onSequence: (event) => outcomes.push(event.outcome),
+  })
+  runtime.claimKeybinding(key('k', { ctrlKey: true }))
+  expect(runtime.claimKeybinding(key('c', { ctrlKey: true }))).toBe(true)
+  expect(outcomes).toEqual(['completed'])
+})

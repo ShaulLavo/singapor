@@ -6,6 +6,7 @@ type Ownership = 'binding' | 'chord'
 type DispatchResult<Payload> =
   | { readonly kind: 'claimed'; readonly binding: KeymapBinding<Payload> }
   | { readonly kind: 'declined' | 'unavailable' }
+  | { readonly kind: 'cancelled'; readonly outcome: ChordOutcome }
 type Pending<Payload> = {
   readonly node: KeymapNode<Payload>
   readonly keys: string
@@ -25,6 +26,7 @@ export function createKeymapRuntime<Payload, Context>(
   let trie = buildKeymapTrie(options.bindings, platform)
   let enabled = options.enabled !== false
   let disposed = false
+  let activeDispatch: { cancellation: ChordOutcome | null } | null = null
   let pending: Pending<Payload> | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
   const processed = new WeakMap<KeyboardEvent, boolean>()
@@ -37,6 +39,10 @@ export function createKeymapRuntime<Payload, Context>(
     return false
   }
   function syncCapture() {
+    if (disposed) {
+      document.removeEventListener('keydown', onCapture, true)
+      return
+    }
     const needed = pending || hasChordOwnership() || (!enabled && claimedKeys.size > 0)
     if (needed) document.addEventListener('keydown', onCapture, true)
     else document.removeEventListener('keydown', onCapture, true)
@@ -46,6 +52,10 @@ export function createKeymapRuntime<Payload, Context>(
     binding: KeymapBinding<Payload> | null = null,
   ) {
     if (!pending) return
+    if (activeDispatch && outcome !== 'disposed') {
+      activeDispatch.cancellation = outcome
+      return
+    }
     const ended = pending
     pending = null
     clearTimeout(timer)
@@ -78,14 +88,32 @@ export function createKeymapRuntime<Payload, Context>(
     for (const binding of candidates) {
       if (!options.isAvailable(binding, context, event)) continue
       eligible = true
-      const claimed = options.dispatch(binding, context, event)
+      const result = dispatchBinding(binding, context, event)
+      const claimed = result.kind === 'claimed'
       if (binding.preventDefault === true || (claimed && binding.preventDefault !== false))
         event.preventDefault()
       if (binding.stopPropagation === true || (claimed && binding.stopPropagation !== false))
         event.stopPropagation()
-      if (claimed) return { kind: 'claimed', binding }
+      if (result.kind !== 'declined') return result
     }
     return { kind: eligible ? 'declined' : 'unavailable' }
+  }
+  function dispatchBinding(
+    binding: KeymapBinding<Payload>,
+    context: Context,
+    event: KeyboardEvent,
+  ): DispatchResult<Payload> {
+    const operation: { cancellation: ChordOutcome | null } = { cancellation: null }
+    activeDispatch = operation
+    let claimed: boolean
+    try {
+      claimed = options.dispatch(binding, context, event)
+    } finally {
+      activeDispatch = null
+    }
+    if (claimed) return { kind: 'claimed', binding }
+    if (operation.cancellation) return { kind: 'cancelled', outcome: operation.cancellation }
+    return { kind: 'declined' }
   }
   function availableCount(
     candidates: readonly KeymapBinding<Payload>[],
@@ -112,7 +140,8 @@ export function createKeymapRuntime<Payload, Context>(
       cancel('completed', result.binding)
       return fromChord ? 'chord' : 'binding'
     }
-    if (result.kind === 'declined') return failContinuation(event, 'unavailable')
+    if (result.kind === 'cancelled') return failContinuation(event, result.outcome, fromChord)
+    if (result.kind === 'declined') return failContinuation(event, 'unavailable', fromChord)
     const count = availableCount(edge.node.descendants, context, event)
     if (!count) return failContinuation(event, 'unavailable')
     if (event.repeat) return null
@@ -121,8 +150,12 @@ export function createKeymapRuntime<Payload, Context>(
     arm(edge.node, keys, count)
     return 'chord'
   }
-  function failContinuation(event: KeyboardEvent, outcome: ChordOutcome): Ownership | null {
-    if (!pending) return null
+  function failContinuation(
+    event: KeyboardEvent,
+    outcome: ChordOutcome,
+    fromChord = pending !== null,
+  ): Ownership | null {
+    if (!fromChord) return null
     swallow(event)
     cancel(outcome)
     return 'chord'
@@ -144,7 +177,7 @@ export function createKeymapRuntime<Payload, Context>(
     }
     let ownership = match(event)
     if (!ownership && event.repeat && previous && !composing) ownership = ownChord(event)
-    if (ownership) claimedKeys.set(code, ownership)
+    if (ownership && !disposed) claimedKeys.set(code, ownership)
     syncCapture()
     processed.set(event, ownership !== null)
     return ownership !== null

@@ -554,9 +554,8 @@ function wordNavigationModifier(): KeyboardEventInit {
  */
 function dispatchDefaultKey(command: EditorCommandId): KeyboardEvent {
   const platform = detectPlatform()
-  const hotkey = defaultEditorKeyBindings(platform).find(
-    (binding) => binding.command === command,
-  )?.hotkey
+  const hotkey = defaultEditorKeyBindings(platform).find((binding) => binding.command === command)
+    ?.chord[0]
   if (hotkey === undefined || typeof hotkey === 'string') {
     throw new Error(`${command} has no default chord on ${platform}`)
   }
@@ -3406,7 +3405,7 @@ describe('Editor', () => {
         defaultBindings: false,
         layers: [
           {
-            bindings: [{ command: 'cursorLeft', hotkey: 'ArrowLeft' }],
+            bindings: [{ command: 'cursorLeft', chord: ['ArrowLeft'] }],
             id: 'test.navigation',
           },
         ],
@@ -3972,7 +3971,7 @@ describe('Editor', () => {
               bindings: [
                 {
                   command: 'addNextOccurrence',
-                  hotkey: { key: 'D', mod: true },
+                  chord: [{ key: 'D', mod: true }],
                   preventDefault: true,
                 },
               ],

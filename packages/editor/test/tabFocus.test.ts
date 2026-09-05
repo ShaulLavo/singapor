@@ -144,7 +144,7 @@ describe('tab-focus mode', () => {
     for (const platform of ['mac', 'windows', 'linux'] as const) {
       const hotkey = defaultEditorKeyBindings(platform).find(
         (binding) => binding.command === 'editor.action.toggleTabFocusMode',
-      )?.hotkey
+      )?.chord[0]
       expect(hotkey, platform).toEqual({
         key: 'M',
         ctrl: true,
@@ -200,9 +200,8 @@ describe('tab-focus mode', () => {
    */
   function pressDefaultChord(command: 'editor.action.toggleTabFocusMode'): KeyboardEvent {
     const platform = detectPlatform()
-    const hotkey = defaultEditorKeyBindings(platform).find(
-      (binding) => binding.command === command,
-    )?.hotkey
+    const hotkey = defaultEditorKeyBindings(platform).find((binding) => binding.command === command)
+      ?.chord[0]
     if (hotkey === undefined || typeof hotkey === 'string') {
       throw new Error(`${command} has no default chord on ${platform}`)
     }

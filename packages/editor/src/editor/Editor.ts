@@ -18,6 +18,7 @@ import { fallbackFoldRanges } from './foldRanges'
 import { EditorFoldState } from './foldState'
 import { guessedTabSize } from './indentationGuess'
 import { EditorKeymapController } from './keymap'
+import type { EditorKeymapContext } from '../keymap/conditions'
 import { InputSelectionController } from './inputSelectionController'
 import { defaultRtlMoveVisually } from './navigationTargets'
 import { EditorSyntaxController } from './syntaxController'
@@ -584,6 +585,8 @@ export class Editor {
     )
     this.keymap = new EditorKeymapController({
       target: this.el,
+      input: this.view.inputElement,
+      captureContext: () => this.getKeymapContext(),
       keymap: options.keymap,
       dispatch: (command, context) => this.dispatchCommand(command, context),
     })
@@ -731,6 +734,22 @@ export class Editor {
   setTabMovesFocus(enabled: boolean): boolean {
     this.tabMovesFocus = enabled
     return this.tabMovesFocus
+  }
+
+  getInputElement(): HTMLTextAreaElement {
+    return this.view.inputElement
+  }
+
+  getKeymapContext(): EditorKeymapContext {
+    return {
+      writable: this.canEditDocument(),
+      hasSelection: this.inputSelection
+        .resolveViewSelections()
+        .some((selection) => selection.startOffset !== selection.endOffset),
+      tabFocusMode: this.tabMovesFocus,
+      findVisible: this.findFeature()?.isVisible() ?? false,
+      inlineSuggestionVisible: this.inputSelection.inlineSuggestionSpecs().length > 0,
+    }
   }
 
   isTabMovesFocusEnabled(): boolean {

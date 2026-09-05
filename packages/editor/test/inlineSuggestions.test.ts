@@ -288,7 +288,7 @@ describe('inline suggestions', () => {
     )
 
     const hostBinding = {
-      hotkey: { key: 'ArrowRight', mod: true, shift: true },
+      chord: [{ key: 'ArrowRight', mod: true, shift: true }],
       command: 'editor.action.inlineSuggest.commit',
     } as const
     expect(editorKeymapLayersForBindings([hostBinding], ['inline-suggest'])).toHaveLength(1)
@@ -311,7 +311,8 @@ describe('inline suggestions', () => {
       // Tab stays where it was: the whole suggestion is taken through the key that already indents,
       // which is the only way that key can still indent when nothing is on offer.
       const tab = defaultEditorKeyBindings(platform).find(
-        ({ hotkey }) => typeof hotkey !== 'string' && hotkey.key === 'Tab' && !hotkey.shift,
+        ({ chord: [hotkey] }) =>
+          typeof hotkey !== 'string' && hotkey.key === 'Tab' && !hotkey.shift,
       )
       expect(tab?.command).toBe('indentSelection')
     }

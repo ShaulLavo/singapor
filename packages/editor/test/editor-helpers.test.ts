@@ -315,16 +315,16 @@ describe('default editor keybindings', () => {
       layers: [
         {
           id: 'base',
-          bindings: [{ hotkey: 'Mod+K', command: 'find' }],
+          bindings: [{ chord: ['Mod+K'], command: 'find' }],
         },
         {
           id: 'override',
-          bindings: [{ hotkey: { key: 'K', mod: true }, command: 'selectAll' }],
+          bindings: [{ chord: [{ key: 'K', mod: true }], command: 'selectAll' }],
         },
       ],
     })
 
-    expect(bindings).toEqual([{ hotkey: { key: 'K', mod: true }, command: 'selectAll' }])
+    expect(bindings.map((binding) => binding.command)).toEqual(['selectAll', 'find'])
   })
 
   it('builds readonly-safe command pack layers without edit commands', () => {
@@ -395,7 +395,7 @@ describe('default editor keybindings', () => {
     ['linux', 'cursorColumnSelectPageUp', { alt: true, key: 'PageUp', mod: true, shift: true }],
     ['linux', 'cursorColumnSelectPageDown', { alt: true, key: 'PageDown', mod: true, shift: true }],
   ] as const)('leaves %s a chord for %s', (platform, command, hotkey) => {
-    expect(defaultEditorKeyBindings(platform)).toContainEqual({ command, hotkey })
+    expect(defaultEditorKeyBindings(platform)).toContainEqual({ command, chord: [hotkey] })
   })
 
   // Both helpers answer through the classification, so a command belonging to no pack is dropped
@@ -415,7 +415,7 @@ describe('default editor keybindings', () => {
       'editor.action.transformToTitlecase',
     ]
     const bindings = commands.map((command, index) => ({
-      hotkey: { alt: true, key: `F${index + 1}` },
+      chord: [{ alt: true, key: `F${index + 1}` }] as const,
       command,
     }))
 
@@ -457,24 +457,26 @@ describe('default editor keybindings', () => {
     expect(defaultEditorKeyBindings('mac')).toContainEqual(
       expect.objectContaining({
         command: 'deleteWordLeft',
-        hotkey: expect.objectContaining({ alt: true, key: 'Backspace' }),
+        chord: [expect.objectContaining({ alt: true, key: 'Backspace' })],
       }),
     )
     expect(defaultEditorKeyBindings('linux')).toContainEqual(
       expect.objectContaining({
         command: 'editor.action.copyLinesUpAction',
-        hotkey: expect.objectContaining({
-          alt: true,
-          key: 'ArrowUp',
-          mod: true,
-          shift: true,
-        }),
+        chord: [
+          expect.objectContaining({
+            alt: true,
+            key: 'ArrowUp',
+            mod: true,
+            shift: true,
+          }),
+        ],
       }),
     )
     expect(defaultEditorKeyBindings('windows')).toContainEqual(
       expect.objectContaining({
         command: 'editor.action.blockComment',
-        hotkey: expect.objectContaining({ alt: true, key: 'A', shift: true }),
+        chord: [expect.objectContaining({ alt: true, key: 'A', shift: true })],
       }),
     )
   })

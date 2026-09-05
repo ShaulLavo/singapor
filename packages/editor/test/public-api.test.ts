@@ -582,6 +582,7 @@ describe('public API facade', () => {
       [{ from: 0, to: 0, text: 'x' }],
     )
     const findFeature = {
+      isVisible: () => false,
       openFind: () => false,
       toggleFind: () => false,
       openFindReplace: () => false,

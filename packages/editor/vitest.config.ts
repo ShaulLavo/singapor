@@ -7,7 +7,7 @@ export default defineConfig({
       {
         test: {
           name: 'node',
-          include: ['src/**/*.test.ts'],
+          include: ['src/**/*.test.ts', 'test/**/*.node.test.ts'],
         },
       },
       {
@@ -20,7 +20,7 @@ export default defineConfig({
           name: 'dom',
           environment: 'happy-dom',
           include: ['test/**/*.test.ts'],
-          exclude: ['test/**/*.browser.test.ts'],
+          exclude: ['test/**/*.browser.test.ts', 'test/**/*.node.test.ts'],
         },
       },
       {
@@ -33,6 +33,17 @@ export default defineConfig({
             enabled: true,
             headless: true,
             provider: playwright(),
+            commands: {
+              proofKeyPress: async ({ page }, key: string) => {
+                await page.keyboard.press(key)
+              },
+              proofKeyDown: async ({ page }, key: string) => {
+                await page.keyboard.down(key)
+              },
+              proofKeyUp: async ({ page }, key: string) => {
+                await page.keyboard.up(key)
+              },
+            },
             instances: [{ browser: 'chromium' }],
           },
           include: ['test/**/*.browser.test.ts'],

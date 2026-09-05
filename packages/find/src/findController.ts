@@ -237,6 +237,10 @@ export class EditorFindController {
     this.editHost = null
   }
 
+  public isVisible(): boolean {
+    return this.state.revealed
+  }
+
   public openFind(): boolean {
     return this.open({ replace: false, focus: 'find' })
   }

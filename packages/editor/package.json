@@ -77,7 +77,12 @@
       "import": "./dist/public/testing.js",
       "default": "./dist/public/testing.js"
     },
-    "./style.css": "./dist/style.css"
+    "./style.css": "./dist/style.css",
+    "./keymap": {
+      "types": "./dist/public/keymap.d.ts",
+      "import": "./dist/public/keymap.js",
+      "default": "./dist/public/keymap.js"
+    }
   },
   "publishConfig": {
     "access": "public",

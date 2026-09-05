@@ -3,6 +3,7 @@ import { createEditorCapabilityToken } from '../plugins'
 export const EDITOR_FIND_FEATURE_ID = 'editor.find'
 
 export type EditorFindFeature = {
+  isVisible(): boolean
   openFind(): boolean
   toggleFind(): boolean
   openFindReplace(): boolean

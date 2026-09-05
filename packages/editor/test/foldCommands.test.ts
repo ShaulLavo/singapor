@@ -200,11 +200,9 @@ type Chord = {
   readonly shift?: boolean
 }
 
-const PLAIN_CHORD: Chord = { mod: true, alt: true }
-const VARIANT_CHORD: Chord = { mod: true, alt: true, shift: true }
-
-function bracketChord(): Chord {
-  return detectPlatform() === 'mac' ? PLAIN_CHORD : { mod: true, shift: true }
+function pressFold(keyName: string, shift = false): void {
+  press('k', { mod: true })
+  press(keyName, { mod: true, shift })
 }
 
 /**
@@ -334,40 +332,40 @@ describe('fold commands', () => {
   it('folds and unfolds the region at the caret from the keyboard', async () => {
     await openTree(2)
 
-    press('[', bracketChord())
+    pressFold('[')
     expect(visibleText()).toContain('  if (a) {')
     expect(visibleText()).not.toContain('    inner()')
 
-    press(']', bracketChord())
+    pressFold(']')
     expect(visibleText()).toContain('    inner()')
   })
 
   it('folds the region under the caret together with everything inside it', async () => {
     await openTree(0)
 
-    press('[', VARIANT_CHORD)
+    pressFold('[', true)
     expect(visibleText()).toContain('function outer() {')
     expect(visibleText()).not.toContain('  tail()')
 
     // Opening the outer block alone leaves the inner one as the recursion left it.
-    press(']', bracketChord())
+    pressFold(']')
     expect(visibleText()).toContain('  if (a) {')
     expect(visibleText()).not.toContain('    inner()')
 
-    press(']', VARIANT_CHORD)
+    pressFold(']', true)
     expect(visibleText()).toContain('    inner()')
   })
 
   it('folds one nesting level at a time', async () => {
     await openTree()
 
-    press('2', PLAIN_CHORD)
+    pressFold('2')
     expect(visibleText()).not.toContain('    inner()')
     expect(visibleText()).toContain('  tail()')
     expect(visibleText()).toContain('  more()')
 
-    press('0', VARIANT_CHORD)
-    press('1', PLAIN_CHORD)
+    pressFold('j')
+    pressFold('1')
     expect(visibleText()).not.toContain('  if (a) {')
     expect(visibleText()).not.toContain('  more()')
     expect(visibleText()).toContain('function next() {')
@@ -387,7 +385,7 @@ describe('fold commands', () => {
       await open(DEEP_TEXT, DEEP_FOLDS)
       editor.setSelection(rowStart(DEEP_TEXT, DEEP_LINES.length - 1))
 
-      press(String(level), PLAIN_CHORD)
+      pressFold(String(level))
       expect(visibleText()).toContain(DEEP_LINES[level - 1]!)
       expect(visibleText()).not.toContain(DEEP_LINES[level]!)
     },
@@ -396,11 +394,11 @@ describe('fold commands', () => {
   it('folds every level at once from the keyboard, and unfolds them again', async () => {
     await openTree()
 
-    press('0', PLAIN_CHORD)
+    pressFold('0')
     expect(visibleText()).not.toContain('  if (a) {')
     expect(visibleText()).not.toContain('  more()')
 
-    press('0', VARIANT_CHORD)
+    pressFold('j')
     expect(visibleText()).toContain('    inner()')
     expect(visibleText()).toContain('  more()')
   })
@@ -409,14 +407,14 @@ describe('fold commands', () => {
     await openTree()
     editor.setSelection(rowStart(TREE_TEXT, 9), rowEnd(TREE_TEXT, 11))
 
-    press(',', PLAIN_CHORD)
+    pressFold(',')
     expect(visibleText()).toContain('header')
     expect(visibleText()).not.toContain('data one')
     expect(visibleText()).not.toContain('data two')
     // Left inside the rows it hides, the caret is what would open the region again.
     expect(editor.getState().cursor).toEqual({ row: 9, column: 0 })
 
-    press(',', VARIANT_CHORD)
+    pressFold(',', true)
     expect(visibleText()).toContain('data one')
   })
 
@@ -424,7 +422,7 @@ describe('fold commands', () => {
     await openTree()
     editor.setSelection(rowStart(TREE_TEXT, 9), rowStart(TREE_TEXT, 12))
 
-    press(',', PLAIN_CHORD)
+    pressFold(',')
     expect(visibleText()).toContain('header')
     expect(visibleText()).not.toContain('data one')
     expect(visibleText()).not.toContain('data two')
@@ -434,7 +432,7 @@ describe('fold commands', () => {
   it('drops the regions drawn in one file when the next one opens', async () => {
     await openTree()
     editor.setSelection(rowStart(TREE_TEXT, 9), rowEnd(TREE_TEXT, 11))
-    press(',', PLAIN_CHORD)
+    pressFold(',')
     expect(visibleText()).not.toContain('data one')
 
     await open(PLAIN_TEXT, [], 'other.ts')
@@ -544,7 +542,7 @@ describe('fold commands', () => {
 
     it('opens every region standing between the destination and the reader', async () => {
       await openTree(0)
-      press('[', VARIANT_CHORD)
+      pressFold('[', true)
       expect(visibleText()).not.toContain('  if (a) {')
 
       editor.setSelection(rowStart(TREE_TEXT, 2) + 4)

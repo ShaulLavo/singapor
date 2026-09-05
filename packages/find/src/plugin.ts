@@ -282,6 +282,7 @@ class EditorFindEditContribution implements EditorEditContribution {
 
 function createFindFeature(controller: EditorFindController): EditorFindFeature {
   return {
+    isVisible: () => controller.isVisible(),
     openFind: () => controller.openFind(),
     toggleFind: () => controller.toggleFind(),
     openFindReplace: () => controller.openFindReplace(),

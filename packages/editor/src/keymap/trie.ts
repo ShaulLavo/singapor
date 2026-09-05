@@ -1,4 +1,7 @@
 import {
+  LETTER_KEYS,
+  NUMBER_KEYS,
+  PUNCTUATION_CODE_MAP,
   normalizeKeyName,
   normalizeRegisterableHotkey,
   parseHotkey,
@@ -6,14 +9,16 @@ import {
 } from '@tanstack/hotkeys'
 import type { KeymapBinding, KeymapPlatform } from './types'
 
+const LATIN_LETTER_PATTERN = /^[a-z]$/i
+
 export type KeymapNode<Payload> = {
-  readonly next: ReadonlyMap<string, KeymapEdge<Payload>>
+  readonly next: ReadonlyMap<string, readonly (KeymapEdge<Payload> | undefined)[]>
   readonly candidates: readonly KeymapBinding<Payload>[]
   readonly descendants: readonly KeymapBinding<Payload>[]
 }
 export type KeymapEdge<Payload> = { readonly keys: string; readonly node: KeymapNode<Payload> }
 type MutableNode<Payload> = {
-  next: Map<string, { keys: string; node: MutableNode<Payload> }>
+  next: Map<string, ({ keys: string; node: MutableNode<Payload> } | undefined)[]>
   candidates: KeymapBinding<Payload>[]
   descendants: KeymapBinding<Payload>[]
 }
@@ -40,10 +45,12 @@ function insertBinding<Payload>(
       typeof stroke === 'string'
         ? parseHotkey(stroke, platform)
         : rawHotkeyToParsedHotkey(stroke, platform)
-    const identity = edgeKey(parsed.key, parsed.alt, parsed.ctrl, parsed.meta, parsed.shift)
-    let edge = node.next.get(identity)
+    const modifiers = modifierMask(parsed.alt, parsed.ctrl, parsed.meta, parsed.shift)
+    const edges = node.next.get(parsed.key) ?? []
+    let edge = edges[modifiers]
     if (!edge) edge = { keys: normalizeRegisterableHotkey(stroke, platform), node: emptyNode() }
-    node.next.set(identity, edge)
+    edges[modifiers] = edge
+    node.next.set(parsed.key, edges)
     node = edge.node
   }
   node.candidates.push(binding)
@@ -53,38 +60,22 @@ export function trieStep<Payload>(
   event: Pick<KeyboardEvent, 'key' | 'code' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>,
 ): KeymapEdge<Payload> | null {
   const printed = normalizeKeyName(event.key)
-  const edge = node.next.get(
-    edgeKey(printed, event.altKey, event.ctrlKey, event.metaKey, event.shiftKey),
-  )
+  const modifiers = modifierMask(event.altKey, event.ctrlKey, event.metaKey, event.shiftKey)
+  const edge = node.next.get(printed)?.[modifiers]
   if (edge) return edge
   // A Latin layout owns its printed letters; AZERTY Z must not activate physical W.
-  if (/^[a-z]$/i.test(printed)) return null
-  const physical = physicalKeyName(event.code)
+  if (LATIN_LETTER_PATTERN.test(printed)) return null
+  const physical = PHYSICAL_KEY_NAMES.get(event.code)
   if (!physical) return null
-  return (
-    node.next.get(edgeKey(physical, event.altKey, event.ctrlKey, event.metaKey, event.shiftKey)) ??
-    null
-  )
+  return node.next.get(physical)?.[modifiers] ?? null
 }
-function edgeKey(key: string, alt: boolean, ctrl: boolean, meta: boolean, shift: boolean): string {
-  return `${key}:${(alt ? 1 : 0) | (ctrl ? 2 : 0) | (meta ? 4 : 0) | (shift ? 8 : 0)}`
+function modifierMask(alt: boolean, ctrl: boolean, meta: boolean, shift: boolean): number {
+  return (alt ? 1 : 0) | (ctrl ? 2 : 0) | (meta ? 4 : 0) | (shift ? 8 : 0)
 }
-const punctuation: Readonly<Record<string, string>> = {
-  Backquote: '`',
-  Minus: '-',
-  Equal: '=',
-  BracketLeft: '[',
-  BracketRight: ']',
-  Backslash: '\\',
-  Semicolon: ';',
-  Quote: "'",
-  Comma: ',',
-  Period: '.',
-  Slash: '/',
-}
-function physicalKeyName(code: string): string | null {
-  const letter = /^Key([A-Z])$/.exec(code)?.[1]
-  if (letter) return letter
-  const digit = /^Digit([0-9])$/.exec(code)?.[1]
-  return digit ?? punctuation[code] ?? null
+const PHYSICAL_KEY_NAMES = physicalKeyNames()
+function physicalKeyNames(): ReadonlyMap<string, string> {
+  const names = new Map(Object.entries(PUNCTUATION_CODE_MAP))
+  for (const letter of LETTER_KEYS) names.set(`Key${letter}`, letter)
+  for (const digit of NUMBER_KEYS) names.set(`Digit${digit}`, digit)
+  return names
 }

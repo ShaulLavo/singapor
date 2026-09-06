@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import { INVISIBLE_CODE_POINT_DATA } from '../src/unicodeHighlightData'
+import { BIDI_CONTROL_CODE_POINTS, containsRTL } from '../src/textCharacters'
 import {
-  BIDI_CONTROL_CODE_POINTS,
   bidiVisualRunIndexAt,
-  containsRTL,
   memoizedContainsRTL,
   rtlClassifierScanCount,
 } from '../src/virtualization/virtualizedTextViewBidi'

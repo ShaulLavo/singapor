@@ -1,10 +1,7 @@
 import type { SelectionAffinity } from '../selections'
-import { RTL_BIDI_CHARACTER } from './bidiClassData'
+import { containsRTL, isSimpleRowText } from '../textCharacters'
+import type { MeasuredText } from '../textMeasurements'
 import type { VirtualizedBidiRun } from './virtualizedTextViewTypes'
-
-export const BIDI_CONTROL_CODE_POINTS = [
-  0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
-] as const
 
 type BidiClassifierMemo = {
   readonly revision: number
@@ -19,23 +16,12 @@ type BidiClassifierHost = {
 const classifierMemos = new WeakMap<BidiClassifierHost, BidiClassifierMemo>()
 const logicalBidiRunIndexes = new WeakMap<readonly VirtualizedBidiRun[], readonly number[]>()
 
-export function containsRTL(text: string): boolean {
-  if (RTL_BIDI_CHARACTER.test(text)) return true
-  for (const codePoint of BIDI_CONTROL_CODE_POINTS) {
-    if (text.includes(String.fromCodePoint(codePoint))) return true
-  }
-  return false
-}
-
-export function isSimpleRowText(text: string): boolean {
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index)
-    if (code !== 9 && (code < 32 || code > 126)) return false
-  }
-  return true
-}
-
-export function memoizedContainsRTL(view: BidiClassifierHost, text: string): boolean {
+export function memoizedContainsRTL(
+  view: BidiClassifierHost,
+  content: string | MeasuredText,
+): boolean {
+  if (typeof content !== 'string' && content.measurements) return content.measurements.containsRTL
+  const text = typeof content === 'string' ? content : content.text
   const memo = classifierMemo(view)
   const cached = memo.results.get(text)
   if (cached !== undefined) return cached

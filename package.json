@@ -17,7 +17,9 @@
 		"health:write": "bun scripts/architecture-health.mjs --write",
 		"publish:packages": "bun scripts/publish-packages.ts",
 		"publish:packages:dry-run": "bun scripts/publish-packages.ts --dry-run",
-		"test": "turbo test"
+		"test": "turbo test",
+		"stress:build": "turbo build --filter=@singapor/core --filter=@singapor/find --filter=@singapor/tree-sitter-languages",
+		"bench:stress": "bun run stress:build && bun run --cwd examples/stress bench"
 	},
 	"devDependencies": {
 		"knip": "^6.16.1",

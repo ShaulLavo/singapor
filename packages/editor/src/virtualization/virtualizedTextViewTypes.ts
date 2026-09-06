@@ -10,6 +10,7 @@ import type { DisplayTextRowSource, InjectedTextRow } from '../displayTransforms
 import type { BrowserTextMetrics } from './browserMetrics'
 import type { RowInlineMapping } from './virtualizedTextViewInlineMapping'
 import type { FixedRowVisibleRange } from './fixedRowVirtualizer'
+import type { MeasuredText } from '../textMeasurements'
 
 type CaretPositionResult = {
   readonly offsetNode: Node
@@ -179,7 +180,7 @@ export type VirtualizedFoldMarker = {
   readonly collapsed: boolean
 }
 
-export type VirtualizedTextRow = {
+export type VirtualizedTextRow = MeasuredText & {
   readonly index: number
   readonly bufferRow: number
   readonly source: DisplayTextRowSource

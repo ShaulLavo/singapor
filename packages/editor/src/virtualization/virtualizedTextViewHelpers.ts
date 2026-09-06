@@ -517,6 +517,7 @@ export function updateMutableRow(
     readonly startOffset: number
     readonly endOffset: number
     readonly text: string
+    readonly measurements?: MountedVirtualizedTextRow['measurements']
     readonly inlineMapping: RowInlineMapping | null
     readonly kind: 'text'
     readonly top: number
@@ -536,6 +537,7 @@ export function updateMutableRow(
     startOffset: number
     endOffset: number
     text: string
+    measurements?: MountedVirtualizedTextRow['measurements']
     inlineMapping: RowInlineMapping | null
     kind: 'text'
     top: number
@@ -553,6 +555,7 @@ export function updateMutableRow(
   mutable.startOffset = values.startOffset
   mutable.endOffset = values.endOffset
   mutable.text = values.text
+  mutable.measurements = values.measurements
   mutable.inlineMapping = values.inlineMapping
   mutable.kind = values.kind
   mutable.top = values.top

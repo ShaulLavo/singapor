@@ -1,3 +1,12 @@
+import type { MeasuredText } from '../textMeasurements'
+import {
+  BIDI_CONTROL_CODE_POINTS,
+  isSimpleRowText,
+  controlCharacterInfo,
+  oneCellControlCharacterLabel,
+  estimatedCodePointWidth,
+  type ControlCharacterInfo,
+} from '../textCharacters'
 import {
   bufferColumnToVisualColumn,
   visualColumnToBufferColumn,
@@ -24,14 +33,7 @@ import type {
   VirtualizedTextChunkTextPart,
 } from './virtualizedTextViewTypes'
 import type { VirtualizedTextViewInternal } from './virtualizedTextViewInternals'
-import {
-  BIDI_CONTROL_CODE_POINTS,
-  bidiVisualRunIndexAt,
-  isSimpleRowText,
-  memoizedContainsRTL,
-} from './virtualizedTextViewBidi'
-
-export { isSimpleRowText } from './virtualizedTextViewBidi'
+import { bidiVisualRunIndexAt, memoizedContainsRTL } from './virtualizedTextViewBidi'
 
 const CONTROL_CHARACTER_CLASS = 'editor-virtualized-control-character'
 // These are exactly the code units the renderer replaces with visible labels or fixed-width boxes.
@@ -277,12 +279,6 @@ export type InlineWidgetPlacement = {
   readonly localStart: number
   readonly localEnd: number
   readonly element: HTMLSpanElement
-}
-
-type ControlCharacterInfo = {
-  readonly label: string
-  readonly widthCells: number
-  readonly key: string
 }
 
 let rowRectMeasurementDepth = 0
@@ -545,7 +541,7 @@ export function rowMightContainRTL(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): boolean {
-  return memoizedContainsRTL(view, row.text)
+  return memoizedContainsRTL(view, row)
 }
 
 export function boundaryPositionXs(
@@ -1266,17 +1262,23 @@ export function rangeSegments(
   return mergeGeometryRangeSegments(segments)
 }
 
-function estimatedDisplayCells(text: string, tabSize: number): number {
+function estimatedDisplayCells(content: string | MeasuredText, tabSize: number): number {
+  const text = typeof content === 'string' ? content : content.text
+  if (typeof content !== 'string' && content.measurements)
+    return content.measurements.columnAt(text.length, tabSize, 'estimated')
   const simpleCells = simpleDisplayCellsOrNull(text, 0, text.length, 0, tabSize)
   if (simpleCells !== null) return simpleCells
   return estimatedDisplayCellsFrom(text, 0, text.length, 0, tabSize).cells
 }
 
 export function estimatedDisplayCellForColumn(
-  text: string,
+  content: string | MeasuredText,
   column: number,
   tabSize: number,
 ): number {
+  if (typeof content !== 'string' && content.measurements)
+    return content.measurements.columnAt(column, tabSize, 'estimated')
+  const text = typeof content === 'string' ? content : content.text
   const end = clamp(column, 0, text.length)
   const simpleCells = simpleDisplayCellsOrNull(text, 0, end, 0, tabSize)
   if (simpleCells !== null) return simpleCells
@@ -1285,11 +1287,14 @@ export function estimatedDisplayCellForColumn(
 }
 
 export function estimatedColumnToBufferColumn(
-  text: string,
+  content: string | MeasuredText,
   visualColumn: number,
   bias: TransformBias,
   tabSize: number,
 ): number {
+  if (typeof content !== 'string' && content.measurements)
+    return content.measurements.offsetAt(visualColumn, bias, tabSize, 'estimated')
+  const text = typeof content === 'string' ? content : content.text
   if (isSimpleRowText(text)) return visualColumnToBufferColumn(text, visualColumn, bias, tabSize)
 
   const target = Math.max(0, visualColumn)
@@ -1313,7 +1318,11 @@ export function estimatedColumnToBufferColumn(
   return text.length
 }
 
-function estimatedRowWidth(text: string, tabSize: number, cellWidth: number): number {
+function estimatedRowWidth(
+  text: string | MeasuredText,
+  tabSize: number,
+  cellWidth: number,
+): number {
   return estimatedDisplayCells(text, tabSize) * cellWidth
 }
 
@@ -1537,7 +1546,9 @@ function buildRowGeometry(
  */
 function rowUsesCalculatedGeometry(row: MountedVirtualizedTextRow): boolean {
   if (row.inlineMapping) return false
-  return isSimpleRowText(row.text)
+  if (!isSimpleRowText(row)) return false
+  // CSS tab stops can disagree with the estimated cell grid after a horizontal spacer.
+  return !(row.measurements?.hasTabs ?? row.text.includes('\t'))
 }
 
 function buildCalculatedRowGeometry(
@@ -1562,7 +1573,7 @@ function calculatedRowWidth(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): number {
-  const columns = bufferColumnToVisualColumn(row.text, row.text.length, view.tabSize)
+  const columns = bufferColumnToVisualColumn(row, row.text.length, view.tabSize)
   return columns * view.metrics.characterWidth
 }
 
@@ -1582,7 +1593,7 @@ function calculatedXToOffset(
   // columns the next anchor owns — a click landing a character or two right of
   // where the caret is drawn, and not even monotonically.
   const visualColumn = clamp(anchor.column + Math.floor(cells), anchor.column, anchor.lastColumn)
-  const local = visualColumnToBufferColumn(row.text, visualColumn, 'nearest', view.tabSize)
+  const local = visualColumnToBufferColumn(row, visualColumn, 'nearest', view.tabSize)
   return rowOffsetForLocalIndex(row, clampLocalOffsetToMountedChunks(row, local))
 }
 
@@ -1597,7 +1608,7 @@ function calculatedRowAnchorForX(
   row: MountedVirtualizedTextRow,
   x: number,
 ): CalculatedRowAnchor {
-  const lastColumn = bufferColumnToVisualColumn(row.text, row.text.length, view.tabSize)
+  const lastColumn = bufferColumnToVisualColumn(row, row.text.length, view.tabSize)
   const base = { x: 0, column: 0, lastColumn }
   if (row.text.length <= KEY_COLUMN_DISTANCE) return base
 
@@ -1658,8 +1669,8 @@ function appendCalculatedChunkBoundaries(
   let anchorX = 0
   let nextAnchorLocal = chunk.localStart
 
+  let column = bufferColumnToVisualColumn(row, chunk.localStart, view.tabSize)
   for (let local = chunk.localStart; local <= chunk.localEnd; local += 1) {
-    const column = bufferColumnToVisualColumn(row.text, local, view.tabSize)
     if (measurement && local >= nextAnchorLocal) {
       nextAnchorLocal = local + KEY_COLUMN_DISTANCE
       const measured = keyColumnX(measurement, chunk, local)
@@ -1675,6 +1686,7 @@ function appendCalculatedChunkBoundaries(
       rowOffsetForLocalIndex(row, local),
       anchorX + (column - anchorColumn) * cellWidth,
     )
+    column += row.text.charCodeAt(local) === 9 ? view.tabSize - (column % view.tabSize) : 1
   }
 }
 
@@ -1747,7 +1759,7 @@ function estimatedRowContentWidth(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): number {
-  return estimatedRowWidth(row.text, view.tabSize, view.metrics.characterWidth)
+  return estimatedRowWidth(row, view.tabSize, view.metrics.characterWidth)
 }
 
 function appendChunkPlan(
@@ -2954,8 +2966,8 @@ function estimatedLocalRangeWidth(
   localStart: number,
   localEnd: number,
 ): number {
-  const start = estimatedDisplayCellForColumn(row.text, localStart, view.tabSize)
-  const end = estimatedDisplayCellForColumn(row.text, localEnd, view.tabSize)
+  const start = estimatedDisplayCellForColumn(row, localStart, view.tabSize)
+  const end = estimatedDisplayCellForColumn(row, localEnd, view.tabSize)
   return Math.max(0, end - start) * view.metrics.characterWidth
 }
 
@@ -3085,35 +3097,6 @@ function firstTextNode(parts: readonly VirtualizedTextChunkPart[]): Text | null 
   return part?.kind === 'text' ? part.node : null
 }
 
-function controlCharacterInfo(code: number): ControlCharacterInfo | null {
-  if (code === 9) return null
-  if (code >= 128 && code <= 159) return c1ControlCharacterInfo(code)
-  return null
-}
-
-function oneCellControlCharacterLabel(code: number): string | null {
-  // A tab is laid out, not labelled: `tab-size` under `white-space: pre` expands it to the column
-  // the geometry counts it as, and a `␉` in its place would shrink an indent by a whole tab stop
-  // per level the moment a replacement made the row take this path.
-  if (code === 9) return null
-  if (code >= 0 && code <= 31) return String.fromCodePoint(0x2400 + code)
-  if (code === 127) return '\u2421'
-  return null
-}
-
-function c1ControlCharacterInfo(code: number): ControlCharacterInfo {
-  const label = `[U+${hexCode(code)}]`
-  return {
-    label,
-    widthCells: label.length,
-    key: `U+${hexCode(code)}`,
-  }
-}
-
-function hexCode(code: number): string {
-  return code.toString(16).toUpperCase().padStart(4, '0')
-}
-
 function estimatedDisplayCellsFrom(
   text: string,
   start: number,
@@ -3160,16 +3143,7 @@ function estimatedStep(
     return { cells: tabSize - (visualCell % tabSize), length: 1 }
   }
 
-  const control = codePoint <= 0xffff ? controlCharacterInfo(codePoint) : null
-  if (control) return { cells: control.widthCells, length: 1 }
-  if (isCombiningMark(codePoint) || isVariationSelector(codePoint)) {
-    return { cells: 0, length: codePointLength(text, index) }
-  }
-
-  return {
-    cells: isWideCodePoint(codePoint) ? 2 : 1,
-    length: codePointLength(text, index),
-  }
+  return { cells: estimatedCodePointWidth(codePoint), length: codePointLength(text, index) }
 }
 
 function columnForVisualTarget(
@@ -3186,18 +3160,6 @@ function columnForVisualTarget(
   if (bias === 'before') return startIndex
   if (bias === 'after') return endIndex
   return target - visual <= next - target ? startIndex : endIndex
-}
-
-function isWideCodePoint(codePoint: number): boolean {
-  if (codePoint >= 0x1100 && codePoint <= 0x115f) return true
-  if (codePoint >= 0x2329 && codePoint <= 0x232a) return true
-  if (codePoint >= 0x2e80 && codePoint <= 0xa4cf) return true
-  if (codePoint >= 0xac00 && codePoint <= 0xd7a3) return true
-  if (codePoint >= 0xf900 && codePoint <= 0xfaff) return true
-  if (codePoint >= 0xfe10 && codePoint <= 0xfe6f) return true
-  if (codePoint >= 0xff00 && codePoint <= 0xff60) return true
-  if (codePoint >= 0xffe0 && codePoint <= 0xffe6) return true
-  return codePoint >= 0x1f300 && codePoint <= 0x1faff
 }
 
 function chunkForLocalOffset(

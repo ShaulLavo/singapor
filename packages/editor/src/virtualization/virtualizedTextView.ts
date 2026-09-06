@@ -112,7 +112,7 @@ import {
   type VisualRowCaretMove,
 } from './virtualizedTextViewGeometry'
 import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTextViewInlineMapping'
-import { BIDI_CONTROL_CODE_POINTS, isSimpleRowText } from './virtualizedTextViewBidi'
+import { BIDI_CONTROL_CODE_POINTS, isSimpleRowText } from '../textCharacters'
 import {
   applyRowHeight,
   disposeGutterCells,
@@ -1249,7 +1249,7 @@ function initialTextOffsetAtRowX(
 ): number | null {
   // Calculated rows answer without touching layout. Measured rows must not fall through to xToOffset:
   // resolving that inverse reads every boundary in the row, while the browser already has the hit.
-  if (!row.inlineMapping && isSimpleRowText(row.text)) return xToOffset(view, row, rowX)
+  if (!row.inlineMapping && isSimpleRowText(row)) return xToOffset(view, row, rowX)
   return hitTestBidiVisualProbeAtLocalX(view, row, rowX)
 }
 

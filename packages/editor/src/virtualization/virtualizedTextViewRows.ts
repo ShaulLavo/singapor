@@ -1,3 +1,5 @@
+import type { MeasuredText } from '../textMeasurements'
+import { isSimpleRowText } from '../textCharacters'
 import {
   isDocumentTextDisplayRow,
   isInjectedTextDisplayRow,
@@ -44,6 +46,7 @@ import {
   lineEndOffset,
   lineStartOffset,
   lineText,
+  lineContent,
   rowForCaretPosition,
   rowForOffset,
   rowTop,
@@ -81,7 +84,6 @@ import {
   estimatedDisplayCellForColumn,
   offsetFromDomBoundary,
   offsetToX,
-  isSimpleRowText,
   setInlineWidgetMeasuredWidth,
 } from './virtualizedTextViewGeometry'
 import {
@@ -113,10 +115,11 @@ type RowUpdatePass = {
   readonly toggleFold: EditorGutterRowContext['toggleFold']
 }
 
-type RowUpdateState = EditorGutterRowContext & {
-  readonly cursorVirtualLine: boolean
-  readonly inlineMapping: RowInlineMapping | null
-}
+type RowUpdateState = EditorGutterRowContext &
+  MeasuredText & {
+    readonly cursorVirtualLine: boolean
+    readonly inlineMapping: RowInlineMapping | null
+  }
 
 /** Fills the span an inline replacement renders into; the return value tears that content down. */
 
@@ -467,6 +470,7 @@ function rowUpdateState(
     startOffset: lineStartOffset(view, index),
     endOffset: lineEndOffset(view, index),
     text: displayRow?.text ?? '',
+    measurements: displayRow?.measurements,
     inlineMapping: rowInlineMappingForDisplayRow(displayRow),
     kind: displayRow?.kind ?? 'text',
     primaryText,
@@ -497,6 +501,7 @@ function mountedRowUpdateState(
     startOffset: row.startOffset,
     endOffset: row.endOffset,
     text: row.text,
+    measurements: row.measurements,
     inlineMapping: row.inlineMapping ?? null,
     kind: row.kind,
     primaryText,
@@ -582,10 +587,11 @@ function updateRow(
     source: state.source,
     startOffset: state.startOffset,
     text: state.text,
+    measurements: state.measurements,
     inlineMapping: state.inlineMapping,
     textRevision: view.textRevision,
     top: item.start,
-    chunkKey: rowChunkKey(view, state.text, snapshot),
+    chunkKey: rowChunkKey(view, state, snapshot),
   })
 }
 
@@ -601,7 +607,7 @@ function updateRowElement(
   updateCursorLineContentClass(view, row, state.cursorVirtualLine)
   updateRowInlineKindClasses(row, state.kind === 'text' ? state.inlineMapping : null)
   updateGutterRowElement(view, row, item, state)
-  updateRowTextChunks(view, row, state.text, state.startOffset, state.inlineMapping, snapshot)
+  updateRowTextChunks(view, row, state, state.startOffset, state.inlineMapping, snapshot)
   updateRowFoldPresentation(row, state.foldMarker)
 }
 
@@ -656,10 +662,11 @@ function updateRowAfterSameLineEdit(
     source: state.source,
     startOffset: state.startOffset,
     text: state.text,
+    measurements: state.measurements,
     inlineMapping: state.inlineMapping,
     textRevision: view.textRevision,
     top: item.start,
-    chunkKey: rowChunkKey(view, state.text, snapshot),
+    chunkKey: rowChunkKey(view, state, snapshot),
   })
   return editedRowPatchedInPlace
 }
@@ -679,7 +686,7 @@ function updateRowElementForSameLineEdit(
     view,
     row,
     item,
-    state.text,
+    state,
     patch,
     state.startOffset,
     state.inlineMapping,
@@ -693,35 +700,36 @@ function updateRowTextForSameLineEdit(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
   item: FixedRowVirtualItem,
-  text: string,
+  content: MeasuredText,
   patch: SameLineEditPatch,
   startOffset: number,
   mapping: RowInlineMapping | null,
   snapshot: FixedRowVirtualizerSnapshot,
 ): boolean {
-  if (bidiMeasurementRefusal(view, text)) {
-    updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
+  const { text } = content
+  if (bidiMeasurementRefusal(view, content)) {
+    updateRowTextChunks(view, row, content, startOffset, mapping, snapshot)
     return false
   }
 
   if (item.index !== patch.rowIndex) {
-    if (row.text !== text) updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
+    if (row.text !== text) updateRowTextChunks(view, row, content, startOffset, mapping, snapshot)
     if (row.text === text) syncRowChunkOffsets(row, startOffset, mapping)
     return false
   }
 
-  if (memoizedContainsRTL(view, text)) {
-    updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
+  if (memoizedContainsRTL(view, content)) {
+    updateRowTextChunks(view, row, content, startOffset, mapping, snapshot)
     return false
   }
 
   if (row.textNode.data !== row.text) {
-    updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
+    updateRowTextChunks(view, row, content, startOffset, mapping, snapshot)
     return false
   }
 
-  if (shouldChunkLine(view, text)) {
-    updateRowTextChunks(view, row, text, startOffset, mapping, snapshot)
+  if (shouldChunkLine(view, content)) {
+    updateRowTextChunks(view, row, content, startOffset, mapping, snapshot)
     return false
   }
 
@@ -751,45 +759,47 @@ function syncRowChunkOffsets(
 function updateRowTextChunks(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
-  text: string,
+  content: MeasuredText,
   startOffset: number,
   mapping: RowInlineMapping | null,
   snapshot = view.virtualizer.getSnapshot(),
 ): void {
+  const { text } = content
   setCoreBidiRefusal(row, false)
   const runs = inlineRowRuns(mapping, text)
-  const refusal = bidiMeasurementRefusal(view, text)
+  const refusal = bidiMeasurementRefusal(view, content)
   if (refusal) {
     setUnmeasurableBidiRowText(row, text, startOffset, mapping, refusal)
     return
   }
   if (runs.widgets.length > 0 || runs.classes.length > 0) {
-    setInlineRunRowText(view, row, text, startOffset, mapping, runs)
+    setInlineRunRowText(view, row, content, startOffset, mapping, runs)
     return
   }
 
-  if (!shouldChunkLine(view, text)) {
-    setDirectRowText(view, row, text, startOffset, mapping)
+  if (!shouldChunkLine(view, content)) {
+    setDirectRowText(view, row, content, startOffset, mapping)
     return
   }
 
-  setChunkedRowText(view, row, text, startOffset, mapping, snapshot)
+  setChunkedRowText(view, row, content, startOffset, mapping, snapshot)
 }
 
 function setDirectRowText(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
-  text: string,
+  content: MeasuredText,
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): void {
+  const { text } = content
   if (reuseDirectRowText(row, text, startOffset, mapping)) return
   setLeftSpacerWidth(row, 0)
 
   // Splitting costs the row the in-place `Text.data` patch it lives on while the user types, so a
   // row short enough to be scanned cheaply keeps its single node and pays nothing.
-  if (!isSimpleRowText(text) || text.length > MAX_SINGLE_NODE_ROW_LENGTH) {
-    setRenderedDirectRowText(view, row, text, startOffset, mapping)
+  if (!isSimpleRowText(content) || text.length > MAX_SINGLE_NODE_ROW_LENGTH) {
+    setRenderedDirectRowText(view, row, content, startOffset, mapping)
     return
   }
 
@@ -804,12 +814,13 @@ function setDirectRowText(
 function setRenderedDirectRowText(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
-  text: string,
+  content: MeasuredText,
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): void {
-  const simple = isSimpleRowText(text)
-  const maxTextNodeLength = simple ? Number.POSITIVE_INFINITY : bidiTextNodeLength(view, text)
+  const { text } = content
+  const simple = isSimpleRowText(content)
+  const maxTextNodeLength = simple ? Number.POSITIVE_INFINITY : bidiTextNodeLength(view, content)
   const rendered = simple
     ? createSplitTextChunkParts(row.element.ownerDocument, text, 0)
     : createRenderedChunkParts(
@@ -1031,14 +1042,15 @@ function inlineRowRuns(mapping: RowInlineMapping | null, text: string): InlineRo
 function setInlineRunRowText(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
-  text: string,
+  content: MeasuredText,
   startOffset: number,
   mapping: RowInlineMapping | null,
   runs: InlineRowRuns,
 ): void {
+  const { text } = content
   setLeftSpacerWidth(row, 0)
   const placements = runs.widgets.map((run) => inlineWidgetPlacement(view, run))
-  const maxTextNodeLength = bidiTextNodeLength(view, text)
+  const maxTextNodeLength = bidiTextNodeLength(view, content)
   const chunk = row.chunks[0]
   if (chunk && reusesInlineRunRowText(row, chunk, text, placements, runs.classes)) {
     syncDirectRowChunk(row, text, startOffset, mapping, chunk.parts, chunk.textNode)
@@ -1402,18 +1414,19 @@ function disposeInlineWidget(host: InlineWidgetHost): void {
 function setChunkedRowText(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
-  text: string,
+  content: MeasuredText,
   startOffset: number,
   mapping: RowInlineMapping | null,
   snapshot: FixedRowVirtualizerSnapshot,
 ): void {
-  const window = horizontalChunkWindow(view, text, snapshot)
+  const { text } = content
+  const window = horizontalChunkWindow(view, content, snapshot)
   const chunks = createRowChunks(view, text, window, startOffset, mapping)
   const elements = chunks
     .map((chunk) => chunk.element)
     .filter((element): element is HTMLSpanElement => element !== null)
   const leftSpacerWidth = Math.round(
-    estimatedDisplayCellForColumn(text, window.start, view.tabSize) * characterWidth(view),
+    estimatedDisplayCellForColumn(content, window.start, view.tabSize) * characterWidth(view),
   )
   setLeftSpacerWidth(row, leftSpacerWidth)
   row.element.replaceChildren(row.leftSpacerElement, ...elements)
@@ -1514,23 +1527,25 @@ function createSplitTextChunkParts(
   return { nodes, parts, textNode: nodes[0]!, oversizedGrapheme: false }
 }
 
-function shouldChunkLine(view: VirtualizedTextViewInternal, text: string): boolean {
+function shouldChunkLine(view: VirtualizedTextViewInternal, content: MeasuredText): boolean {
+  const { text } = content
   if (view.wrapEnabled) return false
   if (text.length <= view.longLineChunkThreshold) return false
-  return !memoizedContainsRTL(view, text)
+  return !memoizedContainsRTL(view, content)
 }
 
-function bidiTextNodeLength(view: VirtualizedTextViewInternal, text: string): number {
-  if (memoizedContainsRTL(view, text)) return MAX_ROW_TEXT_NODE_LENGTH
+function bidiTextNodeLength(view: VirtualizedTextViewInternal, content: MeasuredText): number {
+  if (memoizedContainsRTL(view, content)) return MAX_ROW_TEXT_NODE_LENGTH
   return Number.POSITIVE_INFINITY
 }
 
 function bidiMeasurementRefusal(
   view: VirtualizedTextViewInternal,
-  text: string,
+  content: MeasuredText,
 ): BidiMeasurementRefusal | null {
+  const { text } = content
   if (text.length <= MAX_ROW_TEXT_NODE_LENGTH) return null
-  if (!memoizedContainsRTL(view, text)) return null
+  if (!memoizedContainsRTL(view, content)) return null
   if (text.length >= BIDI_LINE_MEASUREMENT_CEILING) return 'line-length'
   return null
 }
@@ -1606,23 +1621,24 @@ function bidiMeasurementRefusalLabel(refusal: BidiMeasurementRefusal): string {
 
 function rowChunkKey(
   view: VirtualizedTextViewInternal,
-  text: string,
+  content: MeasuredText,
   snapshot = view.virtualizer.getSnapshot(),
 ): string {
-  if (!shouldChunkLine(view, text)) return 'direct'
+  if (!shouldChunkLine(view, content)) return 'direct'
 
   // Only the aligned window bounds describe what the row rendered. Folding the raw scroll position
   // or viewport width in would invalidate the row — and the geometry measured for it — on every
   // pixel of horizontal scroll, even though the mounted chunks are identical.
-  const window = horizontalChunkWindow(view, text, snapshot)
+  const window = horizontalChunkWindow(view, content, snapshot)
   return `${window.start}:${window.end}`
 }
 
 function horizontalChunkWindow(
   view: VirtualizedTextViewInternal,
-  text: string,
+  content: MeasuredText,
   snapshot = view.virtualizer.getSnapshot(),
 ): HorizontalChunkWindow {
+  const { text } = content
   const viewportColumns = horizontalViewportColumns(view, snapshot.viewportWidth)
   const leftColumn = Math.max(
     0,
@@ -1631,12 +1647,12 @@ function horizontalChunkWindow(
   const startColumn = Math.max(0, leftColumn - view.horizontalOverscanColumns)
   const endColumn = leftColumn + viewportColumns + view.horizontalOverscanColumns
   const startBufferColumn = bufferColumnForEstimatedColumn(
-    text,
+    content,
     startColumn,
     'before',
     view.tabSize,
   )
-  const endBufferColumn = bufferColumnForEstimatedColumn(text, endColumn, 'after', view.tabSize)
+  const endBufferColumn = bufferColumnForEstimatedColumn(content, endColumn, 'after', view.tabSize)
   const start = alignChunkStart(startBufferColumn, view.longLineChunkSize)
   const end = alignChunkEnd(Math.min(text.length, endBufferColumn), view.longLineChunkSize)
 
@@ -1644,13 +1660,14 @@ function horizontalChunkWindow(
 }
 
 function bufferColumnForEstimatedColumn(
-  text: string,
+  content: MeasuredText,
   visualColumn: number,
   bias: 'before' | 'after',
   tabSize: number,
 ): number {
-  if (isSimpleRowText(text)) return visualColumnToBufferColumn(text, visualColumn, bias, tabSize)
-  return estimatedColumnToBufferColumn(text, visualColumn, bias, tabSize)
+  if (isSimpleRowText(content))
+    return visualColumnToBufferColumn(content, visualColumn, bias, tabSize)
+  return estimatedColumnToBufferColumn(content, visualColumn, bias, tabSize)
 }
 
 export function horizontalViewportColumns(
@@ -1679,10 +1696,10 @@ function horizontalWindowKey(
   // changes what they render.
   let key = ''
   for (const item of items) {
-    const text = lineText(view, item.index)
-    if (!shouldChunkLine(view, text)) continue
+    const content = lineContent(view, item.index)
+    if (!shouldChunkLine(view, content)) continue
 
-    const window = horizontalChunkWindow(view, text, snapshot)
+    const window = horizontalChunkWindow(view, content, snapshot)
     key += `${item.index}:${window.start}:${window.end}|`
   }
 
@@ -1941,7 +1958,7 @@ function isRowCurrent(
   // Display text alone does not say what is behind it: a run that changed only how it paints — the
   // box it asks for, the node it renders — leaves every column of the row exactly where it was.
   if (row.inlineMapping?.line !== inlineRowForDisplayRow(displayRow)) return false
-  if (row.chunkKey !== rowChunkKey(view, text, snapshot)) return false
+  if (row.chunkKey !== rowChunkKey(view, lineContent(view, item.index), snapshot)) return false
   if (row.rowDecorationKey !== rowDecorationKey(view, item.index)) return false
 
   const foldMarker = foldMarkerForVirtualRow(view, item.index)
@@ -2339,7 +2356,7 @@ function scanVisualColumns(
 function estimatedDisplayRowColumns(view: VirtualizedTextViewInternal, rowIndex: number): number {
   const displayRow = view.model.rows[rowIndex]
   if (!isDocumentTextDisplayRow(displayRow)) return 0
-  return visualColumnLength(displayRow.text, view.tabSize)
+  return visualColumnLength(displayRow, view.tabSize)
 }
 
 function applyContentWidth(view: VirtualizedTextViewInternal, visualColumns: number): void {
@@ -2458,8 +2475,8 @@ function scrollHorizontallyToOffset(
   offset: number,
   affinity?: SelectionAffinity,
 ): void {
-  const text = lineText(view, row)
-  if (!shouldChunkLine(view, text)) return
+  const content = lineContent(view, row)
+  if (!shouldChunkLine(view, content)) return
 
   const snapshot = view.virtualizer.getSnapshot()
   const targetLeft = gutterWidth(view) + rowTextLeftForOffset(view, row, offset, affinity)
@@ -2629,11 +2646,12 @@ function rowTextLeftForOffset(
   }
   if (mounted?.kind === 'text') return offsetToX(view, mounted, offset)
 
-  const text = lineText(view, rowIndex)
+  const content = lineContent(view, rowIndex)
+  const { text } = content
   const localOffset = clamp(offset - lineStartOffset(view, rowIndex), 0, text.length)
-  const column = isSimpleRowText(text)
-    ? bufferColumnToVisualColumn(text, localOffset, view.tabSize)
-    : estimatedDisplayCellForColumn(text, localOffset, view.tabSize)
+  const column = isSimpleRowText(content)
+    ? bufferColumnToVisualColumn(content, localOffset, view.tabSize)
+    : estimatedDisplayCellForColumn(content, localOffset, view.tabSize)
   return column * characterWidth(view)
 }
 

@@ -3,7 +3,7 @@ import {
   type DisplayRow,
   type InjectedTextRow,
 } from '../displayTransforms'
-import type { TextSnapshot } from '../documentTextSnapshot'
+import { measureTextSnapshotRange, type TextSnapshot } from '../documentTextSnapshot'
 import { foldPointToBufferPoint, type FoldMap, type FoldPoint } from '../foldMap'
 import { type InlineMap, inlineReplacementsForBufferRow } from '../inlineMap'
 
@@ -42,6 +42,12 @@ export function createVirtualizedTextViewModel(
     visibleLineCount: foldedLineCount,
     bufferRowForVisibleRow: (row) => bufferRowForVisibleRow(row, lineCount, foldMap),
     lineText: (row) => lineText(input.textSnapshot, input.lineStarts, textLength, row),
+    lineMeasurements: (row) =>
+      measureTextSnapshotRange(
+        input.textSnapshot,
+        lineStartOffset(input.lineStarts, textLength, row),
+        lineEndOffset(input.lineStarts, textLength, row),
+      ),
     lineStartOffset: (row) => lineStartOffset(input.lineStarts, textLength, row),
     lineEndOffset: (row) => lineEndOffset(input.lineStarts, textLength, row),
     wrapColumn: input.wrapColumn,

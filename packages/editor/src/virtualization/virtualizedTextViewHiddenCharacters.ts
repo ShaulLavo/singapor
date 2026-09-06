@@ -72,7 +72,7 @@ type HiddenCharacterRowContext = {
   readonly view: VirtualizedTextViewInternal
   readonly row: MountedVirtualizedTextRow
   readonly pass: HiddenCharacterPass
-  readonly bounds: NonWhitespaceBounds
+  bounds: NonWhitespaceBounds | null
 }
 
 /** Null markers mean the row's inputs are unchanged and what it already draws still stands. */
@@ -257,7 +257,7 @@ function appendWhitespaceMarkers(
     view,
     row,
     pass,
-    bounds: nonWhitespaceBounds(row.text),
+    bounds: null,
   }
   for (const chunk of row.chunks) {
     appendWhitespaceMarkersForChunk(markers, context, chunk)
@@ -391,14 +391,14 @@ function shouldShowHiddenCharacter(
   // A tab is an indentation decision wherever it sits, so the quieting of interior whitespace does
   // not extend to it.
   if (mode === 'boundary') return kind === 'tab' || isBoundarySpace(context, localIndex)
-  if (mode === 'trailing') return localIndex > context.bounds.last
+  if (mode === 'trailing') return localIndex > rowWhitespaceBounds(context).last
   if (mode !== 'show-on-selection') return false
 
   return context.view.selections.some((selection) => selectionContainsOffset(selection, offset))
 }
 
 function isBoundarySpace(context: HiddenCharacterRowContext, localIndex: number): boolean {
-  const { first, last } = context.bounds
+  const { first, last } = rowWhitespaceBounds(context)
   if (localIndex < first || localIndex > last) return true
 
   // Inside the text a lone space is a word separator and marking it shreds prose; two or more in a
@@ -408,15 +408,18 @@ function isBoundarySpace(context: HiddenCharacterRowContext, localIndex: number)
 }
 
 function nonWhitespaceBounds(text: string): NonWhitespaceBounds {
-  let first = -1
-  let last = -1
-  for (let index = 0; index < text.length; index += 1) {
-    if (whitespaceKind(text[index]!)) continue
-    if (first === -1) first = index
-    last = index
-  }
+  let first = 0
+  while (first < text.length && whitespaceKind(text[first]!)) first += 1
+  if (first === text.length) return { first: -1, last: -1 }
+
+  let last = text.length - 1
+  while (last > first && whitespaceKind(text[last]!)) last -= 1
 
   return { first, last }
+}
+
+function rowWhitespaceBounds(context: HiddenCharacterRowContext): NonWhitespaceBounds {
+  return (context.bounds ??= nonWhitespaceBounds(context.row.text))
 }
 
 function rowContinuesBelow(

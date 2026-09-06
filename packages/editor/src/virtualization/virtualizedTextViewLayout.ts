@@ -1,3 +1,5 @@
+import { INDEXED_TEXT_MIN_LENGTH, type MeasuredText } from '../textMeasurements'
+import { measureTextSnapshotRange } from '../documentTextSnapshot'
 import { bufferPointToFoldPoint, foldPointToBufferPoint, type FoldMap } from '../foldMap'
 import {
   bufferColumnToVisualColumn,
@@ -275,7 +277,7 @@ function visualColumnForDisplayRowOffset(
     0,
     displayRow.text.length,
   )
-  return bufferColumnToVisualColumn(displayRow.text, localOffset, view.tabSize)
+  return bufferColumnToVisualColumn(displayRow, localOffset, view.tabSize)
 }
 
 export function offsetForViewportColumn(
@@ -288,12 +290,7 @@ export function offsetForViewportColumn(
   const startOffset = displayRowStartOffset(view, row)
   if (!isDocumentTextDisplayRow(displayRow)) return startOffset
 
-  const bufferColumn = visualColumnToBufferColumn(
-    displayRow.text,
-    visualColumn,
-    'nearest',
-    view.tabSize,
-  )
+  const bufferColumn = visualColumnToBufferColumn(displayRow, visualColumn, 'nearest', view.tabSize)
   return offsetForLocalIndex(
     rowInlineMappingForDisplayRow(displayRow),
     startOffset,
@@ -319,6 +316,11 @@ export function bufferLineStartOffset(view: VirtualizedTextViewInternal, row: nu
 
 export function lineText(view: VirtualizedTextViewInternal, row: number): string {
   return view.model.rows[row]?.text ?? ''
+}
+
+const EMPTY_TEXT_CONTENT = { text: '' }
+export function lineContent(view: VirtualizedTextViewInternal, row: number): MeasuredText {
+  return view.model.rows[row] ?? EMPTY_TEXT_CONTENT
 }
 
 function bufferLineEndOffset(view: VirtualizedTextViewInternal, row: number): number {
@@ -374,7 +376,7 @@ function updateDisplayRowsAfterSameLineEdit(
   if (!row) return
   if (row.kind !== 'text') return
 
-  view.model.rows[patch.rowIndex] = updateTextDisplayRow(row, patch, delta)
+  view.model.rows[patch.rowIndex] = updateTextDisplayRow(view, row, patch, delta)
 }
 
 function updateDisplayRowsAfterMultiLineEdit(
@@ -414,6 +416,11 @@ function createPlainDisplayRowsForRange(
       startOffset,
       endOffset,
       text,
+      ...(text.length >= INDEXED_TEXT_MIN_LENGTH
+        ? {
+            measurements: measureTextSnapshotRange(view.model.textSnapshot, startOffset, endOffset),
+          }
+        : {}),
       sourceText: text,
       sourceStartColumn: 0,
       sourceEndColumn: text.length,
@@ -446,6 +453,7 @@ function shiftPlainDisplayRows(
 }
 
 function updateTextDisplayRow(
+  view: VirtualizedTextViewInternal,
   row: DisplayTextRow,
   patch: SameLineEditPatch,
   delta: number,
@@ -456,6 +464,14 @@ function updateTextDisplayRow(
     ...row,
     endOffset: row.endOffset + delta,
     text,
+    measurements:
+      text.length >= INDEXED_TEXT_MIN_LENGTH
+        ? measureTextSnapshotRange(
+            view.model.textSnapshot,
+            lineStartOffset(view, patch.rowIndex),
+            lineStartOffset(view, patch.rowIndex) + text.length,
+          )
+        : undefined,
     sourceText: text,
     sourceEndColumn: row.sourceEndColumn + delta,
     displayEndColumn: row.displayEndColumn + delta,
@@ -504,7 +520,6 @@ export function sameLineEditPatch(
 
   const rowIndex = bufferRowForOffset(view, edit.from)
   if (rowIndex !== bufferRowForOffset(view, edit.to)) return null
-  if (lineText(view, rowIndex).length > view.longLineChunkThreshold) return null
   return {
     rowIndex,
     localFrom: edit.from - lineStartOffset(view, rowIndex),

@@ -35,6 +35,23 @@
         "vitest": "^4.1.8",
       },
     },
+    "examples/stress": {
+      "name": "@singapor/stress",
+      "dependencies": {
+        "@singapor/core": "workspace:*",
+        "@singapor/find": "workspace:*",
+        "@singapor/tree-sitter-languages": "workspace:*",
+        "evlog": "^2.19.1",
+      },
+      "devDependencies": {
+        "@playwright/test": "^1.60.0",
+        "@typescript/native-preview": "7.0.0-dev.20260613.1",
+        "oxfmt": "0.54.0",
+        "oxlint": "1.69.0",
+        "vite": "8.0.16",
+        "vitest": "^4.1.8",
+      },
+    },
     "packages/decode": {
       "name": "@singapor/decode",
       "version": "0.1.0",
@@ -602,6 +619,8 @@
     "@singapor/scope-lines": ["@singapor/scope-lines@workspace:packages/scope-lines"],
 
     "@singapor/solid": ["@singapor/solid@workspace:packages/solid"],
+
+    "@singapor/stress": ["@singapor/stress@workspace:examples/stress"],
 
     "@singapor/tree-sitter": ["@singapor/tree-sitter@workspace:packages/tree-sitter"],
 

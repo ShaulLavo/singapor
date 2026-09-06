@@ -1,4 +1,11 @@
 import type { PieceTableSnapshot } from './pieceTable/pieceTableTypes'
+import { forEachTextInRange } from './pieceTable/tree'
+import {
+  measureString,
+  TextMeasurements,
+  TextSourceIndex,
+  type MeasuredTextRange,
+} from './textMeasurements'
 import {
   forEachPieceTableTextChunk,
   materializePieceTableFullText,
@@ -18,6 +25,47 @@ export type TextSnapshot = {
 
 export type DocumentTextSnapshot = TextSnapshot & {
   readonly snapshot: PieceTableSnapshot
+}
+
+const rangeMeasurements = new WeakMap<TextSnapshot, Map<string, TextMeasurements>>()
+
+export function measureTextSnapshotRange(
+  snapshot: TextSnapshot,
+  start: number,
+  end: number,
+): TextMeasurements {
+  let ranges = rangeMeasurements.get(snapshot)
+  if (!ranges) {
+    ranges = new Map()
+    rangeMeasurements.set(snapshot, ranges)
+  }
+  const key = `${start}:${end}`
+  const cached = ranges.get(key)
+  if (cached) return cached
+  const measured =
+    snapshot instanceof PieceTableDocumentTextSnapshot
+      ? measureDocumentRange(snapshot.snapshot, start, end)
+      : measureString(snapshot.readRange(start, end))
+  ranges.set(key, measured)
+  return measured
+}
+
+function measureDocumentRange(
+  snapshot: PieceTableSnapshot,
+  start: number,
+  end: number,
+): TextMeasurements {
+  const ranges: MeasuredTextRange[] = []
+  forEachTextInRange(snapshot.root, snapshot.buffers, start, end, (text, from, to, buffer) => {
+    let source = snapshot.buffers.textIndexes.get(buffer)
+    // Undo can reuse an ID for different text; retained ranges keep their immutable old index.
+    if (source?.text !== text) {
+      source = new TextSourceIndex(text)
+      snapshot.buffers.textIndexes.set(buffer, source)
+    }
+    ranges.push({ source, start: from, end: to })
+  })
+  return new TextMeasurements(ranges)
 }
 
 export function defineLazyFullTextProperty<TTarget extends { readonly textSnapshot: TextSnapshot }>(

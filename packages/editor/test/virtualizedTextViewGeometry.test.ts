@@ -1,9 +1,9 @@
+import { isSimpleRowText } from '../src/textCharacters'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createInlineMap } from '../src/inlineMap'
 import { createPieceTableSnapshot } from '../src/public/document'
 import { VirtualizedTextView } from '../src/virtualization'
 import {
-  isSimpleRowText,
   knownRowContentWidth,
   measureRowContentWidth,
   offsetToX,

@@ -88,6 +88,10 @@
       "entry": ["src/index.ts"],
       "project": "src/**/*.{ts,tsx}"
     },
+    "examples/stress": {
+      "entry": ["index.html", "run.mjs", "fixtures.mjs", "compare.mjs", "profile-summary.mjs", "test/verify-results.mjs"],
+      "project": ["src/**/*.ts", "*.mjs"]
+    },
     "examples/app": {
       "entry": ["index.html"],
       "project": "src/**/*.{ts,tsx}"

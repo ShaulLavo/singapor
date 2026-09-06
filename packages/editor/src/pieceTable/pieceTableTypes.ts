@@ -1,4 +1,5 @@
 import type { DocumentLineEnding } from './lineEndings'
+import type { TextSourceIndex } from '../textMeasurements'
 
 declare const pieceBufferIdBrand: unique symbol
 
@@ -41,6 +42,7 @@ export type Piece = {
 }
 
 export type PieceTableBuffers = {
+  readonly textIndexes: Map<PieceBufferId, TextSourceIndex>
   readonly original: PieceBufferId
   readonly chunks: PieceBufferChunks
   readonly nextBufferSequence: number

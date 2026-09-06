@@ -262,7 +262,7 @@ export const forEachTextInRange = (
   buffers: PieceTableBuffers,
   start: number,
   end: number,
-  visit: (text: string, start: number, end: number) => void,
+  visit: (text: string, start: number, end: number, buffer: Piece['buffer']) => void,
   baseOffset = 0,
 ) => {
   if (!node || baseOffset >= end) return
@@ -279,7 +279,7 @@ export const forEachTextInRange = (
     const pieceEnd = Math.min(node.piece.length, end - nodeStart)
     if (pieceEnd > pieceStart) {
       const buffer = bufferForPiece(buffers, node.piece)
-      visit(buffer, node.piece.start + pieceStart, node.piece.start + pieceEnd)
+      visit(buffer, node.piece.start + pieceStart, node.piece.start + pieceEnd, node.piece.buffer)
     }
   }
 

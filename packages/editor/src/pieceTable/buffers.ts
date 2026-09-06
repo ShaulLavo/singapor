@@ -385,6 +385,7 @@ export const createInitialBuffers = (
   const chunks = PieceBufferChunkStore.from([original])
   return {
     original: originalBuffer,
+    textIndexes: new Map(),
     chunks,
     nextBufferSequence: 1,
     prioritySeed: options.prioritySeed ?? DEFAULT_PIECE_TABLE_PRIORITY_SEED,

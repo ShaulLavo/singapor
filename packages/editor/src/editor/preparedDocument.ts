@@ -119,6 +119,14 @@ export type EditorPreparedTabSizePolicy = 'detect-indentation' | 'fixed'
 type PreparedStructuralStage = ReturnType<typeof createStructuralStage>
 type PreparedHighlighterStage = ReturnType<typeof createHighlighterStage>
 
+const LINE_START_ESTIMATED_BYTES = 8
+const FOLD_RANGE_ESTIMATED_BYTES = 48
+const TOKEN_ESTIMATED_BYTES = 48
+const SYNTAX_CAPTURE_ESTIMATED_BYTES = 48
+const BRACKET_ESTIMATED_BYTES = 32
+const SYNTAX_ERROR_ESTIMATED_BYTES = 48
+const SYNTAX_INJECTION_ESTIMATED_BYTES = 48
+
 export function createEditorPreparedDocument(
   options: CreateEditorPreparedDocumentOptions,
 ): EditorPreparedDocument {
@@ -150,7 +158,13 @@ export function createEditorPreparedDocument(
   }
 
   return {
-    estimatedBytes: snapshot.length * 2 + lineStarts.length * 8 + fallbackFolds.length * 48,
+    get estimatedBytes() {
+      const documentBytes =
+        snapshot.length * 2 +
+        lineStarts.length * LINE_START_ESTIMATED_BYTES +
+        fallbackFolds.length * FOLD_RANGE_ESTIMATED_BYTES
+      return documentBytes + readyStageEstimatedBytes(structural, highlighter)
+    },
     startStage(request) {
       if (consumed || disposed) return null
       if (request.family === 'structural') {
@@ -188,6 +202,31 @@ export function createEditorPreparedDocument(
     },
     dispose,
   }
+}
+
+function readyStageEstimatedBytes(
+  structural: PreparedStructuralStage | null,
+  highlighter: PreparedHighlighterStage | null,
+): number {
+  const structuralResult = structural?.readyResult() ?? null
+  const highlighterResult = highlighter?.readyResult() ?? null
+  return (
+    structuralResultEstimatedBytes(structuralResult) +
+    (highlighterResult?.tokens.length ?? 0) * TOKEN_ESTIMATED_BYTES
+  )
+}
+
+function structuralResultEstimatedBytes(result: EditorSyntaxResult | null): number {
+  if (!result) return 0
+
+  return (
+    result.folds.length * FOLD_RANGE_ESTIMATED_BYTES +
+    result.tokens.length * TOKEN_ESTIMATED_BYTES +
+    result.captures.length * SYNTAX_CAPTURE_ESTIMATED_BYTES +
+    result.brackets.length * BRACKET_ESTIMATED_BYTES +
+    result.errors.length * SYNTAX_ERROR_ESTIMATED_BYTES +
+    result.injections.length * SYNTAX_INJECTION_ESTIMATED_BYTES
+  )
 }
 
 function createStructuralStage(

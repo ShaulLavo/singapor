@@ -58,7 +58,7 @@ export type TreeSitterSyntaxSessionOptions = {
 
 export class TreeSitterSyntaxSession implements EditorSyntaxSession {
   private readonly documentId: string
-  private readonly runtimeSessionId: string
+  private runtimeSessionId: string
   private readonly languageId: TreeSitterLanguageId
   private readonly languageResolver: TreeSitterLanguageResolver | undefined
   private readonly includeHighlights: boolean
@@ -270,7 +270,9 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     if (this.disposed) return Promise.resolve(this.result)
 
     this.parsedSnapshotVersion = 0
-    this.backend.disposeDocument(this.runtimeSessionId)
+    const disposedRuntimeSessionId = this.runtimeSessionId
+    this.runtimeSessionId = createEditorRuntimeSessionId()
+    this.backend.disposeDocument(disposedRuntimeSessionId)
     return this.refresh(snapshot)
   }
 

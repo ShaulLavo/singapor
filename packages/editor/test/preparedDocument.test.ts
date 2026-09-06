@@ -20,6 +20,87 @@ import {
 } from '../src/syntax/session'
 
 describe('prepared editor documents', () => {
+  it('adds every retained ready-result array to its byte estimate', async () => {
+    const buffer = createEditorTextBuffer('a\nb\nc\n')
+    const structuralSession = syntaxSession()
+    const structuralResult = {
+      ...createEmptySyntaxResult(),
+      folds: [
+        {
+          endIndex: 3,
+          endLine: 1,
+          startIndex: 0,
+          startLine: 0,
+          type: 'syntax',
+        },
+      ],
+      tokens: [{ start: 0, end: 1, style: { color: 'structural' } }],
+      brackets: [{ char: '(', depth: 0, index: 0 }],
+      captures: [
+        {
+          captureName: 'function.name',
+          endIndex: 1,
+          languageId: 'typescript',
+          startIndex: 0,
+        },
+      ],
+      errors: [{ endIndex: 2, isMissing: false, message: 'unexpected token', startIndex: 1 }],
+      injections: [
+        {
+          endIndex: 3,
+          languageId: 'javascript',
+          parentLanguageId: 'typescript',
+          startIndex: 0,
+        },
+      ],
+    }
+    structuralSession.refresh = vi.fn(async () => structuralResult)
+    structuralSession.queryRange = vi.fn(async () => structuralResult)
+    const structuralProvider: EditorSyntaxProvider = {
+      createSession: () => structuralSession,
+    }
+    const highlighterSession = highlightSession()
+    highlighterSession.refresh = vi.fn(async () => ({
+      tokens: [
+        { start: 0, end: 1, style: { color: 'first' } },
+        { start: 2, end: 3, style: { color: 'second' } },
+      ],
+    }))
+    const highlighterProvider: EditorHighlighterProvider = {
+      createSession: () => highlighterSession,
+    }
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      tabSizePolicy: 'detect-indentation',
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+    const baseBytes = prepared.estimatedBytes
+
+    await prepared.startStage({
+      abortSignal: new AbortController().signal,
+      configuration: { ...structuralConfiguration, includeHighlights: true },
+      configurationTag: ['tree-sitter', 1],
+      family: 'structural',
+      provider: structuralProvider,
+      range: { startIndex: 0, endIndex: buffer.getSnapshot().length },
+    })
+    const structuralBytes = prepared.estimatedBytes
+    await prepared.startStage({
+      abortSignal: new AbortController().signal,
+      configurationTag: ['shiki', 'dark'],
+      family: 'highlighter',
+      provider: highlighterProvider,
+      range: 'full',
+    })
+
+    expect(structuralBytes).toBeGreaterThan(baseBytes + 96)
+    expect(prepared.estimatedBytes).toBeGreaterThan(structuralBytes)
+    prepared.dispose()
+  })
+
   it('transfers exact structural and highlighter sessions once', async () => {
     const buffer = createEditorTextBuffer('const value = 1;\n')
     const structuralSession = syntaxSession()

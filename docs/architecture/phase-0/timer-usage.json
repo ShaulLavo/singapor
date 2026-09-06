@@ -69,10 +69,10 @@
     {
       "api": "setTimeout",
       "file": "packages/editor/src/shiki/shiki.worker.ts",
-      "id": "packages/editor/src/shiki/shiki.worker.ts:setTimeout:6587514795",
-      "justification": "Runs once per highlighter after a one-second delay so background grammar preload stays behind latency-sensitive tokenization and its first paint. `backgroundLoaded` prevents duplicate schedules; worker teardown safely discards pending work.",
-      "line": 228,
-      "snippet": "setTimeout(() => void ensureLanguages(highlighter, registrations).catch(() => undefined), 1_000)"
+      "id": "packages/editor/src/shiki/shiki.worker.ts:setTimeout:7613cb083b",
+      "justification": "Runs once per highlighter after a one-second delay so background grammar preload stays behind latency-sensitive tokenization and its first paint. `backgroundLoaded` prevents duplicate schedules, and worker-task tracking keeps idle fences and teardown behind the preload.",
+      "line": 233,
+      "snippet": "setTimeout(() => {"
     },
     {
       "api": "requestAnimationFrame",

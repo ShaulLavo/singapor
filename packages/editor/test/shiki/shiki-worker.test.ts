@@ -24,6 +24,7 @@ vi.mock('../../src/shiki/tokenizer', () => ({ createIncrementalTokenizer }))
 
 describe('shiki worker', () => {
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.resetModules()
     createHighlighterCore.mockReset()
@@ -86,6 +87,65 @@ describe('shiki worker', () => {
     await waitFor(() => dispose.mock.calls.length === 1)
 
     expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an idle fence behind scheduled background language loading', async () => {
+    vi.useFakeTimers()
+    const languageLoad = deferred<void>()
+    const loadLanguage = vi.fn(() => languageLoad.promise)
+    const postMessage = vi.fn()
+    ;(globalThis as { self?: unknown }).self = { postMessage }
+    createHighlighterCore.mockResolvedValue({
+      getLoadedLanguages: () => [],
+      loadLanguage,
+    })
+    await import('../../src/shiki/shiki.worker')
+
+    const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
+      .onmessage
+    onmessage(
+      new MessageEvent('message', {
+        data: request('preload', {
+          languageRegistrations: [languageRegistration('typescript')],
+          themeRegistrations: [themeRegistration('github-dark')],
+        }),
+      }),
+    )
+    await flushMicrotasks()
+    onmessage(
+      new MessageEvent('message', {
+        data: { ...request('idleFence', {}), id: 2 },
+      }),
+    )
+    await flushMicrotasks()
+
+    expect(responseWithId(postMessage, 2)).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(loadLanguage).toHaveBeenCalledOnce()
+    expect(responseWithId(postMessage, 2)).toBeUndefined()
+
+    languageLoad.resolve(undefined)
+    await flushMicrotasks()
+    expect(responseWithId(postMessage, 2)).toMatchObject({ id: 2, ok: true })
+
+    onmessage(
+      new MessageEvent('message', {
+        data: {
+          ...request('preload', {
+            languageRegistrations: [languageRegistration('typescript')],
+            themeRegistrations: [themeRegistration('github-dark')],
+          }),
+          id: 3,
+        },
+      }),
+    )
+    await flushMicrotasks()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(responseWithId(postMessage, 3)).toMatchObject({ id: 3, ok: true })
+    expect(createHighlighterCore).toHaveBeenCalledOnce()
+    expect(loadLanguage).toHaveBeenCalledOnce()
   })
 
   it('returns editor theme colors from the loaded Shiki theme', async () => {
@@ -377,6 +437,22 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0))
   }
   throw new Error('Timed out waiting for worker response')
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) await Promise.resolve()
+}
+
+function responseWithId(postMessage: ReturnType<typeof vi.fn>, id: number) {
+  return postMessage.mock.calls.find(([response]) => response.id === id)?.[0]
+}
+
+function deferred<T>() {
+  let resolve: (value: T | PromiseLike<T>) => void = () => undefined
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+  return { promise, resolve }
 }
 
 /**

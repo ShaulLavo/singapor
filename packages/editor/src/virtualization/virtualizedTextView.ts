@@ -627,7 +627,7 @@ export class VirtualizedTextView {
     if (preparedTokens) view.tokens = preparedTokens
     const { lineCountChanged } =
       typeof text === 'string'
-        ? setTextLayoutState(view, text, textSnapshot, preparedLineStarts)
+        ? setTextLayoutState(view, textSnapshot, preparedLineStarts)
         : setTextSnapshotLayoutState(view, textSnapshot)
     this.finishTextReplacement(lineCountChanged)
   }

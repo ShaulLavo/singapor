@@ -254,7 +254,7 @@ export class ShikiWorkerOwner {
     const id = this.nextRequestId
     this.nextRequestId += 1
     const request: ShikiWorkerRequest = { id, payload }
-    markEditorWorkerRequest('shiki', payload.type)
+    markEditorWorkerRequest('shiki', payload.type, runtimeSessionIdForPayload(payload))
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject })
@@ -603,9 +603,20 @@ function workerRequestError(error: unknown): Error {
   return new Error(String(error))
 }
 
-function markEditorWorkerRequest(family: string, type: string): void {
+function runtimeSessionIdForPayload(payload: ShikiWorkerRequestPayload): string | null {
+  if ('runtimeSessionId' in payload) return payload.runtimeSessionId
+  return null
+}
+
+function markEditorWorkerRequest(
+  family: string,
+  type: string,
+  runtimeSessionId: string | null,
+): void {
   const traceGlobal = globalThis as typeof globalThis & { readonly __editorPerfTrace?: unknown }
   if (!traceGlobal.__editorPerfTrace) return
 
-  globalThis.performance?.mark('editor.worker.request', { detail: { family, type } })
+  globalThis.performance?.mark('editor.worker.request', {
+    detail: { family, runtimeSessionId, type },
+  })
 }

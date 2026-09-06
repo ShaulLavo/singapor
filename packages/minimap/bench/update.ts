@@ -1,8 +1,12 @@
-import { performance } from 'node:perf_hooks'
-
+import type { TextEdit } from '@singapor/core/document'
+import { createError } from '@singapor/core/logging/evlog'
 import { resolveMinimapOptions } from '../src/options'
 import { MinimapWorkerRenderer } from '../src/renderer'
-import type { MinimapBaseStyles, MinimapDocumentPayload } from '../src/types'
+import type {
+  MinimapBaseStyles,
+  MinimapDocumentPayload,
+  MinimapDocumentSummaryPatch,
+} from '../src/types'
 
 type Sample = {
   readonly lines: number
@@ -66,23 +70,43 @@ function lineStarts(text: string): number[] {
   return starts
 }
 
+function documentPayload(text: string): MinimapDocumentPayload {
+  const starts = lineStarts(text)
+  return {
+    textLength: text.length,
+    lineStarts: starts,
+    lines: starts.map((start, index) => lineSummary(text, starts, start, index)),
+    tokens: [],
+    selections: [],
+    decorations: [],
+  }
+}
+
+function lineSummary(
+  text: string,
+  starts: readonly number[],
+  start: number,
+  index: number,
+): MinimapDocumentPayload['lines'][number] {
+  const nextStart = starts[index + 1]
+  const end = nextStart === undefined ? text.length : Math.max(start, nextStart - 1)
+  return {
+    text: text.slice(start, end),
+    length: end - start,
+  }
+}
+
 function rendererDocument(renderer: MinimapWorkerRenderer): MinimapDocumentPayload {
   const state = (renderer as unknown as { state: { document: MinimapDocumentPayload } | null })
     .state
-  if (!state) throw new Error('Expected initialized renderer')
+  benchmarkInvariant(state, 'Expected initialized renderer')
   return state.document
 }
 
 function measure(): Sample {
   const renderer = createRenderer()
   const text = buildText(LINE_COUNT)
-  renderer.setDocument({
-    text,
-    lineStarts: lineStarts(text),
-    tokens: [],
-    selections: [],
-    decorations: [],
-  })
+  renderer.setDocument(documentPayload(text))
 
   const durations = measureEdits(renderer)
   const document = rendererDocument(renderer)
@@ -90,7 +114,7 @@ function measure(): Sample {
 
   return {
     lines: LINE_COUNT,
-    textLength: document.text.length,
+    textLength: document.textLength,
     iterations: ITERATIONS,
     averageEditMs: average(durations),
     p95EditMs: percentile(durations, 0.95),
@@ -102,13 +126,77 @@ function measureEdits(renderer: MinimapWorkerRenderer): number[] {
   const durations: number[] = []
 
   for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
-    const offset = Math.floor(rendererDocument(renderer).text.length / 2)
+    const document = rendererDocument(renderer)
+    const offset = Math.floor(document.textLength / 2)
+    const edit = { from: offset, to: offset, text: INSERTED_TEXT }
+    const summaryPatch = insertionSummaryPatch(document, edit)
     const start = performance.now()
-    renderer.applyEdit({ from: offset, to: offset, text: INSERTED_TEXT }, { selections: [] })
+    renderer.applyEdit(edit, { selections: [], summaryPatch })
     durations.push(performance.now() - start)
   }
 
   return durations
+}
+
+function insertionSummaryPatch(
+  document: MinimapDocumentPayload,
+  edit: TextEdit,
+): MinimapDocumentSummaryPatch {
+  benchmarkInvariant(edit.from === edit.to, 'Benchmark edit must be an insertion')
+  const lineIndex = lineIndexForOffset(document.lineStarts, edit.from)
+  const line = document.lines[lineIndex]
+  benchmarkInvariant(line, 'Benchmark insertion must resolve to a document line')
+  const lineStart = document.lineStarts[lineIndex] ?? 0
+  const localOffset = edit.from - lineStart
+  benchmarkInvariant(
+    localOffset <= line.text.length,
+    'Benchmark line summary must contain the insertion',
+  )
+
+  const lines = edit.text.split('\n')
+  lines[0] = line.text.slice(0, localOffset) + lines[0]
+  const last = lines.length - 1
+  lines[last] += line.text.slice(localOffset)
+
+  return {
+    textLength: document.textLength + edit.text.length,
+    startLine: lineIndex,
+    deleteCount: 1,
+    lines: lines.map((text) => ({ text, length: text.length })),
+  }
+}
+
+function lineIndexForOffset(lineStarts: readonly number[], offset: number): number {
+  let low = 0
+  let high = lineStarts.length - 1
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2)
+    const start = lineStarts[middle] ?? 0
+    const next = lineStarts[middle + 1] ?? Number.POSITIVE_INFINITY
+    if (offset < start) {
+      high = middle - 1
+      continue
+    }
+    if (offset >= next) {
+      low = middle + 1
+      continue
+    }
+    return middle
+  }
+
+  return Math.max(0, lineStarts.length - 1)
+}
+
+function benchmarkInvariant(condition: unknown, message: string): asserts condition {
+  if (condition) return
+
+  throw createError({
+    code: 'minimap.BENCHMARK_FIXTURE_INVALID',
+    message,
+    why: 'The update benchmark fixture no longer satisfies the renderer payload contract.',
+    fix: 'Update the fixture before recording another minimap result.',
+  })
 }
 
 function average(values: readonly number[]): number {

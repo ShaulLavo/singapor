@@ -905,17 +905,20 @@ describe('Tree-sitter syntax capture conversion', () => {
   it('falls back to a full refresh when incremental parsing fails', async () => {
     const parseVersions: number[] = []
     const disposedDocuments: string[] = []
-    let runtimeSessionId: string | undefined
+    const disposedRuntimeSessionIds = new Set<string>()
+    const parseRuntimeSessionIds: string[] = []
     const backend = {
-      disposeDocument: (documentId) => {
-        disposedDocuments.push(documentId)
+      disposeDocument: (runtimeSessionId) => {
+        disposedDocuments.push(runtimeSessionId)
+        disposedRuntimeSessionIds.add(runtimeSessionId)
       },
       edit: async () => {
         throw new Error('incremental parse failed')
       },
       parse: async (payload) => {
-        runtimeSessionId = payload.runtimeSessionId
+        parseRuntimeSessionIds.push(payload.runtimeSessionId)
         parseVersions.push(payload.snapshotVersion)
+        if (disposedRuntimeSessionIds.has(payload.runtimeSessionId)) return undefined
         return createParseResult(payload)
       },
       registerLanguages: async () => undefined,
@@ -938,9 +941,12 @@ describe('Tree-sitter syntax capture conversion', () => {
     const result = await session.applyChange(change)
 
     expect(parseVersions).toEqual([1, 3])
-    expect(disposedDocuments).toEqual([runtimeSessionId])
-    expect(runtimeSessionId).not.toBe('file.ts')
+    expect(parseRuntimeSessionIds).toHaveLength(2)
+    expect(parseRuntimeSessionIds[1]).not.toBe(parseRuntimeSessionIds[0])
+    expect(disposedDocuments).toEqual([parseRuntimeSessionIds[0]])
+    expect(parseRuntimeSessionIds).not.toContain('file.ts')
     expect(session.getSnapshotVersion()).toBe(3)
+    expect(result.projection.snapshot.version).toBe(3)
     expect(session.getResult()).toBe(result)
   })
 
@@ -985,14 +991,14 @@ describe('Tree-sitter syntax capture conversion', () => {
   it('falls back to a full refresh when current incremental parsing is cancelled', async () => {
     const parseVersions: number[] = []
     const disposedDocuments: string[] = []
-    let runtimeSessionId: string | undefined
+    const parseRuntimeSessionIds: string[] = []
     const backend = {
       disposeDocument: (documentId) => {
         disposedDocuments.push(documentId)
       },
       edit: async () => undefined,
       parse: async (payload) => {
-        runtimeSessionId = payload.runtimeSessionId
+        parseRuntimeSessionIds.push(payload.runtimeSessionId)
         parseVersions.push(payload.snapshotVersion)
         return createParseResult(payload)
       },
@@ -1016,8 +1022,10 @@ describe('Tree-sitter syntax capture conversion', () => {
     const result = await session.applyChange(change)
 
     expect(parseVersions).toEqual([1, 3])
-    expect(disposedDocuments).toEqual([runtimeSessionId])
-    expect(runtimeSessionId).not.toBe('file.ts')
+    expect(parseRuntimeSessionIds).toHaveLength(2)
+    expect(parseRuntimeSessionIds[1]).not.toBe(parseRuntimeSessionIds[0])
+    expect(disposedDocuments).toEqual([parseRuntimeSessionIds[0]])
+    expect(parseRuntimeSessionIds).not.toContain('file.ts')
     expect(session.getSnapshotVersion()).toBe(3)
     expect(session.getResult()).toBe(result)
   })

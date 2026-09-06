@@ -46,6 +46,10 @@ self.onmessage = (event: MessageEvent<ShikiWorkerRequest>): void => {
   const task = handleRequest(event.data)
   if (event.data.payload.type === 'idleFence') return
 
+  trackWorkerTask(task)
+}
+
+const trackWorkerTask = (task: Promise<void>): void => {
   activeWorkerTasks.add(task)
   void task.finally(() => activeWorkerTasks.delete(task)).catch(() => undefined)
 }
@@ -225,7 +229,13 @@ const scheduleBackgroundLanguages = (
   if (backgroundLoaded.has(highlighter)) return
 
   backgroundLoaded.add(highlighter)
-  setTimeout(() => void ensureLanguages(highlighter, registrations).catch(() => undefined), 1_000)
+  const task = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      const complete = () => resolve()
+      void ensureLanguages(highlighter, registrations).then(complete, complete)
+    }, 1_000)
+  })
+  trackWorkerTask(task)
 }
 
 const ensureHighlighterFor = (

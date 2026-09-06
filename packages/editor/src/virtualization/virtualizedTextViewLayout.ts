@@ -42,35 +42,36 @@ export type FoldStateUpdate = {
 
 export function setTextLayoutState(
   view: VirtualizedTextViewInternal,
-  text: string,
   textSnapshot: TextSnapshot,
   preparedLineStarts?: readonly number[],
 ): { readonly lineCountChanged: boolean } {
-  if (preparedLineStarts) assertPreparedLineStarts(text, preparedLineStarts)
+  if (preparedLineStarts) assertPreparedLineStarts(textSnapshot.length, preparedLineStarts)
   return setTextSnapshotLayoutState(view, textSnapshot)
 }
 
-function assertPreparedLineStarts(text: string, lineStarts: readonly number[]): void {
+function assertPreparedLineStarts(snapshotLength: number, lineStarts: readonly number[]): void {
   const environment = (import.meta as ImportMeta & { readonly env?: { readonly DEV?: boolean } })
     .env
   if (!environment?.DEV) return
 
-  if (preparedLineStartsMatchText(text, lineStarts)) return
+  if (preparedLineStartsAreValid(snapshotLength, lineStarts)) return
 
   throw new RangeError('Prepared line starts do not match the attached document')
 }
 
-function preparedLineStartsMatchText(text: string, lineStarts: readonly number[]): boolean {
+function preparedLineStartsAreValid(
+  snapshotLength: number,
+  lineStarts: readonly number[],
+): boolean {
   if (lineStarts[0] !== 0) return false
 
-  let lineIndex = 1
-  for (let offset = 0; offset < text.length; offset += 1) {
-    if (text.charCodeAt(offset) !== 10) continue
-    if (lineStarts[lineIndex] !== offset + 1) return false
-
-    lineIndex += 1
+  let previous = -1
+  for (const lineStart of lineStarts) {
+    if (!Number.isSafeInteger(lineStart)) return false
+    if (lineStart <= previous) return false
+    previous = lineStart
   }
-  return lineIndex === lineStarts.length
+  return previous <= snapshotLength
 }
 
 export function setTextSnapshotLayoutState(

@@ -381,7 +381,7 @@ export class TreeSitterWorkerClient implements TreeSitterBackend {
     const id = this.nextRequestId
     this.nextRequestId += 1
     const request: TreeSitterWorkerRequest = { id, payload }
-    markEditorWorkerRequest('tree-sitter', payload.type)
+    markEditorWorkerRequest('tree-sitter', payload.type, runtimeSessionIdForPayload(payload))
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, {
@@ -623,11 +623,17 @@ const workerRequestError = (error: unknown): Error => {
   return new Error(String(error))
 }
 
-function markEditorWorkerRequest(family: string, type: string): void {
+function markEditorWorkerRequest(
+  family: string,
+  type: string,
+  runtimeSessionId: string | null,
+): void {
   const traceGlobal = globalThis as typeof globalThis & { readonly __editorPerfTrace?: unknown }
   if (!traceGlobal.__editorPerfTrace) return
 
-  globalThis.performance?.mark('editor.worker.request', { detail: { family, type } })
+  globalThis.performance?.mark('editor.worker.request', {
+    detail: { family, runtimeSessionId, type },
+  })
 }
 
 const isTreeSitterParseResult = (result: TreeSitterWorkerResult): result is TreeSitterParseResult =>

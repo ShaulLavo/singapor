@@ -243,6 +243,32 @@ describe('VirtualizedTextView', () => {
     ).toBe(true)
   })
 
+  it('rejects non-integer prepared line starts', () => {
+    view.setText('before')
+    view.setScrollMetrics(0, 40, 240)
+
+    expect(() => view.setText('alpha\nbeta', undefined, [0, Number.NaN, 5])).toThrow(
+      'Prepared line starts do not match the attached document',
+    )
+    expect(() => view.setText('alpha\nbeta', undefined, [0, 1.5, 5])).toThrow(
+      'Prepared line starts do not match the attached document',
+    )
+    expect(view.getState()).toMatchObject({
+      lineCount: 1,
+      mountedRows: [{ text: 'before' }],
+    })
+  })
+
+  it('validates prepared line starts against snapshot length without rescanning text', () => {
+    expect(() => view.setText('alpha\nbeta', undefined, [0, 5])).not.toThrow()
+
+    const shortSnapshot = throwingFullTextSnapshot('alpha')
+    expect(() => view.setText('alpha\nbeta', shortSnapshot, [0, 6])).toThrow(
+      'Prepared line starts do not match the attached document',
+    )
+    expect(view.getLineStarts()).toEqual([0, 6])
+  })
+
   it('mounts all rows without vertical spacer churn in static scroll mode', () => {
     view.dispose()
     view = new VirtualizedTextView(container, {

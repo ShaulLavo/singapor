@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "bench": "node run.mjs",
+    "bench:hidden": "node hidden.mjs",
     "fixtures": "node fixtures.mjs",
     "compare": "node compare.mjs",
     "profile:summary": "node profile-summary.mjs",

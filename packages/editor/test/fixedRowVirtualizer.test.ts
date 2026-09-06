@@ -24,15 +24,93 @@ describe('fixed row virtualizer', () => {
     expect(range).toEqual({ start: 2, end: 5 })
   })
 
-  it('keeps one row visible when the viewport has zero height', () => {
+  it.each([0, -20, Number.NaN])('keeps a %s-height viewport empty', (viewportHeight) => {
     const range = computeFixedRowVisibleRange({
       count: 100,
       rowHeight: 20,
       scrollTop: 40,
-      viewportHeight: 0,
+      viewportHeight,
     })
 
-    expect(range).toEqual({ start: 2, end: 3 })
+    expect(range).toEqual({ start: 0, end: 0 })
+  })
+
+  it('renders the final row when a visible viewport starts at the document end', () => {
+    expect(
+      computeFixedRowVisibleRange({
+        count: 100,
+        rowHeight: 20,
+        scrollTop: 2_000,
+        viewportHeight: 100,
+      }),
+    ).toEqual({ start: 99, end: 100 })
+  })
+
+  it('does not expand an empty range through overscan', () => {
+    expect(
+      computeFixedRowVirtualItems({
+        count: 100,
+        rowHeight: 20,
+        range: { start: 50, end: 50 },
+        overscan: 6,
+      }),
+    ).toEqual([])
+  })
+
+  it.each(['fixed', 'indexed'] as const)(
+    'suspends %s rows before measurement and across hide/show cycles',
+    (layout) => {
+      const virtualizer = new FixedRowVirtualizer({
+        count: 100,
+        rowHeight: 20,
+        rowSizes: layout === 'indexed' ? blockLayout(100, 5, 60) : undefined,
+        overscan: 6,
+      })
+
+      expect(virtualizer.getSnapshot().virtualItems).toEqual([])
+      virtualizer.setScrollMetrics({ scrollTop: 1_000, viewportHeight: 100 })
+      const visible = virtualizer.getSnapshot()
+      expect(visible.virtualItems).toHaveLength(17)
+
+      virtualizer.setScrollMetrics({ scrollTop: 1_000, viewportHeight: 0 })
+      expect(virtualizer.getSnapshot()).toMatchObject({
+        totalSize: visible.totalSize,
+        scrollTop: 1_000,
+        visibleRange: { start: 0, end: 0 },
+        virtualItems: [],
+      })
+
+      virtualizer.updateOptions({ overscan: 8 })
+      expect(virtualizer.getSnapshot().virtualItems).toEqual([])
+      virtualizer.setScrollMetrics({ scrollTop: 1_000, viewportHeight: 100 })
+      expect(virtualizer.getSnapshot().visibleRange).toEqual(visible.visibleRange)
+      expect(virtualizer.getSnapshot().virtualItems).toHaveLength(21)
+      virtualizer.dispose()
+    },
+  )
+
+  it('distinguishes unmeasured static content from a measured hidden viewport', () => {
+    const onChange = vi.fn()
+    const virtualizer = new FixedRowVirtualizer({
+      count: 5,
+      rowHeight: 20,
+      scrollMode: 'static',
+    })
+    virtualizer.attachScrollElement(document.createElement('div'), onChange)
+    expect(virtualizer.getSnapshot().virtualItems).toHaveLength(5)
+
+    virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 0 })
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(virtualizer.getSnapshot()).toMatchObject({
+      totalSize: 100,
+      scrollHeight: 100,
+      viewportHeight: 0,
+      virtualItems: [],
+    })
+
+    virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 100 })
+    expect(virtualizer.getSnapshot().virtualItems).toHaveLength(5)
+    virtualizer.dispose()
   })
 
   it('computes overscanned virtual items', () => {
@@ -520,6 +598,176 @@ describe('fixed row virtualizer', () => {
     }
   })
 
+  it.each(['fixed', 'indexed'] as const)(
+    'restores deep %s scrolling after hidden native geometry collapses',
+    (layout) => {
+      const resize = installResizeObservers()
+      const frames = installFrameScheduler()
+      const virtualizer = new FixedRowVirtualizer({
+        count: 1_000,
+        rowHeight: 20,
+        rowSizes: layout === 'indexed' ? blockLayout(1_000, 5, 60) : undefined,
+        maxScrollHeight: 1_000,
+        overscan: 6,
+      })
+      const element = document.createElement('div')
+      let nativeScrollTop = 0
+      const writeScrollTop = vi.fn((value: number) => {
+        nativeScrollTop = value
+      })
+      Object.defineProperty(element, 'scrollTop', {
+        configurable: true,
+        get: () => nativeScrollTop,
+        set: writeScrollTop,
+      })
+
+      try {
+        virtualizer.attachScrollElement(element, undefined, { readInitialScrollPosition: false })
+        element.scrollLeft = 300
+        virtualizer.setScrollMetrics({
+          scrollTop: 10_000,
+          scrollLeft: 300,
+          viewportHeight: 100,
+          viewportWidth: 320,
+        })
+        const visible = virtualizer.getSnapshot()
+        writeScrollTop.mockClear()
+
+        nativeScrollTop = 0
+        element.scrollLeft = 0
+        resize.resize(element, 0, 0)
+        element.dispatchEvent(new Event('scroll'))
+        frames.flush()
+
+        expect(virtualizer.getSnapshot()).toMatchObject({
+          scrollTop: 10_000,
+          scrollLeft: 300,
+          totalSize: visible.totalSize,
+          virtualItems: [],
+        })
+        expect(writeScrollTop).not.toHaveBeenCalled()
+        element.dispatchEvent(new Event('scroll'))
+        frames.flush()
+        expect(virtualizer.getSnapshot().scrollTop).toBe(10_000)
+
+        resize.resize(element, 320, 100)
+        element.dispatchEvent(new Event('scroll'))
+        frames.flush()
+
+        expect(virtualizer.getSnapshot()).toEqual(visible)
+        expect(nativeScrollTop).toBe(visible.nativeScrollTop)
+        expect(element.scrollLeft).toBe(300)
+        expect(writeScrollTop).toHaveBeenCalledTimes(1)
+      } finally {
+        virtualizer.dispose()
+        frames.restore()
+        resize.restore()
+      }
+    },
+  )
+
+  it('keeps the hidden row anchor while indexed rows change above it', () => {
+    const virtualizer = anchoredVirtualizer(blockLayout(200, 5, 60))
+    virtualizer.setScrollMetrics({ scrollTop: 1_000, viewportHeight: 0 })
+
+    virtualizer.updateOptions({ rowSizes: blockLayout(200, 5, 160) })
+
+    expect(virtualizer.getSnapshot()).toMatchObject({
+      scrollTop: 1_100,
+      totalSize: 4_140,
+      virtualItems: [],
+    })
+    virtualizer.setScrollMetrics({ scrollTop: 1_100, viewportHeight: 100 })
+    expect(topVisibleRow(virtualizer)).toEqual({ index: 48, offsetInViewport: 0 })
+    virtualizer.dispose()
+  })
+
+  it('preserves scrolling when a hide and reveal coalesce before the next frame', () => {
+    const resize = installResizeObservers()
+    const frames = installFrameScheduler()
+    const virtualizer = new FixedRowVirtualizer({ count: 100, rowHeight: 20 })
+    const element = document.createElement('div')
+    let nativeScrollTop = 0
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => nativeScrollTop,
+      set: (value: number) => {
+        nativeScrollTop = value
+      },
+    })
+
+    try {
+      virtualizer.attachScrollElement(element, undefined, { readInitialScrollPosition: false })
+      element.scrollLeft = 200
+      virtualizer.setScrollMetrics({
+        scrollTop: 1_000,
+        scrollLeft: 200,
+        viewportHeight: 100,
+        viewportWidth: 320,
+      })
+      const visible = virtualizer.getSnapshot()
+
+      nativeScrollTop = 0
+      element.scrollLeft = 0
+      resize.resize(element, 0, 0)
+      resize.resize(element, 320, 100)
+      element.dispatchEvent(new Event('scroll'))
+      frames.flush()
+
+      expect(virtualizer.getSnapshot()).toEqual(visible)
+      expect(nativeScrollTop).toBe(1_000)
+      expect(element.scrollLeft).toBe(200)
+    } finally {
+      virtualizer.dispose()
+      frames.restore()
+      resize.restore()
+    }
+  })
+
+  it('restores native scrolling after the revealed snapshot renders its spacer', () => {
+    const virtualizer = new FixedRowVirtualizer({
+      count: 100,
+      rowHeight: 20,
+      maxScrollHeight: 1_000,
+    })
+    const element = document.createElement('div')
+    let nativeScrollTop = 0
+    let nativeScrollLeft = 0
+    let nativeMaximum = 900
+    Object.defineProperties(element, {
+      scrollTop: {
+        configurable: true,
+        get: () => nativeScrollTop,
+        set: (value: number) => {
+          nativeScrollTop = Math.min(value, nativeMaximum)
+        },
+      },
+      scrollLeft: {
+        configurable: true,
+        get: () => nativeScrollLeft,
+        set: (value: number) => {
+          nativeScrollLeft = Math.min(value, nativeMaximum)
+        },
+      },
+    })
+    virtualizer.attachScrollElement(
+      element,
+      (snapshot) => {
+        nativeMaximum = snapshot.viewportHeight > 0 ? 900 : 0
+      },
+      { readInitialScrollPosition: false },
+    )
+    virtualizer.setScrollMetrics({ scrollTop: 1_000, scrollLeft: 500, viewportHeight: 100 })
+    virtualizer.setScrollMetrics({ scrollTop: 1_000, viewportHeight: 0 })
+    virtualizer.updateOptions({ count: 200 })
+
+    virtualizer.setScrollMetrics({ scrollTop: 1_000, viewportHeight: 100 })
+
+    expect(nativeScrollTop).toBe(virtualizer.getSnapshot().nativeScrollTop)
+    expect(nativeScrollLeft).toBe(500)
+    virtualizer.dispose()
+  })
+
   it('cancels pending resize work when detached', () => {
     const originalResizeObserver = globalThis.ResizeObserver
     const frameScheduler = installFrameScheduler()
@@ -543,10 +791,11 @@ describe('fixed row virtualizer', () => {
       virtualizer.attachScrollElement(element, onChange, {
         readInitialScrollPosition: false,
       })
-      virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 100 })
+      virtualizer.setScrollMetrics({ scrollTop: 1_000, viewportHeight: 0 })
       onChange.mockClear()
 
       observers[0]?.resize(element, 320, 160)
+      element.dispatchEvent(new Event('scroll'))
       expect(frameScheduler.pendingCount()).toBe(1)
 
       virtualizer.dispose()
@@ -802,6 +1051,28 @@ class TestResizeObserver implements ResizeObserver {
 
   public resize(target: Element, width: number, height: number): void {
     this.callback([resizeEntry(target, width, height)], this)
+  }
+}
+
+function installResizeObservers(): {
+  resize(target: Element, width: number, height: number): void
+  restore(): void
+} {
+  const original = globalThis.ResizeObserver
+  const observers: TestResizeObserver[] = []
+  globalThis.ResizeObserver = class extends TestResizeObserver {
+    public constructor(callback: ResizeObserverCallback) {
+      super(callback)
+      observers.push(this)
+    }
+  }
+  return {
+    resize: (target, width, height) => {
+      for (const observer of observers) observer.resize(target, width, height)
+    },
+    restore: () => {
+      globalThis.ResizeObserver = original
+    },
   }
 }
 

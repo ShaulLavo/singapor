@@ -257,6 +257,7 @@ export class VirtualizedTextView {
   private readonly view: VirtualizedTextViewInternal
   private readonly disposeForegroundHighlightRestore: () => void
   private cancelContentWidthMeasurement: (() => void) | null = null
+  private viewportVisible = false
   private atomicRenderDepth = 0
   private atomicRenderPending = false
 
@@ -562,8 +563,9 @@ export class VirtualizedTextView {
     const rowHeightValue = metrics.rowHeight
     applyRowHeight(view, rowHeightValue)
     view.gutterWidthDirty = true
-    this.refreshWrapWidth()
+    updateGutterWidthIfNeeded(view)
     view.lastRenderedRowsKey = ''
+    if (this.refreshWrapWidth()) return
     updateVirtualizerRows(view)
   }
 
@@ -633,7 +635,7 @@ export class VirtualizedTextView {
     scrollLeft?: number,
   ): void {
     const width = viewportWidth ?? this.view.virtualizer.getSnapshot().viewportWidth
-    this.refreshWrapWidth(width)
+    if (viewportHeight > 0) this.refreshWrapWidth(width)
     this.view.virtualizer.setScrollMetrics({
       scrollTop,
       viewportHeight,
@@ -1034,7 +1036,20 @@ export class VirtualizedTextView {
     }
 
     const view = this.view
+    const visible = snapshot.viewportHeight > 0
+    const revealed = visible && !this.viewportVisible
+    this.viewportVisible = visible
+    if (revealed) {
+      this.refreshMetrics()
+      return
+    }
     updateGutterWidthIfNeeded(view)
+    if (visible && this.refreshWrapWidth(snapshot.viewportWidth)) return
+    if (!visible) {
+      this.cancelContentWidthMeasurement?.()
+      this.cancelContentWidthMeasurement = null
+    }
+
     updateSpacerHeight(view, snapshot)
     updateSpacerWidth(view, snapshot.viewportWidth)
     const key = rowsKey(view, snapshot)
@@ -1203,17 +1218,18 @@ export class VirtualizedTextView {
 
   private refreshWrapWidth(
     viewportWidth = this.view.virtualizer.getSnapshot().viewportWidth,
-  ): void {
+  ): boolean {
     const view = this.view
     const changed = refreshDisplayRowsForWrapWidth(
       view,
       horizontalViewportColumns(view, viewportWidth),
     )
-    if (!changed) return
+    if (!changed) return false
 
     resetContentWidthScan(view)
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
+    return true
   }
 }
 

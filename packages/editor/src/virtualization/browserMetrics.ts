@@ -93,7 +93,10 @@ function measureTextMetrics(element: HTMLElement): MeasuredTextMetrics {
     characterWidth: measuredCharacterWidth(rect),
     whitespaceDotGlyph: nearestWhitespaceDotGlyph(spaceWidth, dotWidths),
   }
-  if (cacheKey) cacheBrowserTextMetrics(document, cacheKey, metrics)
+  // A hidden probe reports zero geometry; its fallback must not become a shared font measurement.
+  if (cacheKey && rect.width > 0 && rect.height > 0) {
+    cacheBrowserTextMetrics(document, cacheKey, metrics)
+  }
   return metrics
 }
 

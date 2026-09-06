@@ -113,6 +113,23 @@ Useful options: `--repetitions 3`, `--warmups 1`, `--seed 60061`, `--fixtures or
 Scenario failures write a structured event with fixture, state, observation, and error. A failed
 or interrupted run does not replace the requested result file.
 
+## Hidden retained views
+
+Build the public packages, then run the focused E004 measurement:
+
+```sh
+bun run stress:build
+bun run --cwd examples/stress bench:hidden --expect-suspended --output /work/tmp/editor-e004/result.json
+```
+
+The runner reuses E001 fixtures, document churn, and the browser entry. It records initial and
+measured row counts, CSS ranges per view, retained memory, and reveal timing without a selection
+or edit to force repaint. Three repetitions use one fresh context per fixture, followed by two
+warm repetitions. `--core-dist PATH` measures a preserved build; its package dependencies must
+remain resolvable from that directory. Omit `--expect-suspended` to measure the old behavior.
+The [E004 results](results/hidden-rendering.md) include matching baseline, unchanged control, and
+candidate artifacts. Their reveal measurements are separate from E001's original latency limits.
+
 ## CPU profiling
 
 Use a fresh profile directory for each run:

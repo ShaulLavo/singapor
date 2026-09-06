@@ -381,7 +381,12 @@ export function clampStoredSelection(view: VirtualizedTextViewInternal): void {
 
 export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
   const pendingEdit = view.sameLineTokenEdit
-  if (!view.highlightRegistry || view.tokens.length === 0 || view.model.textLength === 0) {
+  if (
+    !view.highlightRegistry ||
+    view.tokens.length === 0 ||
+    view.model.textLength === 0 ||
+    view.rowElements.size === 0
+  ) {
     clearTokenHighlights(view)
     return
   }

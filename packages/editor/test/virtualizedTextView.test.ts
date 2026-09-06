@@ -68,6 +68,7 @@ describe('VirtualizedTextView', () => {
   let view: VirtualizedTextView
 
   beforeEach(() => {
+    clearBrowserTextMetricsCache()
     highlightsMap.clear()
     registrySets = 0
     registryDeletes = 0
@@ -109,6 +110,7 @@ describe('VirtualizedTextView', () => {
   })
 
   it('rejects non-monotonic prepared line starts', () => {
+    view.setScrollMetrics(0, 40)
     view.setText('before')
 
     expect(() => view.setText('alpha\nbeta', undefined, [0, 6, 3])).toThrow(
@@ -118,6 +120,115 @@ describe('VirtualizedTextView', () => {
       lineCount: 1,
       mountedRows: [{ text: 'before' }],
     })
+  })
+
+  it('releases hidden rows and token registrations without changing a sibling', () => {
+    const siblingContainer = document.createElement('div')
+    container.appendChild(siblingContainer)
+    const sibling = new VirtualizedTextView(siblingContainer, {
+      rowHeight: 20,
+      highlightRegistry: mockRegistry,
+    })
+    const text = createLines(100)
+    const tokens = [{ start: 0, end: text.length, style: { color: '#ff0000' } }]
+    try {
+      view.setText(text)
+      sibling.setText(text)
+      view.setScrollMetrics(1_000, 100, 240)
+      sibling.setScrollMetrics(0, 40, 240)
+      view.setTokens(tokens)
+      sibling.setTokens(tokens)
+      const contentWidth = view.getState().contentWidth
+      const siblingRanges = tokenHighlightRanges().filter((range) =>
+        sibling.scrollElement.contains(range.startContainer),
+      )
+      expect(siblingRanges.length).toBeGreaterThan(0)
+
+      view.setScrollMetrics(1_000, 0, 0)
+
+      expect(view.getState().mountedRows).toEqual([])
+      expect(view.getState().totalHeight).toBe(2_000)
+      expect(view.getState().contentWidth).toBe(contentWidth)
+      expect(view.scrollElement.querySelectorAll('[data-editor-virtual-row]')).toHaveLength(0)
+      expect(tokenHighlightRanges()).toEqual(siblingRanges)
+
+      view.setText(text.replace('line 50', 'Updated'))
+      view.setTokens(tokens)
+      expect(tokenHighlightRanges()).toEqual(siblingRanges)
+
+      view.setScrollMetrics(1_000, 100, 240)
+      expect(view.getState().mountedRows.some((row) => row.text === 'Updated')).toBe(true)
+      expect(tokenHighlightRanges().length).toBeGreaterThan(siblingRanges.length)
+      for (const range of siblingRanges) expect(tokenHighlightRanges()).toContain(range)
+    } finally {
+      sibling.dispose()
+    }
+  })
+
+  it('keeps an unmeasured mount empty until a visible viewport arrives', () => {
+    view.setText('ready')
+    view.setTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
+    expect(view.getState().mountedRows).toEqual([])
+    expect(tokenHighlightRanges()).toEqual([])
+
+    view.setScrollMetrics(0, 0)
+    expect(view.getState().mountedRows).toEqual([])
+    expect(tokenHighlightNames()).toEqual([])
+
+    view.setScrollMetrics(0, 40, 240)
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual(['ready'])
+    expect(tokenHighlightRanges()).toHaveLength(1)
+
+    view.setScrollMetrics(0, 0)
+    expect(tokenHighlightNames()).toEqual([])
+  })
+
+  it('wraps after reveal using the newly measured gutter width', () => {
+    view.dispose()
+    let probeVisible = false
+    const measurement = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => mockRect(0, 0, probeVisible ? 160 : 0, probeVisible ? 20 : 0))
+    view = new VirtualizedTextView(container, {
+      wrap: true,
+      rowHeight: 20,
+      gutterWidth: ({ metrics }) => metrics.characterWidth * 4,
+    })
+    try {
+      view.setText('abcdefghij'.repeat(20))
+      view.setScrollMetrics(0, 0, 0)
+      probeVisible = true
+      view.setScrollMetrics(0, 100, 100)
+      const state = view.getState()
+      expect(state.metrics.characterWidth).toBe(10)
+      expect(state.gutterWidth).toBe(40)
+      expect(state.mountedRows[0]?.text.length).toBe(6)
+    } finally {
+      measurement.mockRestore()
+    }
+  })
+
+  it('keeps the saved wrap layout when hidden content changes', () => {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      wrap: true,
+      textMetrics: { characterWidth: 8, rowHeight: 20 },
+    })
+    const text = 'abcdefghij'.repeat(100)
+    view.setText(text)
+    view.setScrollMetrics(1_000, 100, 80)
+    const height = view.getState().totalHeight
+
+    view.setScrollMetrics(1_000, 0, 0)
+    view.applyEdit(
+      { from: 500, to: 504, text: 'EDIT' },
+      `${text.slice(0, 500)}EDIT${text.slice(504)}`,
+    )
+
+    expect(view.getState().totalHeight).toBe(height)
+    expect(view.getState().scrollTop).toBe(1_000)
+    view.setScrollMetrics(1_000, 100, 80)
+    expect(view.getState().mountedRows.some((row) => row.text.includes('EDIT'))).toBe(true)
   })
 
   it('mounts all rows without vertical spacer churn in static scroll mode', () => {
@@ -175,7 +286,9 @@ describe('VirtualizedTextView', () => {
     first.className = 'editor-virtualized'
     second.className = 'editor-virtualized'
     document.body.append(first, second)
-    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue(mockRect(0, 0, 160, 24))
 
     const firstMetrics = measureBrowserTextMetrics(first)
     const callsAfterFirstMeasure = rectSpy.mock.calls.length
@@ -1084,6 +1197,7 @@ describe('VirtualizedTextView', () => {
       longLineChunkSize: 1_000,
       longLineChunkThreshold: 1_000,
       horizontalOverscanColumns: 0,
+      textMetrics: { characterWidth: 8, rowHeight: 20 },
     })
     view.setText('x'.repeat(5_000))
 
@@ -2310,6 +2424,7 @@ describe('VirtualizedTextView', () => {
 
   it('does not measure complex rows during scroll rendering', () => {
     view.setText('\u0000PNG\u0000\uFFFD\n\u4E2D\uD83D\uDE00')
+    view.setScrollMetrics(0, 20, 80)
 
     withThrowingRenderLayoutReads(view.scrollElement, () => {
       view.setScrollMetrics(0, 20, 80)
@@ -2644,6 +2759,23 @@ describe('VirtualizedTextView', () => {
       expect(idle.pending.size).toBe(0)
 
       view = new VirtualizedTextView(container, { rowHeight: 20, overscan: 2 })
+    } finally {
+      idle.restore()
+    }
+  })
+
+  it('cancels row measurements when hidden and resumes them on reveal', () => {
+    const idle = captureIdleCallbacks()
+    try {
+      view.setText('漢字テスト\nabc')
+      view.setScrollMetrics(0, 40, 240)
+      expect(idle.pending.size).toBe(1)
+
+      view.setScrollMetrics(0, 0)
+      expect(idle.pending.size).toBe(0)
+
+      view.setScrollMetrics(0, 40, 240)
+      expect(idle.pending.size).toBe(1)
     } finally {
       idle.restore()
     }

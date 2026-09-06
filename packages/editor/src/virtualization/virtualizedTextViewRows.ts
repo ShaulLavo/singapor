@@ -1674,6 +1674,8 @@ export function horizontalViewportColumns(
   view: VirtualizedTextViewInternal,
   viewportWidth = view.virtualizer.getSnapshot().viewportWidth,
 ): number {
+  if (viewportWidth === 0) return view.model.wrapColumn ?? 1
+
   const width = Math.max(0, viewportWidth - gutterWidth(view))
   return Math.max(1, Math.ceil(width / characterWidth(view)))
 }
@@ -2301,7 +2303,7 @@ export function updateContentWidth(
   const first = items[0]
   const last = items.at(-1)
   if (!first || !last) {
-    applyContentWidth(view, 0)
+    applyContentWidth(view, view.maxVisualColumnsSeen)
     return
   }
 

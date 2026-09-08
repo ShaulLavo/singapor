@@ -40,6 +40,7 @@
       "dependencies": {
         "@singapor/core": "workspace:*",
         "@singapor/find": "workspace:*",
+        "@singapor/tree-sitter": "workspace:*",
         "@singapor/tree-sitter-languages": "workspace:*",
         "evlog": "^2.19.1",
       },

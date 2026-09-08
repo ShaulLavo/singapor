@@ -11,7 +11,8 @@ By deliverable, there are **18 implementation entries, 10 research entries, and 
 Editor ownership describes where the work lands; dependencies can still include shared work.
 [Platform's roadmap](../../platform/PLAN.md) remains the execution scheduler.
 [E002](../docs/performance/input-latency.md) is complete, with a verified local latency gate.
-[E001](e001-stress-fixtures.md), [E004](e004-hidden-editor-rendering.md), and
+[E001](e001-stress-fixtures.md), [E003](../docs/performance/first-paint.md),
+[E004](e004-hidden-editor-rendering.md), and
 [E005](e005-piece-tree-inspector.md) are implemented; E001's broader calibration remains provisional.
 The remaining plans are proposed and unscheduled. The order below is a recommendation.
 

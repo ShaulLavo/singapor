@@ -27,6 +27,7 @@ export default defineConfig({
         // Geometry that only a real engine can answer: caret rects, hit tests
         // and measured advances under a CSS transform. happy-dom reports every
         // rect empty, so these assertions are meaningless anywhere else.
+        optimizeDeps: { exclude: ['web-tree-sitter'] },
         test: {
           name: 'browser',
           browser: {
@@ -42,6 +43,11 @@ export default defineConfig({
               },
               proofKeyUp: async ({ page }, key: string) => {
                 await page.keyboard.up(key)
+              },
+              proofRowScreenshot: async ({ iframe }, hostId: string) => {
+                const row = iframe.locator(`#${hostId} [data-editor-virtual-row="0"]`)
+                const image = await row.screenshot({ animations: 'disabled' })
+                return image.toString('base64')
               },
             },
             instances: [{ browser: 'chromium' }],

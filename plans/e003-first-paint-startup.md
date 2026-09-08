@@ -1,6 +1,6 @@
 # E003: Keep optional startup work off first paint
 
-- Status: Proposed
+- Status: Implemented
 - Kind: Implementation
 - Owner: Editor
 - Priority: P1
@@ -78,3 +78,26 @@ Plain-text-first can cause a visual flash; measure it against the current prepar
 ready results ready. Fonts and metrics can affect caret correctness, so separate optional language
 work from required geometry. Coordinate with existing [Plan 071](../../platform/plans/071-syntax-highlight-retry.md)
 for highlight failure recovery; do not implement an independent retry loop here.
+
+## Implementation evidence
+
+- Behavior and ownership: [file-open first paint](../docs/performance/first-paint.md).
+- Reproducible built-package runner: [E003 matrix](../examples/stress/README.md#first-text-and-highlighted-paint).
+- Matched baseline, unchanged control, candidate, and diagnostic records:
+  [measured results](../examples/stress/results/first-paint/README.md).
+- Real-browser delayed grammar, typing, failure, disposal, replacement, and theme checks:
+  [first-paint contracts](../packages/editor/test/firstPaint.browser.test.ts).
+
+The measured blocker was synchronous fallback-fold scanning during unprepared attachment.
+It now uses the existing secondary-work queue; explicit fold commands flush it immediately.
+Prepared folds retain their atomic first-render adoption. No new preload path or retry loop was added.
+
+On the 500,000-line plain-text fixture, median cold attachment fell from 120.5 ms to 84.3 ms.
+The screenshot-completion upper bound for visible text fell from 230.2 ms to 188.2 ms.
+The unchanged control measured 117.2 ms and 219.1 ms respectively. Warm and prepared results,
+measurement variability, and the worker-disposal fence are recorded with the raw samples.
+
+Core builds, typecheck, lint, prepared-document contracts, focused fold tests, and four new browser
+checks pass. The existing example also passes a built-output rendering and trusted-input check.
+Platform's 11 visible-snapshot browser checks pass against the linked package. Public paint-event
+phases and generation fields retain their meaning; optional fallback markers can now follow text.

@@ -20,7 +20,7 @@ async function visibleRow(page, row) {
   return locator
 }
 
-async function paintEvidence(page, locator, highlighted = false) {
+export async function paintEvidence(page, locator, highlighted = false) {
   await expect(locator).toBeInViewport()
   const box = await locator.boundingBox()
   if (!box || box.width < 1 || box.height < 1) fail('No visible text geometry')

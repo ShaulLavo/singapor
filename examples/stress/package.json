@@ -5,7 +5,9 @@
   "scripts": {
     "bench": "node run.mjs",
     "bench:hidden": "node hidden.mjs",
+    "bench:first-paint": "node first-paint.mjs",
     "fixtures": "node fixtures.mjs",
+    "first-paint:proof": "node test/verify-first-paint.mjs results/first-paint",
     "compare": "node compare.mjs",
     "profile:summary": "node profile-summary.mjs",
     "profile:input": "node profile-input-layout.mjs",
@@ -22,6 +24,7 @@
   "dependencies": {
     "@singapor/core": "workspace:*",
     "@singapor/find": "workspace:*",
+    "@singapor/tree-sitter": "workspace:*",
     "@singapor/tree-sitter-languages": "workspace:*",
     "evlog": "^2.19.1"
   },

@@ -3,7 +3,8 @@ import {
   createFoldGutterContribution,
   createLineGutterContribution,
 } from '../../gutters/src/index.ts'
-import { Editor } from '../src/editor'
+import type { Editor } from '../src/editor'
+import { createVisibleEditor } from './factories/visibleEditor'
 import type { EditorLogEvent, EditorPlugin } from '../src/plugins'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import type { FoldRange } from '../src/syntax'
@@ -147,7 +148,7 @@ describe('fold operations', () => {
     logEvents = []
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = new Editor(container, {
+    editor = createVisibleEditor(container, {
       plugins: [lineGutterPlugin(), foldGutterPlugin(), logCollectorPlugin(logEvents)],
     })
     editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text: TEXT })

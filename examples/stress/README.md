@@ -113,6 +113,43 @@ Useful options: `--repetitions 3`, `--warmups 1`, `--seed 60061`, `--fixtures or
 Scenario failures write a structured event with fixture, state, observation, and error. A failed
 or interrupted run does not replace the requested result file.
 
+## First text and highlighted paint
+
+Build the public packages, then run the E003 open matrix:
+
+```sh
+bun run stress:build
+bun run --cwd examples/stress bench:first-paint --output /work/tmp/editor-e003/before.json
+```
+
+The runner opens the E001 ordinary and 500,000-line fixtures, with and without the real
+TypeScript plugin, directly and through ready prepared documents. Each configuration has fresh
+browser contexts for cold samples and one unrecorded open before warm samples. Prepared stages
+use the existing one-shot transfer contract and an initial 4,096-character query. Preparation
+includes the whole-document worker parse and is reported separately from the prepared open.
+
+Buffer creation, constructor, attachment, and public paint callbacks have separate durations.
+Visible text and highlighted text require screenshot pixels and remain screenshot-completion
+upper bounds. Callback timestamps do not prove paint. Prepared opens may already have highlighted
+pixels in the first text screenshot. The matrix uses a fixed four-space tab policy in both paths.
+Asset request/response times use a runner wall-clock origin; browser durations use performance.now.
+The artifact retains both clocks without treating them as interchangeable.
+
+Use `--core-directory /work/tmp/editor-e003-baseline` for a preserved core package containing
+matching `src`, `dist`, and `package.json`. Dependencies must remain resolvable from that directory.
+Record baseline, unchanged control, and candidate with the same options. `--diagnostics` adds
+the existing opt-in sink plus language asset, worker registration, parse, and range-query phases;
+diagnostic timings are a separate configuration. `--repetitions 1 --fixtures ordinary` provides
+a short smoke run. `--plugins none` and `--modes direct` select narrower investigations.
+
+The entry is a Vite production build loaded through Playwright routing, with no server. Every
+sample checks the full document, initial revision, authoritative paint events, screenshot ink,
+and release of document/view objects after the worker's idle fence acknowledges disposal. It
+also records retention immediately before that fence, when disposal RPCs may still be pending.
+The final artifact records fixture hashes, browser and
+hardware, source identity, asset requests, logs, diagnostics, and raw timing samples. It rejects
+source changes during a run and writes the output only after every sample succeeds.
+
 ## Hidden retained views
 
 Build the public packages, then run the focused E004 measurement:

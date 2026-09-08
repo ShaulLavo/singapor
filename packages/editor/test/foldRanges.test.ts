@@ -3,7 +3,9 @@ import {
   createFoldGutterContribution,
   createLineGutterContribution,
 } from '../../gutters/src/index.ts'
-import type { Editor } from '../src/editor'
+import { detectPlatform } from '@tanstack/hotkeys'
+import type { Editor, EditorOptions } from '../src/editor'
+import type { EditorPerformanceDiagnostic } from '../src/editor/performanceDiagnostics'
 import { createVisibleEditor } from './factories/visibleEditor'
 import type { EditorPlugin, EditorViewSnapshot } from '../src/plugins'
 import {
@@ -125,11 +127,19 @@ function typeCharacter(data: string): void {
   )
 }
 
+function recordFallbackScans(): EditorPerformanceDiagnostic[] {
+  const scans: EditorPerformanceDiagnostic[] = []
+  vi.stubGlobal('__EDITOR_PERFORMANCE_DIAGNOSTICS__', (event: EditorPerformanceDiagnostic) => {
+    if (event.name === 'editor.fallbackFoldRanges') scans.push(event)
+  })
+  return scans
+}
+
 describe('fold ranges without a grammar', () => {
   let container: HTMLElement
   let editor: Editor
 
-  function mount(options: { readonly tabSize?: number } = {}): void {
+  function mount(options: EditorOptions = {}): void {
     container = document.createElement('div')
     document.body.appendChild(container)
     editor = createVisibleEditor(container, {
@@ -138,8 +148,8 @@ describe('fold ranges without a grammar', () => {
     })
   }
 
-  /** The tab width is fixed at construction, so a test that picks one needs its own editor. */
-  function remount(options: { readonly tabSize: number }): void {
+  /** Constructor options require replacing the editor that beforeEach mounted. */
+  function remount(options: EditorOptions): void {
     editor.dispose()
     container.remove()
     mount(options)
@@ -159,6 +169,8 @@ describe('fold ranges without a grammar', () => {
     container.remove()
     setHighlightRegistry(undefined)
     setEditorSyntaxSessionFactory(undefined)
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   it.each(['supported', 'pending'] as const)(
@@ -244,21 +256,21 @@ describe('fold ranges without a grammar', () => {
     editor.openDocument({ documentId: 'config.js', languageId: 'javascript', text: INDENTED_TEXT })
     expect(foldKeys()).toEqual([])
     await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('error'))
-    expect(foldKeys()).toHaveLength(1)
+    await vi.waitFor(() => expect(foldKeys()).toHaveLength(1))
   })
 
   it('keeps indentation folding when the syntax provider has no folding support', async () => {
     setEditorSyntaxSessionFactory(() => createEmptySyntaxSession())
     editor.openDocument({ documentId: 'config.js', languageId: 'javascript', text: INDENTED_TEXT })
-    expect(foldKeys()).toHaveLength(1)
+    expect(foldKeys()).toHaveLength(0)
     await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
-    expect(foldKeys()).toHaveLength(1)
+    await vi.waitFor(() => expect(foldKeys()).toHaveLength(1))
   })
 
-  it('folds a document no grammar can describe by its indentation', () => {
+  it('folds a document no grammar can describe by its indentation', async () => {
     editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
 
-    expect(foldStates()).toEqual(['expanded'])
+    await vi.waitFor(() => expect(foldStates()).toEqual(['expanded']))
     clickFoldToggle()
 
     expect(visibleText()).toContain('def outer():')
@@ -271,43 +283,54 @@ describe('fold ranges without a grammar', () => {
   // blank line separates blocks and whose regions may be marked in any comment syntax at all.
   it.each(FOLDING_RULE_SHAPES)(
     'reads $languageId by its own blank-line rule and comment syntax',
-    ({ languageId, comment, offSide }) => {
+    async ({ languageId, comment, offSide }) => {
       editor.openDocument({ documentId: `blank.${languageId}`, languageId, text: INDENTED_TEXT })
       const bodyEnd = offSide ? BODY_END : BODY_END + 1
-      expect(foldKeys()).toEqual([`${languageId}:indent:${HEADER_END}:${bodyEnd}`])
+      await vi.waitFor(() =>
+        expect(foldKeys()).toEqual([`${languageId}:indent:${HEADER_END}:${bodyEnd}`]),
+      )
 
       const own = markedText(comment)
       editor.openDocument({ documentId: `own.${languageId}`, languageId, text: own })
-      expect(foldKeys()).toEqual([
-        `${languageId}:region:${own.indexOf('\nimport a')}:${own.indexOf('\nmain()')}`,
-      ])
+      await vi.waitFor(() =>
+        expect(foldKeys()).toEqual([
+          `${languageId}:region:${own.indexOf('\nimport a')}:${own.indexOf('\nmain()')}`,
+        ]),
+      )
 
       const other = markedText(otherComment(comment))
       editor.openDocument({ documentId: `other.${languageId}`, languageId, text: other })
+      expect(editor.foldAll()).toBe(false)
       expect(foldKeys()).toEqual([])
     },
   )
 
   // Refusing a marker because we cannot name the language would mark nothing in an unnamed file at
   // all, and a document with no grammar is indistinguishable from prose.
-  it('reads a document with no language off-side, after any comment opener', () => {
+  it('reads a document with no language off-side, after any comment opener', async () => {
     editor.openDocument({ documentId: 'notes', text: INDENTED_TEXT })
-    expect(foldKeys()).toEqual([`plain:indent:${HEADER_END}:${BODY_END}`])
+    await vi.waitFor(() => expect(foldKeys()).toEqual([`plain:indent:${HEADER_END}:${BODY_END}`]))
 
     const marked = markedText('--')
     editor.openDocument({ documentId: 'marked', text: marked })
 
-    expect(foldKeys()).toEqual([
-      `plain:region:${marked.indexOf('\nimport a')}:${marked.indexOf('\nmain()')}`,
-    ])
+    await vi.waitFor(() =>
+      expect(foldKeys()).toEqual([
+        `plain:region:${marked.indexOf('\nimport a')}:${marked.indexOf('\nmain()')}`,
+      ]),
+    )
   })
 
-  it('measures a tab in the columns it stands for before comparing indentation', () => {
+  it('measures a tab in the columns it stands for before comparing indentation', async () => {
     remount({ tabSize: 2 })
     editor.openDocument({ documentId: 'main.py', languageId: 'python', text: TAB_TEXT })
 
     // One region, not two: the space-indented row is beside the tab-indented one, not inside it.
-    expect(foldKeys()).toEqual([`python:indent:${TAB_TEXT.indexOf('\n\tone')}:${TAB_TEXT.length}`])
+    await vi.waitFor(() =>
+      expect(foldKeys()).toEqual([
+        `python:indent:${TAB_TEXT.indexOf('\n\tone')}:${TAB_TEXT.length}`,
+      ]),
+    )
     clickFoldToggle()
 
     expect(visibleText()).toContain('head:')
@@ -315,13 +338,15 @@ describe('fold ranges without a grammar', () => {
     expect(visibleText()).not.toContain('two')
   })
 
-  it('folds an explicit region its lines share one indentation with', () => {
+  it('folds an explicit region its lines share one indentation with', async () => {
     const text = markedText('#')
     editor.openDocument({ documentId: 'main.py', languageId: 'python', text })
 
-    expect(foldKeys()).toEqual([
-      `python:region:${text.indexOf('\nimport a')}:${text.indexOf('\nmain()')}`,
-    ])
+    await vi.waitFor(() =>
+      expect(foldKeys()).toEqual([
+        `python:region:${text.indexOf('\nimport a')}:${text.indexOf('\nmain()')}`,
+      ]),
+    )
     clickFoldToggle()
 
     expect(visibleText()).toContain('# region imports')
@@ -343,15 +368,14 @@ describe('fold ranges without a grammar', () => {
     // region appears on the frame after it rather than inside it.
     expect(foldToggles()).toHaveLength(0)
 
-    await new Promise((resolve) => setTimeout(resolve, 200))
-
-    expect(foldStates()).toEqual(['expanded'])
+    await vi.waitFor(() => expect(foldStates()).toEqual(['expanded']))
     clickFoldToggle()
     expect(visibleText()).not.toContain('pass')
   })
 
-  it('keeps a region collapsed when the grammar takes over the rows it described', () => {
+  it('keeps a region collapsed when the grammar takes over the rows it described', async () => {
     editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+    await vi.waitFor(() => expect(foldStates()).toEqual(['expanded']))
     clickFoldToggle()
     expect(foldStates()).toEqual(['collapsed'])
 
@@ -371,9 +395,9 @@ describe('fold ranges without a grammar', () => {
     expect(visibleText()).not.toContain('second()')
   })
 
-  it('keeps folding a language whose grammar describes no folds at all', () => {
+  it('keeps folding a language whose grammar describes no folds at all', async () => {
     editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
-    expect(foldKeys()).toHaveLength(1)
+    await vi.waitFor(() => expect(foldKeys()).toHaveLength(1))
 
     // Fold queries ship per language. A grammar that parses but was never asked
     // for folds has not answered none of them, and the file still folds.
@@ -382,5 +406,163 @@ describe('fold ranges without a grammar', () => {
     expect(foldKeys()).toHaveLength(1)
     clickFoldToggle()
     expect(visibleText()).not.toContain('second()')
+  })
+
+  it('publishes usable text before scanning fallback folds, then publishes its markers', async () => {
+    vi.useFakeTimers()
+    const scans = recordFallbackScans()
+    const paintedText: string[] = []
+    const layouts: number[] = []
+    remount({
+      onInitialPaint: (event) => {
+        if (event.phase !== 'text') return
+        expect(scans).toHaveLength(0)
+        expect(foldKeys()).toEqual([])
+        paintedText.push(visibleText())
+      },
+    })
+    editor.addPlugin({
+      activate: (context) =>
+        context.registerViewContribution({
+          createContribution: () => ({
+            update: (snapshot, kind) => {
+              if (kind === 'layout') layouts.push(snapshot.foldMarkers.length)
+            },
+            dispose() {},
+          }),
+        }),
+    })
+    scans.length = 0
+    editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+
+    expect(paintedText).toHaveLength(1)
+    expect(paintedText[0]).toContain('def outer():')
+    expect(editor.materializeFullText()).toBe(INDENTED_TEXT)
+    expect(scans).toHaveLength(0)
+
+    await vi.runAllTimersAsync()
+
+    expect(scans).toHaveLength(1)
+    expect(foldKeys()).toEqual([`python:indent:${HEADER_END}:${BODY_END}`])
+    expect(layouts).toContain(1)
+  })
+
+  it('scans the edited document when typing precedes fallback readiness', async () => {
+    vi.useFakeTimers()
+    editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+    editor.setSelection(0)
+    typeCharacter('prefix\n')
+
+    expect(foldKeys()).toEqual([])
+    expect(editor.materializeFullText()).toBe(`prefix\n${INDENTED_TEXT}`)
+
+    await vi.runAllTimersAsync()
+
+    expect(foldKeys()).toEqual([`python:indent:${HEADER_END + 7}:${BODY_END + 7}`])
+    expect(editor.fold(HEADER_END + 7)).toBe(true)
+    expect(visibleText()).toContain('prefix')
+    expect(visibleText()).not.toContain('second()')
+  })
+
+  it('drops outgoing markers and scans only the newest replacement', async () => {
+    vi.useFakeTimers()
+    editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+    await vi.runAllTimersAsync()
+    expect(foldKeys()).toHaveLength(1)
+    const scans = recordFallbackScans()
+
+    editor.openDocument({ documentId: 'pending.py', languageId: 'python', text: INDENTED_TEXT })
+    expect(foldKeys()).toEqual([])
+    const replacement = 'new root\n  one\n  two\ndone'
+    editor.openDocument({ documentId: 'new.py', languageId: 'python', text: replacement })
+    expect(foldKeys()).toEqual([])
+
+    await vi.runAllTimersAsync()
+
+    expect(scans).toHaveLength(1)
+    expect(editor.materializeFullText()).toBe(replacement)
+    expect(foldKeys()).toEqual([
+      `python:indent:${replacement.indexOf('\n')}:${replacement.indexOf('\ndone')}`,
+    ])
+  })
+
+  it.each(['clear', 'dispose'] as const)(
+    'does not scan abandoned startup folds after %s',
+    async (action) => {
+      vi.useFakeTimers()
+      const scans = recordFallbackScans()
+      editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+      editor[action]()
+      scans.length = 0
+
+      await vi.runAllTimersAsync()
+
+      expect(scans).toHaveLength(0)
+      expect(foldKeys()).toEqual([])
+      expect(visibleText()).not.toContain('second()')
+    },
+  )
+
+  it.each(['fold', 'toggleFold', 'foldAll'] as const)(
+    'honors an immediate public %s request and keeps the deferred task from repeating it',
+    async (action) => {
+      vi.useFakeTimers()
+      const scans = recordFallbackScans()
+      editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+      editor.setSelection(HEADER_END)
+      expect(foldKeys()).toEqual([])
+      expect(editor[action]()).toBe(true)
+      expect(foldStates()).toEqual(['collapsed'])
+
+      await vi.runAllTimersAsync()
+
+      expect(scans).toHaveLength(1)
+      expect(foldStates()).toEqual(['collapsed'])
+      expect(visibleText()).not.toContain('second()')
+    },
+  )
+
+  it('honors the keyboard fold chord before fallback readiness', async () => {
+    vi.useFakeTimers()
+    editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+    editor.setSelection(HEADER_END)
+    const mac = detectPlatform() === 'mac'
+    for (const key of ['k', '[']) {
+      editorRoot().dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key,
+          ctrlKey: !mac,
+          metaKey: mac,
+        }),
+      )
+    }
+
+    expect(foldStates()).toEqual(['collapsed'])
+    await vi.runAllTimersAsync()
+    expect(visibleText()).not.toContain('second()')
+  })
+
+  it('publishes newly available markers when an immediate unfold changes no folds', () => {
+    const layouts: number[] = []
+    editor.addPlugin({
+      activate: (context) =>
+        context.registerViewContribution({
+          createContribution: () => ({
+            update: (snapshot, kind) => {
+              if (kind === 'layout') layouts.push(snapshot.foldMarkers.length)
+            },
+            dispose() {},
+          }),
+        }),
+    })
+    editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+    editor.setSelection(HEADER_END)
+    layouts.length = 0
+
+    expect(editor.unfold()).toBe(false)
+    expect(foldStates()).toEqual(['expanded'])
+    expect(layouts).toEqual([1])
   })
 })

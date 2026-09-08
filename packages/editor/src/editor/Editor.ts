@@ -876,6 +876,7 @@ export class Editor {
   foldAll(): boolean {
     if (!this.session) return false
 
+    this.flushFallbackFoldProjection()
     const changed = this.foldState.foldAll()
     if (changed) {
       this.announcer.status(`Folded all, ${this.foldState.collapsedFoldCount} regions collapsed`)
@@ -1397,6 +1398,7 @@ export class Editor {
   }
 
   detachSession(): void {
+    this.secondaryWork.cancel('editor.fallbackFolds')
     this.disposeBufferSubscriptions()
     this.document.detachSession()
     this.inputSelection.clearSelectionHighlight()
@@ -1536,6 +1538,7 @@ export class Editor {
   }
 
   private installPreparedFallbackFolds(folds: readonly FoldRange[]): void {
+    this.secondaryWork.cancel('editor.fallbackFolds')
     this.grammarDescribedFolds = false
     this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
     this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
@@ -2185,15 +2188,18 @@ export class Editor {
   }
 
   private syncFoldStateFromProjections(): void {
+    this.secondaryWork.cancel('editor.fallbackFolds')
     this.syncFallbackFoldProjection()
     this.foldState.setFoldProjections(this.foldProjections())
   }
 
-  /**
-   * The indentation walk reads the whole document, which is not a cost a keystroke can carry, and
-   * the rows it describes are wanted by the next frame rather than by the edit. So an edit adopts
-   * whatever parsed folds it has synchronously and lets the walk catch up.
-   */
+  private flushFallbackFoldProjection(): void {
+    if (!this.secondaryWork.has('editor.fallbackFolds')) return
+
+    this.refreshFallbackFolds()
+  }
+
+  // Whole-document indentation scanning can wait after text adoption. Explicit fold commands flush it.
   private scheduleFallbackFoldProjection(): void {
     const documentVersion = this.documentVersion
     this.foldState.setFoldProjections(this.foldProjections())
@@ -2203,10 +2209,13 @@ export class Editor {
       maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
       version: documentVersion,
       isCurrent: (version) => this.isCurrentSecondaryDocument(version),
-      run: traceEditorPerformanceTask('editor.secondary.folds', () =>
-        this.runInOperation(() => this.syncFoldStateFromProjections()),
-      ),
+      run: traceEditorPerformanceTask('editor.secondary.folds', () => this.refreshFallbackFolds()),
     })
+  }
+
+  private refreshFallbackFolds(): void {
+    this.runInOperation(() => this.syncFoldStateFromProjections())
+    this.notifyViewContributions('layout', null)
   }
 
   /** Indentation owns folds only when structural folding is unavailable, never while it loads. */
@@ -3474,6 +3483,7 @@ export class Editor {
   }
 
   private applyFoldCommand(command: EditorFoldCommandId): boolean {
+    this.flushFallbackFoldProjection()
     if (command === 'editor.foldAll') return this.foldAll()
     if (command === 'editor.unfoldAll') return this.unfoldAll()
     if (command === 'editor.createFoldingRangeFromSelection') return this.createManualFolds()
@@ -3673,6 +3683,7 @@ export class Editor {
   }
 
   private applyFoldOperation(operation: FoldOperation, offset?: number): boolean {
+    this.flushFallbackFoldProjection()
     const location = this.foldLocation(offset)
     if (!location) return false
 
@@ -3729,8 +3740,14 @@ export class Editor {
   private clearSyntaxFolds(): void {
     this.grammarDescribedFolds = false
     this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
+    this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
     this.foldState.clear()
-    this.syncFoldStateFromProjections()
+    if (!this.session || !this.syntax.usesFallbackFolds) {
+      this.syncFoldStateFromProjections()
+      return
+    }
+
+    this.scheduleFallbackFoldProjection()
   }
 
   private applyResolvedTheme(): void {

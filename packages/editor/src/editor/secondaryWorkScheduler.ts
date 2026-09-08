@@ -60,6 +60,10 @@ export class EditorSecondaryWorkScheduler {
     scheduled.cancel()
   }
 
+  has(key: string): boolean {
+    return this.scheduled.has(key)
+  }
+
   dispose(): void {
     if (this.disposed) return
 

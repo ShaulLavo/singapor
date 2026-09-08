@@ -1,30 +1,31 @@
 {
-	"name": "editor-workspace",
-	"private": true,
-	"packageManager": "bun@1.3.14",
-	"workspaces": [
-		"packages/*",
-		"examples/*"
-	],
-	"scripts": {
-		"dev": "turbo dev",
-		"build": "turbo build",
-		"typecheck": "turbo typecheck",
-		"lint": "turbo lint",
-		"format": "turbo format",
-		"format:check": "turbo format:check",
-		"health": "bun scripts/architecture-health.mjs",
-		"health:write": "bun scripts/architecture-health.mjs --write",
-		"publish:packages": "bun scripts/publish-packages.ts",
-		"publish:packages:dry-run": "bun scripts/publish-packages.ts --dry-run",
-		"test": "turbo test",
-		"stress:build": "turbo build --filter=@singapor/core --filter=@singapor/find --filter=@singapor/tree-sitter-languages",
-		"bench:stress": "bun run stress:build && bun run --cwd examples/stress bench"
-	},
-	"devDependencies": {
-		"knip": "^6.16.1",
-		"turbo": "^2.9.18",
-		"typescript": "~6.0.3",
-		"vite": "8.0.16"
-	}
+  "name": "editor-workspace",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "lint": "turbo lint",
+    "format": "turbo format",
+    "format:check": "turbo format:check",
+    "health": "bun scripts/architecture-health.mjs",
+    "health:write": "bun scripts/architecture-health.mjs --write",
+    "publish:packages": "bun scripts/publish-packages.ts",
+    "publish:packages:dry-run": "bun scripts/publish-packages.ts --dry-run",
+    "test": "turbo test",
+    "stress:build": "turbo build --filter=@singapor/core --filter=@singapor/find --filter=@singapor/tree-sitter-languages",
+    "bench:stress": "bun run stress:build && bun run --cwd examples/stress bench",
+    "bench:input": "bun run stress:build && bun run --cwd examples/stress bench:input"
+  },
+  "devDependencies": {
+    "knip": "^6.16.1",
+    "turbo": "^2.9.18",
+    "typescript": "~6.0.3",
+    "vite": "8.0.16"
+  },
+  "packageManager": "bun@1.3.14"
 }

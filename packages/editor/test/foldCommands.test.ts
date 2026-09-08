@@ -4,7 +4,8 @@ import {
   createFoldGutterContribution,
   createLineGutterContribution,
 } from '../../gutters/src/index.ts'
-import { Editor } from '../src/editor'
+import type { Editor } from '../src/editor'
+import { createVisibleEditor } from './factories/visibleEditor'
 import { EDITOR_FOLD_LEVELS, type EditorCommandId } from '../src/editor/commands'
 import { foldNesting, isEditorFoldCommand } from '../src/editor/foldOperations'
 import {
@@ -160,6 +161,7 @@ function createFoldSyntaxSession(folds: readonly FoldRange[]): EditorSyntaxSessi
     applyChange: async () => result(),
     getResult: () => result(),
     getTokens: () => [],
+    foldingSupport: 'supported',
     getSnapshotVersion: () => 0,
     dispose: () => undefined,
   }
@@ -288,7 +290,7 @@ describe('fold commands', () => {
     resetEditorInstanceCount()
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = new Editor(container, {
+    editor = createVisibleEditor(container, {
       plugins: [lineGutterPlugin(), foldGutterPlugin()],
     })
   })
@@ -476,9 +478,9 @@ describe('fold commands', () => {
     expect(visibleText()).not.toContain('}')
   })
 
-  it('lets projected syntax folds displace a live indentation fallback', async () => {
+  it('lets projected syntax folds replace an authoritative empty result', async () => {
     await open(CROSSING_TEXT, [])
-    expect(visibleFoldToggles()).toHaveLength(1)
+    expect(visibleFoldToggles()).toHaveLength(0)
 
     editor['applySyntaxFoldProjection']([blockFold(CROSSING_TEXT, 2, 4)])
 

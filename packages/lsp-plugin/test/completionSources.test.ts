@@ -212,6 +212,7 @@ async function connectedEditor(options: {
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: () => snapshot,
+    requestViewUpdate: vi.fn(),
     getFeature: ((token: unknown) =>
       features.get(token) ?? null) as EditorViewContributionContext['getFeature'],
     getProviders: channel.getProviders,

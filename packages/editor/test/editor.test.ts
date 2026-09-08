@@ -102,6 +102,7 @@ function createMockSyntaxSession(
     applyChange: async () => createSyntaxResult(),
     getResult: () => createSyntaxResult(),
     getTokens: () => [],
+    foldingSupport: 'supported',
     getSnapshotVersion: () => 0,
     dispose: () => undefined,
     ...overrides,
@@ -5897,6 +5898,46 @@ describe('Editor', () => {
       )
       expect(warmedTile).toBeDefined()
       expect(ranges).not.toContainEqual({ startIndex: 0, endIndex: 120_000 })
+    })
+
+    it('keeps fold paint pending when the viewport moves before its first structural result', async () => {
+      const events: ViewContributionEvent[] = []
+      const pending: { range: EditorSyntaxRange; result: Deferred<EditorSyntaxResult> }[] = []
+      editor.dispose()
+      editor = createVisibleEditor(container, { plugins: [createViewContributionPlugin(events)] })
+      setEditorSyntaxSessionFactory(() =>
+        createMockSyntaxSession({
+          refresh: async () => createSyntaxResult([]),
+          queryRange: (range) => {
+            const result = createDeferred<EditorSyntaxResult>()
+            pending.push({ range, result })
+            return result.promise
+          },
+        }),
+      )
+      const text = Array.from(
+        { length: 60_000 },
+        (_, index) => `const line${index} = ${index};`,
+      ).join('\n')
+      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      await vi.waitFor(() => expect(pending).toHaveLength(1))
+      editor.setScrollPosition({ top: 900_000, left: 0 })
+      const firstRange = pending[0]!
+      events.length = 0
+      firstRange.result.resolve(createSyntaxResult([]))
+      await vi.waitFor(() => expect(pending.length).toBeGreaterThan(1))
+      expect(events.at(-1)?.snapshot?.syntaxStatus).toBe('loading')
+      expect(events.at(-1)?.snapshot?.paintLayers).toBeNull()
+      expect(
+        events.some((event) =>
+          event.snapshot?.foldMarkers.some((marker) => marker.key.includes(':indent:')),
+        ),
+      ).toBe(false)
+      const currentRange = pending.find((entry) => entry.range.startIndex > 800_000)!
+      expect(currentRange).toBeDefined()
+      currentRange.result.resolve(createSyntaxResult([]))
+      await vi.waitFor(() => expect(events.at(-1)?.snapshot?.syntaxStatus).toBe('ready'))
+      expect(events.at(-1)?.snapshot?.paintLayers).toEqual([])
     })
 
     it('keeps visible syntax folds when offscreen range warming finishes', async () => {

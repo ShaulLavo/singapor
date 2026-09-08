@@ -679,6 +679,7 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
     scrollElement,
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
+    requestViewUpdate: vi.fn(),
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
     focusEditor: vi.fn(),
@@ -697,6 +698,8 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
     fullText: '',
     textVersion: 1,
     initialHighlightStatus: 'painted',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],

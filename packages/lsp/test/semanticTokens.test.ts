@@ -11,6 +11,17 @@ const semanticTokensOf = (capabilities: ReturnType<typeof semanticTokensClientCa
   capabilities.textDocument?.semanticTokens
 
 describe('defaultClientCapabilities', () => {
+  it('requests definition links with the server-provided source range', () => {
+    expect(defaultClientCapabilities().textDocument?.definition?.linkSupport).toBe(true)
+  })
+
+  it('prefers Markdown hover content so servers preserve syntax-highlightable code fences', () => {
+    expect(defaultClientCapabilities().textDocument?.hover?.contentFormat).toEqual([
+      'markdown',
+      'plaintext',
+    ])
+  })
+
   /**
    * The absence is the design, not an oversight. A client that declares semantic tokens commits
    * every server it speaks to to computing them, and the content of the block is the host's — one

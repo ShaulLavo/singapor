@@ -945,6 +945,210 @@ describe('VirtualizedTextView', () => {
     expect(view.getState().mountedRows[0]!.chunks[0]!.localStart).toBeGreaterThan(chunkLocalStart)
   })
 
+  it('patches same-window chunks without replacing their spans, text nodes, or unchanged paint', () => {
+    mountLongLineView()
+    const original = 'x'.repeat(20_000)
+    view.setScrollMetrics(0, 20, 2_500 * view.getState().metrics.characterWidth)
+    const before = view.getState().mountedRows[0]!.chunks.map((chunk) => ({
+      chunk,
+      nodes: [...chunk.element!.childNodes],
+      paint: chunk.mountedPaint,
+    }))
+    expect(before).toHaveLength(3)
+    const next = `${original.slice(0, 49)}Q\t${original.slice(49)}`
+
+    view.applyEdit({ from: 49, to: 49, text: 'Q\t' }, next)
+
+    const row = view.getState().mountedRows[0]!
+    for (const [index, chunk] of row.chunks.entries()) {
+      expect(chunk).toBe(before[index]!.chunk)
+      const nodes = [...chunk.element!.childNodes]
+      expect(nodes).toHaveLength(before[index]!.nodes.length)
+      expect(nodes.every((node, nodeIndex) => node === before[index]!.nodes[nodeIndex])).toBe(true)
+      expect(chunk.element!.textContent).toBe(next.slice(chunk.localStart, chunk.localEnd))
+      expect(chunk.element!.dataset.editorVirtualChunkStart).toBe(String(chunk.localStart))
+      expect(chunk.element!.dataset.editorVirtualChunkEnd).toBe(String(chunk.localEnd))
+      expect(Math.max(...chunk.parts.map((part) => part.localEnd - part.localStart))).toBe(50)
+    }
+    expect(row.element.dataset.editorVirtualWindowStart).toBe('0')
+    expect(row.element.dataset.editorVirtualWindowEnd).toBe('3000')
+    expect(row.chunks[1]!.mountedPaint).toBe(before[1]!.paint)
+    expect(row.chunks[2]!.mountedPaint).toBe(before[2]!.paint)
+    const oldPaint = before[0]!.paint
+    const newPaint = row.chunks[0]!.mountedPaint
+    expect(oldPaint.kind).toBe('replayable')
+    expect(newPaint.kind).toBe('replayable')
+    if (oldPaint.kind !== 'replayable' || newPaint.kind !== 'replayable') return
+    expect(oldPaint.parts.map((part) => part.text).join('')).toBe('x'.repeat(1_000))
+    expect(newPaint.parts.map((part) => part.text).join('')).toBe(next.slice(0, 1_000))
+    expect(newPaint.parts[2]).toBe(oldPaint.parts[2])
+    const caret = view.createRange(53, 53)!
+    expect(caret.startContainer).toBe(before[0]!.nodes[1])
+    expect(caret.startOffset).toBe(3)
+    expect(view.textOffsetFromDomBoundary(caret.startContainer, 3)).toBe(53)
+  })
+
+  it('retains a chunk span when inserted Unicode and controls need different text parts', () => {
+    mountLongLineView()
+    view.setScrollMetrics(0, 20, 80)
+    const chunk = view.getState().mountedRows[0]!.chunks[0]!
+    const element = chunk.element
+    const originalPaint = chunk.mountedPaint
+    const inserted = '😀e\u0301\u0000\u0085'
+    const next = `${'x'.repeat(49)}${inserted}${'x'.repeat(19_951)}`
+
+    view.applyEdit({ from: 49, to: 49, text: inserted }, next)
+
+    const changed = view.getState().mountedRows[0]!.chunks[0]!
+    expect(changed.element).toBe(element)
+    expect(changed.text).toBe(next.slice(0, 1_000))
+    expect(changed.element!.textContent).toContain('😀e\u0301␀[U+0085]')
+    expect(
+      changed.parts.some((part) => part.kind === 'text' && part.node.data.includes('😀e\u0301')),
+    ).toBe(true)
+    expect(changed.parts.some((part) => part.kind === 'control')).toBe(true)
+    expect(originalPaint.kind).toBe('replayable')
+    if (originalPaint.kind === 'replayable') {
+      expect(originalPaint.parts.map((part) => part.text).join('')).toBe('x'.repeat(1_000))
+    }
+
+    view.applyEdit({ from: 49, to: 49 + inserted.length, text: '' }, 'x'.repeat(20_000))
+
+    const restored = view.getState().mountedRows[0]!.chunks[0]!
+    expect(restored.element).toBe(element)
+    expect(restored.element!.textContent).toBe('x'.repeat(1_000))
+    expect(restored.parts.every((part) => part.kind === 'text')).toBe(true)
+    expect(Math.max(...restored.parts.map((part) => part.localEnd - part.localStart))).toBe(50)
+  })
+
+  it('keeps same-window DOM and projected highlights through repeated cross-part edits', () => {
+    mountLongLineView()
+    let text = 'abcdefghij'.repeat(2_000)
+    let tokens: readonly EditorToken[] = [{ start: 45, end: 1_100, style: { color: '#ff0000' } }]
+    view.setText(text)
+    view.setScrollMetrics(0, 20, 2_500 * view.getState().metrics.characterWidth)
+    view.adoptTokens(tokens)
+    const chunks = view.getState().mountedRows[0]!.chunks
+    const nodes = chunks.flatMap((chunk) => [...chunk.element!.childNodes])
+
+    for (const edit of [
+      { from: 49, to: 49, text: 'Q'.repeat(100) },
+      { from: 47, to: 1_080, text: 'AB\t' },
+      { from: 998, to: 1_003, text: '<>'.repeat(34) },
+    ]) {
+      const next = `${text.slice(0, edit.from)}${edit.text}${text.slice(edit.to)}`
+      view.applyEdit(edit, next)
+      tokens = projectTokensThroughEdit(tokens, edit, text)
+      view.adoptTokens(tokens)
+      text = next
+      const row = view.getState().mountedRows[0]!
+      expect(row.chunks).toBe(chunks)
+      const currentNodes = row.chunks.flatMap((chunk) => [...chunk.element!.childNodes])
+      expect(currentNodes).toHaveLength(nodes.length)
+      expect(currentNodes.every((node, index) => node === nodes[index])).toBe(true)
+      expect(row.chunks.map((chunk) => chunk.element!.textContent).join('')).toBe(
+        text.slice(0, 3_000),
+      )
+      const highlight = highlightsMap.get(tokenHighlightNames()[0]!)!
+      expect([...highlight].map((range) => range.toString()).join('')).toBe(
+        text.slice(tokens[0]!.start, tokens[0]!.end),
+      )
+    }
+  })
+
+  it('keeps chunk source offsets current after an edit in an earlier row', () => {
+    mountLongLineView()
+    const line = 'abcdefghij'.repeat(2_000)
+    view.setText(`header\n${line}`)
+    view.setScrollMetrics(0, 40, 80)
+    const before = view.getState().mountedRows[1]!.chunks[0]!
+    const element = before.element
+    const paint = before.mountedPaint
+
+    view.applyEdit({ from: 3, to: 3, text: '123' }, `hea123der\n${line}`)
+
+    const chunk = view.getState().mountedRows[1]!.chunks[0]!
+    expect(chunk.element).toBe(element)
+    expect(chunk.mountedPaint).toBe(paint)
+    expect(chunk.startOffset).toBe(10)
+    expect(chunk.endOffset).toBe(1_010)
+    const caret = view.createRange(63, 63)!
+    expect(caret.startContainer).toBe(element!.childNodes[1])
+    expect(caret.startOffset).toBe(3)
+    expect(view.textOffsetFromDomBoundary(caret.startContainer, 3)).toBe(63)
+  })
+
+  it('refreshes unchanged chunk control widths after metrics change', () => {
+    view.dispose()
+    const metrics = { rowHeight: 20, characterWidth: 8 }
+    view = new VirtualizedTextView(container, {
+      textMetrics: metrics,
+      longLineChunkSize: 1_000,
+      longLineChunkThreshold: 1_000,
+      horizontalOverscanColumns: 0,
+    })
+    const original = `\u0085${'x'.repeat(20_000)}`
+    view.setText(original)
+    view.setScrollMetrics(0, 20, 80)
+    const control = container.querySelector<HTMLElement>('[data-editor-control-character]')!
+    expect(control.style.width).toBe('64px')
+
+    metrics.characterWidth = 16
+    view.refreshMetrics()
+    view.applyEdit(
+      { from: 1_500, to: 1_500, text: 'Q' },
+      `${original.slice(0, 1_500)}Q${original.slice(1_500)}`,
+    )
+
+    expect(container.querySelector('[data-editor-control-character]')).toBe(control)
+    expect(control.style.width).toBe('128px')
+  })
+
+  it('updates chunk coverage and clears metadata when reused rows switch rendering modes', () => {
+    mountLongLineView()
+    const text = 'x'.repeat(20_000)
+    view.setScrollMetrics(0, 20, 80)
+    view.applyEdit({ from: 49, to: 50, text: 'Q' }, `${text.slice(0, 49)}Q${text.slice(50)}`)
+    const first = view.getState().mountedRows[0]!.chunks[0]!
+    view.setScrollMetrics(0, 20, 80, 2_400 * view.getState().metrics.characterWidth)
+    const scrolled = view.getState().mountedRows[0]!
+    expect(first.element!.isConnected).toBe(false)
+    expect(scrolled.element.dataset.editorVirtualWindowStart).toBe('2000')
+    expect(scrolled.chunks[0]!.element!.textContent).toBe(text.slice(2_000, 3_000))
+
+    view.setText(text)
+    view.setInlineMap(
+      createInlineMap(createPieceTableSnapshot(text), [
+        {
+          id: 'ghost',
+          startIndex: 20,
+          endIndex: 20,
+          text: 'hint',
+          insertion: true,
+          className: 'ghost',
+        },
+      ]),
+    )
+    const inline = view.getState().mountedRows[0]!
+    expect(inline.textRenderMode).toBe('widget')
+    expect(inline.element.querySelector('.ghost')!.textContent).toBe('hint')
+    expect(inline.element.dataset.editorVirtualWindowStart).toBeUndefined()
+    expect(inline.element.dataset.editorVirtualWindowEnd).toBeUndefined()
+
+    view.setInlineMap(null)
+    view.setWrapEnabled(true)
+    view.setScrollMetrics(0, 40, 80, 0)
+    const wrapped = view.getState().mountedRows
+    expect(wrapped.length).toBeGreaterThan(1)
+    expect(
+      wrapped.every(
+        (row) =>
+          row.element.dataset.editorVirtualWindowStart === undefined &&
+          row.element.dataset.editorVirtualWindowEnd === undefined,
+      ),
+    ).toBe(true)
+  })
+
   it('keeps measured row geometry across a sub-chunk horizontal scroll', () => {
     mountLongLineView()
     const { characterWidth } = view.getState().metrics

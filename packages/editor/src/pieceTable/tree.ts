@@ -143,7 +143,10 @@ export const splitByVisibleOffset = (
       node.piece.order,
     )
     newNode.left = right
-    return { left, right: updateNode(newNode) }
+    if (!right || right.priority >= newNode.priority) return { left, right: updateNode(newNode) }
+    // A fresh split priority can move the remainder above this ancestor.
+    newNode.left = null
+    return { left, right: merge(right, updateNode(newNode)) }
   }
 
   if (offset > leftLen + nodeLen) {
@@ -156,7 +159,9 @@ export const splitByVisibleOffset = (
       upperOrder,
     )
     newNode.right = left
-    return { left: updateNode(newNode), right }
+    if (!left || left.priority >= newNode.priority) return { left: updateNode(newNode), right }
+    newNode.right = null
+    return { left: merge(updateNode(newNode), left), right }
   }
 
   if (nodeLen === 0) {

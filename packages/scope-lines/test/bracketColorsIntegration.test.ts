@@ -104,6 +104,7 @@ function highlightRules(): string {
 function bracketSyntaxSession(): EditorSyntaxSession {
   const result: EditorSyntaxResult = { ...createEmptySyntaxResult(), brackets: BRACKETS }
   return {
+    foldingSupport: 'supported',
     applyChange: async () => result,
     dispose: () => undefined,
     getResult: () => result,

@@ -3,7 +3,8 @@ import {
   createFoldGutterContribution,
   createLineGutterContribution,
 } from '../../gutters/src/index.ts'
-import { Editor } from '../src/editor'
+import type { Editor } from '../src/editor'
+import { createVisibleEditor } from './factories/visibleEditor'
 import type { EditorPlugin } from '../src/plugins'
 import {
   createEmptySyntaxResult,
@@ -56,7 +57,10 @@ const mockRegistry = {
 
 class MockHighlight extends Set<Range> {}
 
-type FoldDelivery = { folds: readonly FoldRange[] }
+type FoldDelivery = {
+  readonly foldingSupport?: EditorSyntaxSession['foldingSupport']
+  folds: readonly FoldRange[]
+}
 
 function blockFold(offsetShift: number): FoldRange {
   return {
@@ -193,6 +197,7 @@ function createFoldSyntaxSession(delivery: FoldDelivery): EditorSyntaxSession {
     applyChange: async () => result(),
     getResult: () => result(),
     getTokens: () => [],
+    foldingSupport: delivery.foldingSupport ?? 'supported',
     getSnapshotVersion: () => 0,
     dispose: () => undefined,
   }
@@ -251,7 +256,7 @@ describe('fold collapse durability', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     rows.latest = []
-    editor = new Editor(container, {
+    editor = createVisibleEditor(container, {
       plugins: [lineGutterPlugin(), foldGutterPlugin(), createRowRecorderPlugin(rows)],
     })
   })
@@ -423,7 +428,7 @@ describe('fold collapse durability', () => {
     // The grammar parses and settles, but fold queries ship per language: this
     // one was never asked. Reading that as "answered none" is what left css,
     // html and json with no folds at all.
-    const delivery: FoldDelivery = { folds: [] }
+    const delivery: FoldDelivery = { folds: [], foldingSupport: 'unsupported' }
     await openWithFold(delivery)
     await flushSyntaxDebounce()
 

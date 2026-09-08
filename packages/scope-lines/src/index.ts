@@ -6,6 +6,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
+  EditorVisiblePaintCapture,
+  EditorVisiblePaintRectangle,
   EditorVisibleRowSnapshot,
 } from '@singapor/core/extensions'
 import { createStringTextSnapshot } from '@singapor/core/document'
@@ -49,6 +51,11 @@ type ScopeLineSegment = {
   readonly top: number
   readonly height: number
   readonly active: boolean
+}
+
+type RenderedScopeLineSegment = {
+  readonly segment: ScopeLineSegment
+  readonly element: HTMLDivElement
 }
 
 type ScopeGuidePlacement = {
@@ -107,13 +114,17 @@ function createScopeLinesContribution(
 }
 
 class ScopeLinesContribution implements EditorViewContribution {
+  private readonly context: EditorViewContributionContext
   private readonly root: HTMLDivElement
   private readonly options: ResolvedScopeLinesOptions
   private pendingContentSnapshot: EditorViewSnapshot | null = null
   private pendingContentFrame: number | null = null
+  private renderedSnapshot: EditorViewSnapshot | null = null
+  private renderedSegments: readonly RenderedScopeLineSegment[] = []
   private signature = ''
 
   public constructor(context: EditorViewContributionContext, options: ResolvedScopeLinesOptions) {
+    this.context = context
     this.options = options
     this.root = createRoot(context, options)
     this.update(context.getSnapshot(), 'document')
@@ -133,6 +144,17 @@ class ScopeLinesContribution implements EditorViewContribution {
     this.renderSnapshot(snapshot)
   }
 
+  public captureVisiblePaint(snapshot: EditorViewSnapshot): EditorVisiblePaintCapture {
+    if (this.pendingContentSnapshot || snapshot !== this.renderedSnapshot) {
+      return { id: 'scope-lines', status: 'pending' }
+    }
+    if (snapshot.syntaxStatus === 'loading') return { id: 'scope-lines', status: 'pending' }
+
+    const rectangles = captureScopeLineRectangles(this.renderedSegments, snapshot)
+    if (!rectangles) return { id: 'scope-lines', status: 'pending' }
+    return { id: 'scope-lines', status: 'ready', rectangles }
+  }
+
   public dispose(): void {
     this.cancelContentUpdate()
     this.root.remove()
@@ -144,7 +166,8 @@ class ScopeLinesContribution implements EditorViewContribution {
 
     const view = this.root.ownerDocument.defaultView
     if (!view?.requestAnimationFrame) {
-      this.flushContentUpdate()
+      this.pendingContentSnapshot = null
+      this.renderSnapshot(snapshot)
       return
     }
 
@@ -158,6 +181,7 @@ class ScopeLinesContribution implements EditorViewContribution {
     if (!snapshot) return
 
     this.renderSnapshot(snapshot)
+    this.context.requestViewUpdate()
   }
 
   private cancelContentUpdate(): void {
@@ -179,10 +203,47 @@ class ScopeLinesContribution implements EditorViewContribution {
         visibleRows: snapshot.visibleRows.length,
       }),
     )
-    if (model.signature === this.signature) return
+    if (model.signature === this.signature) {
+      this.renderedSnapshot = snapshot
+      return
+    }
 
     this.signature = model.signature
-    renderScopeLines(this.root, snapshot, model)
+    this.renderedSegments = renderScopeLines(this.root, snapshot, model)
+    this.renderedSnapshot = snapshot
+  }
+}
+
+function captureScopeLineRectangles(
+  segments: readonly RenderedScopeLineSegment[],
+  snapshot: EditorViewSnapshot,
+): readonly EditorVisiblePaintRectangle[] | null {
+  const rectangles: EditorVisiblePaintRectangle[] = []
+  for (const rendered of segments) {
+    if (rendered.segment.height <= 4) continue
+    const rectangle = captureScopeLineRectangle(rendered, snapshot)
+    if (!rectangle) return null
+    if (rectangle.width <= 0) continue
+    rectangles.push(rectangle)
+  }
+  return rectangles
+}
+
+function captureScopeLineRectangle(
+  { element, segment }: RenderedScopeLineSegment,
+  snapshot: EditorViewSnapshot,
+): EditorVisiblePaintRectangle | null {
+  const style = element.ownerDocument.defaultView?.getComputedStyle(element)
+  if (!style?.backgroundColor) return null
+  const width = Number.parseFloat(style.width)
+  if (!Number.isFinite(width)) return null
+
+  return {
+    left: snapshot.gutterWidth + segment.column * snapshot.metrics.characterWidth,
+    top: segment.top + 1,
+    width,
+    height: Math.max(0, segment.height - 4),
+    backgroundColor: style.backgroundColor,
   }
 }
 
@@ -227,17 +288,14 @@ function renderScopeLines(
   root: HTMLDivElement,
   snapshot: EditorViewSnapshot,
   model: ScopeLinesRenderModel,
-): void {
+): readonly RenderedScopeLineSegment[] {
   root.style.setProperty('--editor-scope-lines-content-width', `${snapshot.contentWidth}px`)
-  root.replaceChildren(...createSegmentElements(root.ownerDocument, model.segments, snapshot))
-}
-
-function createSegmentElements(
-  document: Document,
-  segments: readonly ScopeLineSegment[],
-  snapshot: EditorViewSnapshot,
-): HTMLDivElement[] {
-  return segments.map((segment) => createSegmentElement(document, segment, snapshot))
+  const rendered = model.segments.map((segment) => ({
+    segment,
+    element: createSegmentElement(root.ownerDocument, segment, snapshot),
+  }))
+  root.replaceChildren(...rendered.map(({ element }) => element))
+  return rendered
 }
 
 function createSegmentElement(

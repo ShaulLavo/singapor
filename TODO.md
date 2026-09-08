@@ -1,11 +1,12 @@
 # TODO
 
-Backlog of larger ideas we want but are deliberately not doing right now.
+The original wishlist. All 22 topics now have scoped proposals in the
+[Editor backlog](plans/README.md): 30 plans with dependencies, ownership, and acceptance checks.
 
-> This is an unordered product and technical-debt backlog, not an execution
-> index. Cross-project order is authoritative in
-> [Platform's `PLAN.md`](../platform/PLAN.md). No standalone Editor executable
-> plan is active; promote an item into a bounded plan before implementation.
+> These notes preserve the ideas and their original context. Some missing-feature and performance
+> claims below are historical; each plan's **Current code** section records the checked baseline.
+> The plans are proposed, with no standalone Editor implementation scheduled by this document.
+> Cross-project execution order remains in [Platform's `PLAN.md`](../platform/PLAN.md).
 
 Inspired by [Text Editor Data Structures](https://cdacamar.github.io/data%20structures/algorithms/benchmarking/text%20editors/c++/editor-data-structures/)
 (the fredbuf write-up, [repo](https://github.com/cdacamar/fredbuf)) — see also the discussion of
@@ -247,18 +248,22 @@ live in the SAB TODO, stepping stone 4.
 
 ## Input latency as an enforced budget
 
-Fred's feel comes from a designed priority: events on the keystroke→glyph path are processed
-first, and everything else (highlighting, line guides, occurrence match, minimap) is async and
-late-bound. We believe this too — make it enforced rather than aspirational:
+Implemented by E002 on 2026-09-07. The [measurement reference](docs/performance/input-latency.md)
+defines the synchronous input path, deferred-work ownership, and separate dispatch, frame, and
+paint observations. The browser suite covers typing, repeat, composition updates and commits,
+paste, and undo across ordinary, 500,000-line, and one-megabyte-line documents and multiple views.
 
-- Write the invariant down (ARCHITECTURE.md): the synchronous keystroke path is
-  input → piece-table commit → layout → paint of affected lines. Nothing else may ride it.
-- Instrument it: performance marks around that path, surfaced in the dev instrumentation
-  panel; dev-mode warning when a keystroke exceeds a main-thread budget (e.g. 4ms).
-- Audit current sync riders (tree-sitter sync hooks, minimap `workerClient` posts, scope-lines
-  recompute, `packages/editor/src/editor/occurrences.ts`) and demote anything paint doesn't
-  need.
-- Regression guard: a typing-burst-on-large-file scenario in the standing benchmark harness.
+The [recorded local gate](examples/stress/results/input-latency/README.md) accepts an independent
+unchanged run and rejects a real 20 ms delay in all 36 synchronous input groups. Range indexing
+removes the measured whole-source scan from large-file paste. Document-generation checks prevent
+pending secondary work from reaching a replacement document.
+
+Mounted geometry buffers now scale with visible parts, and same-window chunk reuse avoids replacing
+simple text nodes. The optimized candidate passes 108 blocking limits; screenshot durations remain
+advisory. The recorded reference compares isolated builds and preserves earlier failures.
+
+The instrumentation panel remains E023. A universal 4 ms warning is not established by this
+machine-specific calibration; the results state the browser, workload, and IME emulation limits.
 
 ## Look into: windowed/streamed loading for massive files
 

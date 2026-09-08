@@ -84,15 +84,18 @@ describe('editor option sync', () => {
       anchor: 4,
       head: 2,
       reveal: false,
+      revealBlock: 'center',
       revealOffset: 9,
     }
     sync.apply(editor, descriptor, before)
     sync.apply(editor, descriptor, { ...before })
     sync.apply(editor, descriptor, { ...before, affinity: 'after' })
+    sync.apply(editor, descriptor, { ...before, affinity: 'after', revealBlock: 'nearest' })
 
     expect(applied).toEqual([
-      [4, 2, { affinity: 'before', reveal: false, revealOffset: 9 }],
-      [4, 2, { affinity: 'after', reveal: false, revealOffset: 9 }],
+      [4, 2, { affinity: 'before', reveal: false, revealBlock: 'center', revealOffset: 9 }],
+      [4, 2, { affinity: 'after', reveal: false, revealBlock: 'center', revealOffset: 9 }],
+      [4, 2, { affinity: 'after', reveal: false, revealBlock: 'nearest', revealOffset: 9 }],
     ])
     expect(descriptor.validate({ affinity: 'sideways', anchor: 1 })).toMatchObject({
       affinity: undefined,

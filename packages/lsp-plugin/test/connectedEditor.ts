@@ -424,6 +424,7 @@ function viewContributionContext(options: {
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: options.getSnapshot,
+    requestViewUpdate: vi.fn(),
     getFeature: options.getFeature as EditorViewContributionContext['getFeature'],
     revealLine: vi.fn(),
     focusEditor: options.focusEditor,

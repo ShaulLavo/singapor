@@ -43,6 +43,7 @@ export type NavigationRequest = DefinitionRequest & {
  */
 export type DefinitionResult = {
   readonly targets: readonly LanguageServerDefinitionTarget[]
+  readonly sourceRange?: OffsetRange
 }
 
 /**
@@ -97,7 +98,8 @@ export async function requestNavigationTargets(
     } satisfies lsp.TextDocumentPositionParams,
     request.signal ? { signal: request.signal } : undefined,
   )
-  return { targets: definitionTargets(raw) }
+  const sourceRange = definitionSourceRange(raw, request)
+  return { targets: definitionTargets(raw), ...(sourceRange ? { sourceRange } : {}) }
 }
 
 async function requestReferences(
@@ -139,7 +141,7 @@ export function navigateToTarget(
 ): void {
   const start = lspPositionToOffset(editor.text, target.range.start)
   const end = lspPositionToOffset(editor.text, target.range.end)
-  editor.setSelection(start, end, timingName, { revealOffset: start })
+  editor.setSelection(start, end, timingName, { revealBlock: 'center', revealOffset: start })
   editor.focusEditor()
 }
 
@@ -269,6 +271,21 @@ function definitionTargets(
   if (!result) return []
   const items = Array.isArray(result) ? result : [result]
   return items.flatMap(definitionTarget)
+}
+
+function definitionSourceRange(
+  result: lsp.Location[] | lsp.Location | lsp.LocationLink[] | null,
+  request: DefinitionRequest,
+): OffsetRange | null {
+  if (!result) return null
+  const items = Array.isArray(result) ? result : [result]
+  for (const item of items) {
+    if (!('originSelectionRange' in item) || !item.originSelectionRange) continue
+    const start = lspPositionToOffset(request.text, item.originSelectionRange.start)
+    const end = lspPositionToOffset(request.text, item.originSelectionRange.end)
+    if (request.offset >= start && request.offset < end) return { start, end }
+  }
+  return null
 }
 
 function definitionTarget(

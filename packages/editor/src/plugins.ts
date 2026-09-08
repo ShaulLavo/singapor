@@ -21,6 +21,7 @@ import type { InlineReplacementSpec } from './inlineMap'
 import type { TextOffsetRange } from './textRanges'
 import type { SelectionAffinity } from './selections'
 import type { EditorSetSelectionOptions } from './editor/selectionReveal'
+import type { EditorSyntaxStatus } from './editor/types'
 import type {
   DocumentChangesSinceSyncPoint,
   DocumentLogicalRevisionScope,
@@ -355,6 +356,23 @@ export type EditorVisiblePaintRowJSON = {
   readonly chunks: readonly EditorVisiblePaintChunkJSON[]
 }
 
+export type EditorVisiblePaintRectangle = {
+  readonly left: number
+  readonly top: number
+  readonly width: number
+  readonly height: number
+  readonly backgroundColor: string
+}
+
+export type EditorVisiblePaintLayer = {
+  readonly id: string
+  readonly rectangles: readonly EditorVisiblePaintRectangle[]
+}
+
+export type EditorVisiblePaintCapture =
+  | { readonly id: string; readonly status: 'pending' }
+  | ({ readonly status: 'ready' } & EditorVisiblePaintLayer)
+
 export type EditorVisibleSnapshotJSON = {
   readonly kind: 'editor-visible'
   readonly schemaVersion: 1
@@ -372,6 +390,7 @@ export type EditorVisibleSnapshotJSON = {
   readonly tabSize: number
   readonly viewport: EditorViewportSnapshotJSON
   readonly rows: readonly EditorVisiblePaintRowJSON[]
+  readonly paintLayers: readonly EditorVisiblePaintLayer[]
 }
 
 export type EditorVisibleSnapshot = EditorVisibleSnapshotJSON & {
@@ -425,6 +444,9 @@ export type EditorViewSnapshot = {
   readonly fullText: string
   readonly textVersion: number
   readonly initialHighlightStatus: EditorInitialHighlightStatus
+  readonly syntaxStatus: EditorSyntaxStatus
+  /** Null until every paint contribution has committed this exact snapshot. */
+  readonly paintLayers: readonly EditorVisiblePaintLayer[] | null
   readonly documentSyncPoint: DocumentSyncPoint
   readonly changesSinceDocumentSyncPoint: (
     point: DocumentSyncPoint,
@@ -494,6 +516,7 @@ export type EditorViewContributionContext = {
   readonly highlightPrefix?: string
   hasDocument(): boolean
   getSnapshot(): EditorViewSnapshot
+  requestViewUpdate(): void
   getFeature?<T>(token: EditorCapabilityToken<T>): T | null
   /**
    * The sources registered for a language feature, best first. The language is the caller's to name
@@ -584,6 +607,7 @@ export type EditorViewContributionUpdateKind =
  * needs first, into plain data, and writes only once the last of them is in hand.
  */
 export type EditorViewContribution = EditorDisposable & {
+  captureVisiblePaint?(snapshot: EditorViewSnapshot): EditorVisiblePaintCapture
   update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,

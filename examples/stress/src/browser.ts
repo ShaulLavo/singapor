@@ -10,6 +10,7 @@ import { createEditorFindPlugin } from '@singapor/find'
 import { typeScript } from '@singapor/tree-sitter-languages'
 import '@singapor/core/style.css'
 import '@singapor/find/style.css'
+import { createInputLatencyProbe } from './inputLatency.ts'
 import { fixtureFacts, generateFixture, normalizedText, type FixtureId } from './fixtures.ts'
 
 type Diagnostic = {
@@ -41,6 +42,7 @@ let source = ''
 let expected = ''
 let paints: Paint[] = []
 let diagnostics: Diagnostic[] = []
+let droppedDiagnostics = 0
 let keys: KeySample[] = []
 let frames = new Set<number>()
 let released: WeakRef<object>[] = []
@@ -74,9 +76,13 @@ async function prepare(id: FixtureId, seed: number, instrumented: boolean) {
   cancelled = false
   paints = []
   diagnostics = []
+  droppedDiagnostics = 0
   keys = []
   globalThis.__EDITOR_PERFORMANCE_DIAGNOSTICS__ = instrumented
-    ? (event) => diagnostics.push(event)
+    ? (event) => {
+        if (diagnostics.length < 8192) diagnostics.push(event)
+        else droppedDiagnostics++
+      }
     : null
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
   const sha256 = [...new Uint8Array(hash)]
@@ -111,6 +117,8 @@ function open(multiple: boolean, highlight: boolean) {
       onInitialPaint: (event) => paints.push({ ...event, at: performance.now() }),
       onChange: (_state, change) => {
         if (change?.kind === 'edit') recordAppliedKey()
+        if (index === 0 && change && change.kind !== 'selection' && change.kind !== 'none')
+          inputLatency.applied()
       },
     })
     editors.push(editor)
@@ -253,6 +261,7 @@ function observe() {
     start,
     paints,
     diagnostics,
+    droppedDiagnostics,
     state: current().editors[0]!.getState(),
     scroll: current().editors[0]!.getScrollPosition(),
     rows: rows.map((row) => ({
@@ -274,6 +283,7 @@ function verifyRows() {
 }
 
 function dispose() {
+  inputLatency.dispose()
   if (active) {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     released = [active.buffer, ...active.editors].map((value) => new WeakRef(value))
@@ -297,12 +307,15 @@ function retention() {
     trackedObjects: released.length,
     retainedObjects: released.filter((ref) => ref.deref() !== undefined).length,
     hosts: hosts.childElementCount,
-    pendingFrames: frames.size,
+    pendingFrames: frames.size + inputLatency.pendingFrames(),
     active: active !== null,
   }
 }
 
+const inputLatency = createInputLatencyProbe({ current, expected: () => expected })
+
 const bridge = {
+  inputLatency,
   prepare,
   open,
   observe,

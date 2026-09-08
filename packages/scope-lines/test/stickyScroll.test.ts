@@ -378,6 +378,7 @@ function context(
     highlightPrefix: 'sticky-test',
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
+    requestViewUpdate: vi.fn(),
     getReservedOverlayWidth: (side) => (side === 'left' ? reserved.left : reserved.right),
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
@@ -420,6 +421,8 @@ function snapshot(): EditorViewSnapshot {
   return {
     documentId: 'sticky-test',
     languageId: 'typescript',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     fullText: TEXT,
     textVersion: 1,
     initialHighlightStatus: 'painted',

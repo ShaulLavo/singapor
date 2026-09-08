@@ -66,6 +66,8 @@ function editorViewSnapshot(text: string): EditorViewSnapshot {
     fullText: text,
     textVersion: 7,
     initialHighlightStatus: 'painted',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     lineStarts: [0, 6],
     tokens: [{ start: 0, end: 5, style: { color: '#ff0000' } }],
     // 'alpha\nbeta' carries no bracket pairs, so the parse this stands in for published none.

@@ -1105,6 +1105,8 @@ function snapshot(
     fullText: text,
     textVersion: 1,
     initialHighlightStatus: 'painted',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],

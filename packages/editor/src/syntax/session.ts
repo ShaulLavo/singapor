@@ -151,7 +151,10 @@ export function createEditorRuntimeSessionId(): string {
   return `editor-runtime-${id}`
 }
 
+export type EditorSyntaxFoldingSupport = 'pending' | 'supported' | 'unsupported'
+
 export type EditorSyntaxSession = {
+  readonly foldingSupport: EditorSyntaxFoldingSupport
   refresh(snapshot: PieceTableSnapshot, fullText?: string): Promise<EditorSyntaxResult>
   applyChange(change: DocumentSessionChange): Promise<EditorSyntaxResult>
   canQueryRange?(): boolean
@@ -169,6 +172,7 @@ export type EditorSyntaxProvider = {
 export const createEditorSyntaxSession = (): EditorSyntaxSession => createEmptySyntaxSession()
 
 export const createEmptySyntaxSession = (): EditorSyntaxSession => ({
+  foldingSupport: 'unsupported',
   refresh: async () => createEmptySyntaxResult(),
   applyChange: async () => createEmptySyntaxResult(),
   getResult: () => createEmptySyntaxResult(),

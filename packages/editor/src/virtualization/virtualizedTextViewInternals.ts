@@ -19,7 +19,7 @@ import type {
   VirtualizedTextRowDecoration,
 } from './virtualizedTextViewTypes'
 
-export type RevealBlock = 'nearest' | 'end'
+export type RevealBlock = 'nearest' | 'center' | 'end'
 
 export type CreateRangeOptions = {
   readonly scrollIntoView?: boolean

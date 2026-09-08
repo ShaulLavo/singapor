@@ -356,6 +356,7 @@ function viewContext(): EditorViewContributionContext {
     log: vi.fn(),
     hasDocument: () => true,
     getSnapshot: () => snapshot({ tokens: someTokens() }),
+    requestViewUpdate: vi.fn(),
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
     focusEditor: vi.fn(),
@@ -372,6 +373,8 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
   return {
     documentId: 'decode-test',
     languageId: 'typescript',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     fullText: text,
     textVersion: 1,
     lineStarts: lineStarts(text),

@@ -89,6 +89,94 @@ describe('indexed text measurements', () => {
     expect(indexedLengths.filter((length) => length >= original.length)).toEqual([original.length])
   })
 
+  it('indexes only the requested old-text slices when paste makes one row measurable', () => {
+    const builds: Array<{ length: number; sourceLength: number }> = []
+    vi.stubGlobal(
+      '__EDITOR_PERFORMANCE_DIAGNOSTICS__',
+      (event: { name: string; detail: { length: number; sourceLength: number } }) => {
+        if (event.name === 'textMeasurements.index') builds.push(event.detail)
+      },
+    )
+    const original = new TextSourceIndex('a'.repeat(2_097_152))
+    const pasted = 'paste 😀 e\u0301 '.repeat(128)
+    const measured = new TextMeasurements([
+      { source: original, start: 1_000, end: 1_020 },
+      { source: new TextSourceIndex(pasted), start: 0, end: pasted.length },
+      { source: original, start: 1_020, end: 1_040 },
+    ])
+    const text = 'a'.repeat(20) + pasted + 'a'.repeat(20)
+    const expected = estimatedDisplayCellForColumn(text, text.length, 4)
+    const reads = countCharacterReads(() => {
+      expect(measured.isSimple).toBe(false)
+      expect(measured.columnAt(text.length, 4, 'estimated')).toBe(expected)
+      expect(measured.offsetAt(expected, 'nearest', 4, 'estimated')).toBe(text.length)
+    })
+    expect(reads).toBeLessThan(20_000)
+    const originalBuilds = builds.filter((build) => build.sourceLength === original.text.length)
+    expect(originalBuilds.reduce((length, build) => length + build.length, 0)).toBeLessThanOrEqual(
+      512,
+    )
+    builds.length = 0
+    const overlapping = new TextMeasurements([{ source: original, start: 990, end: 1_045 }])
+    expect(overlapping.columnAt(55, 4, 'estimated')).toBe(55)
+    expect(builds).toEqual([])
+  })
+
+  it('reuses overlapping measured ranges inside a larger source', () => {
+    const line = 'abc\t😀e\u0301中'.repeat(4_096)
+    const source = new TextSourceIndex('header\n' + line + '\ntrailer')
+    const measured = new TextMeasurements([{ source, start: 7, end: 7 + line.length }])
+    measured.columnAt(line.length, 4, 'estimated')
+    const overlapping = new TextMeasurements([{ source, start: 17, end: 7 + line.length - 10 }])
+    const expected = estimatedDisplayCellForColumn(line.slice(10, -10), line.length - 20, 4)
+    const reads = countCharacterReads(() => {
+      expect(overlapping.columnAt(line.length - 20, 4, 'estimated')).toBe(expected)
+    })
+    expect(reads).toBeLessThan(4_096)
+  })
+
+  it('preserves scalar tabs and isolated surrogate boundaries in demand-indexed source ranges', () => {
+    const prefix = 'a'.repeat(2_048)
+    const source = new TextSourceIndex(prefix + 'x\ud834\udd1e\t😀e\u0301\t中z' + prefix)
+    const ranges: readonly [number, number][] = [
+      [2_049, 2_050],
+      [2_050, 2_054],
+      [2_049, 2_059],
+      [2_052, 2_058],
+    ]
+    for (const [start, end] of ranges) {
+      checkMeasurements(
+        source.text.slice(start, end),
+        new TextMeasurements([{ source, start, end }]),
+      )
+    }
+  })
+
+  it('promotes sparse ranges into complete source indexes without rereading completed branches', () => {
+    const indexedUnits = new Map<number, number>()
+    vi.stubGlobal(
+      '__EDITOR_PERFORMANCE_DIAGNOSTICS__',
+      (event: { name: string; detail: { length: number; tabSize: number } }) => {
+        if (event.name !== 'textMeasurements.index') return
+        const { length, tabSize } = event.detail
+        indexedUnits.set(tabSize, (indexedUnits.get(tabSize) ?? 0) + length)
+      },
+    )
+    const prefix = 'a'.repeat(255) + '𝄞\t😀e\u0301'
+    const text = prefix + 'b'.repeat(1_024 - prefix.length)
+    const source = new TextSourceIndex(text)
+    const ranges: readonly [number, number][] = [
+      [255, 264],
+      [0, 512],
+      [0, text.length],
+    ]
+    for (const [start, end] of ranges) {
+      checkMeasurements(text.slice(start, end), new TextMeasurements([{ source, start, end }]))
+    }
+    expect([...indexedUnits.keys()].sort()).toEqual([1, 2, 4, 7])
+    expect([...indexedUnits.values()]).toEqual(Array(4).fill(text.length))
+  })
+
   it('bounds far-column character reads independently of line length', () => {
     const small = queryCharacterReads(1_024)
     const large = queryCharacterReads(131_072)
@@ -106,14 +194,14 @@ describe('indexed text measurements', () => {
     )
     const text = 'ab\t'.repeat(10_000)
     const source = new TextSourceIndex(text)
-    source.root(2)
+    source.range(0, text.length, 2)
     for (let revision = 0; revision < 3; revision += 1) {
       const measured = new TextMeasurements([{ source, start: 0, end: text.length }])
       expect(measured.isSimple).toBe(true)
       for (const tabSize of [2, 3, 5, 7]) measured.columnAt(text.length, tabSize, 'utf16')
     }
-    source.root(9)
-    source.root(3)
+    source.range(0, text.length, 9)
+    source.range(0, text.length, 3)
     expect(builds).toEqual([2, 3, 5, 7, 9])
   })
 })
@@ -122,6 +210,16 @@ function queryCharacterReads(repetitions: number): number {
   const text = 'ab\t😀e\u0301中'.repeat(repetitions)
   const measured = measureString(text)
   measured.columnAt(text.length, 4, 'estimated')
+  return countCharacterReads(() => {
+    for (let sample = 0; sample < 64; sample += 1) {
+      const offset = text.length - 1_024 + sample * 13
+      const column = measured.columnAt(offset, 4, 'estimated')
+      measured.offsetAt(column, 'nearest', 4, 'estimated')
+    }
+  })
+}
+
+function countCharacterReads(run: () => void): number {
   const charCodeAt = String.prototype.charCodeAt
   const codePointAt = String.prototype.codePointAt
   let reads = 0
@@ -134,11 +232,7 @@ function queryCharacterReads(repetitions: number): number {
     return codePointAt.call(this, index)
   }
   try {
-    for (let sample = 0; sample < 64; sample += 1) {
-      const offset = text.length - 1_024 + sample * 13
-      const column = measured.columnAt(offset, 4, 'estimated')
-      measured.offsetAt(column, 'nearest', 4, 'estimated')
-    }
+    run()
   } finally {
     String.prototype.charCodeAt = charCodeAt
     String.prototype.codePointAt = codePointAt

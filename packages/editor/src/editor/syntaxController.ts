@@ -42,7 +42,11 @@ import type {
   EditorPreparedTabSizePolicy,
 } from './preparedDocument'
 import { nowMs } from './timing'
-import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
+import {
+  editorPerformanceDiagnosticsEnabled,
+  recordEditorPerformanceDiagnostic,
+  traceEditorPerformanceTask,
+} from './performanceDiagnostics'
 
 export type EditorSyntaxDocumentStartOptions = {
   readonly documentId: string
@@ -72,7 +76,7 @@ export type EditorSyntaxControllerOptions = {
   clearSyntaxFolds(): void
   setSyntaxFolds(folds: readonly FoldRange[]): void
   notifyChange(change: DocumentSessionChange | null): void
-  notifyInitialHighlightStatusChanged(): void
+  notifyViewUpdate(): void
   onInitialPaint?(event: EditorInitialPaintEvent): void
   setSyntaxCaptures?(captures: readonly EditorSyntaxCapture[]): void
   /**
@@ -174,6 +178,10 @@ export class EditorSyntaxController {
   private skipNextHighlighterRefresh = false
   private providerHighlighterTheme: EditorTheme | null = null
   private highlighterTheme: EditorTheme | null = null
+  private foldCoverage:
+    | { readonly kind: 'full' }
+    | { readonly kind: 'range'; readonly range: EditorSyntaxRange }
+    | null = null
   private cachedSyntaxRanges: readonly EditorSyntaxRange[] = []
   private cachedSyntaxFoldRanges: readonly CachedSyntaxFoldRange[] = []
   private readonly syntaxRequests = new LatestAsyncRequest<EditorSyntaxLoadResult>({
@@ -208,6 +216,11 @@ export class EditorSyntaxController {
   private syntaxContentVersion = 0
   private parsedSyntaxContentVersion: number | null = null
   private pendingSyntaxContentVersion: number | null = null
+  private pendingVisibleRange: {
+    readonly documentVersion: number
+    readonly contentVersion: number
+    readonly range: EditorSyntaxRange
+  } | null = null
   private pendingPrefetch: PendingSyntaxPrefetch | null = null
   private pendingWarm: PendingSyntaxWarm | null = null
   private warmGeneration = 0
@@ -215,7 +228,22 @@ export class EditorSyntaxController {
   constructor(private readonly options: EditorSyntaxControllerOptions) {}
 
   get status(): EditorSyntaxStatus {
-    return this.syntaxStatus
+    if (this.syntaxStatus !== 'ready' && this.syntaxStatus !== 'degraded') return this.syntaxStatus
+    if (this.usesFallbackFolds || this.foldsCoverViewport()) return this.syntaxStatus
+    return 'loading'
+  }
+
+  get usesFallbackFolds(): boolean {
+    if (!this.syntaxSession || this.syntaxStatus === 'error') return true
+    return this.syntaxSession.foldingSupport === 'unsupported'
+  }
+
+  private foldsCoverViewport(): boolean {
+    const coverage = this.foldCoverage
+    if (!coverage) return false
+    if (coverage.kind === 'full') return true
+    const range = this.options.getVisibleSyntaxRange()
+    return range !== null && syntaxRangeCoverage(range, [coverage.range]) === 'full'
   }
 
   get initialHighlightStatus(): EditorInitialHighlightStatus {
@@ -437,7 +465,6 @@ export class EditorSyntaxController {
 
     this.disposeSyntaxSession()
     this.clearSyntaxRangeCache()
-    this.options.clearSyntaxFolds()
 
     const session = this.options.getSession()
     if (!session) {
@@ -452,6 +479,7 @@ export class EditorSyntaxController {
       snapshot: session.getSnapshot(),
     })
     this.syntaxStatus = this.syntaxSession ? 'loading' : 'plain'
+    this.options.clearSyntaxFolds()
     this.logSyntaxStatus('editor.syntax.reloaded')
     const configurationGeneration = this.initialHighlightConfigurationGeneration
     if (
@@ -540,6 +568,7 @@ export class EditorSyntaxController {
       return
     }
     this.syntaxContentVersion += 1
+    this.foldCoverage = null
     this.parsedSyntaxContentVersion = null
     this.projectSyntaxRangeCache(change)
   }
@@ -555,6 +584,19 @@ export class EditorSyntaxController {
 
     const uncoveredRange = firstUncoveredSyntaxRange(range, this.cachedSyntaxRanges)
     if (!uncoveredRange) return
+    const pending = this.pendingVisibleRange
+    if (
+      this.rangeRequests.isActive() &&
+      pending?.documentVersion === documentVersion &&
+      pending.contentVersion === this.syntaxContentVersion &&
+      syntaxRangeCoverage(uncoveredRange, [pending.range]) === 'full'
+    )
+      return
+    this.pendingVisibleRange = {
+      documentVersion,
+      contentVersion: this.syntaxContentVersion,
+      range: uncoveredRange,
+    }
 
     this.scheduleSyntaxRangeRequest(
       this.rangeRequests,
@@ -739,7 +781,7 @@ export class EditorSyntaxController {
   ): void {
     if (this.syntaxSession !== transfer.session) return
 
-    const applied = this.applySyntaxResult(
+    this.applySyntaxResult(
       {
         contentVersion,
         range: transfer.range,
@@ -752,9 +794,6 @@ export class EditorSyntaxController {
       nowMs(),
       configurationGeneration,
     )
-    if (!applied) return
-
-    this.refreshVisibleRange(documentVersion, { delayMs: 0 })
   }
 
   private recoverPreparedStructural(
@@ -866,30 +905,24 @@ export class EditorSyntaxController {
     request.schedule({
       delayMs: options.delayMs ?? 50,
       tags: syntaxWorkTags(documentVersion, contentVersion, kind, range),
-      run: () => this.loadSyntaxRangeResult(range, kind, { contentVersion }),
-      apply: (result, startedAt) => {
+      run: traceEditorPerformanceTask('editor.syntax.range.request', () =>
+        this.loadSyntaxRangeResult(range, kind, { contentVersion }),
+      ),
+      apply: traceEditorPerformanceTask('editor.syntax.range.apply', (result, startedAt) => {
         const applied = this.applySyntaxResult(
           result,
           documentVersion,
           startedAt,
           configurationGeneration,
         )
-        if (applied && kind === 'visible') {
-          const visibleRange = this.options.getVisibleSyntaxRange()
-          if (
-            visibleRange &&
-            syntaxRangeCoverage(visibleRange, this.cachedSyntaxRanges) !== 'full'
-          ) {
-            this.refreshVisibleRange(documentVersion, { delayMs: 0 })
-            return
-          }
-          if (visibleRange) this.applyCachedSyntaxFolds(visibleRange)
+        if (applied && kind === 'visible' && this.foldsCoverViewport()) {
           if (!this.flushPendingPrefetch()) this.flushPendingWarm()
         }
         if (applied && kind === 'prefetch') this.flushPendingWarm()
-      },
-      fail: (error, startedAt) =>
+      }),
+      fail: traceEditorPerformanceTask('editor.syntax.range.fail', (error, startedAt) =>
         this.recoverSyntaxError(documentVersion, null, error, startedAt, configurationGeneration),
+      ),
     })
   }
 
@@ -897,11 +930,14 @@ export class EditorSyntaxController {
     const coverage = syntaxRangeCoverage(range, this.cachedSyntaxRanges)
     if (coverage === 'none') return false
 
-    this.options.adoptTokens(this.currentTokens)
-    if (coverage === 'partial') return false
+    if (coverage === 'partial') {
+      this.options.adoptTokens(this.currentTokens)
+      return false
+    }
 
     this.rangeRequests.cancel()
     this.applyCachedSyntaxFolds(range)
+    this.options.adoptTokens(this.currentTokens)
     return true
   }
 
@@ -933,11 +969,15 @@ export class EditorSyntaxController {
       delayMs,
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: syntaxWorkTags(documentVersion, contentVersion, 'full'),
-      run: () => this.loadSyntaxResult(change, contentVersion),
-      apply: (result, startedAt) =>
+      run: traceEditorPerformanceTask('editor.syntax.structural.request', () =>
+        this.loadSyntaxResult(change, contentVersion),
+      ),
+      apply: traceEditorPerformanceTask('editor.syntax.structural.apply', (result, startedAt) =>
         this.applySyntaxResult(result, documentVersion, startedAt, configurationGeneration),
-      fail: (error, startedAt) =>
+      ),
+      fail: traceEditorPerformanceTask('editor.syntax.structural.fail', (error, startedAt) =>
         this.recoverSyntaxError(documentVersion, change, error, startedAt, configurationGeneration),
+      ),
     })
   }
 
@@ -955,10 +995,13 @@ export class EditorSyntaxController {
       delayMs,
       maxDelayMs: SYNTAX_REFRESH_MAX_DELAY_MS,
       tags: { version: documentVersion, configuration: 'highlight' },
-      run: () => this.loadHighlightResult(change),
-      apply: (result, startedAt) =>
+      run: traceEditorPerformanceTask('editor.syntax.highlight.request', () =>
+        this.loadHighlightResult(change),
+      ),
+      apply: traceEditorPerformanceTask('editor.syntax.highlight.apply', (result, startedAt) =>
         this.applyHighlightResult(result, documentVersion, startedAt, configurationGeneration),
-      fail: (_error, startedAt) =>
+      ),
+      fail: traceEditorPerformanceTask('editor.syntax.highlight.fail', (_error, startedAt) =>
         this.recoverHighlightError(
           documentVersion,
           change,
@@ -966,6 +1009,7 @@ export class EditorSyntaxController {
           startedAt,
           configurationGeneration,
         ),
+      ),
     })
   }
 
@@ -1069,8 +1113,14 @@ export class EditorSyntaxController {
     if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return false
     if (loadResult.contentVersion !== this.syntaxContentVersion) return false
 
+    if (editorPerformanceDiagnosticsEnabled()) {
+      recordEditorPerformanceDiagnostic('editor.syntax.structural.accepted', () => ({
+        documentVersion,
+        contentVersion: loadResult.contentVersion,
+        source: loadResult.source,
+      }))
+    }
     const result = loadResult.result
-    this.syntaxStatus = result.degraded ? 'degraded' : 'ready'
     if (loadResult.updatesDocument) this.markSyntaxDocumentCurrent(loadResult.contentVersion)
     const nextTokens = this.highlighterSession
       ? this.currentTokens
@@ -1082,9 +1132,20 @@ export class EditorSyntaxController {
     // Ahead of the tokens, because adopting them is the only notification this pass sends the view
     // contributions: a bracket list assigned after it is a parse late to everyone reading the
     // snapshot, and on a document nobody touches after opening it that means never.
+    if (loadResult.range) this.rememberSyntaxRange(loadResult.range, result)
     if (applyScopeFacts) {
       this.currentBrackets = result.brackets
       this.currentInjections = result.injections
+      this.syntaxStatus = result.degraded ? 'degraded' : 'ready'
+      this.foldCoverage = loadResult.range
+        ? { kind: 'range', range: loadResult.range }
+        : { kind: 'full' }
+      this.options.setSyntaxFolds(result.folds)
+      this.options.setSyntaxCaptures?.(result.captures)
+    }
+    if (!applyScopeFacts) {
+      const visibleRange = this.options.getVisibleSyntaxRange()
+      if (visibleRange) this.applyCachedSyntaxFolds(visibleRange)
     }
     if (!this.highlighterSession) {
       const status: Exclude<EditorInitialHighlightStatus, 'loading'> = result.degraded
@@ -1096,7 +1157,6 @@ export class EditorSyntaxController {
         configurationGeneration,
       )
     }
-    if (loadResult.range) this.rememberSyntaxRange(loadResult.range, result)
     if (
       !this.highlighterSession &&
       loadResult.range &&
@@ -1104,10 +1164,6 @@ export class EditorSyntaxController {
       !this.pendingWarm
     ) {
       this.warmSyntaxAroundRange(documentVersion, loadResult.range)
-    }
-    if (applyScopeFacts) {
-      this.options.setSyntaxFolds(result.folds)
-      this.options.setSyntaxCaptures?.(result.captures)
     }
     if (
       this.highlighterSession &&
@@ -1118,6 +1174,24 @@ export class EditorSyntaxController {
         () => this.setTokens(this.currentTokens),
         configurationGeneration,
       )
+    }
+    this.options.notifyViewUpdate()
+    this.options.log?.({
+      action: 'editor.syntax.structural_applied',
+      level: 'debug',
+      syntax: {
+        documentVersion,
+        contentVersion: loadResult.contentVersion,
+        source: loadResult.source,
+        foldingSupport: this.syntaxSession?.foldingSupport ?? 'unsupported',
+        foldCount: result.folds.length,
+        viewportCovered: this.foldsCoverViewport(),
+        scopeFactsApplied: applyScopeFacts,
+        status: this.status,
+      },
+    })
+    if (!this.usesFallbackFolds && !this.foldsCoverViewport()) {
+      this.refreshVisibleRange(documentVersion, { delayMs: 0 })
     }
     this.options.notifyChange(null)
     return true
@@ -1200,9 +1274,10 @@ export class EditorSyntaxController {
     this.warmRangeRequests.schedule({
       delayMs: pending.delayMs,
       tags: syntaxWorkTags(pending.documentVersion, pending.contentVersion, 'warm', range),
-      run: () =>
+      run: traceEditorPerformanceTask('editor.syntax.warm.request', () =>
         this.loadSyntaxRangeResult(range, 'warm', { contentVersion: pending.contentVersion }),
-      apply: (result, startedAt) => {
+      ),
+      apply: traceEditorPerformanceTask('editor.syntax.warm.apply', (result, startedAt) => {
         if (pending.generation !== this.warmGeneration) return
         const applied = this.applySyntaxResult(
           result,
@@ -1211,8 +1286,8 @@ export class EditorSyntaxController {
           pending.configurationGeneration,
         )
         if (applied) this.scheduleNextWarmRange(pending)
-      },
-      fail: (error, startedAt) =>
+      }),
+      fail: traceEditorPerformanceTask('editor.syntax.warm.fail', (error, startedAt) =>
         this.recoverSyntaxError(
           pending.documentVersion,
           null,
@@ -1220,6 +1295,7 @@ export class EditorSyntaxController {
           startedAt,
           pending.configurationGeneration,
         ),
+      ),
     })
   }
 
@@ -1254,7 +1330,10 @@ export class EditorSyntaxController {
     const folds = cachedSyntaxFoldsForRange(range, this.cachedSyntaxFoldRanges)
     if (!folds) return
 
+    this.foldCoverage = { kind: 'range', range }
+    this.syntaxStatus = 'ready'
     this.options.setSyntaxFolds(folds)
+    this.options.notifyViewUpdate()
   }
 
   private rememberSyntaxRange(range: EditorSyntaxRange, result: EditorSyntaxResult): void {
@@ -1266,6 +1345,7 @@ export class EditorSyntaxController {
   }
 
   private clearSyntaxRangeCache(): void {
+    this.foldCoverage = null
     this.cachedSyntaxRanges = []
     this.cachedSyntaxFoldRanges = []
   }
@@ -1299,6 +1379,12 @@ export class EditorSyntaxController {
     if (!session || documentVersion !== this.options.getDocumentVersion()) return
     if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
 
+    if (editorPerformanceDiagnosticsEnabled()) {
+      recordEditorPerformanceDiagnostic('editor.syntax.highlight.accepted', () => ({
+        documentVersion,
+        configurationGeneration,
+      }))
+    }
     if (result.theme !== undefined) this.setHighlighterTheme(result.theme)
     this.commitInitialHighlightStatus(
       'painted',
@@ -1321,6 +1407,8 @@ export class EditorSyntaxController {
     if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return
 
     this.syntaxStatus = 'error'
+    this.options.clearSyntaxFolds()
+    this.options.notifyViewUpdate()
     if (!this.highlighterSession) this.commitInitialHighlightError(configurationGeneration)
     if (
       this.highlighterSession &&
@@ -1509,7 +1597,7 @@ export class EditorSyntaxController {
       const generation = this.initialHighlightConfigurationGeneration
       this.pendingInitialHighlightReplacement = { generation, kind: replacement }
       this.initialHighlightState = 'loading'
-      this.options.notifyInitialHighlightStatusChanged()
+      this.options.notifyViewUpdate()
       return generation
     }
 
@@ -1517,7 +1605,7 @@ export class EditorSyntaxController {
     this.pendingInitialHighlightReplacement = { generation, kind: replacement }
     this.initialHighlightState = 'loading'
     this.initialHighlightPaintEmitted = false
-    this.options.notifyInitialHighlightStatusChanged()
+    this.options.notifyViewUpdate()
     return generation
   }
 
@@ -1527,7 +1615,7 @@ export class EditorSyntaxController {
 
     this.commitInitialHighlightStatus(
       'plain',
-      () => this.options.notifyInitialHighlightStatusChanged(),
+      () => this.options.notifyViewUpdate(),
       this.initialHighlightConfigurationGeneration,
     )
   }
@@ -1553,7 +1641,7 @@ export class EditorSyntaxController {
   private commitInitialHighlightError(configurationGeneration: number): void {
     this.commitInitialHighlightStatus(
       'error',
-      () => this.options.notifyInitialHighlightStatusChanged(),
+      () => this.options.notifyViewUpdate(),
       configurationGeneration,
     )
   }

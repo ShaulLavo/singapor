@@ -1567,6 +1567,7 @@ function viewContributionContext(
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: () => snapshot,
+    requestViewUpdate: vi.fn(),
     getFeature,
     revealLine: vi.fn(),
     focusEditor: vi.fn(),
@@ -1595,6 +1596,8 @@ function editorSnapshot(options: Partial<EditorViewSnapshot> = {}): EditorViewSn
   const textVersion = options.textVersion ?? 1
   const documentSyncPoint = options.documentSyncPoint ?? fixtureSyncPoint(textVersion)
   return {
+    syntaxStatus: 'ready',
+    paintLayers: [],
     documentId: 'src/index.ts',
     languageId: 'typescript',
     fullText,

@@ -266,6 +266,7 @@ describe('authoritative initial paint', () => {
               },
               getResult: () => createEmptySyntaxResult(),
               getTokens: () => [],
+              foldingSupport: 'supported',
               getSnapshotVersion: () => 0,
               dispose: () => undefined,
             }
@@ -704,6 +705,7 @@ function syntaxSession(
     applyChange: () => result.promise,
     getResult: () => createEmptySyntaxResult(),
     getTokens: () => [],
+    foldingSupport: 'supported',
     getSnapshotVersion: () => 0,
     dispose: () => undefined,
   }

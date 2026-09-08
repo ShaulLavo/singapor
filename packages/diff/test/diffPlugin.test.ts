@@ -650,6 +650,7 @@ function createRecordingSyntaxBackend(
         sessionOptions.push(options)
         parsedTexts.push(options.fullText)
         return {
+          foldingSupport: 'supported',
           applyChange: async () => createEmptySyntaxResult(),
           dispose: () => undefined,
           getResult: () => createEmptySyntaxResult(),
@@ -668,6 +669,7 @@ function createTokenSyntaxBackend(): DiffSyntaxBackend {
     provider: {
       createSession(options) {
         return {
+          foldingSupport: 'supported',
           applyChange: async () => syntaxResultForOptions(options),
           dispose: () => undefined,
           getResult: () => syntaxResultForOptions(options),

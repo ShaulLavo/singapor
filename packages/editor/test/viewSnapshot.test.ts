@@ -6,11 +6,15 @@ import {
 } from '../../gutters/src/index.ts'
 
 import { createEditorViewSnapshot } from '../src/editor/viewSnapshot'
+import { EditorViewContributionController } from '../src/editor/viewContributions'
+import { MAX_VISIBLE_PAINT_RECTANGLES } from '../src/editor/visiblePaint'
 import { setEditorTokenIndex } from '../src/editor/tokenIndex'
 import { createInlineMap } from '../src/inlineMap'
 import { createPieceTableSnapshot } from '../src/public/document'
 import type {
   EditorMountedChunkPaintJSON,
+  EditorViewContribution,
+  EditorVisiblePaintRectangle,
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
 } from '../src/plugins'
@@ -655,9 +659,253 @@ describe('editor view snapshot serialization', () => {
   })
 })
 
+describe('visible contribution paint snapshots', () => {
+  it('keeps built-in folded paint pending without any optional paint contributors', () => {
+    const snapshots: EditorViewSnapshot[] = []
+    let syntaxStatus: EditorViewSnapshot['syntaxStatus'] = 'loading'
+    const controller = new EditorViewContributionController(
+      [
+        {
+          update(snapshot) {
+            snapshots.push(snapshot)
+          },
+          dispose() {},
+        },
+      ],
+      () => snapshotHarness({ syntaxStatus }).snapshot,
+    )
+
+    controller.notify('document')
+    expect(snapshots[0]!.paintLayers).toBeNull()
+    expect(snapshots[0]!.toVisibleSnapshot()).toBeNull()
+    syntaxStatus = 'ready'
+    controller.notify('tokens')
+    expect(snapshots[1]!.paintLayers).toEqual([])
+    expect(snapshots[1]!.toVisibleSnapshot()?.paintLayers).toEqual([])
+    controller.dispose()
+  })
+
+  it('captures lazily after the entire update pass and clones both serialization boundaries', () => {
+    const harness = snapshotHarness()
+    const rectangle = paintRectangle()
+    let committed: EditorViewSnapshot | null = null
+    const capture = vi.fn((snapshot: EditorViewSnapshot) => {
+      expect(snapshot).toBe(committed)
+      return { id: 'guides', status: 'ready' as const, rectangles: [rectangle] }
+    })
+    const observer: EditorViewContribution = {
+      update(snapshot) {
+        expect(snapshot.paintLayers).toBeNull()
+        expect(snapshot.toVisibleSnapshot()).toBeNull()
+        expect(harness.readRange).not.toHaveBeenCalled()
+      },
+      dispose() {},
+    }
+    const painter: EditorViewContribution = {
+      update(snapshot) {
+        committed = snapshot
+      },
+      captureVisiblePaint: capture,
+      dispose() {},
+    }
+    const controller = new EditorViewContributionController(
+      [observer, painter],
+      () => harness.snapshot,
+    )
+
+    controller.notify('document')
+    expect(capture).not.toHaveBeenCalled()
+    expect(harness.snapshot.paintLayers).toEqual([{ id: 'guides', rectangles: [rectangle] }])
+    expect(Object.isFrozen(harness.snapshot.paintLayers?.[0]?.rectangles[0])).toBe(true)
+    const visible = harness.snapshot.toVisibleSnapshot()!
+    const json = visible.toJSON()
+    rectangle.left = 99
+    expect(visible.paintLayers[0]?.rectangles[0]?.left).toBe(12)
+    expect(json.paintLayers[0]?.rectangles[0]).not.toBe(visible.paintLayers[0]?.rectangles[0])
+    expect(visible.paintLayers).not.toBe(harness.snapshot.paintLayers)
+    expect(capture).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
+  it('invalidates uncaptured old snapshots and preserves captured historical paint', () => {
+    const snapshots: EditorViewSnapshot[] = []
+    const rectangle = paintRectangle()
+    const capture = vi.fn(() => ({
+      id: 'guides',
+      status: 'ready' as const,
+      rectangles: [rectangle],
+    }))
+    const controller = new EditorViewContributionController(
+      [
+        {
+          update(snapshot) {
+            snapshots.push(snapshot)
+          },
+          captureVisiblePaint: capture,
+          dispose() {},
+        },
+      ],
+      () => snapshotHarness().snapshot,
+    )
+
+    controller.notify('document')
+    controller.notify('viewport')
+    expect(snapshots[0]!.paintLayers).toBeNull()
+    expect(snapshots[0]!.toVisibleSnapshot()).toBeNull()
+    expect(capture).not.toHaveBeenCalled()
+    expect(snapshots[1]!.paintLayers?.[0]?.rectangles[0]?.left).toBe(12)
+    rectangle.left = 44
+    controller.notify('layout')
+    expect(snapshots[1]!.paintLayers?.[0]?.rectangles[0]?.left).toBe(12)
+    expect(snapshots[2]!.paintLayers?.[0]?.rectangles[0]?.left).toBe(44)
+    controller.notify('selection')
+    controller.dispose()
+    expect(snapshots[3]!.paintLayers).toBeNull()
+    expect(snapshots[2]!.paintLayers?.[0]?.rectangles[0]?.left).toBe(44)
+  })
+
+  it('keeps a pending pass unavailable until an asynchronous producer requests a fresh update', () => {
+    const snapshots: EditorViewSnapshot[] = []
+    let ready = false
+    const controller = new EditorViewContributionController(
+      [
+        {
+          update(snapshot) {
+            snapshots.push(snapshot)
+          },
+          captureVisiblePaint() {
+            if (!ready) return { id: 'guides', status: 'pending' }
+            return { id: 'guides', status: 'ready', rectangles: [paintRectangle()] }
+          },
+          dispose() {},
+        },
+      ],
+      () => snapshotHarness().snapshot,
+    )
+
+    controller.notify('content')
+    expect(snapshots[0]!.paintLayers).toBeNull()
+    ready = true
+    expect(snapshots[0]!.toVisibleSnapshot()).toBeNull()
+    controller.notify('layout')
+    expect(snapshots[1]!.toVisibleSnapshot()?.paintLayers[0]?.id).toBe('guides')
+    controller.dispose()
+  })
+
+  it.each([
+    { left: Infinity },
+    { top: NaN },
+    { width: 0 },
+    { height: -1 },
+    { backgroundColor: '' },
+  ])('rejects malformed rectangle paint through contribution failure handling: %j', (invalid) => {
+    const snapshots: EditorViewSnapshot[] = []
+    const onFailure = vi.fn()
+    const dispose = vi.fn()
+    const painter: EditorViewContribution = {
+      update() {},
+      captureVisiblePaint: () => ({
+        id: 'guides',
+        status: 'ready',
+        rectangles: [paintRectangle(invalid)],
+      }),
+      dispose,
+    }
+    const controller = new EditorViewContributionController(
+      [
+        {
+          update(snapshot) {
+            snapshots.push(snapshot)
+          },
+          dispose() {},
+        },
+        painter,
+      ],
+      () => snapshotHarness().snapshot,
+      onFailure,
+    )
+
+    controller.notify('document')
+    expect(snapshots[0]!.toVisibleSnapshot()).toBeNull()
+    expect(onFailure).toHaveBeenCalledWith(painter, 'capture-visible-paint', expect.any(RangeError))
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(snapshots[1]!.paintLayers).toEqual([])
+    controller.dispose()
+  })
+
+  it('bounds rectangle payloads before copying producer data', () => {
+    const snapshots: EditorViewSnapshot[] = []
+    const onFailure = vi.fn()
+    const controller = new EditorViewContributionController(
+      [
+        {
+          update(snapshot) {
+            snapshots.push(snapshot)
+          },
+          captureVisiblePaint: () => ({
+            id: 'guides',
+            status: 'ready',
+            rectangles: Array.from({ length: MAX_VISIBLE_PAINT_RECTANGLES + 1 }, () =>
+              paintRectangle(),
+            ),
+          }),
+          dispose() {},
+        },
+      ],
+      () => snapshotHarness().snapshot,
+      onFailure,
+    )
+
+    controller.notify('document')
+    expect(snapshots[0]!.paintLayers).toBeNull()
+    expect(onFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      'capture-visible-paint',
+      expect.any(RangeError),
+    )
+    controller.dispose()
+  })
+
+  it('notifies observers when paint contributions are added or removed', () => {
+    const snapshots: EditorViewSnapshot[] = []
+    const controller = new EditorViewContributionController(
+      [
+        {
+          update(snapshot) {
+            snapshots.push(snapshot)
+          },
+          dispose() {},
+        },
+      ],
+      () => snapshotHarness().snapshot,
+    )
+    const painter: EditorViewContribution = {
+      update() {},
+      captureVisiblePaint: () => ({
+        id: 'guides',
+        status: 'ready',
+        rectangles: [paintRectangle()],
+      }),
+      dispose() {},
+    }
+    controller.notify('document')
+    controller.add(painter)
+    expect(snapshots[0]!.paintLayers).toBeNull()
+    expect(snapshots[1]!.paintLayers?.[0]?.id).toBe('guides')
+    controller.remove(painter)
+    expect(snapshots[2]!.paintLayers).toEqual([])
+    controller.dispose()
+  })
+})
+
+function paintRectangle(overrides: Partial<EditorVisiblePaintRectangle> = {}) {
+  return { left: 12, top: 20, width: 1, height: 40, backgroundColor: 'rgb(1, 2, 3)', ...overrides }
+}
+
 function snapshotHarness(
   options: {
     readonly text?: string
+    readonly syntaxStatus?: EditorViewSnapshot['syntaxStatus']
     readonly metadata?: unknown
     readonly theme?: EditorViewSnapshot['theme']
     readonly tokens?: readonly EditorToken[]
@@ -720,6 +968,7 @@ function snapshotHarness(
     },
     textVersion: 4,
     initialHighlightStatus: 'painted' as const,
+    syntaxStatus: options.syntaxStatus ?? 'ready',
     documentSyncPoint: {
       revision: 4,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],

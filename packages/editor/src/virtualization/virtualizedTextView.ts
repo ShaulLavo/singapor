@@ -129,7 +129,7 @@ import {
   restoreScrollPosition,
   rowsKey,
   scrollOffsetIntoView,
-  scrollOffsetToViewportEnd,
+  scrollOffsetToViewportBlock,
   scrollToRow,
   textOffsetFromDomBoundary,
   updateContentWidth,
@@ -260,6 +260,11 @@ export class VirtualizedTextView {
   private viewportVisible = false
   private atomicRenderDepth = 0
   private atomicRenderPending = false
+  private pendingReveal: {
+    readonly offset: number
+    readonly block: RevealBlock
+    readonly affinity?: SelectionAffinity
+  } | null = null
 
   public constructor(container: HTMLElement, options: VirtualizedTextViewOptions = {}) {
     const overscan = options.overscan ?? DEFAULT_OVERSCAN
@@ -410,6 +415,7 @@ export class VirtualizedTextView {
 
   public dispose(): void {
     const view = this.view
+    this.pendingReveal = null
     this.cancelContentWidthMeasurement?.()
     this.cancelContentWidthMeasurement = null
     this.disposeForegroundHighlightRestore()
@@ -427,6 +433,7 @@ export class VirtualizedTextView {
 
   /** The offset the next text replacement should render at, so a restore costs one pass, not two. */
   public requestScrollTop(value: number): void {
+    this.pendingReveal = null
     this.view.virtualizer.requestScrollTop(value)
   }
 
@@ -447,6 +454,7 @@ export class VirtualizedTextView {
     preparedTokens?: readonly EditorToken[],
   ): void {
     const view = this.view
+    this.pendingReveal = null
     view.sameLineTokenEdit = null
     view.tokenProjectionDirtyStartRow = null
     view.tokenRenderIndexDirty = true
@@ -724,15 +732,7 @@ export class VirtualizedTextView {
   }
 
   public revealOffset(offset: number, block: RevealBlock = 'nearest'): void {
-    const view = this.view
-    if (block === 'end') {
-      scrollOffsetToViewportEnd(view, offset)
-      ensureOffsetMounted(view, offset)
-      return
-    }
-
-    ensureOffsetMounted(view, offset)
-    scrollOffsetIntoView(view, offset)
+    this.reveal(offset, block)
   }
 
   public revealCaret(
@@ -740,9 +740,20 @@ export class VirtualizedTextView {
     affinity: SelectionAffinity,
     block: RevealBlock = 'nearest',
   ): void {
+    this.reveal(offset, block, affinity)
+  }
+
+  private reveal(offset: number, block: RevealBlock, affinity?: SelectionAffinity): void {
     const view = this.view
-    if (block === 'end') {
-      scrollOffsetToViewportEnd(view, offset, affinity)
+    this.pendingReveal = null
+    // Initial navigation can arrive before ResizeObserver measures the viewport.
+    if (block !== 'nearest' && view.virtualizer.getSnapshot().viewportHeight === 0) {
+      this.pendingReveal = { offset, block, affinity }
+      return
+    }
+
+    if (block !== 'nearest') {
+      scrollOffsetToViewportBlock(view, offset, block, affinity)
       ensureOffsetMounted(view, offset, affinity)
       return
     }
@@ -1055,6 +1066,7 @@ export class VirtualizedTextView {
     const key = rowsKey(view, snapshot)
     if (key === view.lastRenderedRowsKey) {
       view.onViewportChange?.()
+      this.flushPendingReveal()
       return
     }
 
@@ -1065,6 +1077,14 @@ export class VirtualizedTextView {
     for (const name of view.rangeHighlightGroups.keys()) renderRangeHighlight(view, name)
     renderSelectionHighlight(view)
     view.onViewportChange?.()
+    this.flushPendingReveal()
+  }
+
+  private flushPendingReveal(): void {
+    if (!this.viewportVisible || !this.pendingReveal) return
+
+    const pending = this.pendingReveal
+    this.reveal(pending.offset, pending.block, pending.affinity)
   }
 
   private flushAtomicRender(): void {

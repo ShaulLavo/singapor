@@ -1,0 +1,53 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`piece tree inspection > prints stable empty, split, deleted and normalized snapshots with bounded opt-in text > deleted 1`] = `
+"piece tree length=7 pieces=5 nodes=10
+root n1 pieces tombstone buffer="buffer:0" start=3 length=3 order=2048 lineBreaks=0 priority=0.3916193323675543 left=n2 right=n3 subtreeLength=12 subtreeVisibleLength=7 subtreePieces=5 subtreeLineBreaks=1 subtreeMinOrder=1024 subtreeMaxOrder=3072
+  left n2 pieces visible buffer="buffer:0" start=0 length=2 order=1024 lineBreaks=0 priority=0.4059804705902934 left=- right=n4 subtreeLength=4 subtreeVisibleLength=2 subtreePieces=3 subtreeLineBreaks=0 subtreeMinOrder=1024 subtreeMaxOrder=1536
+    right n4 pieces tombstone buffer="buffer:0" start=2 length=1 order=1280 lineBreaks=0 priority=0.5071685304865241 left=- right=n5 subtreeLength=2 subtreeVisibleLength=0 subtreePieces=2 subtreeLineBreaks=0 subtreeMinOrder=1280 subtreeMaxOrder=1536
+      right n5 pieces tombstone buffer="buffer:1" start=0 length=1 order=1536 lineBreaks=0 priority=0.6053271924611181 left=- right=- subtreeLength=1 subtreeVisibleLength=0 subtreePieces=1 subtreeLineBreaks=0 subtreeMinOrder=1536 subtreeMaxOrder=1536
+  right n3 pieces visible buffer="buffer:0" start=6 length=5 order=3072 lineBreaks=1 priority=0.8202198229264468 left=- right=- subtreeLength=5 subtreeVisibleLength=5 subtreePieces=1 subtreeLineBreaks=1 subtreeMinOrder=3072 subtreeMaxOrder=3072
+root n6 reverse tombstone buffer="buffer:1" start=0 length=1 order=1536 lineBreaks=0 priority=0.4804062379989773 left=n7 right=- buffer=buffer:1 start=0 order=1536
+  left n7 reverse visible buffer="buffer:0" start=6 length=5 order=3072 lineBreaks=1 priority=0.5712969300802797 left=n8 right=- buffer=buffer:0 start=6 order=3072
+    left n8 reverse tombstone buffer="buffer:0" start=2 length=1 order=1280 lineBreaks=0 priority=0.748986727790907 left=n9 right=n10 buffer=buffer:0 start=2 order=1280
+      left n9 reverse visible buffer="buffer:0" start=0 length=2 order=1024 lineBreaks=0 priority=0.8792756062466651 left=- right=- buffer=buffer:0 start=0 order=1024
+      right n10 reverse tombstone buffer="buffer:0" start=3 length=3 order=2048 lineBreaks=0 priority=0.9997228353749961 left=- right=- buffer=buffer:0 start=3 order=2048"
+`;
+
+exports[`piece tree inspection > prints stable empty, split, deleted and normalized snapshots with bounded opt-in text > initial 1`] = `
+"piece tree length=11 pieces=1 nodes=2
+root n1 pieces visible buffer="buffer:0" start=0 length=11 order=1024 lineBreaks=1 priority=0.12716096732765436 left=- right=- subtreeLength=11 subtreeVisibleLength=11 subtreePieces=1 subtreeLineBreaks=1 subtreeMinOrder=1024 subtreeMaxOrder=1024
+root n2 reverse visible buffer="buffer:0" start=0 length=11 order=1024 lineBreaks=1 priority=0.27749306173063815 left=- right=- buffer=buffer:0 start=0 order=1024"
+`;
+
+exports[`piece tree inspection > prints stable empty, split, deleted and normalized snapshots with bounded opt-in text > normalized 1`] = `
+"piece tree length=7 pieces=5 nodes=10
+root n1 pieces tombstone buffer="buffer:0" start=3 length=3 order=3172 lineBreaks=0 priority=0.3916193323675543 left=n2 right=n3 subtreeLength=12 subtreeVisibleLength=7 subtreePieces=5 subtreeLineBreaks=1 subtreeMinOrder=100 subtreeMaxOrder=4196
+  left n2 pieces visible buffer="buffer:0" start=0 length=2 order=100 lineBreaks=0 priority=0.4059804705902934 left=- right=n4 subtreeLength=4 subtreeVisibleLength=2 subtreePieces=3 subtreeLineBreaks=0 subtreeMinOrder=100 subtreeMaxOrder=2148
+    right n4 pieces tombstone buffer="buffer:0" start=2 length=1 order=1124 lineBreaks=0 priority=0.5071685304865241 left=- right=n5 subtreeLength=2 subtreeVisibleLength=0 subtreePieces=2 subtreeLineBreaks=0 subtreeMinOrder=1124 subtreeMaxOrder=2148
+      right n5 pieces tombstone buffer="buffer:1" start=0 length=1 order=2148 lineBreaks=0 priority=0.6053271924611181 left=- right=- subtreeLength=1 subtreeVisibleLength=0 subtreePieces=1 subtreeLineBreaks=0 subtreeMinOrder=2148 subtreeMaxOrder=2148
+  right n3 pieces visible buffer="buffer:0" start=6 length=5 order=4196 lineBreaks=1 priority=0.8202198229264468 left=- right=- subtreeLength=5 subtreeVisibleLength=5 subtreePieces=1 subtreeLineBreaks=1 subtreeMinOrder=4196 subtreeMaxOrder=4196
+root n6 reverse visible buffer="buffer:0" start=6 length=5 order=4196 lineBreaks=1 priority=0.2474426741246134 left=n7 right=n8 buffer=buffer:0 start=6 order=4196
+  left n7 reverse tombstone buffer="buffer:0" start=2 length=1 order=1124 lineBreaks=0 priority=0.28663157601840794 left=n9 right=n10 buffer=buffer:0 start=2 order=1124
+    left n9 reverse visible buffer="buffer:0" start=0 length=2 order=100 lineBreaks=0 priority=0.39854016760364175 left=- right=- buffer=buffer:0 start=0 order=100
+    right n10 reverse tombstone buffer="buffer:0" start=3 length=3 order=3172 lineBreaks=0 priority=0.7972171627916396 left=- right=- buffer=buffer:0 start=3 order=3172
+  right n8 reverse tombstone buffer="buffer:1" start=0 length=1 order=2148 lineBreaks=0 priority=0.9318896161857992 left=- right=- buffer=buffer:1 start=0 order=2148"
+`;
+
+exports[`piece tree inspection > prints stable empty, split, deleted and normalized snapshots with bounded opt-in text > split 1`] = `
+"piece tree length=12 pieces=3 nodes=6
+root n1 pieces visible buffer="buffer:1" start=0 length=1 order=1536 lineBreaks=0 priority=0.6053271924611181 left=n2 right=n3 subtreeLength=12 subtreeVisibleLength=12 subtreePieces=3 subtreeLineBreaks=1 subtreeMinOrder=1024 subtreeMaxOrder=2048
+  left n2 pieces visible buffer="buffer:0" start=0 length=3 order=1024 lineBreaks=0 priority=0.945239543216303 left=- right=- subtreeLength=3 subtreeVisibleLength=3 subtreePieces=1 subtreeLineBreaks=0 subtreeMinOrder=1024 subtreeMaxOrder=1024
+  right n3 pieces visible buffer="buffer:0" start=3 length=8 order=2048 lineBreaks=1 priority=0.8661290416494012 left=- right=- subtreeLength=8 subtreeVisibleLength=8 subtreePieces=1 subtreeLineBreaks=1 subtreeMinOrder=2048 subtreeMaxOrder=2048
+root n4 reverse visible buffer="buffer:1" start=0 length=1 order=1536 lineBreaks=0 priority=0.4804062379989773 left=n5 right=- buffer=buffer:1 start=0 order=1536
+  left n5 reverse visible buffer="buffer:0" start=0 length=3 order=1024 lineBreaks=0 priority=0.7616775801870972 left=- right=n6 buffer=buffer:0 start=0 order=1024
+    right n6 reverse visible buffer="buffer:0" start=3 length=8 order=2048 lineBreaks=1 priority=0.9816973335109651 left=- right=- buffer=buffer:0 start=3 order=2048"
+`;
+
+exports[`piece tree inspection > prints stable empty, split, deleted and normalized snapshots with bounded opt-in text 1`] = `
+"piece tree length=2 pieces=2 nodes=4
+root n1 pieces tombstone buffer="buffer:0" start=2 length=2 order=2 lineBreaks=1 priority=1 left=n2 right=- subtreeLength=4 subtreeVisibleLength=2 subtreePieces=2 subtreeLineBreaks=1 subtreeMinOrder=1 subtreeMaxOrder=2
+  left n2 pieces visible buffer="buffer:0" start=0 length=2 order=1 lineBreaks=1 priority=2 left=- right=- subtreeLength=2 subtreeVisibleLength=2 subtreePieces=1 subtreeLineBreaks=1 subtreeMinOrder=1 subtreeMaxOrder=1
+root n3 reverse tombstone buffer="buffer:0" start=2 length=2 order=2 lineBreaks=1 priority=0.7083016845863312 left=n4 right=- buffer=buffer:0 start=2 order=2
+  left n4 reverse visible buffer="buffer:0" start=0 length=2 order=1 lineBreaks=1 priority=0.8994232793338597 left=- right=- buffer=buffer:0 start=0 order=1"
+`;

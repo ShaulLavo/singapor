@@ -1,6 +1,9 @@
 import type { TransformBias } from './displayTransforms'
 import { containsRTL, estimatedCodePointWidth, isSimpleRowText } from './textCharacters'
-import { recordEditorPerformanceDiagnostic } from './editor/performanceDiagnostics'
+import {
+  editorPerformanceDiagnosticsEnabled,
+  recordEditorPerformanceDiagnostic,
+} from './editor/performanceDiagnostics'
 
 export const INDEXED_TEXT_MIN_LENGTH = 1024
 const BLOCK_LENGTH = 256
@@ -42,8 +45,83 @@ const EMPTY: Summary = {
   estimated: { prefix: 0, suffix: null },
 }
 
+type SourceRangeState =
+  | { readonly kind: 'unmeasured' }
+  | { readonly kind: 'split'; readonly left: SourceRangeIndex; readonly right: SourceRangeIndex }
+  | { readonly kind: 'measured'; readonly node: TextNode }
+
+class SourceRangeIndex {
+  private state: SourceRangeState = { kind: 'unmeasured' }
+
+  constructor(
+    private readonly start: number,
+    private readonly end: number,
+  ) {}
+
+  get tabIndependent(): boolean {
+    return this.state.kind === 'measured' && this.state.node.summary.utf16.suffix === null
+  }
+
+  read(text: string, start: number, end: number, tabSize: number): TextNode {
+    if (this.state.kind === 'measured') {
+      return sliceNode(this.state.node, start - this.start, end - this.start, tabSize)
+    }
+    if ((start === this.start && end === this.end) || this.end - this.start <= BLOCK_LENGTH) {
+      return sliceNode(
+        this.materialize(text, tabSize),
+        start - this.start,
+        end - this.start,
+        tabSize,
+      )
+    }
+
+    const middle = sourceMiddle(this.start, this.end)
+    if (this.state.kind === 'unmeasured') {
+      this.state = {
+        kind: 'split',
+        left: new SourceRangeIndex(this.start, middle),
+        right: new SourceRangeIndex(middle, this.end),
+      }
+    }
+    const { left, right } = this.state
+    if (end <= middle) return left.read(text, start, end, tabSize)
+    if (start >= middle) return right.read(text, start, end, tabSize)
+    return branch(
+      left.read(text, start, middle, tabSize),
+      right.read(text, middle, end, tabSize),
+      tabSize,
+    )
+  }
+
+  private materialize(text: string, tabSize: number): TextNode {
+    if (this.state.kind === 'measured') return this.state.node
+    if (this.state.kind === 'split') {
+      const node = branch(
+        this.state.left.materialize(text, tabSize),
+        this.state.right.materialize(text, tabSize),
+        tabSize,
+      )
+      this.state = { kind: 'measured', node }
+      return node
+    }
+
+    const node = buildSource(text, this.start, this.end, tabSize)
+    this.state = { kind: 'measured', node }
+    if (editorPerformanceDiagnosticsEnabled()) {
+      recordEditorPerformanceDiagnostic('textMeasurements.index', () => ({
+        length: this.end - this.start,
+        sourceLength: text.length,
+        start: this.start,
+        end: this.end,
+        tabSize,
+      }))
+    }
+    return node
+  }
+}
+
 export class TextSourceIndex {
-  private readonly roots = new Map<number, TextNode>()
+  private readonly roots = new Map<number, SourceRangeIndex>()
 
   constructor(readonly text: string) {}
 
@@ -51,19 +129,15 @@ export class TextSourceIndex {
     return this.roots.keys().next().value
   }
 
-  root(tabSize: number): TextNode {
+  range(start: number, end: number, tabSize: number): TextNode {
     const cached = this.roots.get(tabSize)
-    if (cached) return cached
+    if (cached) return cached.read(this.text, start, end, tabSize)
     const first = this.roots.values().next().value
-    if (first?.summary.utf16.suffix === null) return first
-    const root = buildSource(this.text, 0, this.text.length, tabSize)
+    if (first?.tabIndependent) return first.read(this.text, start, end, tabSize)
+    const root = new SourceRangeIndex(0, this.text.length)
     makeCacheRoom(this.roots)
     this.roots.set(tabSize, root)
-    recordEditorPerformanceDiagnostic('textMeasurements.index', {
-      length: this.text.length,
-      tabSize,
-    })
-    return root
+    return root.read(this.text, start, end, tabSize)
   }
 }
 
@@ -132,9 +206,7 @@ export class TextMeasurements {
   private root(tabSize: number): TextNode {
     const cached = this.roots.get(tabSize)
     if (cached) return cached
-    const nodes = this.ranges.map(({ source, start, end }) =>
-      sliceNode(source.root(tabSize), start, end, tabSize),
-    )
+    const nodes = this.ranges.map(({ source, start, end }) => source.range(start, end, tabSize))
     const root = joinNodes(nodes, 0, nodes.length, tabSize)
     makeCacheRoom(this.roots)
     this.roots.set(tabSize, root)
@@ -146,7 +218,7 @@ export function measureString(text: string): TextMeasurements {
   return new TextMeasurements([{ source: new TextSourceIndex(text), start: 0, end: text.length }])
 }
 
-function makeCacheRoom(roots: Map<number, TextNode>): void {
+function makeCacheRoom<T>(roots: Map<number, T>): void {
   if (roots.size < MAX_TAB_SIZES) return
   for (const key of roots.keys()) {
     roots.delete(key)
@@ -249,12 +321,16 @@ function scanAdvance(text: string, tabSize: number, mode: ColumnMode): Advance {
 function buildSource(text: string, start: number, end: number, tabSize: number): TextNode {
   if (end - start <= BLOCK_LENGTH)
     return { kind: 'leaf', text, start, summary: scanSummary(text, start, end, tabSize) }
-  const middle = start + Math.max(1, Math.floor((end - start) / (BLOCK_LENGTH * 2))) * BLOCK_LENGTH
+  const middle = sourceMiddle(start, end)
   return branch(
     buildSource(text, start, middle, tabSize),
     buildSource(text, middle, end, tabSize),
     tabSize,
   )
+}
+
+function sourceMiddle(start: number, end: number): number {
+  return start + Math.max(1, Math.floor((end - start) / (BLOCK_LENGTH * 2))) * BLOCK_LENGTH
 }
 
 function branch(left: TextNode, right: TextNode, tabSize: number): TextNode {

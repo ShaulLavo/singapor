@@ -200,6 +200,7 @@ export const EDITOR_OPTION_DESCRIPTORS: readonly EditorOptionDescriptor[] = [
       editor.setSelection(selection.anchor, selection.head, {
         affinity: selection.affinity,
         reveal: selection.reveal,
+        revealBlock: selection.revealBlock,
         revealOffset: selection.revealOffset,
       })
       return true
@@ -311,6 +312,7 @@ function validateSelection(input: unknown): EditorControlledSelection | null {
     anchor,
     head: validateOffset(input.head),
     reveal: typeof input.reveal === 'boolean' ? input.reveal : undefined,
+    revealBlock: validateRevealBlock(input.revealBlock),
     revealOffset: validateOffset(input.revealOffset),
   }
 }
@@ -326,8 +328,14 @@ function selectionsEqual(
     left.anchor === right.anchor &&
     left.head === right.head &&
     left.reveal === right.reveal &&
+    left.revealBlock === right.revealBlock &&
     left.revealOffset === right.revealOffset
   )
+}
+
+function validateRevealBlock(input: unknown): EditorControlledSelection['revealBlock'] {
+  if (input === 'nearest' || input === 'center' || input === 'end') return input
+  return undefined
 }
 
 function validateSelectionAffinity(input: unknown): EditorControlledSelection['affinity'] {

@@ -159,3 +159,126 @@ traces from mixing with a new run. Profiles remain available after a failed scen
 See [the long-line investigation](results/long-line-profile.md) for the measured hot paths and
 [the implemented fixes](results/long-line-fix.md) for normal-build before/after measurements,
 regression coverage, and the memory tradeoff.
+
+## Native input layout profiles
+
+Build the packages with `bun run stress:build` from the repository root. Capture layout stacks
+around native typing and paste bursts with a new output directory:
+
+```sh
+bun run --cwd examples/stress profile:input --mode trace --repetitions 1 --output /work/tmp/editor-layout-trace
+```
+
+The default groups cover typing in ordinary and long-line documents, and paste in long-line and
+short-line documents, with multiple views. Use `--groups long-line/multiple/typing` to select one.
+Each group runs one warmup before the measured repetitions. The output includes raw Chromium
+traces, CPU profiles, source maps, layout counts by callsite, and the full correctness samples.
+Layouts without a JavaScript stack remain in the totals.
+
+For latency measurements without profiling instrumentation, use `--mode timing`:
+
+```sh
+bun run --cwd examples/stress profile:input --mode timing --output /work/tmp/editor-layout-timing
+```
+
+Add `--core-directory /path/to/frozen/packages/editor` to compare a frozen core through the same
+harness. Runs record the selected source hash and reject source changes during measurement.
+Both modes reuse the native input suite's text, selection, rendering, and cleanup checks. These
+focused artifacts are not budget acceptance runs; trace timings include instrumentation overhead.
+Use the complete input suite below for budget comparisons.
+
+## Input latency budgets
+
+Before changing the implementation, preserve its measurements for the comparison report:
+
+```sh
+bun run bench:input --repetitions 1 --output /work/tmp/editor-input/before.json.gz
+```
+
+Establish a reference calibration by running the six input scenarios over all three fixtures and both view configurations:
+
+```sh
+bun run bench:input --repetitions 3 --output /work/tmp/editor-input/control-1.json.gz
+```
+
+Repeat the unchanged command with `control-2.json.gz` and `control-3.json.gz` as output paths.
+Use the same command for a separate `rerun.json.gz`. Keep the browser, hardware and workload fixed.
+Run without other benchmarks or builds competing for the CPU.
+
+To collect baseline controls after changing the active core, preserve a core package with matching
+`src`, `package.json`, and built `dist` before making changes. Its dependencies must remain
+resolvable from that directory. After building the public packages, run the runner directly to use
+the existing builds:
+
+```sh
+node examples/stress/run.mjs --suite input-latency --core-directory /work/tmp/editor-input/baseline/packages/editor --repetitions 3 --output /work/tmp/editor-input/control-1.json.gz
+```
+
+Use the same frozen directory for all three controls and the independent reference rerun.
+`--core-directory` aliases every `@singapor/core` export to the selected package's `dist`; omitting
+it selects the active `packages/editor` package. It cannot be combined with `--url`.
+The selected path is recorded as `environment.coreDirectory`, without changing the workload config.
+`environment.sourceHash` enumerates the selected `src` tree under canonical `packages/editor/src`
+paths, replacing active core sources while retaining the existing source hashing rules for other
+packages and the runner. The hash identifies source content; keep the preserved source and build
+matched. Moving an identical source tree does not change its identity.
+
+Calibrate and check the independent rerun:
+
+```sh
+node examples/stress/input-compare.mjs calibrate /work/tmp/editor-input/calibration.json.gz /work/tmp/editor-input/control-1.json.gz /work/tmp/editor-input/control-2.json.gz /work/tmp/editor-input/control-3.json.gz
+node examples/stress/input-compare.mjs check /work/tmp/editor-input/control-1.json.gz /work/tmp/editor-input/rerun.json.gz /work/tmp/editor-input/calibration.json.gz
+```
+
+Each input limit is the largest control p95 plus the largest of three times the between-run p95
+spread, three times the between-run median spread, or the widest observed within-run range
+(maximum minus minimum). Calibration records each control's median, p95, minimum, and maximum.
+This local envelope includes the observed timing variation across the full sample, including
+arrival at different points in a frame. It is not a statistical confidence bound. Establish the
+rule before collecting its independent unchanged holdout, and require the real delayed control
+to fail before accepting the calibration.
+
+The input comparison has **108 blocking groups**: input-to-applied, synchronous dispatch, and
+input-to-next-frame for every fixture, view configuration, and scenario. Its **36 screenshot
+groups are advisory**. Their burst-to-screenshot-completion upper bounds include input delivery,
+Playwright transport, and capture overhead. Raw screenshot distributions and calibrated limits
+remain in the report, but exceeding those timing limits alone does not fail acceptance.
+Screenshot evidence, changed pixels, rendered text, and revision correctness remain mandatory.
+
+Check a candidate build against those established limits. Preserve the controls and reference rerun:
+
+```sh
+bun run bench:input --repetitions 3 --output /work/tmp/editor-input/candidate.json.gz
+node examples/stress/input-compare.mjs check /work/tmp/editor-input/control-1.json.gz /work/tmp/editor-input/candidate.json.gz /work/tmp/editor-input/calibration.json.gz
+```
+
+Prove the gate catches delayed work with a real 20 ms pause inside each measured input operation:
+
+```sh
+bun run bench:input --repetitions 3 --slowdown-ms 20 --output /work/tmp/editor-input/delayed.json.gz
+node examples/stress/input-compare.mjs check /work/tmp/editor-input/control-1.json.gz /work/tmp/editor-input/delayed.json.gz /work/tmp/editor-input/calibration.json.gz --allow-slowdown
+```
+
+The delayed comparison must exit with status 1 and report failed synchronous-duration groups.
+`--allow-slowdown` permits that explicit configuration difference; it does not bypass the gate.
+Collect diagnostic phase correlations separately:
+
+```sh
+bun run bench:input --repetitions 1 --diagnostics --output /work/tmp/editor-input/diagnostic.json.gz
+node examples/stress/test/verify-input-results.mjs /work/tmp/editor-input
+```
+
+Keep the candidate source unchanged for its delayed and diagnostic runs. The proof command checks
+the saved before measurements, controls, independent reference rerun, candidate, delayed run and diagnostic records.
+It writes `verification.json` and `calibration.json.gz`. It fails on missing or incomparable samples,
+incorrect text/revisions/paint, malformed index ranges, listener growth, incomplete context closure,
+reused run identities, or a candidate exceeding the established blocking limits. A valid run that
+exceeds blocking timing limits still writes `verification.json` with `passed: false` and
+`candidateFailures`, then exits with status 1. Screenshot timing excesses appear separately in
+`candidateAdvisories`. Malformed evidence fails before the report is written.
+`.json.gz` stores the same raw records as `.json` using gzip.
+
+For a quick probe, add `--input-smoke`. That runs ordinary/single-view cases and marks the artifact
+`smokeOnly`; the acceptance gate rejects it. Use the full suite to accept a change.
+See [measurement boundaries and diagnostic fields](../../docs/performance/input-latency.md)
+for what each duration proves and the CDP composition-commit limitation.

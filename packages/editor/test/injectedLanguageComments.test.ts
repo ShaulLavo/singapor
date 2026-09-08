@@ -95,6 +95,7 @@ function injectedSyntaxSession(injections: readonly EditorSyntaxInjection[]): Ed
     applyChange: async () => result,
     dispose: () => undefined,
     getResult: () => result,
+    foldingSupport: 'supported',
     getSnapshotVersion: () => 0,
     getTokens: () => [],
     refresh: async () => result,

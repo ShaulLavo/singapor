@@ -323,6 +323,7 @@ class EditorFixture {
       highlightPrefix: 'editor-test-',
       hasDocument: () => true,
       getSnapshot: () => this.snapshot(),
+      requestViewUpdate: vi.fn(),
       revealLine: vi.fn(),
       focusEditor: vi.fn(),
       setSelection: vi.fn(),
@@ -406,6 +407,8 @@ class EditorFixture {
       fullText: this.text,
       textVersion: this.textVersion,
       initialHighlightStatus: 'painted',
+      syntaxStatus: 'ready',
+      paintLayers: [],
       lineStarts,
       documentSyncPoint: this.#chain.point(this.textVersion),
       changesSinceDocumentSyncPoint: (point, scope) =>

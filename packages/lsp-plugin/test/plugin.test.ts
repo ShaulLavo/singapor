@@ -761,6 +761,7 @@ function viewContributionContext(
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: () => snapshot,
+    requestViewUpdate: vi.fn(),
     getFeature,
     revealLine: vi.fn(),
     focusEditor: vi.fn(),

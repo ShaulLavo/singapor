@@ -1,8 +1,10 @@
 import type { SelectionAffinity } from '../selections'
+import type { RevealBlock } from '../virtualization/virtualizedTextViewInternals'
 
 export type EditorSetSelectionOptions = {
   readonly affinity?: SelectionAffinity
   readonly reveal?: boolean
+  readonly revealBlock?: RevealBlock
   readonly revealOffset?: number
 }
 

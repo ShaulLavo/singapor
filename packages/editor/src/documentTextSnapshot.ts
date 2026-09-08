@@ -185,3 +185,7 @@ function fullTextSnapshotDetail(
     retained,
   }
 }
+
+export function getPieceTreeSnapshot(text: TextSnapshot): PieceTableSnapshot | null {
+  return text instanceof PieceTableDocumentTextSnapshot ? text.snapshot : null
+}

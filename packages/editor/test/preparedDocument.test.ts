@@ -4,7 +4,7 @@ import {
   createEditorTextBuffer,
   createEditorViewSession,
 } from '../src/documentSession'
-import { Editor } from '../src/editor/Editor'
+import { createVisibleEditor } from './factories/visibleEditor'
 import { createEditorPreparedDocument } from '../src/editor/preparedDocument'
 import type {
   EditorHighlightResult,
@@ -212,7 +212,7 @@ describe('prepared editor documents', () => {
     }
     const container = document.createElement('div')
     document.body.appendChild(container)
-    const editor = new Editor(container, { plugins: [plugin] })
+    const editor = createVisibleEditor(container, { plugins: [plugin] })
 
     editor.attachSession(
       createEditorBufferSession(buffer, createEditorViewSession(buffer, 'prepared-view')),
@@ -282,7 +282,7 @@ describe('prepared editor documents', () => {
     await expect(outcome).resolves.toBe('ready')
     const container = document.createElement('div')
     document.body.appendChild(container)
-    const editor = new Editor(container, { plugins: [plugin] })
+    const editor = createVisibleEditor(container, { plugins: [plugin] })
     observedTokenColors.length = 0
 
     editor.attachSession(
@@ -334,7 +334,7 @@ describe('prepared editor documents', () => {
     })
     const container = document.createElement('div')
     document.body.appendChild(container)
-    const editor = new Editor(container, { plugins: [plugin] })
+    const editor = createVisibleEditor(container, { plugins: [plugin] })
     snapshots.length = 0
 
     editor.attachSession(
@@ -376,7 +376,7 @@ describe('prepared editor documents', () => {
     })
     const container = document.createElement('div')
     document.body.appendChild(container)
-    const editor = new Editor(container, { plugins: [plugin] })
+    const editor = createVisibleEditor(container, { plugins: [plugin] })
     firstRowFoldStates.length = 0
 
     editor.attachSession(
@@ -447,7 +447,7 @@ describe('prepared editor documents', () => {
     await expect(outcome).resolves.toBe('ready')
     const container = document.createElement('div')
     document.body.appendChild(container)
-    const editor = new Editor(container, { plugins: [plugin] })
+    const editor = createVisibleEditor(container, { plugins: [plugin] })
     foldCounts.length = 0
 
     editor.attachSession(
@@ -497,7 +497,7 @@ describe('prepared editor documents', () => {
     }
     const container = document.createElement('div')
     document.body.appendChild(container)
-    const editor = new Editor(container, { plugins: [plugin] })
+    const editor = createVisibleEditor(container, { plugins: [plugin] })
     const viewport = container.querySelector('.editor-virtualized')
     if (!(viewport instanceof HTMLElement)) throw new TypeError('missing editor viewport')
     Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 80 })
@@ -568,7 +568,7 @@ describe('prepared editor documents', () => {
     }
     const container = document.createElement('div')
     document.body.appendChild(container)
-    const editor = new Editor(container, { plugins: [plugin] })
+    const editor = createVisibleEditor(container, { plugins: [plugin] })
 
     editor.attachSession(
       createEditorBufferSession(buffer, createEditorViewSession(buffer, 'pending-view')),
@@ -631,7 +631,7 @@ describe('prepared editor documents', () => {
     })
     const container = document.createElement('div')
     document.body.appendChild(container)
-    const editor = new Editor(container, { plugins: [plugin] })
+    const editor = createVisibleEditor(container, { plugins: [plugin] })
 
     editor.attachSession(
       createEditorBufferSession(buffer, createEditorViewSession(buffer, 'pending-highlight-view')),
@@ -792,6 +792,7 @@ function syntaxSession(): EditorSyntaxSession {
     applyChange: vi.fn(async () => result),
     dispose: vi.fn(),
     getResult: () => result,
+    foldingSupport: 'supported',
     getSnapshotVersion: () => 0,
     getTokens: () => result.tokens,
     queryRange: vi.fn(async () => result),

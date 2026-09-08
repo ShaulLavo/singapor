@@ -174,14 +174,73 @@ function tooltipController() {
   })
 }
 
+describe('definition link source spans', () => {
+  afterEach(() => document.body.replaceChildren())
+
+  it.each(['.', '/', '-', '@'])(
+    'links the whole import string when entered on %s and keeps one link across its segments',
+    async (character) => {
+      const text = 'import { helper } from "@scope/nested/my-helper.ts"'
+      const start = text.indexOf('"')
+      const { controller, context, element, request } = hoverController(
+        () => Promise.resolve(null),
+        text,
+      )
+      request.mockResolvedValue([
+        {
+          originSelectionRange: {
+            start: { line: 0, character: start },
+            end: { line: 0, character: text.length },
+          },
+          targetUri: 'file:///nested/my-helper.ts',
+          targetRange: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+          targetSelectionRange: {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 1 },
+          },
+        },
+      ])
+
+      vi.mocked(context.textOffsetFromPoint).mockReturnValue(text.indexOf(character, start))
+      element.dispatchEvent(
+        new PointerEvent('pointermove', { ctrlKey: true, buttons: 0, clientX: 40, clientY: 60 }),
+      )
+      await flushPromises()
+      expect(context.setRangeHighlight).toHaveBeenLastCalledWith(
+        expect.any(String),
+        [{ start, end: text.length }],
+        expect.any(Object),
+      )
+      expect(element.style.cursor).toBe('pointer')
+
+      vi.mocked(context.textOffsetFromPoint).mockReturnValue(text.indexOf('-'))
+      element.dispatchEvent(
+        new PointerEvent('pointermove', { ctrlKey: true, buttons: 0, clientX: 50, clientY: 60 }),
+      )
+      await flushPromises()
+      expect(request).toHaveBeenCalledTimes(1)
+
+      vi.mocked(context.textOffsetFromPoint).mockReturnValue(0)
+      request.mockResolvedValue([])
+      element.dispatchEvent(
+        new PointerEvent('pointermove', { ctrlKey: true, buttons: 0, clientX: 10, clientY: 60 }),
+      )
+      await flushPromises()
+      expect(element.style.cursor).toBe('')
+      controller.dispose()
+    },
+  )
+})
+
 function hoverController(
   requestHover: (
     onUpdate: (update: LanguageServerHoverUpdate) => void,
   ) => Promise<lsp.Hover | null>,
+  text = 'const value = 1',
 ) {
   const element = document.createElement('div')
   document.body.append(element)
-  const active = activeDocument()
+  const active = activeDocument(text)
   const snapshot = hoverSnapshot(active)
   const context = {
     container: element,
@@ -191,12 +250,14 @@ function hoverController(
     textOffsetFromPoint: vi.fn(() => 6),
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
     setSelection: vi.fn(),
+    setRangeHighlight: vi.fn(),
     clearRangeHighlight: vi.fn(),
   } as unknown as EditorViewContributionContext
+  const request = vi.fn<LspClient['request']>()
   const client = {
     initialized: true,
     serverCapabilities: { hoverProvider: true },
-    request: vi.fn(),
+    request,
   } as unknown as LspClient
   const controller = new HoverDefinitionController({
     context,
@@ -212,16 +273,16 @@ function hoverController(
     completionContainsTarget: () => false,
     onRequestError: vi.fn(),
   })
-  return { controller, element }
+  return { controller, context, element, request }
 }
 
-function activeDocument(): ActiveDocument {
+function activeDocument(text = 'const value = 1'): ActiveDocument {
   return {
     uri: 'file:///index.ts',
     languageId: 'typescript',
     textSnapshot: {} as ActiveDocument['textSnapshot'],
     lineStarts: arrayLspLineStarts([0]),
-    fullText: 'const value = 1',
+    fullText: text,
     textVersion: 1,
     lspVersion: 1,
   }

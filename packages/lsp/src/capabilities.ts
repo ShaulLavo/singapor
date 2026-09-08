@@ -62,6 +62,12 @@ export const defaultClientCapabilities = (): lsp.ClientCapabilities => ({
       dynamicRegistration: false,
       relatedDocumentSupport: false,
     },
+    hover: {
+      contentFormat: ['markdown', 'plaintext'],
+    },
+    definition: {
+      linkSupport: true,
+    },
     completion: {
       contextSupport: true,
       completionItem: {

@@ -54,6 +54,7 @@ describe('indexed long-line geometry', () => {
     const view = mountView(7)
     view.setText(text, buffer.getTextSnapshot())
     checkCaret(view, text, 5_400)
+    expect(view.getState().mountedRows[0]!.element.dataset.editorVirtualWindowStart).toBeDefined()
     applyChange([view], session.applyEdits([{ from: 3_000, to: 3_000, text: '\n' }]))
     view.setScrollMetrics(0, 100, 360)
     const rows = view.getState().mountedRows
@@ -65,6 +66,15 @@ describe('indexed long-line geometry', () => {
     view.setScrollMetrics(0, 100, 360, 0)
     expect(view.getState().mountedRows.length).toBeGreaterThan(1)
     expect(view.getState().mountedRows.every((row) => row.text.length < 100)).toBe(true)
+    expect(
+      view
+        .getState()
+        .mountedRows.every(
+          (row) =>
+            row.element.dataset.editorVirtualWindowStart === undefined &&
+            row.element.dataset.editorVirtualWindowEnd === undefined,
+        ),
+    ).toBe(true)
   })
 })
 
@@ -101,6 +111,16 @@ function checkCaret(view: VirtualizedTextView, text: string, offset: number): vo
   expect(row.chunks.some((chunk) => chunk.startOffset <= offset && chunk.endOffset >= offset)).toBe(
     true,
   )
+  const elements = [
+    ...row.element.querySelectorAll<HTMLElement>('[data-editor-virtual-chunk-start]'),
+  ]
+  expect(elements.length).toBeGreaterThan(0)
+  for (const element of elements) {
+    const start = Number(element.dataset.editorVirtualChunkStart)
+    const end = Number(element.dataset.editorVirtualChunkEnd)
+    expect(end).toBeGreaterThan(start)
+    expect(element.textContent).toBe(text.slice(start, end))
+  }
   const range = view.createRange(offset, offset)
   expect(range).not.toBeNull()
   const rect = range!.getBoundingClientRect()

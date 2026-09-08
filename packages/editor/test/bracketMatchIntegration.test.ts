@@ -134,6 +134,7 @@ function bracketSyntaxSession(): EditorSyntaxSession {
     applyChange: async () => result,
     dispose: () => undefined,
     getResult: () => result,
+    foldingSupport: 'supported',
     getSnapshotVersion: () => 0,
     getTokens: () => [],
     refresh: async () => result,

@@ -17,6 +17,7 @@ import {
   type EditorSyntaxRange,
   type EditorSyntaxResult,
   type EditorSyntaxSession,
+  type EditorSyntaxFoldingSupport,
   treeSitterCapturesToEditorTokens,
   unpackEditorTokens,
 } from '@singapor/core/syntax'
@@ -45,6 +46,7 @@ export type TreeSitterSyntaxSessionOptions = {
   readonly runtimeSessionId?: string
   readonly languageId: TreeSitterLanguageId
   readonly languageResolver?: TreeSitterLanguageResolver
+  readonly foldingSupport?: Exclude<EditorSyntaxFoldingSupport, 'pending'>
   readonly includeHighlights?: boolean
   readonly includeCaptures?: boolean
   readonly syntaxMode?: 'full' | 'range'
@@ -68,6 +70,7 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
   private textSnapshot: DocumentTextSnapshot
   private snapshot: PieceTableSnapshot
   private result: EditorSyntaxResult
+  private currentFoldingSupport: EditorSyntaxFoldingSupport
   private languageRegistrationPromise: Promise<boolean> | null = null
   private disposed = false
 
@@ -76,6 +79,9 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     this.runtimeSessionId = options.runtimeSessionId ?? createEditorRuntimeSessionId()
     this.languageId = options.languageId
     this.languageResolver = options.languageResolver
+    this.currentFoldingSupport = options.languageResolver
+      ? 'pending'
+      : (options.foldingSupport ?? 'supported')
     this.includeHighlights = options.includeHighlights ?? true
     this.includeCaptures = options.includeCaptures ?? true
     this.syntaxMode = options.syntaxMode ?? 'full'
@@ -84,6 +90,10 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
     this.snapshot = options.snapshot
     this.backend = options.backend ?? createTreeSitterWorkerBackend()
     this.result = this.createEmptyResult({ snapshot: options.snapshot, snapshotVersion: 0 })
+  }
+
+  public get foldingSupport(): EditorSyntaxFoldingSupport {
+    return this.currentFoldingSupport
   }
 
   public async refresh(
@@ -279,7 +289,11 @@ export class TreeSitterSyntaxSession implements EditorSyntaxSession {
 
   private async registerResolvedLanguage(): Promise<boolean> {
     const descriptor = await this.languageResolver?.resolveTreeSitterLanguage(this.languageId)
-    if (!descriptor) return false
+    if (!descriptor) {
+      this.currentFoldingSupport = 'unsupported'
+      return false
+    }
+    this.currentFoldingSupport = descriptor.foldQuerySource?.trim() ? 'supported' : 'unsupported'
 
     await this.backend.registerLanguages(await this.withInjectedLanguages(descriptor))
     return true

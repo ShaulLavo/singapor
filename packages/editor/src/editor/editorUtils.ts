@@ -1,6 +1,7 @@
 import type { DocumentSessionChange } from '../documentSession'
 import type { EditorViewContributionUpdateKind } from '../plugins'
 import type { SelectionAffinity } from '../selections'
+import type { EditorSetSelectionOptions } from './selectionReveal'
 
 const SYNTAX_EDIT_DEBOUNCE_MS = 75
 
@@ -16,7 +17,7 @@ export type SessionChangeOptions = {
   readonly revealOffset?: number
   /** Present only when revealOffset names the active caret rather than an arbitrary document point. */
   readonly revealAffinity?: SelectionAffinity
-  readonly revealBlock?: 'nearest' | 'end'
+  readonly revealBlock?: EditorSetSelectionOptions['revealBlock']
 }
 
 export function syntaxRefreshDelay(change: DocumentSessionChange | null): number {

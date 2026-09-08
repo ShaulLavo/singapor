@@ -359,6 +359,41 @@ describe('Tree-sitter syntax capture conversion', () => {
     ])
   })
 
+  it.each([
+    { foldQuerySource: '(object) @fold', expected: 'supported' },
+    { foldQuerySource: '', expected: 'unsupported' },
+  ] as const)(
+    'resolves folding support from language assets: $expected',
+    async ({ foldQuerySource, expected }) => {
+      const registration = createDeferred<void>()
+      const snapshot = createPieceTableSnapshot('const config = {}')
+      const session = new TreeSitterSyntaxSession({
+        documentId: 'config.js',
+        languageId: 'javascript',
+        snapshot,
+        backend: createCapturingTreeSitterBackend(),
+        languageResolver: {
+          resolveTreeSitterLanguage: async () => {
+            await registration.promise
+            return {
+              id: 'javascript',
+              aliases: [],
+              extensions: ['.js'],
+              wasmUrl: '/javascript.wasm',
+              foldQuerySource,
+            }
+          },
+        },
+      })
+      const result = session.refresh(snapshot)
+      expect(session.foldingSupport).toBe('pending')
+      registration.resolve()
+      await result
+      expect(session.foldingSupport).toBe(expected)
+      session.dispose()
+    },
+  )
+
   it('uses compact worker tokens without requiring returned captures', async () => {
     const parsePayloads: TreeSitterBackendParsePayload[] = []
     const tokens = [{ start: 0, end: 5, style: { color: '#123456' } }]

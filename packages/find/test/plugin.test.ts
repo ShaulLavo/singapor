@@ -230,6 +230,7 @@ function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext {
     highlightPrefix: 'editor-find-test',
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
+    requestViewUpdate: vi.fn(),
     revealLine: vi.fn(),
     focusEditor: vi.fn(),
     setSelection: vi.fn(),
@@ -256,6 +257,8 @@ function snapshot(): EditorViewSnapshot {
     fullText: 'foo bar foo',
     textVersion: 1,
     initialHighlightStatus: 'painted',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],

@@ -33,8 +33,18 @@ import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
 import { appendTiming, nowMs } from './timing'
 import { copyTokenProjectionMetadata, projectTokensThroughEdit } from './tokenProjection'
 import {
+  beginEditorPerformanceBatch,
+  beginEditorPerformanceCommand,
+  beginEditorPerformancePass,
+  beginEditorPerformanceView,
+  editorPerformanceDiagnosticsEnabled,
+  endEditorPerformanceInput,
+  endEditorPerformancePass,
+  endEditorPerformanceScope,
   measureEditorPerformance,
+  markEditorPerformanceFlush,
   recordEditorPerformanceDiagnostic,
+  traceEditorPerformanceTask,
 } from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
@@ -219,7 +229,12 @@ const PLUGIN_INJECTED_ROWS_PROJECTION_OWNER = 'editor.injectedRows.plugins'
 
 type SyntaxScrollDirection = -1 | 0 | 1
 type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'feature' | 'view'
-type EditorContributionFailurePhase = 'dispose' | 'factory' | 'initial-update' | 'update'
+type EditorContributionFailurePhase =
+  | 'dispose'
+  | 'factory'
+  | 'initial-update'
+  | 'update'
+  | 'capture-visible-paint'
 
 type TrackedAnchorRange = {
   readonly start: PieceTableAnchor
@@ -491,7 +506,7 @@ export class Editor {
       setSyntaxCaptures: (captures) => this.setSyntaxCaptures(captures),
       needsSyntaxCaptures: () => this.inlineReplacementProviders().length > 0,
       notifyChange: (change) => this.notifyChange(change),
-      notifyInitialHighlightStatusChanged: () => this.notifyViewContributions('tokens', null),
+      notifyViewUpdate: () => this.notifyViewContributions('tokens', null),
       onInitialPaint: (event) => this.options.onInitialPaint?.(event),
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
@@ -940,7 +955,12 @@ export class Editor {
    * one each. Calls made from inside a pass join it rather than opening another.
    */
   runInOperation<T>(run: () => T): T {
-    return this.withOperation(() => run())
+    const scope = beginEditorPerformanceBatch()
+    try {
+      return this.withOperation(() => run())
+    } finally {
+      endEditorPerformanceInput(scope)
+    }
   }
 
   edit(editOrEdits: EditorEditInput, options: EditorEditOptions = {}): void {
@@ -1294,6 +1314,18 @@ export class Editor {
   }
 
   dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
+    const scope = beginEditorPerformanceCommand(command)
+    try {
+      return this.dispatchCommandInOperation(command, context)
+    } finally {
+      endEditorPerformanceInput(scope)
+    }
+  }
+
+  private dispatchCommandInOperation(
+    command: EditorCommandId,
+    context: EditorCommandContext,
+  ): boolean {
     const start = nowMs()
     const handled = this.runInOperation(() => this.commandRouter.dispatch(command, context))
     this.log({
@@ -1508,7 +1540,7 @@ export class Editor {
     this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
     this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
     this.foldState.clear()
-    if (folds.length > 0) {
+    if (folds.length > 0 && this.syntax.usesFallbackFolds) {
       this.displayProjections.set({
         kind: 'folds',
         owner: FALLBACK_FOLD_PROJECTION_OWNER,
@@ -2163,28 +2195,27 @@ export class Editor {
    * whatever parsed folds it has synchronously and lets the walk catch up.
    */
   private scheduleFallbackFoldProjection(): void {
+    const documentVersion = this.documentVersion
     this.foldState.setFoldProjections(this.foldProjections())
     this.secondaryWork.schedule({
       key: 'editor.fallbackFolds',
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
       maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
-      run: () => this.runInOperation(() => this.syncFoldStateFromProjections()),
+      version: documentVersion,
+      isCurrent: (version) => this.isCurrentSecondaryDocument(version),
+      run: traceEditorPerformanceTask('editor.secondary.folds', () =>
+        this.runInOperation(() => this.syncFoldStateFromProjections()),
+      ),
     })
   }
 
-  /**
-   * Keeps a fold model in place for documents the grammar cannot describe, so that folding, and
-   * everything downstream that reads enclosing scopes, is never a property of which languages we
-   * happen to ship a parser for.
-   *
-   * A grammar that has described folds displaces this entirely, including over the stretches where it
-   * currently describes none: letting indentation answer there would contribute a second version of
-   * blocks the grammar already describes, which the fan-in refuses as crossing anyway. Merely having
-   * parsed is not that signal — fold queries ship for some languages and not others, and a grammar
-   * that was never asked for folds must not be read as having answered none.
-   */
+  /** Indentation owns folds only when structural folding is unavailable, never while it loads. */
   private syncFallbackFoldProjection(): void {
-    if (this.grammarDescribedFolds || this.syntaxFoldProjection().length > 0) {
+    if (
+      !this.syntax.usesFallbackFolds ||
+      this.grammarDescribedFolds ||
+      this.syntaxFoldProjection().length > 0
+    ) {
       this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
       return
     }
@@ -2411,6 +2442,7 @@ export class Editor {
       highlightPrefix: this.highlightPrefix,
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
+      requestViewUpdate: () => this.notifyViewContributions('layout', null),
       getFeature: (key) => this.getFeature(key),
       getProviders: (token, languageId) => this.languageFeatures.ordered(token, languageId),
       registerProvider: (token, selector, provider) =>
@@ -2723,6 +2755,7 @@ export class Editor {
         textSnapshot,
         textVersion: this.textVersion,
         initialHighlightStatus: this.syntax.initialHighlightStatus,
+        syntaxStatus: this.syntax.status,
         documentSyncPoint: sync.point,
         changesSinceDocumentSyncPoint: (
           point: DocumentSyncPoint,
@@ -2779,6 +2812,7 @@ export class Editor {
         })),
         viewport,
       }),
+      { paintPending: true },
     )
   }
 
@@ -2992,6 +3026,27 @@ export class Editor {
     totalStart = nowMs(),
     options: SessionChangeOptions = {},
   ): void {
+    const scope = this.beginPerformanceView()
+    try {
+      this.updateSessionView(change, totalName, totalStart, options)
+    } finally {
+      endEditorPerformanceScope(scope)
+    }
+  }
+
+  private updateSessionView(
+    change: DocumentSessionChange,
+    totalName: string,
+    totalStart: number,
+    options: SessionChangeOptions,
+  ): void {
+    if (change.edits.length > 0 && editorPerformanceDiagnosticsEnabled()) {
+      recordEditorPerformanceDiagnostic('editor.document.committed', () => ({
+        kind: change.kind,
+        editCount: change.edits.length,
+        timingName: totalName,
+      }))
+    }
     this.withOperation((operation) => {
       this.syntax.projectCacheForChange(change)
       const renderStart = nowMs()
@@ -3022,6 +3077,7 @@ export class Editor {
     // has to be able to hand back.
     this.cursorHistoryBefore = this.captureCursorHistoryBefore()
     beginRowRectMeasurements()
+    const performancePass = beginEditorPerformancePass()
     try {
       return run(operation)
     } finally {
@@ -3030,17 +3086,40 @@ export class Editor {
       // and in a finally so a pass that throws part-way still closes instead of
       // leaving the editor wedged inside it.
       this.operation = null
+      markEditorPerformanceFlush(performancePass)
       try {
         this.flushOperation(operation)
       } finally {
         endRowRectMeasurements()
+        endEditorPerformancePass(performancePass)
       }
     }
   }
 
   private flushOperation(operation: EditorOperation): void {
+    const scope = this.beginPerformanceView()
+    try {
+      this.flushViewOperation(operation)
+    } finally {
+      endEditorPerformanceScope(scope)
+    }
+  }
+
+  private beginPerformanceView(): ReturnType<typeof beginEditorPerformanceView> {
+    if (!editorPerformanceDiagnosticsEnabled()) return null
+
+    return beginEditorPerformanceView(
+      this.highlightPrefix,
+      this.documentId,
+      this.documentVersion,
+      editorBufferSession(this.session)?.buffer.getRevision() ?? this.textVersion,
+    )
+  }
+
+  private flushViewOperation(operation: EditorOperation): void {
     const flush = operation.flush()
     if (!flush) return
+    const documentVersion = this.documentVersion
 
     // Ahead of the fan-out below, because a listener that moves the caret from
     // inside it opens a pass of its own and that pass belongs after this one.
@@ -3084,6 +3163,7 @@ export class Editor {
     // the pass made still has to be handed over, in the order it was made — only
     // the notifications above describe a state, and only a state can be skipped.
     for (const pending of flush.changes) {
+      if (!this.isCurrentSecondaryDocument(documentVersion)) return
       const recorded = pending === flush.latest ? finalChange : pending.change
       this.logSessionChange(recorded, pending.totalName)
       this.sessionChangeVersion += 1
@@ -3091,7 +3171,15 @@ export class Editor {
         recorded,
         pending.totalName,
         this.sessionChangeVersion,
+        documentVersion,
       )
+    }
+    if (editorPerformanceDiagnosticsEnabled()) {
+      recordEditorPerformanceDiagnostic('editor.view.updated', () => ({
+        kind: passChange.kind,
+        editCount: passChange.edits.length,
+        timingName: flush.latest.totalName,
+      }))
     }
   }
 
@@ -3313,8 +3401,8 @@ export class Editor {
     change: DocumentSessionChange,
     timingName: string,
     sessionChangeVersion: number,
+    documentVersion: number,
   ): void {
-    const documentVersion = this.documentVersion
     if (!this.shouldDeferSecondarySessionWork(change, timingName)) {
       this.runSecondarySessionChangeWork(documentVersion, change)
       return
@@ -3325,23 +3413,31 @@ export class Editor {
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
       maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
       version: sessionChangeVersion,
-      isCurrent: (version) => version === this.sessionChangeVersion,
-      run: () =>
+      isCurrent: (version) =>
+        version === this.sessionChangeVersion && this.isCurrentSecondaryDocument(documentVersion),
+      run: traceEditorPerformanceTask('editor.secondary.syntax', () =>
         measureEditorPerformance('editor.refreshSyntax', () =>
           this.refreshSyntax(documentVersion, change, { delayMs: 0 }),
         ),
+      ),
     })
     this.secondaryWork.schedule({
       key: 'editor.featureContributions',
       delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
       maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
       version: sessionChangeVersion,
-      isCurrent: (version) => version === this.sessionChangeVersion,
-      run: () =>
+      isCurrent: (version) =>
+        version === this.sessionChangeVersion && this.isCurrentSecondaryDocument(documentVersion),
+      run: traceEditorPerformanceTask('editor.secondary.features', () =>
         measureEditorPerformance('editor.notifyEditorFeatureContributions', () =>
           this.notifyEditorFeatureContributions(change),
         ),
+      ),
     })
+  }
+
+  private isCurrentSecondaryDocument(documentVersion: number): boolean {
+    return this.session !== null && documentVersion === this.documentVersion
   }
 
   private runSecondarySessionChangeWork(
@@ -3438,6 +3534,7 @@ export class Editor {
     this.revealFoldedOffset(head)
     this.inputSelection.applyFindSelection(anchor, head, timingName, {
       affinity: normalizedOptions?.affinity,
+      revealBlock: normalizedOptions?.revealBlock,
       revealOffset: selectionRevealOffset(normalizedOptions, head, revealByDefault),
     })
   }
@@ -3633,8 +3730,6 @@ export class Editor {
     this.grammarDescribedFolds = false
     this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
     this.foldState.clear()
-    // Losing the parse is precisely when the fallback has something to say, and this runs on every
-    // freshly opened document — where it is the only thing that will speak until a parse lands.
     this.syncFoldStateFromProjections()
   }
 
@@ -3797,6 +3892,7 @@ function editorLogError(error: unknown): EditorLogError {
 function editorContributionFailureAction(phase: EditorContributionFailurePhase): string {
   if (phase === 'factory') return 'editor.contribution.factory_failed'
   if (phase === 'dispose') return 'editor.contribution.dispose_failed'
+  if (phase === 'capture-visible-paint') return 'editor.contribution.capture_visible_paint_failed'
   return 'editor.contribution.update_failed'
 }
 

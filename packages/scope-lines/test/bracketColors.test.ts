@@ -259,6 +259,7 @@ function context(viewSnapshot = snapshot()) {
     cleared,
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
+    requestViewUpdate: vi.fn(),
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
     focusEditor: vi.fn(),
@@ -286,6 +287,8 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
   return {
     documentId: 'bracket-colors-test',
     languageId: 'typescript',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     fullText: text,
     textVersion: 1,
     lineStarts: [0],

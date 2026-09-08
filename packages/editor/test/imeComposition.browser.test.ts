@@ -98,3 +98,109 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('composing in a rea
     expect(box.top).toBeCloseTo(caret.top, 0)
   })
 })
+
+describe.skipIf(typeof globalThis.Highlight === 'undefined')(
+  'hidden input anchor scrolling',
+  () => {
+    let container: HTMLElement
+    let view: VirtualizedTextView
+
+    beforeEach(() => {
+      container = document.createElement('div')
+      container.style.cssText = 'display:flex;width:360px;height:120px;transform-origin:top left'
+      document.body.appendChild(container)
+      view = new VirtualizedTextView(container, { rowHeight: 20, overscan: 0 })
+      view.setEditable(true)
+    })
+
+    afterEach(() => {
+      view.dispose()
+      container.remove()
+    })
+
+    it('keeps the input on the caret through focus and content writes in a scaled scrolled host', async () => {
+      container.style.transform = 'translate(17px, 23px) scale(1.25)'
+      const line = '0123456789'.repeat(24)
+      const text = Array.from({ length: 80 }, () => line).join('\n')
+      const offset = 40 * (line.length + 1) + 36
+      view.setText(text)
+      view.setScrollMetrics(760, 120, 360, 160)
+      const { inputElement: input, scrollElement: scroller } = view
+      scroller.scrollLeft = 160
+      view.setSelection(offset, offset)
+      await browserFrames(2)
+
+      expect(scroller.scrollTop).toBe(760)
+      expect(scroller.scrollLeft).toBe(160)
+      const before = expectInputAtCaret(container, input)
+      const viewport = scroller.getBoundingClientRect()
+      expect(before.left).toBeGreaterThan(viewport.left)
+      expect(before.top).toBeGreaterThan(viewport.top)
+      expect(before.right).toBeLessThan(viewport.right)
+      expect(before.bottom).toBeLessThan(viewport.bottom)
+      const pageScroll = { x: window.scrollX, y: window.scrollY }
+
+      view.focusInput()
+      input.value = `${line}\n${line}`
+      input.setSelectionRange(line.length + 37, line.length + 37)
+      view.setSelection(offset + 1, offset + 1)
+      view.focusInput()
+      await browserFrames(2)
+
+      expect(document.activeElement).toBe(input)
+      expect(input.value).toBe(`${line}\n${line}`)
+      expect(input.selectionStart).toBe(line.length + 37)
+      expect(input.selectionStart).toBe(input.selectionEnd)
+      expect(scroller.scrollTop).toBe(760)
+      expect(scroller.scrollLeft).toBe(160)
+      expect({ x: window.scrollX, y: window.scrollY }).toEqual(pageScroll)
+      const after = expectInputAtCaret(container, input)
+      expect(after.left).toBeGreaterThan(before.left)
+    })
+
+    it('keeps the input on the visible caret when logical scroll exceeds the native scroll range', async () => {
+      const lines = Array.from({ length: 4000 }, (_, index) => `line${index}`)
+      view.dispose()
+      view = new VirtualizedTextView(container, { rowHeight: 5000, overscan: 0 })
+      view.setText(lines.join('\n'))
+      const offset = lines.slice(0, 2000).join('\n').length + 5
+      view.setScrollMetrics(10_000_000, 120, 360, 0)
+      view.setSelection(offset, offset)
+      view.focusInput()
+      await browserFrames(2)
+
+      expect(view.getState().scrollTop).toBeCloseTo(10_000_000, 3)
+      const nativeScrollTop: unknown = Reflect.get(
+        Element.prototype,
+        'scrollTop',
+        view.scrollElement,
+      )
+      expect(nativeScrollTop).toBeGreaterThan(0)
+      expect(nativeScrollTop).toBeLessThan(10_000_000)
+      expect(document.activeElement).toBe(view.inputElement)
+      const input = expectInputAtCaret(container, view.inputElement)
+      expect(
+        Math.abs(input.top - view.scrollElement.getBoundingClientRect().top),
+      ).toBeLessThanOrEqual(1)
+    })
+  },
+)
+
+function expectInputAtCaret(container: HTMLElement, input: HTMLTextAreaElement): DOMRect {
+  const caret = container
+    .querySelector<HTMLElement>('.editor-virtualized-caret:not([hidden])')!
+    .getBoundingClientRect()
+  const box = input.getBoundingClientRect()
+  expect(box.width).toBeGreaterThan(0)
+  expect(box.height).toBeGreaterThan(0)
+  expect(Math.abs(box.left - caret.left)).toBeLessThanOrEqual(1)
+  expect(Math.abs(box.top - caret.top)).toBeLessThanOrEqual(1)
+  expect(Math.abs(box.height - caret.height)).toBeLessThanOrEqual(1)
+  return box
+}
+
+async function browserFrames(count: number): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  }
+}

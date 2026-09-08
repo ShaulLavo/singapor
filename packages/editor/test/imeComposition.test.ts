@@ -97,8 +97,7 @@ function caretTransform(): string {
 }
 
 function inputCorner(): string {
-  const input = editorInput()
-  return `translate(${input.style.left}, ${input.style.top})`
+  return editorInput().style.transform
 }
 
 /** What the browser leaves in the element when it writes into it: new text, and a caret past it. */
@@ -387,7 +386,8 @@ describe('IME composition', () => {
     const shift = Number.parseFloat(spacer.style.transform.replace(/[^-\d.]/g, ''))
     const caretTop = Number.parseFloat(caretTransform().split(', ')[1]!)
     expect(shift).not.toBe(0)
-    expect(Number.parseFloat(editorInput().style.top)).toBeCloseTo(caretTop + shift, 3)
+    const inputTop = Number.parseFloat(inputCorner().split(', ')[1]!)
+    expect(inputTop).toBeCloseTo(caretTop + shift, 3)
   })
 
   it('parks the hidden input in the viewport corner when the caret is scrolled out of view', () => {

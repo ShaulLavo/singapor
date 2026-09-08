@@ -8,6 +8,7 @@ import type {
   EditorViewportSnapshotJSON,
   EditorVisibleChunkSnapshot,
   EditorVisiblePaintChunkJSON,
+  EditorVisiblePaintLayer,
   EditorVisiblePaintRunJSON,
   EditorVisiblePaintRowJSON,
   EditorVisibleRowSnapshot,
@@ -18,8 +19,17 @@ import type {
 import type { EditorTheme } from '../theme'
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 import { getEditorTokenIndex, type EditorTokenIndex } from './tokenIndex'
+import { copyEditorVisiblePaintLayers } from './visiblePaint'
 
-type RuntimeViewSnapshot = Omit<EditorViewSnapshot, 'toJSON' | 'toVisibleSnapshot'>
+type RuntimeViewSnapshot = Omit<EditorViewSnapshot, 'toJSON' | 'toVisibleSnapshot' | 'paintLayers'>
+
+type VisiblePaintState = {
+  layers: readonly EditorVisiblePaintLayer[] | null
+  capture: (() => readonly EditorVisiblePaintLayer[] | null) | null
+}
+
+const visiblePaint = new WeakMap<EditorViewSnapshot, VisiblePaintState>()
+const EMPTY_PAINT_LAYERS: readonly EditorVisiblePaintLayer[] = Object.freeze([])
 
 type ClassifiedChunk = {
   readonly chunk: EditorVisibleChunkSnapshot
@@ -52,9 +62,20 @@ type PaintEvent = {
   readonly candidate: PaintCandidate
 }
 
-export function createEditorViewSnapshot(snapshot: RuntimeViewSnapshot): EditorViewSnapshot {
+export function createEditorViewSnapshot(
+  snapshot: RuntimeViewSnapshot,
+  options: { readonly paintPending?: boolean } = {},
+): EditorViewSnapshot {
   const runtime = snapshot as EditorViewSnapshot
+  visiblePaint.set(runtime, {
+    layers: options.paintPending ? null : EMPTY_PAINT_LAYERS,
+    capture: null,
+  })
   Object.defineProperties(runtime, {
+    paintLayers: {
+      enumerable: false,
+      get: () => readVisiblePaint(runtime),
+    },
     toJSON: {
       enumerable: false,
       value: () => editorViewSnapshotToJSON(runtime),
@@ -65,6 +86,32 @@ export function createEditorViewSnapshot(snapshot: RuntimeViewSnapshot): EditorV
     },
   })
   return runtime
+}
+
+export function beginEditorViewSnapshotPaint(snapshot: EditorViewSnapshot): void {
+  visiblePaint.set(snapshot, { layers: null, capture: null })
+}
+
+export function finalizeEditorViewSnapshotPaint(
+  snapshot: EditorViewSnapshot,
+  capture: () => readonly EditorVisiblePaintLayer[] | null,
+): void {
+  visiblePaint.set(snapshot, { layers: null, capture })
+}
+
+export function invalidateEditorViewSnapshotPaint(snapshot: EditorViewSnapshot): void {
+  const state = visiblePaint.get(snapshot)
+  if (state) state.capture = null
+}
+
+function readVisiblePaint(snapshot: EditorViewSnapshot): readonly EditorVisiblePaintLayer[] | null {
+  const state = visiblePaint.get(snapshot)
+  if (!state) return null
+  const capture = state.capture
+  if (!capture) return state.layers
+  state.capture = null
+  state.layers = capture()
+  return state.layers
 }
 
 function editorViewSnapshotToJSON(snapshot: EditorViewSnapshot): EditorViewSnapshotJSON {
@@ -109,6 +156,8 @@ function editorViewSnapshotToJSON(snapshot: EditorViewSnapshot): EditorViewSnaps
 }
 
 function editorViewSnapshotToVisible(snapshot: EditorViewSnapshot): EditorVisibleSnapshot | null {
+  const paintLayers = snapshot.paintLayers
+  if (paintLayers === null) return null
   const classifiedRows = classifyMountedRows(snapshot)
   if (!classifiedRows) return null
 
@@ -117,7 +166,7 @@ function editorViewSnapshotToVisible(snapshot: EditorViewSnapshot): EditorVisibl
   )
   if (exactChunks.length > 0) attachTokenRuns(snapshot.tokens, exactChunks)
 
-  const json = visibleSnapshotJSON(snapshot, classifiedRows)
+  const json = visibleSnapshotJSON(snapshot, classifiedRows, paintLayers)
   const runtime = json as EditorVisibleSnapshot
   Object.defineProperty(runtime, 'toJSON', {
     enumerable: false,
@@ -362,6 +411,7 @@ function appendMergedRun(runs: EditorVisiblePaintRunJSON[], run: EditorVisiblePa
 function visibleSnapshotJSON(
   snapshot: EditorViewSnapshot,
   classifiedRows: readonly ClassifiedRow[],
+  paintLayers: readonly EditorVisiblePaintLayer[],
 ): EditorVisibleSnapshotJSON {
   return {
     kind: 'editor-visible',
@@ -380,6 +430,7 @@ function visibleSnapshotJSON(
     tabSize: finite('tabSize', snapshot.tabSize),
     viewport: copyViewport(snapshot.viewport),
     rows: classifiedRows.map(({ row, chunks }) => copyVisiblePaintRow(row, chunks)),
+    paintLayers: copyEditorVisiblePaintLayers(paintLayers),
   }
 }
 
@@ -460,6 +511,7 @@ function copyVisibleSnapshotJSON(snapshot: EditorVisibleSnapshot): EditorVisible
     gutterLayout: copyGutterLayout(snapshot.gutterLayout),
     tabSize: finite('tabSize', snapshot.tabSize),
     viewport: copyViewport(snapshot.viewport),
+    paintLayers: copyEditorVisiblePaintLayers(snapshot.paintLayers),
     rows: snapshot.rows.map((row) => ({
       ...row,
       gutterCursorLineBackgroundLaneIds: [...row.gutterCursorLineBackgroundLaneIds],

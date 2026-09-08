@@ -40,6 +40,7 @@ const syntaxResult = (): EditorSyntaxResult => ({
 })
 
 const markdownSyntaxSession = (): EditorSyntaxSession => ({
+  foldingSupport: 'supported',
   refresh: async () => syntaxResult(),
   applyChange: async () => syntaxResult(),
   getResult: () => syntaxResult(),

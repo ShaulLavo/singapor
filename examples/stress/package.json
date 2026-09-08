@@ -8,12 +8,16 @@
     "fixtures": "node fixtures.mjs",
     "compare": "node compare.mjs",
     "profile:summary": "node profile-summary.mjs",
+    "profile:input": "node profile-input-layout.mjs",
     "test": "vitest run",
     "proof": "node test/verify-results.mjs results",
     "typecheck": "tsgo --noEmit",
     "lint": "oxlint .",
     "format": "oxfmt --write .",
-    "format:check": "oxfmt --check ."
+    "format:check": "oxfmt --check .",
+    "bench:input": "node run.mjs --suite input-latency",
+    "input:compare": "node input-compare.mjs",
+    "input:proof": "node test/verify-input-results.mjs results/input-latency"
   },
   "dependencies": {
     "@singapor/core": "workspace:*",

@@ -63,6 +63,177 @@ describe('createScopeLinesPlugin', () => {
     expect(testContext.scrollElement.querySelector('.editor-scope-lines')).toBeNull()
   })
 
+  it('captures the mounted guide geometry and resolved active colors', () => {
+    const registration = registeredProvider(createScopeLinesPlugin())
+    const viewSnapshot = snapshot({ gutterWidth: 48 })
+    const testContext = context(viewSnapshot)
+    const contribution = registration?.createContribution(testContext)
+    document.body.appendChild(testContext.container)
+    const style = document.createElement('style')
+    style.textContent = `
+      .editor-scope-line { width: 2px; background-color: rgb(10, 20, 30); }
+      .editor-scope-line[data-editor-scope-line-level='2'] { background-color: rgb(70, 80, 90); }
+      .editor-scope-line-active { background-color: rgb(40, 50, 60); }
+      .editor-scope-line-active[data-editor-scope-line-level='2'] { background-color: rgb(100, 110, 120); }
+    `
+    document.head.appendChild(style)
+
+    try {
+      expect(contribution?.captureVisiblePaint?.(viewSnapshot)).toEqual({
+        id: 'scope-lines',
+        status: 'ready',
+        rectangles: [
+          { left: 48, top: 21, width: 2, height: 56, backgroundColor: 'rgb(10, 20, 30)' },
+          { left: 64, top: 41, width: 2, height: 16, backgroundColor: 'rgb(70, 80, 90)' },
+        ],
+      })
+      const active = snapshot({
+        gutterWidth: 48,
+        selections: [
+          { anchorOffset: 29, headOffset: 29, startOffset: 29, endOffset: 29, affinity: 'after' },
+        ],
+      })
+      contribution?.update(active, 'selection')
+      expect(contribution?.captureVisiblePaint?.(active)).toMatchObject({
+        status: 'ready',
+        rectangles: [
+          { backgroundColor: 'rgb(40, 50, 60)' },
+          { backgroundColor: 'rgb(100, 110, 120)' },
+        ],
+      })
+    } finally {
+      contribution?.dispose()
+      testContext.container.remove()
+      style.remove()
+    }
+  })
+
+  it('captures an enclosing scope whose opener and closer are outside mounted rows', () => {
+    const registration = registeredProvider(createScopeLinesPlugin())
+    const viewSnapshot = snapshot({
+      visibleRows: snapshot().visibleRows.slice(2, 3),
+      gutterWidth: 48,
+    })
+    const testContext = context(viewSnapshot)
+    const contribution = registration?.createContribution(testContext)
+    const lines = testContext.scrollElement.querySelectorAll<HTMLElement>('.editor-scope-line')
+    for (const line of lines) {
+      line.style.width = '1px'
+      line.style.backgroundColor = 'rgb(10, 20, 30)'
+    }
+    document.body.appendChild(testContext.container)
+
+    try {
+      expect(contribution?.captureVisiblePaint?.(viewSnapshot)).toEqual({
+        id: 'scope-lines',
+        status: 'ready',
+        rectangles: [
+          { left: 48, top: 41, width: 1, height: 16, backgroundColor: 'rgb(10, 20, 30)' },
+          { left: 64, top: 41, width: 1, height: 16, backgroundColor: 'rgb(10, 20, 30)' },
+        ],
+      })
+    } finally {
+      contribution?.dispose()
+      testContext.container.remove()
+    }
+  })
+
+  it('keeps deferred content paint pending until the latest snapshot is committed', () => {
+    const frames: FrameRequestCallback[] = []
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+    const registration = registeredProvider(createScopeLinesPlugin())
+    const initial = snapshot()
+    const testContext = context(initial)
+    const contribution = registration?.createContribution(testContext)
+    const earlier = snapshot({ textVersion: 2, foldMarkers: [] })
+    const latest = snapshot({ textVersion: 3, foldMarkers: [] })
+
+    try {
+      contribution?.update(earlier, 'content')
+      contribution?.update(latest, 'content')
+      expect(testContext.scrollElement.querySelectorAll('.editor-scope-line')).toHaveLength(2)
+      expect(contribution?.captureVisiblePaint?.(latest)).toEqual({
+        id: 'scope-lines',
+        status: 'pending',
+      })
+      frames.shift()?.(0)
+      expect(testContext.scrollElement.querySelectorAll('.editor-scope-line')).toHaveLength(0)
+      expect(contribution?.captureVisiblePaint?.(latest)).toEqual({
+        id: 'scope-lines',
+        status: 'ready',
+        rectangles: [],
+      })
+      expect(contribution?.captureVisiblePaint?.(earlier)).toEqual({
+        id: 'scope-lines',
+        status: 'pending',
+      })
+      expect(testContext.requestViewUpdate).toHaveBeenCalledOnce()
+    } finally {
+      contribution?.dispose()
+      requestFrame.mockRestore()
+    }
+  })
+
+  it('omits guide segments with no visible width or height', () => {
+    const registration = registeredProvider(createScopeLinesPlugin())
+    const viewSnapshot = snapshot()
+    const testContext = context(viewSnapshot)
+    const contribution = registration?.createContribution(testContext)
+    document.body.appendChild(testContext.container)
+    const lines = testContext.scrollElement.querySelectorAll<HTMLElement>('.editor-scope-line')
+    lines.forEach((line, index) => {
+      line.style.width = `${index}px`
+      line.style.backgroundColor = 'rgb(10, 20, 30)'
+    })
+
+    try {
+      expect(contribution?.captureVisiblePaint?.(viewSnapshot)).toEqual({
+        id: 'scope-lines',
+        status: 'ready',
+        rectangles: [
+          { left: 16, top: 41, width: 1, height: 16, backgroundColor: 'rgb(10, 20, 30)' },
+        ],
+      })
+      const shortRows = snapshot({
+        visibleRows: viewSnapshot.visibleRows.slice(2, 3).map((row) => ({ ...row, height: 4 })),
+      })
+      contribution?.update(shortRows, 'layout')
+      expect(contribution?.captureVisiblePaint?.(shortRows)).toEqual({
+        id: 'scope-lines',
+        status: 'ready',
+        rectangles: [],
+      })
+    } finally {
+      contribution?.dispose()
+      testContext.container.remove()
+    }
+  })
+
+  it('does not capture an empty layer while structural syntax is loading', () => {
+    const registration = registeredProvider(createScopeLinesPlugin())
+    const loading = snapshot({ foldMarkers: [], syntaxStatus: 'loading' })
+    const testContext = context(loading)
+    const contribution = registration?.createContribution(testContext)
+
+    expect(contribution?.captureVisiblePaint?.(loading)).toEqual({
+      id: 'scope-lines',
+      status: 'pending',
+    })
+    const ready = snapshot({ foldMarkers: [], syntaxStatus: 'ready' })
+    contribution?.update(ready, 'tokens')
+    expect(contribution?.captureVisiblePaint?.(ready)).toEqual({
+      id: 'scope-lines',
+      status: 'ready',
+      rectangles: [],
+    })
+    contribution?.dispose()
+  })
+
   it('aligns scope guides to the configured indent step', () => {
     const registration = registeredProvider(createScopeLinesPlugin())
     const text = 'function f() {\n    if (x) {\n        y()\n    }\n}\n'
@@ -335,6 +506,7 @@ function context(viewSnapshot = snapshot()): EditorViewContributionContext {
     scrollElement,
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
+    requestViewUpdate: vi.fn(),
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
     focusEditor: vi.fn(),
@@ -351,6 +523,8 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
   return {
     documentId: 'scope-test',
     languageId: 'typescript',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     fullText: text,
     textVersion: 1,
     lineStarts: lineStarts(text),

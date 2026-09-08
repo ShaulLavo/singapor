@@ -183,6 +183,7 @@ function viewContext(
     highlightPrefix: 'editor-find-test',
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
+    requestViewUpdate: vi.fn(),
     getFeature: <T>(token: unknown) => (token === EDITOR_MINIMAP_FEATURE ? (minimap as T) : null),
     revealLine: vi.fn(),
     focusEditor: vi.fn(),
@@ -209,6 +210,8 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
     fullText: text,
     textVersion: 1,
     initialHighlightStatus: 'painted',
+    syntaxStatus: 'ready',
+    paintLayers: [],
     documentSyncPoint: {
       revision: 1,
       segment: Object.freeze({}) as EditorViewSnapshot['documentSyncPoint']['segment'],

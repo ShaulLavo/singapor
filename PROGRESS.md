@@ -17,6 +17,16 @@ does not define another sequence.
 
 ## Completed Baseline
 
+- E002 input-latency work completed on 2026-09-07: correlated input/view/deferred diagnostics,
+  bounded source-range indexing, and document-generation guards are live. The
+  [local browser gate](examples/stress/results/input-latency/README.md) accepts the optimized candidate
+  and independent unchanged run across 108 blocking timing limits, and detects a real 20 ms delay
+  in every dispatch group. Screenshot timing is advisory; one excess remains recorded. Mounted
+  geometry buffers and chunk reuse cut long-line multiple-view dispatch p95 from 4.1 to 2.7 ms
+  for typing and 9.8 to 6.9 ms for paste. Calibration uses the controls' full observed timing range;
+  earlier failures and runs affected by concurrent checkout edits remain preserved.
+  Lasting contracts live in
+  [the measurement reference](docs/performance/input-latency.md); the executable plan was deleted.
 - Persistent piece-table documents, durable anchors, multi-selection editing,
   undo/redo, folds, wrapped and virtualized rendering, minimap, diff, and merge
   editing are live.
@@ -46,8 +56,9 @@ snapshot persistence, prepared editor opens, the diagnostic-peek composition gat
 editor-native keymap takeover. Each relevant milestone must verify both repositories in lockstep.
 There is no active standalone Editor plan.
 
-No other item in [`TODO.md`](TODO.md) is executable merely because it appears in
-the backlog.
+The [Editor backlog](plans/README.md), authored on 2026-09-05, turns all 22 topics from
+[`TODO.md`](TODO.md) into 30 stable entries, including completed implementation references.
+It records suggested priorities and dependencies; it does not schedule implementation.
 
 ## Superseded Sources
 

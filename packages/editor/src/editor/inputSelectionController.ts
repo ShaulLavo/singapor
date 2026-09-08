@@ -99,7 +99,7 @@ import {
   visualColumnToBufferColumn,
 } from '../displayTransforms'
 import { appendTiming, eventStartMs, mergeChangeTimings, nowMs } from './timing'
-import { measureEditorPerformance } from './performanceDiagnostics'
+import { measureEditorPerformance, traceEditorInput } from './performanceDiagnostics'
 import {
   createEditorInputState,
   selectionBeforeEditSource,
@@ -1373,6 +1373,7 @@ export class InputSelectionController {
     timingName: string,
     options: {
       readonly affinity?: SelectionAffinity
+      readonly revealBlock?: SessionChangeOptions['revealBlock']
       readonly revealOffset?: number
     } = {},
   ): void {
@@ -1393,6 +1394,7 @@ export class InputSelectionController {
     this.syncSessionSelectionHighlight()
     this.markSessionSelectionForNextInput()
     this.applyChange(change, timingName, start, {
+      revealBlock: options.revealBlock,
       revealOffset: options.revealOffset,
       syncDomSelection: false,
     })
@@ -1508,8 +1510,9 @@ export class InputSelectionController {
         affinity: resolved.affinity,
       }
     })
-    this.options.view.setSelections(selections)
+    // Focused textarea writes flush layout; include them before measuring the caret.
     this.refreshHiddenInputContent()
+    this.options.view.setSelections(selections)
   }
 
   /**
@@ -1649,7 +1652,7 @@ export class InputSelectionController {
    * resolving, a dictated phrase, a soft keyboard rewriting the word around the caret. None of them
    * carries usable data on the event, and all of them leave the answer in the element's value.
    */
-  private handleHiddenInputChange = (event: Event): void => {
+  private handleHiddenInputChange = traceEditorInput('input.deducedText', (event: Event): void => {
     this.transitionInputState({ type: 'native-input-observed' })
     const session = this.session
     if (!session) return
@@ -1666,39 +1669,48 @@ export class InputSelectionController {
     if (isEmptyDeducedInput(deduced, this.hiddenInputContent)) return
 
     this.applyDeducedInput(session, deduced, eventStartMs(event))
-  }
+  })
 
-  private handleCompositionStart = (_event: CompositionEvent): void => {
-    this.transitionInputState({ type: 'composition-start' })
-  }
+  private handleCompositionStart = traceEditorInput(
+    'input.compositionstart',
+    (_event: CompositionEvent): void => {
+      this.transitionInputState({ type: 'composition-start' })
+    },
+  )
 
-  private handleCompositionUpdate = (event: CompositionEvent): void => {
-    this.transitionInputState({ text: event.data, type: 'composition-update' })
-    // Every candidate a reader passes through on the way to the one they want is here and nowhere
-    // else: the hidden input holds it, and the document does not hear about any of them.
-    this.options.view.setCompositionPreedit(event.data)
-  }
+  private handleCompositionUpdate = traceEditorInput(
+    'input.compositionupdate',
+    (event: CompositionEvent): void => {
+      this.transitionInputState({ text: event.data, type: 'composition-update' })
+      // Every candidate a reader passes through on the way to the one they want is here and nowhere
+      // else: the hidden input holds it, and the document does not hear about any of them.
+      this.options.view.setCompositionPreedit(event.data)
+    },
+  )
 
-  private handleCompositionEnd = (event: CompositionEvent): void => {
-    const text = event.data || this.inputState.compositionText
-    const shouldCommit = shouldCommitCompositionEnd(this.inputState, text)
-    // Taken down for every way a composition can end, including the ones below that return: text
-    // already committed through beforeinput is the document's to draw, and text abandoned mid-word
-    // was never the document's at all.
-    this.options.view.setCompositionPreedit('')
-    this.transitionInputState({ type: 'composition-end' })
-    if (!shouldCommit) {
-      // The document is already right — the text arrived as a beforeinput and was written from
-      // there — but the hidden input is not: every refresh between the compositionstart and here
-      // returned rather than write over a candidate the reader was still assembling. Nothing else
-      // writes that baseline, so leaving it a composition behind makes the next edit the editor
-      // cannot name diff against text the browser stopped holding, and type the composition again.
-      this.refreshHiddenInputContent()
-      return
-    }
+  private handleCompositionEnd = traceEditorInput(
+    'input.compositionend',
+    (event: CompositionEvent): void => {
+      const text = event.data || this.inputState.compositionText
+      const shouldCommit = shouldCommitCompositionEnd(this.inputState, text)
+      // Taken down for every way a composition can end, including the ones below that return: text
+      // already committed through beforeinput is the document's to draw, and text abandoned mid-word
+      // was never the document's at all.
+      this.options.view.setCompositionPreedit('')
+      this.transitionInputState({ type: 'composition-end' })
+      if (!shouldCommit) {
+        // The document is already right — the text arrived as a beforeinput and was written from
+        // there — but the hidden input is not: every refresh between the compositionstart and here
+        // returned rather than write over a candidate the reader was still assembling. Nothing else
+        // writes that baseline, so leaving it a composition behind makes the next edit the editor
+        // cannot name diff against text the browser stopped holding, and type the composition again.
+        this.refreshHiddenInputContent()
+        return
+      }
 
-    this.applyCompositionText(text, eventStartMs(event))
-  }
+      this.applyCompositionText(text, eventStartMs(event))
+    },
+  )
 
   private handleMouseDown = (event: MouseEvent): void => {
     if (!this.session) return
@@ -2404,7 +2416,7 @@ export class InputSelectionController {
     return createNavigationLineReader(session.getSnapshot(), session.getTextSnapshot())(offset)
   }
 
-  private handleBeforeInput = (event: InputEvent): void => {
+  private handleBeforeInput = traceEditorInput('input.beforeinput', (event: InputEvent): void => {
     const session = this.session
     if (!session) return
     if (!this.options.canEditDocument()) {
@@ -2430,9 +2442,9 @@ export class InputSelectionController {
     )
     this.transitionInputState({ type: 'transaction-committed' })
     this.applyChange(mergeChangeTimings(textChange, selectionChange), 'input.beforeinput', start)
-  }
+  })
 
-  private handlePaste = (event: ClipboardEvent): void => {
+  private handlePaste = traceEditorInput('input.paste', (event: ClipboardEvent): void => {
     const session = this.session
     if (!session) return
     if (!this.options.canEditDocument()) {
@@ -2476,7 +2488,7 @@ export class InputSelectionController {
       revealBlock: pasteRevealBlock(pasted),
       revealOffset: this.primarySelectionHeadOffset(change),
     })
-  }
+  })
 
   /**
    * Whether anything registered would even look at this transfer.
@@ -2832,21 +2844,24 @@ export class InputSelectionController {
    * back. Both routes describe what happened; `event.key` only describes what was pressed, which is
    * why waiting on one to decide about the other was a race worth deleting rather than tuning.
    */
-  private handleKeyDown = (event: KeyboardEvent): void => {
-    const session = this.session
-    if (!session) return
-    if (!this.options.canEditDocument()) return
-    if (event.target === this.options.view.inputElement) return
+  private handleKeyDown = traceEditorInput(
+    'input.keydownFallback',
+    (event: KeyboardEvent): void => {
+      const session = this.session
+      if (!session) return
+      if (!this.options.canEditDocument()) return
+      if (event.target === this.options.view.inputElement) return
 
-    const typedText = keyboardFallbackText(event)
-    if (typedText === null) return
-    if (this.inputState.compositionActive) return
+      const typedText = keyboardFallbackText(event)
+      if (typedText === null) return
+      if (this.inputState.compositionActive) return
 
-    event.preventDefault()
-    this.applyKeyboardText(typedText, eventStartMs(event))
-    // The next keystroke belongs on the input, where the browser can describe it properly.
-    this.options.view.focusInput()
-  }
+      event.preventDefault()
+      this.applyKeyboardText(typedText, eventStartMs(event))
+      // The next keystroke belongs on the input, where the browser can describe it properly.
+      this.options.view.focusInput()
+    },
+  )
 
   private applyKeyboardText(text: string, start: number): void {
     const session = this.session

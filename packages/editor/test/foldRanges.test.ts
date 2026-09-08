@@ -1,11 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createFoldGutterContribution,
   createLineGutterContribution,
 } from '../../gutters/src/index.ts'
-import { Editor } from '../src/editor'
-import type { EditorPlugin } from '../src/plugins'
-import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
+import type { Editor } from '../src/editor'
+import { createVisibleEditor } from './factories/visibleEditor'
+import type { EditorPlugin, EditorViewSnapshot } from '../src/plugins'
+import {
+  createEmptySyntaxResult,
+  createEmptySyntaxSession,
+  type EditorSyntaxResult,
+} from '../src/public/syntax'
+import {
+  resetEditorInstanceCount,
+  setHighlightRegistry,
+  setEditorSyntaxSessionFactory,
+} from '../src/public/testing'
 
 /**
  * The gutter package types itself against the published `@singapor/core` facade, so the plugin
@@ -122,7 +132,7 @@ describe('fold ranges without a grammar', () => {
   function mount(options: { readonly tabSize?: number } = {}): void {
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = new Editor(container, {
+    editor = createVisibleEditor(container, {
       plugins: [lineGutterPlugin(), foldGutterPlugin()],
       ...options,
     })
@@ -148,6 +158,101 @@ describe('fold ranges without a grammar', () => {
     editor.dispose()
     container.remove()
     setHighlightRegistry(undefined)
+    setEditorSyntaxSessionFactory(undefined)
+  })
+
+  it.each(['supported', 'pending'] as const)(
+    'hides provisional indentation while %s structural folds settle',
+    async (foldingSupport) => {
+      let resolveResult!: (result: EditorSyntaxResult) => void
+      const pending = new Promise<EditorSyntaxResult>((resolve) => {
+        resolveResult = resolve
+      })
+      const snapshots: EditorViewSnapshot[] = []
+      let support = foldingSupport
+      setEditorSyntaxSessionFactory(() => ({
+        ...createEmptySyntaxSession(),
+        get foldingSupport() {
+          return support
+        },
+        refresh: () => pending,
+      }))
+      editor.addPlugin({
+        activate: (context) =>
+          context.registerViewContribution({
+            createContribution: () => ({
+              update: (snapshot) => {
+                snapshots.push(snapshot)
+              },
+              dispose() {},
+            }),
+          }),
+      })
+      editor.openDocument({
+        documentId: 'config.js',
+        languageId: 'javascript',
+        text: INDENTED_TEXT,
+      })
+      expect(foldKeys()).toEqual([])
+      expect(snapshots.at(-1)?.syntaxStatus).toBe('loading')
+      expect(snapshots.at(-1)?.paintLayers).toBeNull()
+
+      support = 'supported'
+      resolveResult({
+        ...createEmptySyntaxResult(),
+        folds: [
+          {
+            startIndex: HEADER_END - 1,
+            endIndex: BODY_END,
+            startLine: 0,
+            endLine: 2,
+            type: 'object',
+            languageId: 'javascript',
+          },
+        ],
+      })
+      await vi.waitFor(() => expect(snapshots.at(-1)?.syntaxStatus).toBe('ready'))
+      expect(foldKeys()).toEqual([`javascript:object:${HEADER_END - 1}:${BODY_END}`])
+      expect(
+        snapshots
+          .filter((snapshot) => snapshot.syntaxStatus === 'ready')
+          .every((snapshot) =>
+            snapshot.foldMarkers.every((marker) => !marker.key.includes(':indent:')),
+          ),
+      ).toBe(true)
+    },
+  )
+
+  it('treats a supported empty fold result as authoritative', async () => {
+    setEditorSyntaxSessionFactory(() => ({
+      ...createEmptySyntaxSession(),
+      foldingSupport: 'supported',
+    }))
+    editor.openDocument({ documentId: 'config.js', languageId: 'javascript', text: INDENTED_TEXT })
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
+    expect(foldKeys()).toEqual([])
+  })
+
+  it('restores indentation folding if the pending structural provider fails', async () => {
+    setEditorSyntaxSessionFactory(() => ({
+      ...createEmptySyntaxSession(),
+      foldingSupport: 'pending',
+      refresh: async () => {
+        throw new RangeError('Parser unavailable')
+      },
+    }))
+    editor.openDocument({ documentId: 'config.js', languageId: 'javascript', text: INDENTED_TEXT })
+    expect(foldKeys()).toEqual([])
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('error'))
+    expect(foldKeys()).toHaveLength(1)
+  })
+
+  it('keeps indentation folding when the syntax provider has no folding support', async () => {
+    setEditorSyntaxSessionFactory(() => createEmptySyntaxSession())
+    editor.openDocument({ documentId: 'config.js', languageId: 'javascript', text: INDENTED_TEXT })
+    expect(foldKeys()).toHaveLength(1)
+    await vi.waitFor(() => expect(editor.getState().syntaxStatus).toBe('ready'))
+    expect(foldKeys()).toHaveLength(1)
   })
 
   it('folds a document no grammar can describe by its indentation', () => {

@@ -23,6 +23,7 @@ export {
   type EditorSyntaxResultOptions,
   type EditorSyntaxServiceRequest,
   type EditorSyntaxSession,
+  type EditorSyntaxFoldingSupport,
   type EditorSyntaxSessionOptions,
   type EditorSyntaxSnapshotTag,
   type FoldRange,

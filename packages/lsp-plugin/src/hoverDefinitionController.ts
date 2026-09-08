@@ -446,9 +446,9 @@ export class HoverDefinitionController {
       return this.clearDefinitionLink()
     }
 
-    const range = identifierRangeAtOffset(active.fullText, offset)
-    if (!range) return this.clearDefinitionLink()
-    if (sameOffsetRange(this.linkRange, range)) return
+    if (this.linkRange && offset >= this.linkRange.start && offset < this.linkRange.end) return
+    this.clearDefinitionLink()
+    const range = hoverTargetRange(active.fullText, offset)
 
     const requestId = this.definitionHoverRequestId + 1
     this.definitionHoverRequestId = requestId
@@ -469,11 +469,12 @@ export class HoverDefinitionController {
   ): void {
     if (requestId !== this.definitionHoverRequestId) return
     if (active !== this.options.getActiveDocument()) return
-    if (!preferredJumpableDefinitionTarget(active.uri, active.fullText, range, result))
+    const sourceRange = result.sourceRange ?? range
+    if (!preferredJumpableDefinitionTarget(active.uri, active.fullText, sourceRange, result))
       return this.clearDefinitionLink()
 
-    this.linkRange = range
-    this.context.setRangeHighlight?.(this.linkHighlightName, [range], LINK_HIGHLIGHT_STYLE)
+    this.linkRange = sourceRange
+    this.context.setRangeHighlight?.(this.linkHighlightName, [sourceRange], LINK_HIGHLIGHT_STYLE)
     this.context.scrollElement.style.cursor = 'pointer'
   }
 

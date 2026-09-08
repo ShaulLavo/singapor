@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { gzipSync } from 'node:zlib'
+import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { cpus, platform, release, totalmem, arch } from 'node:os'
@@ -11,12 +12,18 @@ import { createManifest } from './fixtures.mjs'
 import { scenarios, states, validateResult } from './results.mjs'
 import { runScenario } from './scenarios.mjs'
 import { fail } from './errors.mjs'
+import { operationsPerSample, runInputSuite } from './input-scenarios.mjs'
+import { inputScenarios, inputViewModes, validateInputResult } from './input-results.mjs'
 import { profileScenario, profileSourceMaps } from './profile.mjs'
+import { hashBenchmarkSource, loadCorePackage } from './core-package.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const repository = resolve(root, '../..')
 const { values } = parseArgs({
   options: {
+    suite: { type: 'string', default: 'stress' },
+    'input-smoke': { type: 'boolean', default: false },
+    'slowdown-ms': { type: 'string', default: '0' },
     output: { type: 'string', default: '/work/tmp/editor-stress/result.json' },
     repetitions: { type: 'string', default: '3' },
     warmups: { type: 'string', default: '1' },
@@ -26,6 +33,7 @@ const { values } = parseArgs({
     'verify-cancellation': { type: 'boolean', default: false },
     url: { type: 'string' },
     'profile-directory': { type: 'string' },
+    'core-directory': { type: 'string' },
   },
 })
 const integer = (text, name) => {
@@ -33,6 +41,17 @@ const integer = (text, name) => {
   if (!Number.isSafeInteger(value) || value < 1) fail(`${name} must be a positive integer`)
   return value
 }
+if (!['stress', 'input-latency'].includes(values.suite)) fail('Unknown suite')
+if (values['core-directory'] && values.url)
+  fail('--core-directory requires a runner build, not --url')
+const core = await loadCorePackage(
+  values['core-directory'] ?? resolve(repository, 'packages/editor'),
+)
+const inputSuite = values.suite === 'input-latency'
+if (!inputSuite && (values['input-smoke'] || Number(values['slowdown-ms']) !== 0))
+  fail('Input controls require --suite input-latency')
+if (inputSuite && values.fixtures)
+  fail('The input suite requires all three fixtures; use --input-smoke for development')
 const config = {
   runnerVersion: 1,
   repetitions: integer(values.repetitions, 'repetitions'),
@@ -48,7 +67,29 @@ const config = {
   paintMeasurement: 'screenshot-completion-upper-bound',
   memory: 'chromium-cdp-forced-gc',
 }
+if (inputSuite) {
+  Object.assign(config, {
+    scenarios: inputScenarios,
+    views: inputViewModes,
+    operationsPerSample,
+    slowdownMs: Number(values['slowdown-ms']),
+    syntax: 'tree-sitter-typescript-on-ordinary',
+    measurement: 'native-event-capture-through-handler-return-microtask-or-preedit-bubble',
+    composition: 'chromium-cdp-imeSetComposition-and-insertText',
+    compositionCommitTrust: 'cdp-untrusted-compositionend',
+    isolation: 'closed-browser-context-per-fixture-view-scenario',
+    paste: 'native-clipboard-shortcut-128-unicode-fragments',
+  })
+  delete config.typedText
+  delete config.churnCycles
+  if (!Number.isFinite(config.slowdownMs) || config.slowdownMs < 0) fail('Invalid slowdown')
+  if (values['profile-directory']) fail('Use normal input runs for the input budget')
+}
 const manifest = createManifest(integer(values.seed, 'seed'))
+if (inputSuite)
+  manifest.fixtures = manifest.fixtures.filter((fixture) =>
+    ['ordinary', 'short-lines', 'long-line'].includes(fixture.id),
+  )
 if (values['profile-directory']) {
   config.profiling = { intervalMicros: 1000, minify: false, scenarios: ['typing', 'churn'] }
   if (values.url) fail('CPU profiles require the built entry and its saved source maps')
@@ -82,6 +123,7 @@ try {
       root,
       configFile: false,
       logLevel: 'warn',
+      resolve: { alias: core.aliases },
       plugins: values['profile-directory'] ? [profileSourceMaps()] : [],
       worker: { format: 'es' },
       build: {
@@ -96,6 +138,7 @@ try {
   browser = await chromium.launch({ headless: true, env: { ...process.env, TMPDIR: directory } })
   const result = {
     schemaVersion: 1,
+    ...(inputSuite ? { suite: 'input-latency' } : {}),
     id: randomUUID(),
     createdAt: new Date().toISOString(),
     manifest,
@@ -104,17 +147,22 @@ try {
     samples: [],
   }
   if (values['verify-cancellation']) result.cancellation = await verifyCancellation(browser)
-  for (const fixture of manifest.fixtures) await runFixture(browser, fixture, result)
-  validateResult(result)
+  if (inputSuite)
+    await runInputSuite(browser, result, { newPage, readMemory, smoke: values['input-smoke'] })
+  else for (const fixture of manifest.fixtures) await runFixture(browser, fixture, result)
+  if (values['input-smoke']) result.smokeOnly = true
+  else if (inputSuite) validateInputResult(result)
+  else validateResult(result)
   if (interrupted) fail('Run cancelled; incomplete results were not saved')
   await mkdir(dirname(resolve(values.output)), { recursive: true })
   partialOutput = `${resolve(values.output)}.${result.id}.partial`
-  await writeFile(partialOutput, JSON.stringify(result) + '\n')
+  const serialized = JSON.stringify(result) + '\n'
+  await writeFile(partialOutput, values.output.endsWith('.gz') ? gzipSync(serialized) : serialized)
   if (interrupted) fail('Run cancelled before publishing results')
   await rename(partialOutput, values.output)
   console.log(
     JSON.stringify({
-      event: 'stress.complete',
+      event: inputSuite ? 'input.complete' : 'stress.complete',
       output: resolve(values.output),
       samples: result.samples.length,
     }),
@@ -303,16 +351,11 @@ async function environment(browser) {
     'packages',
     'examples/stress',
   ).split('\n')
-  const hash = createHash('sha256')
-  for (const file of [...new Set(files)].sort()) {
-    if (!/\.(ts|mjs|css|html)$/.test(file) || file.includes('/test/') || file.includes('/results/'))
-      continue
-    hash.update(file).update(await readFile(resolve(repository, file)))
-  }
   return {
     commit: git('rev-parse', 'HEAD'),
     dirty: Boolean(git('status', '--porcelain')),
-    sourceHash: hash.digest('hex'),
+    sourceHash: await hashBenchmarkSource(repository, files, core.sourceDirectory),
+    coreDirectory: core.directory,
     browser: { engine: 'chromium', version: browser.version(), headless: true },
     hardware: {
       cpu: cpus()[0]?.model ?? 'unknown',

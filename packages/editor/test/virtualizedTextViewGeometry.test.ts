@@ -4,6 +4,7 @@ import { createInlineMap } from '../src/inlineMap'
 import { createPieceTableSnapshot } from '../src/public/document'
 import { VirtualizedTextView } from '../src/virtualization'
 import {
+  clearRowGeometryCache,
   knownRowContentWidth,
   measureRowContentWidth,
   offsetToX,
@@ -370,6 +371,40 @@ describe('virtualized text view geometry', () => {
 
       expect(shortRowArrays).toBeGreaterThan(0)
       expect(allocated).toBe(shortRowArrays)
+    } finally {
+      globalThis.Float64Array = NativeFloat64Array
+      restore()
+    }
+  })
+
+  it.each(['x', 'é', '\t'])('bounds %s geometry allocation by mounted text', (character) => {
+    const restore = stubProportionalLayout()
+    const NativeFloat64Array = globalThis.Float64Array
+    try {
+      view = mountView(container, character.repeat(1_048_576))
+      const internal = internals(view)
+      const row = textRows(view)[0]!
+      const mountedUnits = row.chunks.reduce(
+        (total, chunk) => total + chunk.localEnd - chunk.localStart,
+        0,
+      )
+      expect(mountedUnits).toBeLessThan(10_000)
+      clearRowGeometryCache(row)
+      let allocatedBytes = 0
+      globalThis.Float64Array = new Proxy(NativeFloat64Array, {
+        construct: (target, args, newTarget) => {
+          const array = Reflect.construct(target, args, newTarget) as Float64Array
+          allocatedBytes += array.byteLength
+          return array
+        },
+      })
+
+      const start = row.chunks[0]!.startOffset
+      const end = row.chunks.at(-1)!.endOffset
+      expect(offsetToX(internal, row, end)).toBeGreaterThan(offsetToX(internal, row, start))
+      expect(allocatedBytes).toBeGreaterThan(0)
+      expect(allocatedBytes).toBeLessThan((mountedUnits + 100) * 64)
+      expect(xToOffset(internal, row, offsetToX(internal, row, end))).toBe(end)
     } finally {
       globalThis.Float64Array = NativeFloat64Array
       restore()

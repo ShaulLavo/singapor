@@ -1882,7 +1882,7 @@ function appendUnitPlan(
 
 /** Sized once against the same bound `createBoundaryBuffer` is, and appended to the same way. */
 function createPlanBuffer(row: MountedVirtualizedTextRow): PlanBuffer {
-  const capacity = row.text.length + row.chunks.length + 2
+  const capacity = mountedBoundaryCapacity(row)
   return {
     offsets: new Float64Array(capacity),
     writerUnit: new Int32Array(capacity),
@@ -2580,14 +2580,21 @@ function resolveRowGeometry(geometry: RowGeometry): RowGeometry {
   return geometry
 }
 
-/**
- * Sized once, never grown: a row build appends in ascending offset order, so every repeat lands
- * next to the boundary it repeats and `appendBoundary` folds it away. What survives is one boundary
- * per local index — the builders never split one — plus a chunk's own end, which the chunk after it
- * appends again as its start, and the row's end.
- */
+// Text parts contribute at most one boundary per UTF-16 unit plus their end.
+// Widgets and gaps between chunks contribute endpoints without allocating for offscreen text.
+function mountedBoundaryCapacity(row: MountedVirtualizedTextRow): number {
+  let capacity = 1
+  for (const chunk of row.chunks) {
+    capacity += 2
+    for (const part of chunk.parts) {
+      capacity += part.kind === 'text' ? part.node.length + 1 : 2
+    }
+  }
+  return capacity
+}
+
 function createBoundaryBuffer(row: MountedVirtualizedTextRow): BoundaryBuffer {
-  const capacity = row.text.length + row.chunks.length + 2
+  const capacity = mountedBoundaryCapacity(row)
   return { offsets: new Float64Array(capacity), xs: new Float64Array(capacity), length: 0 }
 }
 

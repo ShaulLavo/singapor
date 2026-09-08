@@ -31,6 +31,7 @@ export type {
   EditorSyntaxResultOptions,
   EditorSyntaxServiceRequest,
   EditorSyntaxSession,
+  EditorSyntaxFoldingSupport,
   EditorSyntaxSessionOptions,
   EditorSyntaxSnapshotTag,
   FoldRange,

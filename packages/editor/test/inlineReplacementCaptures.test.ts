@@ -105,6 +105,7 @@ function captureSyntaxSession(includeCaptures: boolean): EditorSyntaxSession {
     applyChange: async () => result,
     dispose: () => undefined,
     getResult: () => result,
+    foldingSupport: 'supported',
     getSnapshotVersion: () => 0,
     getTokens: () => [],
     refresh: async () => result,

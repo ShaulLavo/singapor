@@ -1421,17 +1421,116 @@ function setChunkedRowText(
 ): void {
   const { text } = content
   const window = horizontalChunkWindow(view, content, snapshot)
-  const chunks = createRowChunks(view, text, window, startOffset, mapping)
-  const elements = chunks
-    .map((chunk) => chunk.element)
-    .filter((element): element is HTMLSpanElement => element !== null)
   const leftSpacerWidth = Math.round(
     estimatedDisplayCellForColumn(content, window.start, view.tabSize) * characterWidth(view),
   )
   setLeftSpacerWidth(row, leftSpacerWidth)
+  if (reuseRowChunks(view, row, text, window, startOffset, mapping)) return
+
+  const chunks = createRowChunks(view, text, window, startOffset, mapping)
+  const elements = chunks
+    .map((chunk) => chunk.element)
+    .filter((element): element is HTMLSpanElement => element !== null)
+  row.element.dataset.editorVirtualWindowStart = String(window.start)
+  row.element.dataset.editorVirtualWindowEnd = String(window.end)
   row.element.replaceChildren(row.leftSpacerElement, ...elements)
   setTextRenderMode(row, 'chunked')
   updateMutableRowChunks(row, chunks)
+}
+
+function reuseRowChunks(
+  view: VirtualizedTextViewInternal,
+  row: MountedVirtualizedTextRow,
+  text: string,
+  window: HorizontalChunkWindow,
+  startOffset: number,
+  mapping: RowInlineMapping | null,
+): boolean {
+  if (row.textRenderMode !== 'chunked') return false
+  if (row.chunks[0]?.localStart !== window.start) return false
+  if (row.chunks.at(-1)?.localEnd !== window.end) return false
+
+  for (const chunk of row.chunks) {
+    if (chunk.element === null) return false
+    updateRowChunk(view, chunk, chunk.element, text, startOffset, mapping)
+  }
+
+  updateMutableRowChunks(row, row.chunks)
+  return true
+}
+
+function updateRowChunk(
+  view: VirtualizedTextViewInternal,
+  chunk: VirtualizedTextChunk,
+  element: HTMLSpanElement,
+  text: string,
+  startOffset: number,
+  mapping: RowInlineMapping | null,
+): void {
+  const mutableChunk = chunk as {
+    startOffset: number
+    endOffset: number
+    text: string
+    parts: readonly VirtualizedTextChunkPart[]
+    textNode: Text
+    mountedPaint: EditorMountedChunkPaintJSON
+  }
+  mutableChunk.startOffset = offsetForLocalIndex(mapping, startOffset, chunk.localStart, 'before')
+  mutableChunk.endOffset = offsetForLocalIndex(mapping, startOffset, chunk.localEnd, 'after')
+  const chunkText = text.slice(chunk.localStart, chunk.localEnd)
+  if (chunkText === chunk.text) {
+    refreshChunkControlWidths(view, chunk)
+    return
+  }
+
+  const paint = patchSimpleChunkText(chunk, chunkText)
+  mutableChunk.text = chunkText
+  if (paint !== null) {
+    mutableChunk.mountedPaint = paint
+    return
+  }
+
+  const rendered = createRowChunkParts(view, chunkText, chunk.localStart)
+  element.replaceChildren(...rendered.nodes)
+  mutableChunk.parts = rendered.parts
+  mutableChunk.textNode = rendered.textNode
+  mutableChunk.mountedPaint = captureMountedPaint(rendered.parts)
+}
+
+function refreshChunkControlWidths(
+  view: VirtualizedTextViewInternal,
+  chunk: VirtualizedTextChunk,
+): void {
+  for (const part of chunk.parts) {
+    if (part.kind !== 'control') continue
+    setStyleValue(part.element, 'width', `${part.widthCells * characterWidth(view)}px`)
+  }
+}
+
+function patchSimpleChunkText(
+  chunk: VirtualizedTextChunk,
+  text: string,
+): EditorMountedChunkPaintJSON | null {
+  if (!isSimpleRowText(chunk.text) || !isSimpleRowText(text)) return null
+  const paint = chunk.mountedPaint
+  if (paint.kind !== 'replayable') return null
+
+  let changedPaint: (typeof paint.parts)[number][] | null = null
+  for (let index = 0; index < chunk.parts.length; index += 1) {
+    const part = chunk.parts[index]!
+    if (part.kind !== 'text') return null
+    const partText = text.slice(
+      part.localStart - chunk.localStart,
+      part.localEnd - chunk.localStart,
+    )
+    if (part.node.data === partText) continue
+
+    part.node.data = partText
+    changedPaint ??= paint.parts.slice()
+    changedPaint[index] = { kind: 'text', text: partText }
+  }
+
+  return changedPaint === null ? paint : { kind: 'replayable', parts: changedPaint }
 }
 
 function createRowChunks(
@@ -1465,17 +1564,11 @@ function createRowChunk(
   const localEnd = Math.min(localStart + view.longLineChunkSize, windowEnd)
   const element = view.scrollElement.ownerDocument.createElement('span')
   const chunkText = text.slice(localStart, localEnd)
-  const rendered = isSimpleRowText(chunkText)
-    ? createSplitTextChunkParts(view.scrollElement.ownerDocument, chunkText, localStart)
-    : createRenderedChunkParts(
-        view.scrollElement.ownerDocument,
-        chunkText,
-        localStart,
-        characterWidth(view),
-      )
+  const rendered = createRowChunkParts(view, chunkText, localStart)
 
   element.className = 'editor-virtualized-row-chunk'
   element.dataset.editorVirtualChunkStart = String(localStart)
+  element.dataset.editorVirtualChunkEnd = String(localEnd)
   element.append(...rendered.nodes)
 
   return {
@@ -1489,6 +1582,23 @@ function createRowChunk(
     parts: rendered.parts,
     mountedPaint: captureMountedPaint(rendered.parts),
   }
+}
+
+function createRowChunkParts(
+  view: VirtualizedTextViewInternal,
+  text: string,
+  localStart: number,
+): RenderedChunkParts {
+  if (isSimpleRowText(text)) {
+    return createSplitTextChunkParts(view.scrollElement.ownerDocument, text, localStart)
+  }
+
+  return createRenderedChunkParts(
+    view.scrollElement.ownerDocument,
+    text,
+    localStart,
+    characterWidth(view),
+  )
 }
 
 /**
@@ -2053,8 +2163,12 @@ function setTextRenderMode(
   row: MountedVirtualizedTextRow,
   textRenderMode: VirtualizedTextRenderMode,
 ): void {
+  const wasChunked = row.textRenderMode === 'chunked'
   const mutable = row as { textRenderMode: VirtualizedTextRenderMode }
   mutable.textRenderMode = textRenderMode
+  if (!wasChunked || textRenderMode === 'chunked') return
+  delete row.element.dataset.editorVirtualWindowStart
+  delete row.element.dataset.editorVirtualWindowEnd
 }
 
 function setLeftSpacerWidth(row: MountedVirtualizedTextRow, width: number): void {
@@ -2509,12 +2623,10 @@ export function positionInputAtCaret(
   // offset the spacer is translated by on a document taller than the browser will scroll.
   const spacerOffset = snapshot.nativeScrollTop - snapshot.scrollTop
 
-  setStyleValue(
-    view.inputElement,
-    'top',
-    `${caret ? caret.top + spacerOffset : snapshot.nativeScrollTop}px`,
-  )
-  setStyleValue(view.inputElement, 'left', `${caret ? caret.left : snapshot.scrollLeft}px`)
+  const top = caret ? caret.top + spacerOffset : snapshot.nativeScrollTop
+  const left = caret ? caret.left : snapshot.scrollLeft
+  // Keep caret placement from invalidating layout after the input content was measured.
+  setStyleValue(view.inputElement, 'transform', `translate(${left}px, ${top}px)`)
 }
 
 /** Null for a caret outside the rows that are mounted, or behind the gutter or the right edge. */
@@ -2580,15 +2692,18 @@ export function scrollOffsetIntoView(
   syncVirtualizerMetricsFromScrollElement(view)
 }
 
-export function scrollOffsetToViewportEnd(
+export function scrollOffsetToViewportBlock(
   view: VirtualizedTextViewInternal,
   offset: number,
+  block: 'center' | 'end',
   affinity?: SelectionAffinity,
 ): void {
   const row = rowForOptionalAffinity(view, offset, affinity)
   let snapshot = view.virtualizer.getSnapshot()
-  const bottom = rowTop(view, row) + getRowHeight(view)
-  const scrollTop = scrollTopForRowBottom(bottom, snapshot)
+  const space = snapshot.viewportHeight - getRowHeight(view)
+  const alignmentOffset = block === 'center' ? space / 2 : space
+  const maxScrollTop = Math.max(0, snapshot.totalSize - snapshot.viewportHeight)
+  const scrollTop = clamp(rowTop(view, row) - alignmentOffset, 0, maxScrollTop)
   if (scrollTop !== snapshot.scrollTop) {
     view.scrollElement.scrollTop = scrollTop
     syncVirtualizerMetricsFromScrollElement(view)
@@ -2599,11 +2714,6 @@ export function scrollOffsetToViewportEnd(
   if (scrollLeft === snapshot.scrollLeft) return
   view.scrollElement.scrollLeft = scrollLeft
   syncVirtualizerMetricsFromScrollElement(view)
-}
-
-function scrollTopForRowBottom(rowBottom: number, snapshot: FixedRowVirtualizerSnapshot): number {
-  const maxScrollTop = Math.max(0, snapshot.totalSize - snapshot.viewportHeight)
-  return clamp(rowBottom - snapshot.viewportHeight, 0, maxScrollTop)
 }
 
 function scrollTopForVisibleRow(

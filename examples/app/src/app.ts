@@ -109,6 +109,19 @@ export function mountApp(): void {
     },
   })
 
+  const inspect = el('button', { type: 'button' })
+  inspect.textContent = 'Inspect piece tree'
+  inspect.onclick = async () => {
+    if (document.querySelector('dialog[aria-label="Piece tree inspector"]')) return
+    const [{ openPieceTreeInspector }, { getPieceTreeSnapshot }] = await Promise.all([
+      import('./components/pieceTreeInspector.ts'),
+      import('@singapor/core/debug'),
+    ])
+    if (document.querySelector('dialog[aria-label="Piece tree inspector"]')) return
+    openPieceTreeInspector(() => getPieceTreeSnapshot(editor.getTextSnapshot()))
+  }
+  topBar.element.append(inspect)
+
   syncTypeScriptStatus()
   controller.start()
 }

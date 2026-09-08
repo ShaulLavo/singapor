@@ -2971,7 +2971,10 @@ function assertInputAndCompositionAtPrimaryCaret(
 ): void {
   const position = caretPosition(fixture.internal, offset, affinity)?.[0]
   expect(position).toBeDefined()
-  expect(Number.parseFloat(fixture.view.inputElement.style.left)).toBeCloseTo(position!.left, 3)
+  const caret = primaryCaretElement(fixture.container).getBoundingClientRect()
+  const input = fixture.view.inputElement.getBoundingClientRect()
+  expect(input.left).toBeCloseTo(caret.left, 0)
+  expect(input.top).toBeCloseTo(caret.top, 0)
 
   fixture.view.setCompositionPreedit('x')
   const preedit = fixture.container.querySelector<HTMLElement>('.editor-virtualized-composition')

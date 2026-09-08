@@ -46,7 +46,7 @@ import {
   getEditorTokenIndex,
   setEditorTokenIndex,
 } from '../src/editor/tokenIndex'
-import type { TextSnapshot } from '../src/documentTextSnapshot'
+import { createStringTextSnapshot, type TextSnapshot } from '../src/documentTextSnapshot'
 import { createPieceTableSnapshot } from '../src/pieceTable/pieceTable'
 import type { FoldRange } from '../src/syntax'
 import type { EditorToken } from '../src/tokens'
@@ -814,7 +814,11 @@ describe('token projection', () => {
 })
 
 function lazyTextSnapshot(text: string): TextSnapshot {
+  const source = createStringTextSnapshot(text)
   return {
+    lineCount: source.lineCount,
+    lineStart: (line) => source.lineStart(line),
+    lineAt: (offset) => source.lineAt(offset),
     length: text.length,
     materializeFullText: () => {
       throw new Error('unexpected full text materialization')
@@ -830,7 +834,11 @@ function recordingTextSnapshot(
   text: string,
   reads: Array<readonly [number, number]>,
 ): TextSnapshot {
+  const source = createStringTextSnapshot(text)
   return {
+    lineCount: source.lineCount,
+    lineStart: (line) => source.lineStart(line),
+    lineAt: (offset) => source.lineAt(offset),
     length: text.length,
     materializeFullText: () => {
       throw new Error('unexpected full text materialization')

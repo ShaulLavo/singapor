@@ -6,6 +6,7 @@ import type {
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
 import { setHighlightRegistry } from '@singapor/core/testing'
+import { EditorSecondaryTextView } from '@singapor/core/secondary-views'
 import {
   createEditorFindContributionProviders,
   createEditorFindPlugin,
@@ -277,6 +278,9 @@ function editorProbe(text: string, plugins: readonly EditorPlugin[] = []): Edito
   }
 
   const editor = new Editor(container, { defaultText: text, plugins: [...plugins, capture] })
+  const view: unknown = Reflect.get(editor, 'view')
+  // happy-dom has no layout, so deliver the first visible viewport measurement explicitly.
+  if (view instanceof EditorSecondaryTextView) view.setScrollMetrics(0, 24)
   openProbes.push(() => {
     editor.dispose()
     container.remove()
@@ -359,7 +363,8 @@ function announcements(container: HTMLElement): string[] {
 }
 
 function mountedMatchCount(snapshot: EditorViewSnapshot): number {
-  return snapshot.visibleRows.filter((row) => row.text.includes('foo')).length
+  return snapshot.visibleRows.filter((row) => row.text.slice(0, row.text.length).includes('foo'))
+    .length
 }
 
 // Scrolled the way a reader does, so the rows the view mounts are recomputed and

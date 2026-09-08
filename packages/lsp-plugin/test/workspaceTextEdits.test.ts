@@ -100,16 +100,12 @@ describe('prepareWorkspaceTextReplay', () => {
     const target = fixture('alpha\n😀z\n')
     const source = target.initialSnapshot
     let materialized = false
-    const guardedSnapshot: DocumentTextSnapshot = {
-      forEachTextChunk: (visit) => source.forEachTextChunk(visit),
-      length: source.length,
+    const guardedSnapshot = Object.assign(createDocumentTextSnapshot(source.snapshot), {
       materializeFullText: () => {
         materialized = true
         throw new Error('full text must not be materialized')
       },
-      readRange: (start, end) => source.readRange(start, end),
-      snapshot: source.snapshot,
-    }
+    })
     const result = prepareWorkspaceTextReplay({
       logicalRevisionScope: createDocumentLogicalRevisionScope(),
       provenance: [],

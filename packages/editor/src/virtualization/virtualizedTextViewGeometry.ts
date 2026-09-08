@@ -1,3 +1,4 @@
+import type { TextContent } from '../textContent'
 import type { MeasuredText } from '../textMeasurements'
 import {
   BIDI_CONTROL_CODE_POINTS,
@@ -327,7 +328,7 @@ export function createTextChunkParts(
 
 export function createRenderedChunkParts(
   document: Document,
-  text: string,
+  text: TextContent,
   localStart: number,
   cellWidth: number,
   widgets: readonly InlineWidgetPlacement[] = [],
@@ -632,7 +633,7 @@ function rtlTextClassification(row: MountedVirtualizedTextRow): RtlTextClassific
   return classification
 }
 
-function classifyRtlText(text: string): RtlTextClassification {
+function classifyRtlText(text: TextContent): RtlTextClassification {
   rtlTextClassificationScanCount += 1
   let hasStrongCharacter = false
   let hasBidiControl = false
@@ -1295,7 +1296,7 @@ export function estimatedColumnToBufferColumn(
   if (typeof content !== 'string' && content.measurements)
     return content.measurements.offsetAt(visualColumn, bias, tabSize, 'estimated')
   const text = typeof content === 'string' ? content : content.text
-  if (isSimpleRowText(text)) return visualColumnToBufferColumn(text, visualColumn, bias, tabSize)
+  if (isSimpleRowText(text)) return visualColumnToBufferColumn(content, visualColumn, bias, tabSize)
 
   const target = Math.max(0, visualColumn)
   let visual = 0
@@ -1548,7 +1549,7 @@ function rowUsesCalculatedGeometry(row: MountedVirtualizedTextRow): boolean {
   if (row.inlineMapping) return false
   if (!isSimpleRowText(row)) return false
   // CSS tab stops can disagree with the estimated cell grid after a horizontal spacer.
-  return !(row.measurements?.hasTabs ?? row.text.includes('\t'))
+  return !(row.measurements?.hasTabs ?? (typeof row.text === 'string' && row.text.includes('\t')))
 }
 
 function buildCalculatedRowGeometry(
@@ -2964,6 +2965,10 @@ function estimatedPrefixWidth(
   row: MountedVirtualizedTextRow,
   localOffset: number,
 ): number {
+  const firstStart = row.chunks[0]?.localStart
+  if (firstStart !== undefined && localOffset >= firstStart) {
+    return row.leftSpacerWidth + estimatedLocalRangeWidth(view, row, firstStart, localOffset)
+  }
   return estimatedLocalRangeWidth(view, row, 0, localOffset)
 }
 
@@ -3039,7 +3044,7 @@ function appendTextParts(
   return true
 }
 
-function hasOnlyStandaloneGraphemes(text: string): boolean {
+function hasOnlyStandaloneGraphemes(text: TextContent): boolean {
   for (let index = 0; index < text.length; index += 1) {
     if (!isStandaloneGraphemeCodeUnit(text.charCodeAt(index))) return false
   }
@@ -3105,7 +3110,7 @@ function firstTextNode(parts: readonly VirtualizedTextChunkPart[]): Text | null 
 }
 
 function estimatedDisplayCellsFrom(
-  text: string,
+  text: TextContent,
   start: number,
   end: number,
   initialCells: number,
@@ -3123,7 +3128,7 @@ function estimatedDisplayCellsFrom(
 }
 
 function simpleDisplayCellsOrNull(
-  text: string,
+  text: TextContent,
   start: number,
   end: number,
   initialCells: number,
@@ -3140,7 +3145,7 @@ function simpleDisplayCellsOrNull(
 }
 
 function estimatedStep(
-  text: string,
+  text: TextContent,
   index: number,
   visualCell: number,
   tabSize: number,

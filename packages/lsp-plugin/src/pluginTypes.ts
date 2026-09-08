@@ -1,5 +1,4 @@
-import type { TextSnapshot } from '@singapor/core/document'
-import type { LspLineStarts, LspWebSocketTransportOptions } from '@singapor/lsp'
+import type { LspLineStarts, LspTextSnapshot, LspWebSocketTransportOptions } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type {
@@ -48,7 +47,7 @@ export type DiagnosticMarkerDirection = 'next' | 'previous'
 export type ActiveDocument = {
   readonly uri: lsp.DocumentUri
   readonly languageId: string
-  readonly textSnapshot: TextSnapshot
+  readonly textSnapshot: LspTextSnapshot
   readonly lineStarts: LspLineStarts
   readonly fullText: string
   readonly textVersion: number
@@ -58,7 +57,7 @@ export type ActiveDocument = {
 export type DocumentDescriptor = {
   readonly uri: lsp.DocumentUri
   readonly languageId: string
-  readonly textSnapshot: TextSnapshot
+  readonly textSnapshot: LspTextSnapshot
   readonly lineStarts: LspLineStarts
   readonly fullText: string
   readonly textVersion: number

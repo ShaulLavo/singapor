@@ -1,5 +1,5 @@
 import type { EditorCommandId } from '@singapor/core/editor'
-import type { TextSnapshot } from '@singapor/core/document'
+import { createStringTextSnapshot } from '@singapor/core/document'
 import {
   createEditorCapabilityToken,
   type EditorCommandContributionContext,
@@ -789,7 +789,7 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
     fullText,
     textVersion: 1,
     lineStarts,
-    textSnapshot: stringTextSnapshot(fullText),
+    textSnapshot: createStringTextSnapshot(fullText),
     tokens: [],
     brackets: [],
     selections: [
@@ -811,15 +811,6 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
       clientWidth: 0,
       visibleRange: { start: 0, end: 1 } as EditorViewSnapshot['viewport']['visibleRange'],
     },
-  }
-}
-
-function stringTextSnapshot(text: string): TextSnapshot {
-  return {
-    length: text.length,
-    materializeFullText: () => text,
-    readRange: (start, end) => text.slice(start, end),
-    forEachTextChunk: (visit) => visit(text, 0, text.length),
   }
 }
 

@@ -112,7 +112,12 @@ function checkExecutablePlan(plan) {
       `${plan.id}: ${key} differs from manifest`,
     )
   }
-  check(markdown.includes(manifest.baseline), `${plan.id}: missing inspected baseline`)
+  const baseline = plan.baseline ?? manifest.baseline
+  check(/^[a-f0-9]{40}$/.test(baseline), `${plan.id}: invalid inspected baseline`)
+  check(
+    metadata(markdown, 'Inspected baseline').includes(baseline),
+    `${plan.id}: missing inspected baseline`,
+  )
   for (const section of sections) {
     check(markdown.includes(`\n## ${section}\n`), `${plan.id}: missing ${section} section`)
   }

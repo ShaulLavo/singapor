@@ -178,7 +178,7 @@ function createRowRecorderPlugin(rows: { latest: readonly string[] }): EditorPlu
           update: (snapshot) => {
             rows.latest = snapshot.visibleRows
               .filter((row) => row.kind === 'text')
-              .map((row) => row.text)
+              .map((row) => row.text.slice(0, row.text.length))
           },
         }),
       }),

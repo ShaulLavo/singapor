@@ -136,6 +136,9 @@ function charactersReadForCaretMove(lineCount: number): number {
   let charactersRead = 0
   const counted: TextSnapshot = {
     length: source.length,
+    lineCount: source.lineCount,
+    lineStart: (line) => source.lineStart(line),
+    lineAt: (offset) => source.lineAt(offset),
     readRange: (start, end) => {
       const value = source.readRange(start, end)
       charactersRead += value.length

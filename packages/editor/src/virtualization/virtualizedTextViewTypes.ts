@@ -1,3 +1,4 @@
+import type { TextContent } from '../textContent'
 import type {
   EditorGutterContribution,
   EditorGutterWidthContext,
@@ -130,7 +131,7 @@ export type VirtualizedTextChunk = {
   readonly endOffset: number
   readonly localStart: number
   readonly localEnd: number
-  readonly text: string
+  readonly text: TextContent
   readonly element: HTMLSpanElement | null
   readonly textNode: Text
   readonly parts: readonly VirtualizedTextChunkPart[]
@@ -188,7 +189,7 @@ export type VirtualizedTextRow = MeasuredText & {
   readonly metadata?: unknown
   readonly startOffset: number
   readonly endOffset: number
-  readonly text: string
+  readonly text: TextContent
   readonly kind: 'text'
   readonly chunks: readonly VirtualizedTextChunk[]
   readonly element: HTMLDivElement

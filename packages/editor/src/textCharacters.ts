@@ -1,14 +1,16 @@
 import { isCombiningMark, isVariationSelector } from './graphemes'
 import { RTL_BIDI_CHARACTER } from './virtualization/bidiClassData'
 import type { MeasuredText } from './textMeasurements'
+import type { TextContent } from './textContent'
 
 export const BIDI_CONTROL_CODE_POINTS = [
   0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
 ] as const
 
-export function containsRTL(content: string | MeasuredText): boolean {
+export function containsRTL(content: TextContent | MeasuredText): boolean {
   if (typeof content !== 'string' && content.measurements) return content.measurements.containsRTL
-  const text = typeof content === 'string' ? content : content.text
+  const text = contentText(content)
+  if (typeof text !== 'string') return text.measurements.containsRTL
   if (RTL_BIDI_CHARACTER.test(text)) return true
   for (const codePoint of BIDI_CONTROL_CODE_POINTS) {
     if (text.includes(String.fromCodePoint(codePoint))) return true
@@ -16,14 +18,21 @@ export function containsRTL(content: string | MeasuredText): boolean {
   return false
 }
 
-export function isSimpleRowText(content: string | MeasuredText): boolean {
+export function isSimpleRowText(content: TextContent | MeasuredText): boolean {
   if (typeof content !== 'string' && content.measurements) return content.measurements.isSimple
-  const text = typeof content === 'string' ? content : content.text
+  const text = contentText(content)
+  if (typeof text !== 'string') return text.measurements.isSimple
   for (let index = 0; index < text.length; index += 1) {
     const code = text.charCodeAt(index)
     if (code !== 9 && (code < 32 || code > 126)) return false
   }
   return true
+}
+
+function contentText(content: TextContent | MeasuredText): TextContent {
+  if (typeof content === 'string') return content
+  if ('text' in content) return content.text
+  return content
 }
 
 export type ControlCharacterInfo = {

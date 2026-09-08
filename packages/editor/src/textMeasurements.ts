@@ -1,4 +1,5 @@
 import type { TransformBias } from './displayTransforms'
+import type { TextContent } from './textContent'
 import { containsRTL, estimatedCodePointWidth, isSimpleRowText } from './textCharacters'
 import {
   editorPerformanceDiagnosticsEnabled,
@@ -10,7 +11,7 @@ const BLOCK_LENGTH = 256
 const MAX_TAB_SIZES = 4
 
 export type ColumnMode = 'utf16' | 'estimated'
-export type MeasuredText = { readonly text: string; readonly measurements?: TextMeasurements }
+export type MeasuredText = { readonly text: TextContent; readonly measurements?: TextMeasurements }
 type Advance = { readonly prefix: number; readonly suffix: number | null }
 type Summary = {
   readonly length: number
@@ -149,10 +150,34 @@ export type MeasuredTextRange = {
 
 export class TextMeasurements {
   private readonly roots = new Map<number, TextNode>()
+  private readonly rangeEnds: readonly number[]
   readonly length: number
 
   constructor(private readonly ranges: readonly MeasuredTextRange[]) {
-    this.length = ranges.reduce((length, range) => length + range.end - range.start, 0)
+    let length = 0
+    this.rangeEnds = ranges.map((range) => {
+      length += range.end - range.start
+      return length
+    })
+    this.length = length
+  }
+
+  static concat(parts: readonly TextMeasurements[]): TextMeasurements {
+    return new TextMeasurements(parts.flatMap((part) => part.ranges))
+  }
+
+  codeUnitAt(offset: number): number {
+    if (offset < 0 || offset >= this.length) return Number.NaN
+    let low = 0
+    let high = this.rangeEnds.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if (this.rangeEnds[middle]! <= offset) low = middle + 1
+      else high = middle
+    }
+    const range = this.ranges[low]!
+    const start = this.rangeEnds[low - 1] ?? 0
+    return range.source.text.charCodeAt(range.start + offset - start)
   }
 
   get isSimple(): boolean {

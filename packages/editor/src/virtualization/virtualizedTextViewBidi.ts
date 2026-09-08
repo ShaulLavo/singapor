@@ -1,3 +1,4 @@
+import type { TextContent } from '../textContent'
 import type { SelectionAffinity } from '../selections'
 import { containsRTL, isSimpleRowText } from '../textCharacters'
 import type { MeasuredText } from '../textMeasurements'
@@ -5,7 +6,7 @@ import type { VirtualizedBidiRun } from './virtualizedTextViewTypes'
 
 type BidiClassifierMemo = {
   readonly revision: number
-  readonly results: Map<string, boolean>
+  readonly results: Map<TextContent, boolean>
   scans: number
 }
 
@@ -27,6 +28,7 @@ export function memoizedContainsRTL(
   if (cached !== undefined) return cached
 
   const result = !isSimpleRowText(text) && containsRTL(text)
+  if (memo.results.size >= 128) memo.results.clear()
   memo.results.set(text, result)
   memo.scans += 1
   return result
@@ -111,7 +113,7 @@ function classifierMemo(view: BidiClassifierHost): BidiClassifierMemo {
   const current = classifierMemos.get(view)
   if (current?.revision === view.textRevision) return current
 
-  const memo = { revision: view.textRevision, results: new Map<string, boolean>(), scans: 0 }
+  const memo = { revision: view.textRevision, results: new Map<TextContent, boolean>(), scans: 0 }
   classifierMemos.set(view, memo)
   return memo
 }

@@ -35,8 +35,13 @@ The actual target is measured live memory and input latency, not a count of meth
 ## Scope
 
 Create a call-site and retention inventory, measure real paths, and fix justified residual copies.
-Cover find, syntax, minimap, LSP, snapshot getters, and framework-controlled text bindings.
+Cover find, syntax, minimap, and LSP consumer algorithms and retention.
 E008 owns matcher changes. E009 owns worker transport representation decisions.
+The 2026-09-08 split assigns eager display rows to [E031](../docs/performance/e031-projection.md),
+session render batches to [E032](e032-incremental-edit-batches.md), implicit getters, plugin
+contexts and framework full-text APIs to [E033](e033-explicit-full-text-boundary.md), and
+indentation fallback to [E034](e034-snapshot-indentation-folds.md). Keep one call-site inventory;
+coordinate source contracts with E033 without making its final enforcement gate a prerequisite here.
 Keep required host save, export, and external protocol serialization explicit and supported.
 Platform filesystem writes and remote LSP proxy changes need their own host implementation scope.
 

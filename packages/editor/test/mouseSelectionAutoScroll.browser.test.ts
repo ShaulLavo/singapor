@@ -26,8 +26,9 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
       document.body.appendChild(container)
       editor = new Editor(container, { plugins: [createLineGutterPlugin()] })
       editor.attachSession(createDocumentSession(LONG_LINE))
-      // The editor sizes itself from a ResizeObserver, which reports one frame after layout.
-      await new Promise((resolve) => requestAnimationFrame(resolve))
+      await expect
+        .poll(() => editorElement(editor).querySelector('[data-editor-virtual-row]'))
+        .not.toBeNull()
     })
 
     afterEach(() => {

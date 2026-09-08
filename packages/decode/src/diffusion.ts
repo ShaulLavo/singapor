@@ -84,6 +84,7 @@ function buildCells(
     const rowElement = document.createElement('div')
     rowElement.className = ROW_CLASS
     rowElement.style.top = `${row.top}px`
+    rowElement.style.marginLeft = `${row.leftSpacerWidth}px`
     appendRowGlyphs(document, rowElement, row, rowOrdinal, cells, colorAt)
     layer.appendChild(rowElement)
     rowOrdinal += 1

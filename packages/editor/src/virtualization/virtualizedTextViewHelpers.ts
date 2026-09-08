@@ -1,3 +1,4 @@
+import type { TextContent } from '../textContent'
 import type { FoldMap, FoldPoint } from '../foldMap'
 import type { InlineMap } from '../inlineMap'
 import type { RowInlineMapping } from './virtualizedTextViewInlineMapping'
@@ -516,7 +517,7 @@ export function updateMutableRow(
     readonly metadata?: unknown
     readonly startOffset: number
     readonly endOffset: number
-    readonly text: string
+    readonly text: TextContent
     readonly measurements?: MountedVirtualizedTextRow['measurements']
     readonly inlineMapping: RowInlineMapping | null
     readonly kind: 'text'
@@ -536,7 +537,7 @@ export function updateMutableRow(
     metadata?: unknown
     startOffset: number
     endOffset: number
-    text: string
+    text: TextContent
     measurements?: MountedVirtualizedTextRow['measurements']
     inlineMapping: RowInlineMapping | null
     kind: 'text'

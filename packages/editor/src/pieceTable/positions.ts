@@ -122,7 +122,7 @@ const findOffsetAfterLineBreak = (
   )
 }
 
-const lineStartOffset = (snapshot: PieceTableTreeSnapshot, row: number): number => {
+export const lineStartOffset = (snapshot: PieceTableTreeSnapshot, row: number): number => {
   if (row <= 0) return 0
 
   const offset = findOffsetAfterLineBreak(snapshot.root, snapshot.buffers, row)

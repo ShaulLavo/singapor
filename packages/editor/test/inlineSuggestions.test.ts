@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { DocumentSessionChange } from '../src/documentSession'
-import { Editor } from '../src/editor/Editor'
+import type { Editor } from '../src/editor/Editor'
+import { createVisibleEditor } from './factories/visibleEditor'
 import {
   defaultEditorKeyBindings,
   editorCommandPackForCommand,
@@ -58,7 +59,7 @@ describe('inline suggestions', () => {
         }),
     }
 
-    editor = new Editor(container, {
+    editor = createVisibleEditor(container, {
       onChange: (_state, change) => {
         if (change) lastChange = change
       },

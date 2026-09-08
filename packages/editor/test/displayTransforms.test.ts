@@ -3,14 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
   bufferColumnToVisualColumn,
   bufferPointToTabPoint,
-  createDisplayRows,
   createInlineRow,
   createWrapMap,
   type InjectedTextRow,
   type InlineCursorStops,
   type InlineReplacement,
   inlineColumnToSourceColumn,
-  isDocumentTextDisplayRow,
   sourceColumnToInlineColumn,
   sourceRangeToInlineRanges,
   tabPointToBufferPoint,
@@ -18,6 +16,7 @@ import {
   visualColumnToBufferColumn,
   wrapPointToTabPoint,
 } from '../src/displayTransforms'
+import { createDisplayRows, isDocumentTextDisplayRow } from './oracles/displayTransforms'
 import { computeLineStarts } from '../src/virtualization/virtualizedTextViewHelpers'
 
 describe('display transform core', () => {

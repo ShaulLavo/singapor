@@ -1,3 +1,4 @@
+import type { TextContent } from './textContent'
 import type { EditorDecorationRange, EditorDecorationStore } from './editor/decorationStore'
 import type { DocumentSessionChange } from './documentSession'
 import type { DocumentTextSnapshot, TextSnapshot } from './documentTextSnapshot'
@@ -234,11 +235,13 @@ export type EditorVisibleChunkSnapshot = {
   readonly sourceEndOffset: number
   readonly rowLocalStart: number
   readonly rowLocalEnd: number
-  readonly text: string
+  readonly text: TextContent
   readonly mountedPaint: EditorMountedChunkPaintJSON
 }
 
-export type EditorVisibleChunkSnapshotJSON = EditorVisibleChunkSnapshot
+export type EditorVisibleChunkSnapshotJSON = Omit<EditorVisibleChunkSnapshot, 'text'> & {
+  readonly text: string
+}
 
 export type EditorVisibleGutterLayoutJSON = {
   readonly fixedWidth: number
@@ -277,7 +280,7 @@ export type EditorVisibleRowSnapshot = {
   readonly metadata?: unknown
   readonly startOffset: number
   readonly endOffset: number
-  readonly text: string
+  readonly text: TextContent
   readonly kind: 'text'
   /** Document-backed text, including soft-wrap continuations. */
   readonly primaryText: boolean
@@ -852,7 +855,7 @@ export type EditorGutterRowContext = {
   readonly source: DisplayTextRowSource
   readonly startOffset: number
   readonly endOffset: number
-  readonly text: string
+  readonly text: TextContent
   readonly kind: 'text'
   readonly injectedTextRowId?: string
   readonly metadata?: unknown

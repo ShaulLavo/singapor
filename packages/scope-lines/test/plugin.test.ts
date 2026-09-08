@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { TextSnapshot } from '@singapor/core/document'
+import { createStringTextSnapshot, type TextSnapshot } from '@singapor/core/document'
 import type { VirtualizedFoldMarker } from '@singapor/core/rendering'
 import type {
   EditorPluginContext,
@@ -660,15 +660,13 @@ function countingTextSnapshot(
   starts: readonly number[],
   readRows: number[],
 ): TextSnapshot {
-  return {
-    length: text.length,
+  return Object.assign(createStringTextSnapshot(text), {
     materializeFullText: () => {
       throw new Error('unexpected full text materialization')
     },
-    readRange: (start, end) => {
+    readRange: (start: number, end: number) => {
       readRows.push(starts.indexOf(start))
       return text.slice(start, end)
     },
-    forEachTextChunk: (visit) => visit(text, 0, text.length),
-  }
+  })
 }

@@ -3309,10 +3309,7 @@
       "repetition": 2,
       "before": {
         "retainedObjects": 2,
-        "retainedLabels": [
-          "editor",
-          "buffer"
-        ],
+        "retainedLabels": ["editor", "buffer"],
         "hosts": 0,
         "active": false,
         "worker": {
@@ -3357,9 +3354,7 @@
       "repetition": 0,
       "before": {
         "retainedObjects": 1,
-        "retainedLabels": [
-          "editor"
-        ],
+        "retainedLabels": ["editor"],
         "hosts": 0,
         "active": false,
         "worker": {
@@ -3404,10 +3399,7 @@
       "repetition": 2,
       "before": {
         "retainedObjects": 2,
-        "retainedLabels": [
-          "editor",
-          "buffer"
-        ],
+        "retainedLabels": ["editor", "buffer"],
         "hosts": 0,
         "active": false,
         "worker": {
@@ -3452,9 +3444,7 @@
       "repetition": 1,
       "before": {
         "retainedObjects": 1,
-        "retainedLabels": [
-          "editor"
-        ],
+        "retainedLabels": ["editor"],
         "hosts": 0,
         "active": false,
         "worker": {

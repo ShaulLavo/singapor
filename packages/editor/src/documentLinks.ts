@@ -55,20 +55,55 @@ export function documentLinkAtOffset(
 }
 
 function appendRowLinks(links: DocumentLink[], row: EditorVisibleRowSnapshot): void {
-  URL_PATTERN.lastIndex = 0
-  let match = URL_PATTERN.exec(row.text)
+  if (typeof row.text === 'string') {
+    appendTextLinks(links, row.text, row.startOffset)
+    return
+  }
+  for (const chunk of row.chunks) {
+    appendRangeLinks(links, row, chunk.rowLocalStart, chunk.rowLocalEnd)
+  }
+}
 
+function appendTextLinks(links: DocumentLink[], text: string, startOffset: number): void {
+  URL_PATTERN.lastIndex = 0
+  let match = URL_PATTERN.exec(text)
   while (match !== null) {
     const trimmed = trimTrailingPunctuation(match[0])
-    if (trimmed.length > 0) {
-      links.push({
-        end: row.startOffset + match.index + trimmed.length,
-        start: row.startOffset + match.index,
-        url: trimmed,
-      })
+    const start = startOffset + match.index
+    if (trimmed.length > 0 && links.at(-1)?.start !== start) {
+      links.push({ start, end: start + trimmed.length, url: trimmed })
     }
-    match = URL_PATTERN.exec(row.text)
+    match = URL_PATTERN.exec(text)
   }
+}
+
+function appendRangeLinks(
+  links: DocumentLink[],
+  row: EditorVisibleRowSnapshot,
+  start: number,
+  end: number,
+): void {
+  let cursor = start
+  while (cursor > 0 && !/[\s<>"'`]/.test(row.text.charAt(cursor - 1))) cursor -= 1
+  while (cursor < end) {
+    const prefix = row.text.slice(cursor, Math.min(row.text.length, cursor + 8))
+    if (prefix.startsWith('https://') || prefix.startsWith('http://')) {
+      cursor = appendRangeLink(links, row, cursor)
+      continue
+    }
+    cursor += 1
+  }
+}
+
+function appendRangeLink(
+  links: DocumentLink[],
+  row: EditorVisibleRowSnapshot,
+  start: number,
+): number {
+  let end = start
+  while (end < row.text.length && !/[\s<>"'`]/.test(row.text.charAt(end))) end += 1
+  appendTextLinks(links, row.text.slice(start, end), row.startOffset + start)
+  return end
 }
 
 /**

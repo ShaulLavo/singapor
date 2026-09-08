@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { Editor } from '../src/editor/Editor'
+import type { Editor } from '../src/editor/Editor'
+import { createVisibleEditor } from './factories/visibleEditor'
 import {
   resetEditorInstanceCount,
   setEditorSyntaxSessionFactory,
@@ -44,7 +45,7 @@ describe('token painting over inline replacements', () => {
     resetEditorInstanceCount()
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = new Editor(container, { plugins: [highlighterPlugin()] })
+    editor = createVisibleEditor(container, { plugins: [highlighterPlugin()] })
   })
 
   afterEach(() => {

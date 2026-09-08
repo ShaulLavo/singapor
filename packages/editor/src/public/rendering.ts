@@ -37,7 +37,9 @@ export type {
   InlineReplacementRender,
   InlineRow,
   InlineRowSegment,
+  MaterializedInlineRow,
 } from '../displayTransforms'
+export type { RangeText, TextContent } from '../textContent'
 export type { EditorSyntaxTheme, EditorSyntaxThemeColor, EditorTheme } from '../theme'
 export type {
   EditorCursorLineHighlightOptions,

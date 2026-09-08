@@ -583,6 +583,9 @@ function countingTextSnapshot(
   return {
     forEachTextChunk: (visit) => textSnapshot.forEachTextChunk(visit),
     length: textSnapshot.length,
+    lineCount: textSnapshot.lineCount,
+    lineStart: (line) => textSnapshot.lineStart(line),
+    lineAt: (offset) => textSnapshot.lineAt(offset),
     materializeFullText: () => textSnapshot.materializeFullText(),
     readRange: (start, end) => {
       onRead()
@@ -1572,6 +1575,54 @@ describe('Editor', () => {
   })
 
   describe('view contribution plugins', () => {
+    it.each(['', 'previous\ndocument'])(
+      'keeps line starts aligned after attaching a buffer over %j',
+      (initialText) => {
+        const events: ViewContributionEvent[] = []
+        editor.dispose()
+        editor = createVisibleEditor(container, {
+          defaultText: initialText,
+          plugins: [createViewContributionPlugin(events)],
+        })
+        const previousVersion = events.at(-1)?.snapshot?.textVersion
+        const buffer = createEditorTextBuffer('alpha\nbeta\ngamma')
+
+        editor.attachSession(createEditorBufferSession(buffer), { documentId: 'attached.ts' })
+
+        const snapshot = events.at(-1)?.snapshot
+        expect(snapshot?.textSnapshot?.lineCount).toBe(3)
+        expect(snapshot?.lineCount).toBe(3)
+        expect(snapshot?.lineStarts).toEqual([0, 6, 11])
+        expect(snapshot?.lineStartsView?.toArray()).toEqual([0, 6, 11])
+        expect(snapshot?.textVersion).toBeGreaterThan(previousVersion!)
+        for (const event of events) {
+          if (event.snapshot?.documentId !== 'attached.ts') continue
+
+          expect(event.snapshot.lineStarts).toEqual([0, 6, 11])
+        }
+      },
+    )
+
+    it('increments snapshot textVersion when opening and clearing documents', () => {
+      const events: ViewContributionEvent[] = []
+      editor.dispose()
+      editor = createVisibleEditor(container, {
+        defaultText: 'previous\ndocument',
+        plugins: [createViewContributionPlugin(events)],
+      })
+      const previousVersion = events.at(-1)?.snapshot?.textVersion
+
+      editor.openDocument({ documentId: 'replacement.ts', text: 'next\ntext' })
+      const opened = events.at(-1)?.snapshot
+      expect(opened?.textVersion).toBeGreaterThan(previousVersion!)
+      expect(opened?.lineStarts).toEqual([0, 5])
+
+      editor.clear()
+      const cleared = events.at(-1)?.snapshot
+      expect(cleared?.textVersion).toBeGreaterThan(opened!.textVersion)
+      expect(cleared?.lineStarts).toEqual([0])
+    })
+
     it('receives document, token, selection, and content updates', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
@@ -2821,6 +2872,21 @@ describe('Editor', () => {
       expect(editorRoot().textContent).toBe('abc')
     })
 
+    it('resets to the undo snapshot after unrendered session revisions', () => {
+      const session = createDocumentSession('abc')
+      editor.attachSession(session)
+      session.applyEdits([{ from: 0, to: 3, text: 'xyz' }])
+      session.applyEdits([{ from: 3, to: 3, text: '!' }])
+      expect(editor.getTextSnapshot().readRange(0, 3)).toBe('abc')
+      expect(session.materializeFullText()).toBe('xyz!')
+
+      editor.dispatchCommand('undo')
+
+      expect(session.materializeFullText()).toBe('xyz')
+      expect(editor.getTextSnapshot()).toBe(session.getTextSnapshot())
+      expect(editorRoot().textContent).toBe('xyz')
+    })
+
     it('routes delete commands through the keymap layer', () => {
       const session = createDocumentSession('abc')
       editor.attachSession(session)
@@ -3182,7 +3248,7 @@ describe('Editor', () => {
       expect(session.materializeFullText()).toBe('abcd')
     })
 
-    it('reveals the affinity-owned row when a single-line paste crosses a row boundary', () => {
+    it('keeps the caret on its source row when a paste shifts the following line', () => {
       const originalResizeObserver = globalThis.ResizeObserver
       globalThis.ResizeObserver = MockResizeObserver
       MockResizeObserver.instances = []
@@ -3208,7 +3274,8 @@ describe('Editor', () => {
         editorInput().dispatchEvent(createPasteEvent('!'))
 
         expect(editor.getState().cursor).toEqual({ row: 2, column: 7 })
-        expect(root.scrollTop).toBe(40)
+        expect(editor['view'].getLineStartsView().at(3)).toBe(offset + 2)
+        expect(root.scrollTop).toBe(30)
       } finally {
         globalThis.ResizeObserver = originalResizeObserver
       }

@@ -4,7 +4,6 @@ import type { SelectionAffinity } from '../selections'
 import type { EditorToken, EditorTokenStyle } from '../tokens'
 import type { BrowserTextMetrics } from './browserMetrics'
 import type { FixedRowVirtualizer } from './fixedRowVirtualizer'
-import type { LineStartOffsetIndex } from './lineStartIndex'
 import type { SuspiciousCharacterSettings } from './virtualizedTextViewHiddenCharacters'
 import type { VirtualizedTextViewModelState } from './virtualizedTextViewModel'
 import type {
@@ -112,7 +111,6 @@ export interface VirtualizedTextViewInternal {
   renderedRangeHighlightRuleVersion: number
   selectionHighlightRegistered: boolean
   model: VirtualizedTextViewModelState
-  text: string
   textRevision: number
   displayProjectionRevision: number
   tokens: readonly EditorToken[]
@@ -120,8 +118,6 @@ export interface VirtualizedTextViewInternal {
   tokenRenderEntryMaxEnds: readonly number[]
   tokenRenderStyles: ReadonlyMap<string, EditorTokenStyle>
   tokenRenderIndexDirty: boolean
-  lineStarts: readonly number[]
-  lineStartOffsetIndex: LineStartOffsetIndex | null
   foldMarkers: readonly VirtualizedFoldMarker[]
   rowDecorations: ReadonlyMap<number, VirtualizedTextRowDecoration>
   foldMarkerByStartRow: ReadonlyMap<number, VirtualizedFoldMarker>

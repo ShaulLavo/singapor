@@ -6,6 +6,83 @@ Buffer coordinates (row/column in actual text) differ from screen coordinates. F
 replacements, expanded tabs, and wrapped lines create divergence. The editor must convert between
 these spaces.
 
+## Indexed display projection
+
+Each `VirtualizedTextView` owns a `DisplayProjection` over one immutable `TextSnapshot` and its
+fold, inline, injected-row, wrap-width, and tab-size configuration. The snapshot remains the text
+authority. The view has no document-sized display-row array or line-start array.
+
+The projection uses an AVL sequence with source-line and display-row counts in each subtree.
+Plain and folded spans occupy runs. Wrapped lines occupy blocks of at most 256 source lines,
+with typed prefix counts and optional tabbed wrap checkpoints. Inline replacements and injected
+rows have sparse line entries. Leaves contain relative columns and counts; row lookup derives
+absolute offsets from the current snapshot. An edit splices source-line ranges without shifting
+unchanged suffix entries.
+
+`TextSnapshot.lineCount`, `lineStart`, and `lineAt` provide source rank/select. Piece snapshots reuse
+the buffer newline indexes; detached string snapshots build an explicit source-owned index once.
+The first buffer-index scan is recorded as `textSnapshot.sourceIndex`, separately from projection
+text reads. `LineStartsView` delegates to these methods. Its `toArray()` is an explicit export for
+consumers that need a dense source index; painting and geometry do not call it.
+
+### Lookup and materialization
+
+| Method | Result |
+| --- | --- |
+| `rowCount` | Exact vertical row count; uniform row height remains the geometry rule. |
+| `getRowMetrics(index)` | Source range, columns, and row metadata without reading row text. |
+| `rowForOffset(offset, bias)` | Display row containing a source offset, with wrap-boundary bias. |
+| `rowForBufferRow(row)` / `bufferRowForRow(row)` | Source/display row mapping through folds and injections. |
+| `nextDocumentRow(index, step)` | Adjacent document row, skipping injected runs. |
+| `getRow(index)` | Row content handle, cached for painting or an explicit geometry query. |
+| `getRowTextWindow(index, start, end)` | A requested display-text slice. |
+| `materializeWindow(start, end)` | Rows for the requested viewport window, with the end excluded. |
+| `retainWindow(start, end)` | Eviction outside the current viewport and overscan, without reading text. |
+| `update({ before, after, edits })` | One final revision from normalized edits in the common pre-edit space. |
+| `reconfigure(input)` | Local transform changes, or an explicit reset for a replacement snapshot. |
+
+The row cache retains at most 256 rows and 1 MiB of row strings. Scrolling evicts the previous
+window. A zero-height viewport clears the cache and does not materialize rows. Disposal releases
+the projection's source and transform references. Source and display ranks have distinct branded
+types at the sequence-index boundary.
+
+Live row and chunk `text` values are `TextContent`: a string for small materializations, or a
+`RangeText` for large content. `length`, `charAt`, `charCodeAt`, and `codePointAt` work on either;
+`slice(start, end)` explicitly reads a string. Range-backed measurements read immutable source
+ranges and reuse numeric metrics. Horizontal painting reads bounded windows and keeps inline
+widget boundaries intact. Consumers must use mounted chunks when they need paintable text.
+There is no implicit string conversion or full row iterator.
+
+`InlineRow` contains source/display lengths and mapping segments. `createInlineRow` remains a
+small-input materializer returning `MaterializedInlineRow`; the projection builds the same mapping
+without assembling the whole line. The old eager row algorithm lives only in
+`test/oracles/displayTransforms.ts` for differential tests.
+
+### Invalidation and remaining global work
+
+Ordinary rendering forwards document snapshots into the view. Single edits use the same projection
+transition contract as batches. E032 owns session delivery of every edit in a batch. An already
+adopted session target is a no-op; a view that missed the transaction's source revision resets from
+the immutable target rather than applying an edit in the wrong coordinate space.
+
+Edits rebuild affected summaries and splice them into the sequence. Transform changes compare sparse
+metadata and replace changed source ranges. Edits hidden inside an unchanged fold do not remeasure
+its visible output. Every geometry and painting consumer sees the final document/layout pair.
+
+A cold wrap configuration still inspects visible source lines to calculate exact counts. Width and
+tab-size changes rebuild those numeric summaries, with source reads bounded to 16 KiB windows.
+Tabbed lines retain numeric segment checkpoints. Fold, inline, and injection configuration changes
+still inspect sparse transform metadata. Long-line width and BiDi classification can inspect source
+text through shared measurements. These costs are separate from row/string materialization.
+Horizontal extent still follows observed rows rather than a whole-document maximum-width scan.
+
+Live snapshots retain content handles. `toVisibleSnapshot()` captures mounted paint parts and stays
+bounded to mounted content. The explicit full-document `toJSON()` export still materializes full text
+and source line starts, including its row strings. E033 owns that public full-text boundary; E034
+owns fallback indentation-fold discovery.
+
+Measurements and commands are recorded in [the E031 performance report](../performance/e031-projection.md).
+
 ## Decision: Proceed With Layered Transforms
 
 FoldMap validated the core contract: a layer can own local state, update that state against a new
@@ -88,7 +165,7 @@ second validation layer instead of collapsing immediately to a monolithic mapper
 ### Implemented after FoldMap
 
 - Tab expansion uses configurable `tabSize` math shared with the renderer.
-- Wrapping is represented as transform-produced display rows using monospace measured columns.
+- Wrapping uses indexed numeric summaries and materializes segments on demand with the existing tab-column math.
 
 The removed block-row and block-surface APIs are not part of the transform architecture and are not
 compatibility targets.

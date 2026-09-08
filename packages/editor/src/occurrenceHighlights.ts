@@ -1,5 +1,6 @@
+import type { TextContent } from './textContent'
 import type { EditorVisibleRowSnapshot } from './plugins'
-import { wordRangeAtOffset } from './textRanges'
+import { isWholeWordRange, wordRangeAtOffset } from './textRanges'
 
 export type OccurrenceHighlightRange = {
   readonly start: number
@@ -26,10 +27,12 @@ export function occurrenceQueryAtCaret(
   if (!row) return null
 
   const local = caretOffset - row.startOffset
-  const range = wordRangeAtOffset(row.text, local)
-  if (range.start === range.end) return null
+  const start = Math.max(0, local - MAX_QUERY_LENGTH - 1)
+  const window = row.text.slice(start, Math.min(row.text.length, local + MAX_QUERY_LENGTH + 1))
+  const range = wordRangeAtOffset(window, local - start)
+  if (range.start === range.end || range.end - range.start > MAX_QUERY_LENGTH) return null
 
-  const query = row.text.slice(range.start, range.end)
+  const query = window.slice(range.start, range.end)
   return query.length > MAX_QUERY_LENGTH ? null : query
 }
 
@@ -62,13 +65,41 @@ function appendRowOccurrences(
   row: EditorVisibleRowSnapshot,
   query: string,
 ): void {
-  let index = row.text.indexOf(query)
-  while (index !== -1) {
-    if (isWholeWordAt(row.text, index, query.length)) {
-      ranges.push({ end: row.startOffset + index + query.length, start: row.startOffset + index })
-    }
-    index = row.text.indexOf(query, index + query.length)
+  if (typeof row.text === 'string') {
+    appendWindowOccurrences(ranges, row, query, 0, row.text.length)
+    return
   }
+  for (const chunk of row.chunks) {
+    appendWindowOccurrences(ranges, row, query, chunk.rowLocalStart, chunk.rowLocalEnd)
+  }
+}
+
+function appendWindowOccurrences(
+  ranges: OccurrenceHighlightRange[],
+  row: EditorVisibleRowSnapshot,
+  query: string,
+  start: number,
+  end: number,
+): void {
+  const from = Math.max(0, start - query.length + 1)
+  const text = row.text.slice(from, Math.min(row.text.length, end + query.length - 1))
+  let index = text.indexOf(query)
+  while (index !== -1) {
+    const local = from + index
+    if (
+      local + query.length > start &&
+      local < end &&
+      isWholeWordAt(row.text, local, query.length)
+    ) {
+      appendOccurrence(ranges, row.startOffset + local, query.length)
+    }
+    index = text.indexOf(query, index + query.length)
+  }
+}
+
+function appendOccurrence(ranges: OccurrenceHighlightRange[], start: number, length: number): void {
+  if (ranges.at(-1)?.start === start) return
+  ranges.push({ start, end: start + length })
 }
 
 /**
@@ -76,9 +107,8 @@ function appendRowOccurrences(
  * keeps one definition of a word boundary instead of a second character-class table that could
  * drift from it.
  */
-function isWholeWordAt(text: string, index: number, length: number): boolean {
-  const range = wordRangeAtOffset(text, index)
-  return range.start === index && range.end === index + length
+function isWholeWordAt(text: TextContent, index: number, length: number): boolean {
+  return isWholeWordRange(text, { start: index, end: index + length })
 }
 
 function rowContainingOffset(

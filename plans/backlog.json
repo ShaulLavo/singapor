@@ -32,7 +32,7 @@
       "id": "E003",
       "file": "e003-first-paint-startup.md",
       "title": "Keep optional startup work off first paint",
-      "status": "Proposed",
+      "status": "Implemented",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
@@ -363,6 +363,82 @@
       "effort": "M",
       "dependsOn": [],
       "topics": ["File explorer: flattened view"]
+    },
+    {
+      "id": "E031",
+      "reference": "../docs/performance/e031-projection.md",
+      "title": "Replace eager display rows with an indexed projection",
+      "status": "Completed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "L",
+      "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
+      "dependsOn": [
+        "E001"
+      ],
+      "topics": [
+        "Reduce editor memory footprint",
+        "Input latency as an enforced budget",
+        "Defer startup work off the first-paint path"
+      ]
+    },
+    {
+      "id": "E032",
+      "file": "e032-incremental-edit-batches.md",
+      "title": "Render edit batches without flattening the document",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "L",
+      "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
+      "dependsOn": [],
+      "topics": [
+        "Reduce editor memory footprint",
+        "Input latency as an enforced budget"
+      ]
+    },
+    {
+      "id": "E033",
+      "file": "e033-explicit-full-text-boundary.md",
+      "title": "Make full-document text reads an explicit boundary",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "L",
+      "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
+      "dependsOn": [
+        "E007",
+        "E031",
+        "E032",
+        "E034"
+      ],
+      "topics": [
+        "Reduce editor memory footprint",
+        "Editor hook taxonomy: inventory and completeness check"
+      ]
+    },
+    {
+      "id": "E034",
+      "file": "e034-snapshot-indentation-folds.md",
+      "title": "Maintain indentation folds from document snapshots",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "L",
+      "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
+      "dependsOn": [
+        "E003",
+        "E032"
+      ],
+      "topics": [
+        "Reduce editor memory footprint",
+        "Input latency as an enforced budget",
+        "Defer startup work off the first-paint path"
+      ]
     }
   ]
 }

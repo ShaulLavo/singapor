@@ -40,6 +40,8 @@ Use strictly empty logical lines initially. Whitespace-only lines introduce wrap
 Do not fake compaction by squashing glyphs while retaining the original scroll footprint; that cannot show more code.
 Editor owns reusable layout options. Platform owns any eventual preference registration and app setting UI.
 Do not redesign the entire display-transform stack unless the measurements identify a necessary shared contract.
+If [E031](../docs/performance/e031-projection.md) has landed, prototype against its projection/geometry
+owner; do not reintroduce an eager display-row array for compact heights.
 
 ## Design
 

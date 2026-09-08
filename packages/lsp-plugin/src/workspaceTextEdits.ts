@@ -18,6 +18,8 @@ import type {
   TextSnapshot,
 } from '@singapor/core/document'
 
+import type { LspTextSnapshot } from '@singapor/lsp'
+
 import type {
   ParsedWorkspacePosition,
   ParsedWorkspaceTextEdit,
@@ -27,7 +29,7 @@ import type {
 } from './workspaceEdit'
 
 export type WorkspaceTextDocumentProvenance = {
-  readonly textSnapshot: TextSnapshot
+  readonly textSnapshot: LspTextSnapshot
   readonly uri: string
   readonly version: number
 }

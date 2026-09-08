@@ -1,16 +1,18 @@
 # Editor backlog
 
-30 stable entries cover all 22 topics in the original [wishlist](../TODO.md).
+34 stable entries cover all 22 topics in the original [wishlist](../TODO.md).
 Executable plans include source evidence, scope, delivery steps, and acceptance checks.
 Completed entries link to permanent implementation references and measured results.
-The inspected Editor baseline is `9abb944f3a2b8d6516953fdec75e8df5e1a94811` (2026-09-05).
-Recheck source before execution; this date records planning, not feature completion.
+The original inspected Editor baseline is `9abb944f3a2b8d6516953fdec75e8df5e1a94811` (2026-09-05).
+E031–E034 were inspected at `ff1dfeda9e52b308f57915da7372f7ac6e5f04f9` (2026-09-08).
+Recheck source before execution; these dates record planning, not feature completion.
 
-There are **23 Editor-owned entries, 6 requiring both repositories, and 1 Platform-owned entry**.
-By deliverable, there are **18 implementation entries, 10 research entries, and 2 design entries**.
+There are **27 Editor-owned entries, 6 requiring both repositories, and 1 Platform-owned entry**.
+By deliverable, there are **22 implementation entries, 10 research entries, and 2 design entries**.
 Editor ownership describes where the work lands; dependencies can still include shared work.
 [Platform's roadmap](../../platform/PLAN.md) remains the execution scheduler.
 [E002](../docs/performance/input-latency.md) is complete, with a verified local latency gate.
+[E031](../docs/performance/e031-projection.md) is complete, with indexed display projection and measured before/after results.
 [E001](e001-stress-fixtures.md), [E003](../docs/performance/first-paint.md),
 [E004](e004-hidden-editor-rendering.md), and
 [E005](e005-piece-tree-inspector.md) are implemented; E001's broader calibration remains provisional.
@@ -40,6 +42,7 @@ that an unmeasured optimization will help.
 | Track                   | Start                                                                                               | Continue after its checks pass                                                                                              |
 | ----------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Performance foundation  | E003 startup, E007 copies, or E008 find using the [E001 harness](e001-stress-fixtures.md)           | E006 reclamation also uses the [E005 inspector](e005-piece-tree-inspector.md).                                              |
+| Display and full-text reads | [E032 batch rendering](e032-incremental-edit-batches.md) after the completed [E031 projection](../docs/performance/e031-projection.md) | E034 fallback folds follows E032; E033 closes the explicit full-text boundary after E007/E031/E032/E034. |
 | Everyday editing        | [E021 styled copy](e021-styled-clipboard.md) or [E020 jump history](e020-cursor-jump-history.md)    | These are independently scoped Editor features; they need no shared-memory work.                                            |
 | History                 | [E017 branching undo](e017-branching-undo.md)                                                       | E019 viewer and E018 persisted history can follow independently once the graph contract is stable.                          |
 | Developer tools         | [E024 syntax inspector](e024-syntax-tree-inspector.md)                                              | E023 timing panel follows E001; its deep piece-tree integration is optional.                                                |
@@ -58,6 +61,9 @@ what already ships:
   E007/E008 target remaining copies and exact bounded work, including self-overlapping matches.
 - Tree-sitter shared text is already decoded once and cached. E009 measures remaining costs before
   E010–E013 consider different storage or transport. Minimap range reads and incremental LSP sync exist.
+- E031 replaced the eager display model with an indexed projection and bounded row materialization.
+  E032 keeps session batches incremental. E034 preserves reachable
+  indentation fallback using snapshots, and E033 makes deliberate full-text extraction explicit.
 - Undo already has a depth limit; branches need a retention policy. Cursor Undo/Redo also exists;
   E020 adds an edit-surviving trail for meaningful jumps.
 - Single-selection styled HTML copy already ships. E021 adds multiple selections and portable colors.
@@ -74,6 +80,15 @@ what already ships:
 | [E002 — Enforce the input-to-paint budget](../docs/performance/input-latency.md)    | Implementation | Editor | P1       | M    | [E001](e001-stress-fixtures.md) |
 | [E003 — Keep optional startup work off first paint](e003-first-paint-startup.md)    | Implementation | Editor | P1       | M    | [E001](e001-stress-fixtures.md) |
 | [E004 — Suspend rendering in zero-height views](e004-hidden-editor-rendering.md)    | Implementation | Editor | P2       | S    | [E001](e001-stress-fixtures.md) |
+
+## Display projection and explicit text reads
+
+| Plan | Kind | Owner | Priority | Size | Needs |
+| --- | --- | --- | --- | --- | --- |
+| [E031 — Replace eager display rows with an indexed projection](../docs/performance/e031-projection.md) | Implementation | Editor | P1 | L | [E001](e001-stress-fixtures.md) |
+| [E032 — Render edit batches without flattening the document](e032-incremental-edit-batches.md) | Implementation | Editor | P1 | L | — |
+| [E033 — Make full-document text reads an explicit boundary](e033-explicit-full-text-boundary.md) | Implementation | Editor | P1 | L | [E007](e007-chunked-document-consumers.md), [E031](../docs/performance/e031-projection.md), [E032](e032-incremental-edit-batches.md), [E034](e034-snapshot-indentation-folds.md) |
+| [E034 — Maintain indentation folds from document snapshots](e034-snapshot-indentation-folds.md) | Implementation | Editor | P1 | L | [E003](e003-first-paint-startup.md), [E032](e032-incremental-edit-batches.md) |
 
 ## Storage and worker transport
 
@@ -139,12 +154,12 @@ verifiable plans. This table preserves the source wording; current behavior is r
 | Original topic                                                    | Plans                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Visual piece-tree debug tool                                      | [E005](e005-piece-tree-inspector.md)                                                                                                                                                                                            |
-| Reduce editor memory footprint                                    | [E006](e006-tombstone-reclamation.md), [E007](e007-chunked-document-consumers.md)                                                                                                                                               |
+| Reduce editor memory footprint | [E006](e006-tombstone-reclamation.md), [E007](e007-chunked-document-consumers.md), [E031](../docs/performance/e031-projection.md), [E032](e032-incremental-edit-batches.md), [E033](e033-explicit-full-text-boundary.md), [E034](e034-snapshot-indentation-folds.md) |
 | Research: SAB-backed SoA piece tree (LMDB-style shared snapshots) | [E009](e009-worker-transport-costs.md), [E010](e010-shared-memory-toolkit.md), [E011](e011-packed-piece-tree.md), [E012](e012-epoch-reclamation.md), [E013](e013-shared-document-snapshots.md), [E014](e014-parallel-search.md) |
 | Undo history as a graph (never lose an edit state)                | [E017](e017-branching-undo.md), [E018](e018-persisted-undo.md)                                                                                                                                                                  |
 | Undo graph widget (Fred-style time-travel UI)                     | [E019](e019-undo-graph-viewer.md)                                                                                                                                                                                               |
 | Faster in-buffer find (single-threaded)                           | [E008](e008-in-buffer-search.md)                                                                                                                                                                                                |
-| Input latency as an enforced budget                               | [E002](../docs/performance/input-latency.md)                                                                                                                                                                                    |
+| Input latency as an enforced budget | [E002](../docs/performance/input-latency.md), [E031](../docs/performance/e031-projection.md), [E032](e032-incremental-edit-batches.md), [E034](e034-snapshot-indentation-folds.md) |
 | Look into: windowed/streamed loading for massive files            | [E015](e015-massive-file-loading.md), [E016](e016-bounded-structural-parsing.md)                                                                                                                                                |
 | Look into: render nothing at zero-height viewports                | [E004](e004-hidden-editor-rendering.md)                                                                                                                                                                                         |
 | Cursor position navigation history (alt+left / alt+right)         | [E020](e020-cursor-jump-history.md)                                                                                                                                                                                             |
@@ -154,9 +169,9 @@ verifiable plans. This table preserves the source wording; current behavior is r
 | Standing stress fixtures + interactive benchmarks                 | [E001](e001-stress-fixtures.md)                                                                                                                                                                                                 |
 | File explorer: flattened view                                     | [E030](e030-flat-file-explorer.md)                                                                                                                                                                                              |
 | Plugin system: study Fred's runtime-compiled plugin model         | [E025](e025-runtime-plugins.md)                                                                                                                                                                                                 |
-| Defer startup work off the first-paint path                       | [E003](e003-first-paint-startup.md)                                                                                                                                                                                             |
+| Defer startup work off the first-paint path | [E003](e003-first-paint-startup.md), [E031](../docs/performance/e031-projection.md), [E034](e034-snapshot-indentation-folds.md) |
 | Command metadata: single source of truth                          | [E026](e026-command-metadata.md)                                                                                                                                                                                                |
-| Editor hook taxonomy: inventory and completeness check            | [E027](e027-extension-hooks.md)                                                                                                                                                                                                 |
+| Editor hook taxonomy: inventory and completeness check | [E027](e027-extension-hooks.md), [E033](e033-explicit-full-text-boundary.md) |
 | Stress-test the input/command substrate with a modal (vim) layer  | [E028](e028-modal-input-prototype.md)                                                                                                                                                                                           |
 | Compact blank lines (display-time)                                | [E022](e022-compact-blank-lines.md)                                                                                                                                                                                             |
 | Hot/cold data structure vocabulary                                | [E029](e029-runtime-and-serialized-data.md)                                                                                                                                                                                     |

@@ -1,4 +1,9 @@
-import type { EditorViewContributionContext, EditorViewSnapshot } from '@singapor/core/extensions'
+import type {
+  EditorViewContributionContext,
+  EditorViewSnapshot,
+  EditorVisibleRowSnapshot,
+  EditorVisibleChunkSnapshot,
+} from '@singapor/core/extensions'
 
 /** Class on the scroll element that hides the real rows until each is revealed. */
 export const ACTIVE_CLASS = 'editor-decode-active'
@@ -14,6 +19,7 @@ export type DecodeRevealRow = {
   readonly startOffset: number
   /** Character count, used to scale the per-line reveal duration. */
   readonly length: number
+  readonly leftSpacerWidth: number
   /** Row top in content coordinates (matches the live row). */
   readonly top: number
   /** Row height in px. */
@@ -45,14 +51,23 @@ export function collectRevealRows(
     )
     if (!element) continue
 
+    const mounted = mountedRowText(row)
+    if (!mounted.text) continue
     rows.push({
       element,
-      text: row.text,
-      startOffset: row.startOffset,
-      length: row.text.length,
+      text: mounted.text,
+      startOffset: mounted.startOffset,
+      length: mounted.text.length,
+      leftSpacerWidth: row.leftSpacerWidth,
       top: row.top,
       height: row.height,
-      width: textWidth(context, row.startOffset, row.endOffset, row.text.length, charWidth),
+      width: textWidth(
+        context,
+        mounted.startOffset,
+        mounted.endOffset,
+        mounted.text.length,
+        charWidth,
+      ),
     })
     if (rows.length >= maxRows) break
   }
@@ -70,4 +85,24 @@ function textWidth(
   const rect = context.getRangeClientRect(startOffset, endOffset)
   if (rect && rect.width > 0) return rect.width
   return length * charWidth
+}
+
+function mountedRowText(row: EditorVisibleRowSnapshot): {
+  readonly text: string
+  readonly startOffset: number
+  readonly endOffset: number
+} {
+  if (typeof row.text === 'string')
+    return { text: row.text, startOffset: row.startOffset, endOffset: row.endOffset }
+  return {
+    text: row.chunks.map(mountedChunkText).join(''),
+    startOffset: row.chunks[0]?.sourceStartOffset ?? row.startOffset,
+    endOffset: row.chunks.at(-1)?.sourceEndOffset ?? row.endOffset,
+  }
+}
+
+function mountedChunkText(chunk: EditorVisibleChunkSnapshot): string {
+  if (typeof chunk.text === 'string') return chunk.text
+  if (chunk.mountedPaint.kind !== 'replayable') return ''
+  return chunk.mountedPaint.parts.map((part) => part.text).join('')
 }

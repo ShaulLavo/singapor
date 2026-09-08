@@ -925,6 +925,9 @@ function snapshotHarness(
   const readLineStarts = vi.fn(() => [0])
   const lineStartsViewToArray = vi.fn(() => [0])
   const textSnapshot = {
+    lineCount: 1,
+    lineStart: () => 0,
+    lineAt: () => 0,
     length: text.length,
     readRange,
     materializeFullText,

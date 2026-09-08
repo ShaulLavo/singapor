@@ -1,10 +1,6 @@
+import type { TextContent } from './textContent'
 import type { Point } from './pieceTable/pieceTableTypes'
-import {
-  INDEXED_TEXT_MIN_LENGTH,
-  measureString,
-  type MeasuredText,
-  type TextMeasurements,
-} from './textMeasurements'
+import { type MeasuredText } from './textMeasurements'
 
 declare const tabPointBrand: unique symbol
 declare const wrapPointBrand: unique symbol
@@ -34,8 +30,8 @@ export type DisplayDocumentTextRow = MeasuredText & {
   readonly bufferRow: number
   readonly startOffset: number
   readonly endOffset: number
-  readonly text: string
-  readonly sourceText: string
+  readonly text: TextContent
+  readonly sourceText: TextContent
   readonly sourceStartColumn: number
   readonly sourceEndColumn: number
   readonly displayStartColumn: number
@@ -60,8 +56,8 @@ export type DisplayInjectedTextRow = MeasuredText & {
   readonly order: number
   readonly startOffset: number
   readonly endOffset: number
-  readonly text: string
-  readonly sourceText: string
+  readonly text: TextContent
+  readonly sourceText: TextContent
   readonly sourceStartColumn: number
   readonly sourceEndColumn: number
   readonly displayStartColumn: number
@@ -88,18 +84,6 @@ export type InjectedTextRow = {
   readonly gutterClassName?: string
   readonly metadata?: unknown
 }
-
-type InjectedTextRowsAtBufferRow = {
-  readonly before: readonly InjectedTextRow[]
-  readonly after: readonly InjectedTextRow[]
-}
-
-type MutableInjectedTextRowsAtBufferRow = {
-  readonly before: InjectedTextRow[]
-  readonly after: InjectedTextRow[]
-}
-
-type InjectedTextRowIndex = ReadonlyMap<number, InjectedTextRowsAtBufferRow>
 
 type WrapSegment = {
   readonly inputRow: number
@@ -172,9 +156,14 @@ export type InlineRowSegment = {
  * so column conversion in either direction is total.
  */
 export type InlineRow = {
+  readonly sourceLength: number
+  readonly displayLength: number
+  readonly segments: readonly InlineRowSegment[]
+}
+
+export type MaterializedInlineRow = InlineRow & {
   readonly sourceText: string
   readonly text: string
-  readonly segments: readonly InlineRowSegment[]
 }
 
 export type InlineColumnRange = {
@@ -202,7 +191,7 @@ export function bufferColumnToVisualColumn(
   const end = clampColumn(column, text.length)
 
   for (let index = 0; index < end; index += 1) {
-    visual += visualWidthForChar(text[index]!, visual, tabSize)
+    visual += visualWidthForChar(text.charAt(index), visual, tabSize)
   }
 
   return visual
@@ -221,7 +210,7 @@ export function visualColumnToBufferColumn(
   let visual = 0
 
   for (let index = 0; index < text.length; index += 1) {
-    const next = visual + visualWidthForChar(text[index]!, visual, tabSize)
+    const next = visual + visualWidthForChar(text.charAt(index), visual, tabSize)
     const column = columnForVisualTarget(index, visual, next, target, bias)
     if (column !== null) return column
     visual = next
@@ -239,23 +228,6 @@ export function visualColumnLength(
     typeof text === 'string' ? text.length : text.text.length,
     tabSize,
   )
-}
-
-function indexedMeasurements(
-  text: string,
-  existing?: TextMeasurements,
-): TextMeasurements | undefined {
-  if (text.length < INDEXED_TEXT_MIN_LENGTH) return undefined
-  return existing ?? measureString(text)
-}
-
-function displayTextSegments(
-  text: string,
-  width: number | null | undefined,
-  tabSize: number,
-): readonly Pick<WrapSegment, 'segmentIndex' | 'startColumn' | 'endColumn'>[] {
-  if (!width || width <= 0) return [{ segmentIndex: 0, startColumn: 0, endColumn: text.length }]
-  return textSegments(text, width, tabSize)
 }
 
 export function bufferPointToTabPoint(
@@ -321,8 +293,8 @@ export function wrapPointToTabPoint(
 export function createInlineRow(
   sourceText: string,
   replacements: readonly InlineReplacement[] = [],
-): InlineRow {
-  const normalized = normalizeInlineReplacements(sourceText, replacements)
+): MaterializedInlineRow {
+  const normalized = normalizeInlineReplacements(sourceText.length, replacements)
   if (normalized.length === 0) return identityInlineRow(sourceText)
 
   const segments: InlineRowSegment[] = []
@@ -348,7 +320,7 @@ export function createInlineRow(
     text += sourceText.slice(sourceColumn)
   }
 
-  return { sourceText, text, segments }
+  return { sourceText, text, sourceLength: sourceText.length, displayLength: text.length, segments }
 }
 
 export function sourceColumnToInlineColumn(
@@ -356,7 +328,7 @@ export function sourceColumnToInlineColumn(
   column: number,
   bias: TransformBias = 'nearest',
 ): number {
-  const target = clampColumn(column, row.sourceText.length)
+  const target = clampColumn(column, row.sourceLength)
 
   for (const segment of row.segments) {
     if (target > segment.sourceEndColumn) continue
@@ -369,7 +341,7 @@ export function sourceColumnToInlineColumn(
     return injectedRunSideColumn(row, displayColumn, bias)
   }
 
-  return row.text.length
+  return row.displayLength
 }
 
 /**
@@ -384,9 +356,9 @@ export function inlineColumnToSourceColumn(
   column: number,
   bias: TransformBias = 'nearest',
 ): number {
-  const target = clampColumn(column, row.text.length)
+  const target = clampColumn(column, row.displayLength)
   const segment = row.segments[inlineSegmentIndexForDisplayColumn(row, target, bias)]
-  if (!segment) return row.sourceText.length
+  if (!segment) return row.sourceLength
 
   if (segment.kind === 'source') {
     return segment.sourceStartColumn + (target - segment.displayStartColumn)
@@ -405,8 +377,8 @@ export function sourceRangeToInlineRanges(
   startColumn: number,
   endColumn: number,
 ): readonly InlineColumnRange[] {
-  const low = clampColumn(Math.min(startColumn, endColumn), row.sourceText.length)
-  const high = clampColumn(Math.max(startColumn, endColumn), row.sourceText.length)
+  const low = clampColumn(Math.min(startColumn, endColumn), row.sourceLength)
+  const high = clampColumn(Math.max(startColumn, endColumn), row.sourceLength)
 
   if (low === high) {
     const column = sourceColumnToInlineColumn(row, low)
@@ -434,59 +406,18 @@ export function isInjectedTextDisplayRow(
   return row?.kind === 'text' && row.source === 'injected'
 }
 
-export type DisplayRowLineInput = {
-  readonly visibleLineCount: number
-  readonly bufferRowForVisibleRow: (row: number) => number
-  readonly lineText: (bufferRow: number) => string
-  readonly lineMeasurements?: (bufferRow: number) => TextMeasurements
-  readonly lineStartOffset: (bufferRow: number) => number
-  readonly lineEndOffset: (bufferRow: number) => number
-  readonly wrapColumn?: number | null
-  readonly injectedTextRows?: readonly InjectedTextRow[]
-  readonly inlineReplacements?: (bufferRow: number) => readonly InlineReplacement[]
-  readonly tabSize?: number
-}
-
-export function createDisplayRows(options: {
-  readonly lineStarts: readonly number[]
-  readonly text: string
-  readonly bufferRowForVisibleRow: (row: number) => number
-  readonly visibleLineCount: number
-  readonly wrapColumn?: number | null
-  readonly injectedTextRows?: readonly InjectedTextRow[]
-  readonly inlineReplacements?: (bufferRow: number) => readonly InlineReplacement[]
-  readonly tabSize?: number
-}): DisplayRow[] {
-  return createDisplayRowsFromLines({
-    ...options,
-    lineText: (row) => lineTextFromFullText(options.text, options.lineStarts, row),
-    lineStartOffset: (row) => lineStartOffsetFromLineStarts(options.text, options.lineStarts, row),
-    lineEndOffset: (row) => lineEndOffsetFromLineStarts(options.text, options.lineStarts, row),
-  })
-}
-
-export function createDisplayRowsFromLines(options: DisplayRowLineInput): DisplayRow[] {
-  const rows: DisplayRow[] = []
-  const injectedTextRows = injectedTextRowIndex(options.injectedTextRows ?? [])
-  const tabSize = options.tabSize ?? DEFAULT_TAB_SIZE
-
-  for (let visibleRow = 0; visibleRow < options.visibleLineCount; visibleRow += 1) {
-    appendDisplayRowsForVisibleRow(rows, visibleRow, injectedTextRows, options, tabSize)
-  }
-
-  return rows
-}
-
 const asTabPoint = (point: Point): TabPoint => point as TabPoint
 const asWrapPoint = (point: Point): WrapPoint => point as WrapPoint
 
-const identityInlineRow = (sourceText: string): InlineRow => ({
+const identityInlineRow = (sourceText: string): MaterializedInlineRow => ({
   sourceText,
   text: sourceText,
+  sourceLength: sourceText.length,
+  displayLength: sourceText.length,
   segments: [inlineSourceSegment(0, sourceText.length, 0)],
 })
 
-const inlineSourceSegment = (
+export const inlineSourceSegment = (
   startColumn: number,
   endColumn: number,
   displayStartColumn: number,
@@ -498,7 +429,7 @@ const inlineSourceSegment = (
   displayEndColumn: displayStartColumn + (endColumn - startColumn),
 })
 
-const inlineReplacementSegment = (
+export const inlineReplacementSegment = (
   replacement: InlineReplacement,
   displayStartColumn: number,
 ): InlineRowSegment => ({
@@ -515,8 +446,8 @@ const inlineReplacementSegment = (
   ...(replacement.metadata === undefined ? {} : { metadata: replacement.metadata }),
 })
 
-const normalizeInlineReplacements = (
-  sourceText: string,
+export const normalizeInlineReplacements = (
+  sourceLength: number,
   replacements: readonly InlineReplacement[],
 ): readonly InlineReplacement[] => {
   const candidates = replacements
@@ -524,8 +455,8 @@ const normalizeInlineReplacements = (
     .filter((replacement) => !replacement.text.includes('\n'))
     .map((replacement) => ({
       ...replacement,
-      startColumn: clampColumn(replacement.startColumn, sourceText.length),
-      endColumn: clampColumn(replacement.endColumn, sourceText.length),
+      startColumn: clampColumn(replacement.startColumn, sourceLength),
+      endColumn: clampColumn(replacement.endColumn, sourceLength),
     }))
     // Zero width is phantom text at a point, which only a replacement that asked for one may be; an
     // ordinary span that clamping collapsed onto itself is degenerate and still goes.
@@ -698,156 +629,6 @@ const appendInlineColumnRange = (ranges: InlineColumnRange[], range: InlineColum
   }
 }
 
-const appendDisplayRowsForVisibleRow = (
-  rows: DisplayRow[],
-  visibleRow: number,
-  injectedTextRows: InjectedTextRowIndex,
-  options: DisplayRowLineInput,
-  tabSize: number,
-): void => {
-  const bufferRow = options.bufferRowForVisibleRow(visibleRow)
-  const text = options.lineText(bufferRow)
-  const startOffset = options.lineStartOffset(bufferRow)
-  appendInjectedTextRows(
-    rows,
-    injectedTextRows,
-    bufferRow,
-    'before',
-    startOffset,
-    options.wrapColumn,
-    tabSize,
-  )
-  appendDocumentTextDisplayRows(
-    rows,
-    bufferRow,
-    createInlineRow(text, options.inlineReplacements?.(bufferRow)),
-    startOffset,
-    options.wrapColumn,
-    tabSize,
-    text.length >= INDEXED_TEXT_MIN_LENGTH ? options.lineMeasurements?.(bufferRow) : undefined,
-  )
-  appendInjectedTextRows(
-    rows,
-    injectedTextRows,
-    bufferRow,
-    'after',
-    options.lineEndOffset(bufferRow),
-    options.wrapColumn,
-    tabSize,
-  )
-}
-
-const appendDocumentTextDisplayRows = (
-  rows: DisplayRow[],
-  bufferRow: number,
-  inlineRow: InlineRow,
-  startOffset: number,
-  wrapColumn: number | null | undefined,
-  tabSize: number,
-  sourceMeasurements: TextMeasurements | undefined,
-): void => {
-  const transformed = inlineRow.text !== inlineRow.sourceText
-  const measurements = indexedMeasurements(
-    inlineRow.text,
-    transformed ? undefined : sourceMeasurements,
-  )
-  const segments = displayTextSegments(inlineRow.text, wrapColumn, tabSize)
-
-  for (const segment of segments) {
-    const sourceStartColumn = inlineColumnToSourceColumn(inlineRow, segment.startColumn, 'before')
-    const sourceEndColumn = inlineColumnToSourceColumn(inlineRow, segment.endColumn, 'after')
-    const segmentMeasurements = measurementsForSegment(measurements, segment)
-
-    rows.push({
-      kind: 'text',
-      source: 'document',
-      index: rows.length,
-      bufferRow,
-      startOffset: startOffset + sourceStartColumn,
-      endOffset: startOffset + sourceEndColumn,
-      text: inlineRow.text.slice(segment.startColumn, segment.endColumn),
-      ...(segmentMeasurements ? { measurements: segmentMeasurements } : {}),
-      sourceText: inlineRow.sourceText,
-      sourceStartColumn,
-      sourceEndColumn,
-      displayStartColumn: segment.startColumn,
-      displayEndColumn: segment.endColumn,
-      wrapSegment: segment.segmentIndex,
-      ...(transformed ? { inlineRow } : {}),
-    })
-  }
-}
-
-function measurementsForSegment(
-  measurements: TextMeasurements | undefined,
-  segment: Pick<WrapSegment, 'startColumn' | 'endColumn'>,
-): TextMeasurements | undefined {
-  if (!measurements || segment.endColumn - segment.startColumn < INDEXED_TEXT_MIN_LENGTH)
-    return undefined
-  if (segment.startColumn === 0 && segment.endColumn === measurements.length) return measurements
-  return measurements.slice(segment.startColumn, segment.endColumn)
-}
-
-const appendInjectedTextRows = (
-  rows: DisplayRow[],
-  injectedTextRows: InjectedTextRowIndex,
-  bufferRow: number,
-  placement: InjectedTextRowPlacement,
-  offset: number,
-  wrapColumn: number | null | undefined,
-  tabSize: number,
-): void => {
-  const rowInjections = injectedTextRows.get(bufferRow)?.[placement]
-  if (!rowInjections) return
-
-  for (const injected of rowInjections) {
-    appendInjectedTextRowSegments(rows, injected, offset, wrapColumn, tabSize)
-  }
-}
-
-const appendInjectedTextRowSegments = (
-  rows: DisplayRow[],
-  injected: InjectedTextRow,
-  offset: number,
-  wrapColumn: number | null | undefined,
-  tabSize: number,
-): void => {
-  const segments = displayTextSegments(injected.text, wrapColumn, tabSize)
-  for (const segment of segments) {
-    const row = injectedTextDisplayRow(rows.length, injected, offset, segment)
-    const measurements = indexedMeasurements(row.text)
-    rows.push(measurements ? { ...row, measurements } : row)
-  }
-}
-
-const injectedTextDisplayRow = (
-  index: number,
-  injected: InjectedTextRow,
-  offset: number,
-  segment: Pick<WrapSegment, 'segmentIndex' | 'startColumn' | 'endColumn'>,
-): DisplayInjectedTextRow => ({
-  kind: 'text',
-  source: 'injected',
-  id: injected.id,
-  index,
-  bufferRow: injected.anchorBufferRow,
-  anchorBufferRow: injected.anchorBufferRow,
-  placement: injected.placement,
-  order: injected.order ?? 0,
-  startOffset: offset,
-  endOffset: offset,
-  text: injected.text.slice(segment.startColumn, segment.endColumn),
-  sourceText: injected.text,
-  sourceStartColumn: segment.startColumn,
-  sourceEndColumn: segment.endColumn,
-  displayStartColumn: segment.startColumn,
-  displayEndColumn: segment.endColumn,
-  wrapSegment: segment.segmentIndex,
-  ...(injected.className === undefined ? {} : { className: injected.className }),
-  ...(injected.gutterClassName === undefined ? {} : { gutterClassName: injected.gutterClassName }),
-  ...(injected.metadata === undefined ? {} : { metadata: injected.metadata }),
-})
-
 const textSegments = (
   text: string,
   wrapColumn: number | null | undefined,
@@ -961,66 +742,6 @@ const columnForVisualTarget = (
 const visualWidthForChar = (char: string, column: number, tabSize: number): number => {
   if (char !== '\t') return 1
   return tabSize - (column % tabSize)
-}
-
-const placementOrder = (placement: InjectedTextRowPlacement): number =>
-  placement === 'before' ? 0 : 1
-
-const normalizeInjectedTextRows = (rows: readonly InjectedTextRow[]): readonly InjectedTextRow[] =>
-  rows
-    .filter((row) => row.id.length > 0)
-    .filter((row) => row.anchorBufferRow >= 0)
-    .toSorted((left, right) => {
-      return (
-        left.anchorBufferRow - right.anchorBufferRow ||
-        placementOrder(left.placement) - placementOrder(right.placement) ||
-        (left.order ?? 0) - (right.order ?? 0) ||
-        left.id.localeCompare(right.id)
-      )
-    })
-
-const injectedTextRowIndex = (rows: readonly InjectedTextRow[]): InjectedTextRowIndex => {
-  const index = new Map<number, MutableInjectedTextRowsAtBufferRow>()
-
-  for (const row of normalizeInjectedTextRows(rows)) {
-    injectedTextRowsAtBufferRow(index, row.anchorBufferRow)[row.placement].push(row)
-  }
-
-  return index
-}
-
-const injectedTextRowsAtBufferRow = (
-  index: Map<number, MutableInjectedTextRowsAtBufferRow>,
-  bufferRow: number,
-): MutableInjectedTextRowsAtBufferRow => {
-  const existing = index.get(bufferRow)
-  if (existing) return existing
-
-  const rows = { before: [], after: [] }
-  index.set(bufferRow, rows)
-  return rows
-}
-
-const lineTextFromFullText = (text: string, lineStarts: readonly number[], row: number): string =>
-  text.slice(
-    lineStartOffsetFromLineStarts(text, lineStarts, row),
-    lineEndOffsetFromLineStarts(text, lineStarts, row),
-  )
-
-const lineStartOffsetFromLineStarts = (
-  text: string,
-  lineStarts: readonly number[],
-  row: number,
-): number => lineStarts[row] ?? text.length
-
-const lineEndOffsetFromLineStarts = (
-  text: string,
-  lineStarts: readonly number[],
-  row: number,
-): number => {
-  const nextLineStart = lineStarts[row + 1]
-  if (nextLineStart === undefined) return text.length
-  return Math.max(lineStartOffsetFromLineStarts(text, lineStarts, row), nextLineStart - 1)
 }
 
 const normalizeWrapColumn = (wrapColumn: number): number => {

@@ -4,7 +4,11 @@ import {
   createLineGutterContribution,
 } from '../../gutters/src/index.ts'
 import { projectTokensThroughEdit } from '../src/editor/tokenProjection'
-import { createPieceTableSnapshot, type TextSnapshot } from '../src/public/document'
+import {
+  createPieceTableSnapshot,
+  createStringTextSnapshot,
+  type TextSnapshot,
+} from '../src/public/document'
 import { type EditorToken, treeSitterCapturesToEditorTokens } from '../src/public/syntax'
 import type { VirtualizedFoldMarker } from '../src/public/rendering'
 import type { EditorGutterRowContext } from '../src/public/extensions'
@@ -51,7 +55,11 @@ class MockHighlight extends Set<Range> {
 }
 
 function throwingFullTextSnapshot(text: string): TextSnapshot {
+  const source = createStringTextSnapshot(text)
   return {
+    lineCount: source.lineCount,
+    lineStart: (line) => source.lineStart(line),
+    lineAt: (offset) => source.lineAt(offset),
     length: text.length,
     materializeFullText: () => {
       throw new Error('unexpected full text read')
@@ -228,7 +236,11 @@ describe('VirtualizedTextView', () => {
     expect(view.getState().totalHeight).toBe(height)
     expect(view.getState().scrollTop).toBe(1_000)
     view.setScrollMetrics(1_000, 100, 80)
-    expect(view.getState().mountedRows.some((row) => row.text.includes('EDIT'))).toBe(true)
+    expect(
+      view
+        .getState()
+        .mountedRows.some((row) => row.text.slice(0, row.text.length).includes('EDIT')),
+    ).toBe(true)
   })
 
   it('mounts all rows without vertical spacer churn in static scroll mode', () => {
@@ -1131,6 +1143,8 @@ describe('VirtualizedTextView', () => {
     )
     const inline = view.getState().mountedRows[0]!
     expect(inline.textRenderMode).toBe('widget')
+    expect(inline.element.querySelector('.ghost')).toBeNull()
+    view.setScrollMetrics(0, 20, 80, 0)
     expect(inline.element.querySelector('.ghost')!.textContent).toBe('hint')
     expect(inline.element.dataset.editorVirtualWindowStart).toBeUndefined()
     expect(inline.element.dataset.editorVirtualWindowEnd).toBeUndefined()

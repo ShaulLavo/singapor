@@ -465,7 +465,7 @@ function isMergeConflictNeutralInsertion(edit: TextEdit): boolean {
 }
 
 function snapshotMayContainMergeConflict(snapshot: EditorViewSnapshot): boolean {
-  return snapshot.visibleRows.some((row) => lineStartsWithMergeConflictMarker(row.text))
+  return snapshot.visibleRows.some((row) => lineStartsWithMergeConflictMarker(row.text.slice(0, 8)))
 }
 
 function lineStartsWithMergeConflictMarker(text: string): boolean {

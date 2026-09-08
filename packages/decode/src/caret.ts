@@ -43,6 +43,7 @@ function createCaret(document: Document, row: DecodeRevealRow): HTMLElement {
   const caret = document.createElement('div')
   caret.className = CARET_CLASS
   caret.style.top = `${row.top}px`
+  caret.style.left = `calc(var(--editor-gutter-width, 0px) + ${row.leftSpacerWidth}px)`
   caret.style.height = `${row.height}px`
 
   const bar = document.createElement('div')

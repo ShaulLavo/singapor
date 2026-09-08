@@ -1,12 +1,9 @@
+import type { TextContent } from '../textContent'
 import type { FoldMap } from '../foldMap'
 import { nextGraphemeBoundary, previousGraphemeBoundary } from '../graphemes'
 import type { ResolvedSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
-import {
-  normalizeTabSize,
-  isDocumentTextDisplayRow,
-  type InjectedTextRow,
-} from '../displayTransforms'
+import { normalizeTabSize, type InjectedTextRow } from '../displayTransforms'
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
 import type { EditorTheme } from '../theme'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
@@ -66,26 +63,24 @@ import {
 import { setCompositionPreedit } from './virtualizedTextViewComposition'
 import { createVirtualizedTextViewModel } from './virtualizedTextViewModel'
 import {
-  applyMultiLineTextLayout,
-  applySameLineTextLayout,
+  applyTextLayoutTransition,
   lineEndOffset,
   lineStartOffset,
   offsetForViewportColumn,
-  rebuildDisplayRows,
-  refreshDisplayRowsForWrapWidth,
+  refreshDisplayProjection,
+  refreshDisplayProjectionForWrapWidth,
   rowForCaretPosition,
   rowForOffset,
   rowForViewportY,
   sameLineEditPatch,
   setFoldStateLayout,
   setInjectedTextRowsLayout,
-  materializeLineStarts,
   multiLineEditPatch,
+  sourceEditPatch,
   setTextLayoutState,
   setTextSnapshotLayoutState,
   setWrapEnabledLayout,
   updateVirtualizerRows,
-  visibleLineCount,
   visualColumnForOffset,
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
@@ -298,7 +293,6 @@ export class VirtualizedTextView {
     const initialInjectedTextRows = options.injectedTextRows ?? []
     const initialModel = createVirtualizedTextViewModel({
       textSnapshot: initialTextSnapshot,
-      lineStarts: [0],
       foldMap: null,
       inlineMap: null,
       injectedTextRows: initialInjectedTextRows,
@@ -339,7 +333,6 @@ export class VirtualizedTextView {
       rangeHighlightGroups: new Map(),
       selectionHighlightRegistered: false,
       model: initialModel,
-      text: '',
       textRevision: 0,
       displayProjectionRevision: 0,
       tokens: [],
@@ -347,8 +340,6 @@ export class VirtualizedTextView {
       tokenRenderEntryMaxEnds: [],
       tokenRenderStyles: new Map(),
       tokenRenderIndexDirty: true,
-      lineStarts: [0],
-      lineStartOffsetIndex: null,
       foldMarkers: [],
       rowDecorations: new Map(),
       foldMarkerByStartRow: new Map(),
@@ -423,6 +414,18 @@ export class VirtualizedTextView {
     for (const name of view.rangeHighlightGroups.keys()) clearRangeHighlight(view, name)
     clearTokenHighlights(view)
     view.virtualizer.dispose()
+    view.model.projection.dispose()
+    view.model.textSnapshot = view.model.projection.textSnapshot
+    view.model.textLength = 0
+    view.model.lineCount = 1
+    view.model.visibleLineCount = 0
+    view.model.foldMap = null
+    view.model.inlineMap = null
+    view.model.injectedTextRows = []
+    view.inlineMapBase = null
+    view.foldMarkers = []
+    view.foldMarkerByStartRow = new Map()
+    view.foldMarkerByKey = new Map()
     disposeInlineWidgets(view)
     disposeGutterCells(view)
     this.scrollElement.remove()
@@ -448,8 +451,8 @@ export class VirtualizedTextView {
   }
 
   public setText(
-    text: string,
-    textSnapshot = createStringTextSnapshot(text),
+    text: string | TextSnapshot,
+    textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text,
     preparedLineStarts?: readonly number[],
     preparedTokens?: readonly EditorToken[],
   ): void {
@@ -459,7 +462,10 @@ export class VirtualizedTextView {
     view.tokenProjectionDirtyStartRow = null
     view.tokenRenderIndexDirty = true
     if (preparedTokens) view.tokens = preparedTokens
-    const { lineCountChanged } = setTextLayoutState(view, text, textSnapshot, preparedLineStarts)
+    const { lineCountChanged } =
+      typeof text === 'string'
+        ? setTextLayoutState(view, text, textSnapshot, preparedLineStarts)
+        : setTextSnapshotLayoutState(view, textSnapshot)
     this.finishTextReplacement(lineCountChanged)
   }
 
@@ -479,11 +485,7 @@ export class VirtualizedTextView {
     this.refreshInlineReveal()
   }
 
-  /**
-   * Re-derives the rendered inline map from the supplied one by revealing whatever the selections
-   * touch, then rebuilds rows only if the result actually differs. Rendering and coordinate mapping
-   * both read `model.inlineMap`, so they always agree on what is currently hidden.
-   */
+  // Selection reveal, mapping, and painting share the same derived inline map.
   private refreshInlineReveal(): void {
     const view = this.view
     const base = view.inlineMapBase
@@ -492,7 +494,7 @@ export class VirtualizedTextView {
 
     view.model.inlineMap = next
     clearRowTokenState(view)
-    rebuildDisplayRows(view, horizontalViewportColumns(view))
+    refreshDisplayProjection(view, horizontalViewportColumns(view))
     view.lastRenderedRowsKey = ''
     updateVirtualizerRows(view)
   }
@@ -507,7 +509,7 @@ export class VirtualizedTextView {
     if (!update.changed) return
 
     if (update.foldMapChanged) clearRowTokenState(view)
-    if (update.foldMapChanged) rebuildDisplayRows(view, horizontalViewportColumns(view))
+    if (update.foldMapChanged) refreshDisplayProjection(view, horizontalViewportColumns(view))
 
     view.lastRenderedRowsKey = ''
     if (update.foldMapChanged) {
@@ -583,7 +585,7 @@ export class VirtualizedTextView {
       typeof nextText === 'string' ? createStringTextSnapshot(nextText) : nextText
     const sameLinePatch = sameLineEditPatch(view, edit)
     if (sameLinePatch) {
-      this.applySameLineEdit(sameLinePatch, textSnapshot)
+      this.applySameLineEdit(sameLinePatch, edit, textSnapshot)
       return
     }
 
@@ -593,7 +595,7 @@ export class VirtualizedTextView {
       return
     }
 
-    this.setTextSnapshot(textSnapshot)
+    this.applyProjectionEdit(edit, textSnapshot)
   }
 
   public setTokens(tokens: readonly EditorToken[]): void {
@@ -642,8 +644,6 @@ export class VirtualizedTextView {
     viewportWidth?: number,
     scrollLeft?: number,
   ): void {
-    const width = viewportWidth ?? this.view.virtualizer.getSnapshot().viewportWidth
-    if (viewportHeight > 0) this.refreshWrapWidth(width)
     this.view.virtualizer.setScrollMetrics({
       scrollTop,
       viewportHeight,
@@ -805,35 +805,20 @@ export class VirtualizedTextView {
     return pageRowDelta(this.view)
   }
 
-  public getLineStarts(): readonly number[] {
-    return materializeLineStarts(this.view)
+  public getProjectionDiagnostics() {
+    return this.view.model.projection.diagnostics
   }
 
-  // Snapshot view over the current line starts without forcing the pending
-  // suffix deltas to materialize into a fresh array.
+  public getLineStarts(): readonly number[] {
+    return this.getLineStartsView().toArray()
+  }
+
   public getLineStartsView(): LineStartsView {
-    const offsetIndex = this.view.lineStartOffsetIndex
-    if (!offsetIndex?.dirty) return new LineStartsView(this.view.lineStarts, [])
-
-    const revision = offsetIndex.revision
-    return new LineStartsView(
-      this.view.lineStarts,
-      offsetIndex.snapshotDeltas(),
-      (materialized) => {
-        // Adopt the materialized array as the new base while no further edits
-        // have landed, so internal consumers skip their own materialization.
-        if (this.view.lineStartOffsetIndex !== offsetIndex) return
-        if (offsetIndex.revision !== revision) return
-
-        // Freshly built by toArray when deltas exist; never the shared base.
-        this.view.lineStarts = materialized
-        this.view.lineStartOffsetIndex = null
-      },
-    )
+    return new LineStartsView(this.view.model.textSnapshot)
   }
 
   public getLineCount(): number {
-    return this.view.lineStarts.length
+    return this.view.model.lineCount
   }
 
   public createRange(
@@ -858,7 +843,7 @@ export class VirtualizedTextView {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
     return {
-      lineCount: view.lineStarts.length,
+      lineCount: view.model.lineCount,
       contentWidth: view.contentWidth,
       gutterWidth: view.currentGutterWidth,
       gutterLayout: {
@@ -937,7 +922,7 @@ export class VirtualizedTextView {
     if (metrics.verticalDirection > 0) {
       return textHitPosition(lineEndOffset(view, row), 'before', row, metrics.x)
     }
-    if (!isDocumentTextDisplayRow(view.model.rows[row])) return null
+    if (view.model.projection.getRowMetrics(row)?.source !== 'document') return null
 
     const mounted = view.rowElements.get(row)
     if (mounted?.kind === 'text' && rowMightContainRTL(view, mounted)) {
@@ -1048,6 +1033,11 @@ export class VirtualizedTextView {
 
     const view = this.view
     const visible = snapshot.viewportHeight > 0
+    if (visible) {
+      const first = snapshot.virtualItems[0]?.index ?? 0
+      const last = snapshot.virtualItems.at(-1)?.index ?? -1
+      view.model.projection.retainWindow(first, last + 1)
+    }
     const revealed = visible && !this.viewportVisible
     this.viewportVisible = visible
     if (revealed) {
@@ -1059,6 +1049,7 @@ export class VirtualizedTextView {
     if (!visible) {
       this.cancelContentWidthMeasurement?.()
       this.cancelContentWidthMeasurement = null
+      view.model.projection.clearCache()
     }
 
     updateSpacerHeight(view, snapshot)
@@ -1164,11 +1155,15 @@ export class VirtualizedTextView {
     updateContentWidth(view, view.virtualizer.getSnapshot().virtualItems)
   }
 
-  private applySameLineEdit(patch: SameLineEditPatch, nextText: TextSnapshot): void {
+  private applySameLineEdit(
+    patch: SameLineEditPatch,
+    edit: TextEdit,
+    nextText: TextSnapshot,
+  ): void {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
     view.tokenRenderIndexDirty = true
-    applySameLineTextLayout(view, patch, nextText)
+    applyTextLayoutTransition(view, [edit], nextText)
     clampStoredSelection(view)
     resetContentWidthScan(view)
     clearRowGeometryCaches(view)
@@ -1194,7 +1189,7 @@ export class VirtualizedTextView {
   ): void {
     const view = this.view
     view.tokenRenderIndexDirty = true
-    applyMultiLineTextLayout(view, patch, edit, nextText)
+    applyTextLayoutTransition(view, [edit], nextText)
     clampStoredSelection(view)
     resetContentWidthScan(view)
     clearRowGeometryCaches(view)
@@ -1216,19 +1211,31 @@ export class VirtualizedTextView {
     renderHiddenCharacters(view)
   }
 
-  private setTextSnapshot(textSnapshot: TextSnapshot): void {
+  private applyProjectionEdit(edit: TextEdit, textSnapshot: TextSnapshot): void {
     const view = this.view
+    const previousLineCount = view.model.lineCount
+    const patch = sourceEditPatch(view, edit)
+    applyTextLayoutTransition(view, [edit], textSnapshot)
+    if (patch) {
+      projectFoldMarkersThroughMultiLineEdit(view, patch, edit)
+      projectRowDecorationsThroughMultiLineEdit(view, patch)
+    }
     view.sameLineTokenEdit = null
     view.tokenProjectionDirtyStartRow = null
     view.tokenRenderIndexDirty = true
-    const { lineCountChanged } = setTextSnapshotLayoutState(view, textSnapshot)
-    this.finishTextReplacement(lineCountChanged)
+    if (previousLineCount !== view.model.lineCount) view.gutterWidthDirty = true
+    clampStoredSelection(view)
+    clearRowTokenState(view)
+    clearRowGeometryCaches(view)
+    view.lastRenderedRowsKey = ''
+    resetContentWidthScan(view)
+    updateVirtualizerRows(view)
   }
 
   private finishTextReplacement(lineCountChanged: boolean): void {
     const view = this.view
     if (lineCountChanged) view.gutterWidthDirty = true
-    rebuildDisplayRows(view, horizontalViewportColumns(view))
+    refreshDisplayProjection(view, horizontalViewportColumns(view))
     clampStoredSelection(view)
     clearRowTokenState(view)
     view.lastRenderedRowsKey = ''
@@ -1240,7 +1247,7 @@ export class VirtualizedTextView {
     viewportWidth = this.view.virtualizer.getSnapshot().viewportWidth,
   ): boolean {
     const view = this.view
-    const changed = refreshDisplayRowsForWrapWidth(
+    const changed = refreshDisplayProjectionForWrapWidth(
       view,
       horizontalViewportColumns(view, viewportWidth),
     )
@@ -1875,7 +1882,7 @@ function rowStartsOnVisualLeft(
   return startOnLeft
 }
 
-function candidateGraphemeOffsets(text: string, localGuess: number): ReadonlySet<number> {
+function candidateGraphemeOffsets(text: TextContent, localGuess: number): ReadonlySet<number> {
   const offsets = new Set<number>()
   const local = Math.max(0, Math.min(text.length, localGuess))
   const previous = previousGraphemeBoundary(text, local)
@@ -2435,14 +2442,7 @@ function displayRowsShareBoundary(
 }
 
 function nextDocumentTextRow(view: VirtualizedTextViewInternal, row: number, step: 1 | -1): number {
-  const end = step > 0 ? visibleLineCount(view) - 1 : 0
-  let current = row
-  while (current !== end) {
-    current += step
-    if (isDocumentTextDisplayRow(view.model.rows[current])) return current
-  }
-
-  return row
+  return view.model.projection.nextDocumentRow(row, step) ?? row
 }
 
 function normalizeCursorLineHighlight(

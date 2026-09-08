@@ -1,3 +1,5 @@
+import type { TextContent } from './textContent'
+
 /**
  * Grapheme clusters — what a reader calls "one character" — for the three places that have to agree
  * on where one ends: how wide a row measures, where a caret may stop, and how much a backwards
@@ -53,7 +55,7 @@ export function segmentGraphemes(text: string): readonly TextSegment[] {
  * does not have. Widening can only ever move the answer earlier, so two windows that agree have
  * both seen enough, and the first one to reach the start of the text has seen everything.
  */
-export function previousGraphemeBoundary(text: string, offset: number): number {
+export function previousGraphemeBoundary(text: TextContent, offset: number): number {
   if (offset <= 0) return 0
   if (isSoloBefore(text, offset)) return offset - 1
 
@@ -67,7 +69,7 @@ export function previousGraphemeBoundary(text: string, offset: number): number {
   }
 }
 
-export function nextGraphemeBoundary(text: string, offset: number): number {
+export function nextGraphemeBoundary(text: TextContent, offset: number): number {
   if (offset >= text.length) return text.length
   if (isSoloAt(text, offset)) return offset + 1
 
@@ -92,7 +94,7 @@ export function nextGraphemeBoundary(text: string, offset: number): number {
  * a trailing skin tone or keycap goes with the base it decorates because it is nothing on its own.
  * Everything else, a combining accent included, steps back a single code point.
  */
-export function previousDeleteBoundary(text: string, offset: number): number {
+export function previousDeleteBoundary(text: TextContent, offset: number): number {
   if (offset <= 0) return 0
 
   const clusterStart = previousGraphemeBoundary(text, offset)
@@ -103,7 +105,7 @@ export function previousDeleteBoundary(text: string, offset: number): number {
   return previousCodePointBoundary(text, offset)
 }
 
-export function codePointLength(text: string, index: number): number {
+export function codePointLength(text: TextContent, index: number): number {
   const codePoint = text.codePointAt(index) ?? 0
   return codePoint > 0xffff ? 2 : 1
 }
@@ -138,17 +140,17 @@ function isSoloCodeUnit(code: number): boolean {
  * Both neighbours are checked, not just the one being stepped over: a joining character that
  * precedes a plain one pulls it into its own cluster, and only the character before reveals that.
  */
-function isSoloBefore(text: string, offset: number): boolean {
+function isSoloBefore(text: TextContent, offset: number): boolean {
   if (!isSoloCodeUnit(text.charCodeAt(offset - 1))) return false
   return offset < 2 || isSoloCodeUnit(text.charCodeAt(offset - 2))
 }
 
-function isSoloAt(text: string, offset: number): boolean {
+function isSoloAt(text: TextContent, offset: number): boolean {
   if (!isSoloCodeUnit(text.charCodeAt(offset))) return false
   return offset + 1 >= text.length || isSoloCodeUnit(text.charCodeAt(offset + 1))
 }
 
-function previousCodePointBoundary(text: string, offset: number): number {
+function previousCodePointBoundary(text: TextContent, offset: number): number {
   const previous = offset - 1
   if (previous <= 0) return Math.max(0, previous)
 
@@ -159,7 +161,7 @@ function previousCodePointBoundary(text: string, offset: number): number {
   return before >= 0xd800 && before <= 0xdbff ? previous - 1 : previous
 }
 
-function lastJoinerIndex(text: string, start: number, end: number): number | null {
+function lastJoinerIndex(text: TextContent, start: number, end: number): number | null {
   for (let index = end - 1; index >= start; index -= 1) {
     if (text.charCodeAt(index) === ZERO_WIDTH_JOINER) return index
   }
@@ -167,7 +169,7 @@ function lastJoinerIndex(text: string, start: number, end: number): number | nul
   return null
 }
 
-function endsWithDependentModifier(text: string, start: number, end: number): boolean {
+function endsWithDependentModifier(text: TextContent, start: number, end: number): boolean {
   const last = previousCodePointBoundary(text, end)
   if (last < start) return false
 

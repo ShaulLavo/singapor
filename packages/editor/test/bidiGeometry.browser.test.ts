@@ -3060,7 +3060,7 @@ function assertWhitespaceMarkersForRow(
 ): void {
   const glyphs = glyphRectOracle(row)
   for (let local = 0; local < row.text.length; local += 1) {
-    if (row.text[local] !== ' ' && row.text[local] !== '\t') continue
+    if (row.text.charAt(local) !== ' ' && row.text.charAt(local) !== '\t') continue
     const marker = row.element.querySelector<HTMLElement>(
       `[data-editor-hidden-character-offset="${row.startOffset + local}"]`,
     )

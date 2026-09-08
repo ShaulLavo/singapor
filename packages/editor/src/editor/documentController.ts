@@ -128,7 +128,7 @@ export class EditorDocumentController {
     this.currentLanguageId = options.languageId ?? null
     this.currentSession = session
     this.currentSessionOptions = options
-    this.currentTextSnapshot = session.getTextSnapshot()
+    this.setRenderedTextSnapshot(session.getTextSnapshot())
 
     return this.createAttachment({
       documentVersion: this.currentDocumentVersion,
@@ -149,7 +149,7 @@ export class EditorDocumentController {
     this.currentDocumentId = null
     this.currentDocumentMode = normalizeEditorDocumentMode(this.defaultDocumentMode)
     this.currentLanguageId = null
-    this.currentTextSnapshot = createStringTextSnapshot('')
+    this.setRenderedTextSnapshot(createStringTextSnapshot(''))
     this.detachSession()
     return this.currentDocumentVersion
   }
@@ -168,7 +168,7 @@ export class EditorDocumentController {
     this.currentLanguageId = document.languageId ?? null
     this.currentSession = createEditorDocumentSession(document.text, this.currentDocumentMode)
     this.currentSessionOptions = {}
-    this.currentTextSnapshot = this.currentSession.getTextSnapshot()
+    this.setRenderedTextSnapshot(this.currentSession.getTextSnapshot())
 
     return this.createAttachment({
       documentVersion: this.currentDocumentVersion,

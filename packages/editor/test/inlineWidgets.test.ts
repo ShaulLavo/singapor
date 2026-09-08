@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { Editor } from '../src/editor/Editor'
+import type { Editor } from '../src/editor/Editor'
+import { createVisibleEditor } from './factories/visibleEditor'
 import { createInlineMap, type InlineReplacementSpec } from '../src/inlineMap'
 import { createPieceTableSnapshot } from '../src/public/document'
 import { resetEditorInstanceCount } from '../src/public/testing'
@@ -360,7 +361,7 @@ describe('inline replacements that render their own DOM, through the editor', ()
     resetEditorInstanceCount()
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = new Editor(container, {})
+    editor = createVisibleEditor(container, {})
   })
 
   afterEach(() => {

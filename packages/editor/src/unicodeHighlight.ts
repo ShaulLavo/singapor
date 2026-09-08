@@ -1,3 +1,4 @@
+import type { TextContent } from './textContent'
 import { clampTextOffset, type TextOffsetRange, wordRangeAtOffset } from './textRanges'
 import { CONFUSABLE_CODE_POINT_DATA, INVISIBLE_CODE_POINT_DATA } from './unicodeHighlightData'
 
@@ -107,7 +108,7 @@ export function suspiciousCharactersEnabled(options: ResolvedSuspiciousCharacter
  * and that word does not stop at the edge of the viewport.
  */
 export function suspiciousCharacterRanges(
-  text: string,
+  text: TextContent,
   options: ResolvedSuspiciousCharactersOptions,
   range?: TextOffsetRange,
 ): readonly SuspiciousCharacterRange[] {
@@ -132,7 +133,7 @@ export function suspiciousCharacterRanges(
 }
 
 function suspiciousKindAt(
-  text: string,
+  text: TextContent,
   index: number,
   codePoint: number,
   options: ResolvedSuspiciousCharactersOptions,
@@ -172,7 +173,7 @@ function candidateKind(
  * nothing ASCII anywhere in the word, and at least one character too foreign to imitate anything.
  */
 function isExcusedByItsWord(
-  text: string,
+  text: TextContent,
   index: number,
   tables: SuspiciousCharacterTables,
 ): boolean {
@@ -183,8 +184,9 @@ function isExcusedByItsWord(
 
   let hasAscii = false
   let hasUnmistakable = false
-  for (const character of text.slice(word.start, word.end)) {
-    const codePoint = character.codePointAt(0) ?? 0
+  for (let cursor = word.start; cursor < word.end; ) {
+    const codePoint = text.codePointAt(cursor) ?? 0
+    cursor += codePoint > 0xffff ? 2 : 1
     if (isPlainAsciiCodePoint(codePoint)) {
       hasAscii = true
       continue
@@ -210,7 +212,7 @@ function isPlainAsciiCodePoint(codePoint: number): boolean {
 }
 
 /** Back up onto the high surrogate a range edge landed after, so the pair is read as one. */
-function codePointStartAt(text: string, index: number): number {
+function codePointStartAt(text: TextContent, index: number): number {
   if (index <= 0) return index
   const code = text.charCodeAt(index)
   if (code < 0xdc00 || code > 0xdfff) return index

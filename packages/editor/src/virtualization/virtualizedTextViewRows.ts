@@ -1,4 +1,5 @@
 import type { MeasuredText } from '../textMeasurements'
+import { sliceTextContent, type TextContent } from '../textContent'
 import { isSimpleRowText } from '../textCharacters'
 import {
   isDocumentTextDisplayRow,
@@ -20,7 +21,7 @@ import type {
   EditorGutterRowContext,
   EditorGutterWidthContext,
 } from '../plugins'
-import { segmentGraphemes } from '../graphemes'
+import { nextGraphemeBoundary, previousGraphemeBoundary, segmentGraphemes } from '../graphemes'
 import type { FixedRowVirtualItem, FixedRowVirtualizerSnapshot } from './fixedRowVirtualizer'
 import {
   alignChunkEnd,
@@ -130,6 +131,7 @@ type InlineWidgets = {
 }
 
 type InlineWidgetHost = {
+  measuredWidth: number | null
   readonly element: HTMLSpanElement
   readonly mountDisposable: { dispose(): void } | null
   readonly observer: ResizeObserver | null
@@ -447,7 +449,7 @@ function createRowUpdatePass(view: VirtualizedTextViewInternal): RowUpdatePass {
     cursorVirtualRow: cursorLineVirtualRow(view),
     cursorLineHighlight: view.cursorLineHighlight,
     foldMarkersAvailable: view.foldMarkerByStartRow.size > 0,
-    lineCount: view.lineStarts.length,
+    lineCount: view.model.lineCount,
     toggleFold: view.onFoldToggle ?? noopToggleFold,
   }
 }
@@ -457,7 +459,7 @@ function rowUpdateState(
   index: number,
   updatePass: RowUpdatePass,
 ): RowUpdateState {
-  const displayRow = view.model.rows[index]
+  const displayRow = view.model.projection.getRow(index)
   const bufferRow = bufferRowForDisplayRow(view, index)
   const primaryText = isDocumentTextDisplayRow(displayRow) && displayRow.sourceStartColumn === 0
 
@@ -518,7 +520,7 @@ function mountedRowUpdateState(
 }
 
 function bufferRowForDisplayRow(view: VirtualizedTextViewInternal, index: number): number {
-  const displayRow = view.model.rows[index]
+  const displayRow = view.model.projection.getRow(index)
   if (displayRow?.kind === 'text') return displayRow.bufferRow
   return bufferRowForVirtualRow(view, index)
 }
@@ -591,7 +593,7 @@ function updateRow(
     inlineMapping: state.inlineMapping,
     textRevision: view.textRevision,
     top: item.start,
-    chunkKey: rowChunkKey(view, state, snapshot),
+    chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
   })
 }
 
@@ -666,7 +668,7 @@ function updateRowAfterSameLineEdit(
     inlineMapping: state.inlineMapping,
     textRevision: view.textRevision,
     top: item.start,
-    chunkKey: rowChunkKey(view, state, snapshot),
+    chunkKey: rowChunkKey(view, state, snapshot, state.inlineMapping),
   })
   return editedRowPatchedInPlace
 }
@@ -707,7 +709,7 @@ function updateRowTextForSameLineEdit(
   snapshot: FixedRowVirtualizerSnapshot,
 ): boolean {
   const { text } = content
-  if (bidiMeasurementRefusal(view, content)) {
+  if (typeof text !== 'string' || bidiMeasurementRefusal(view, content)) {
     updateRowTextChunks(view, row, content, startOffset, mapping, snapshot)
     return false
   }
@@ -792,7 +794,8 @@ function setDirectRowText(
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): void {
-  const { text } = content
+  const text =
+    typeof content.text === 'string' ? content.text : content.text.slice(0, content.text.length)
   if (reuseDirectRowText(row, text, startOffset, mapping)) return
   setLeftSpacerWidth(row, 0)
 
@@ -818,7 +821,8 @@ function setRenderedDirectRowText(
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): void {
-  const { text } = content
+  const text =
+    typeof content.text === 'string' ? content.text : content.text.slice(0, content.text.length)
   const simple = isSimpleRowText(content)
   const maxTextNodeLength = simple ? Number.POSITIVE_INFINITY : bidiTextNodeLength(view, content)
   const rendered = simple
@@ -896,7 +900,7 @@ function reuseDirectRowText(
 
 function syncDirectRowChunk(
   row: MountedVirtualizedTextRow,
-  text: string,
+  text: TextContent,
   startOffset: number,
   mapping: RowInlineMapping | null,
   parts: readonly VirtualizedTextChunkPart[] = createTextChunkParts(row.textNode, 0, text.length),
@@ -1010,7 +1014,7 @@ function rowHasInlineAttachments(row: MountedVirtualizedTextRow): boolean {
  * the mapping, so a wrapped row only claims the runs that fall inside the slice it renders: a run
  * cut by a wrap boundary has no single box to be, and stays the text it stands for.
  */
-function inlineRowRuns(mapping: RowInlineMapping | null, text: string): InlineRowRuns {
+function inlineRowRuns(mapping: RowInlineMapping | null, text: TextContent): InlineRowRuns {
   if (!mapping) return NO_INLINE_ROW_RUNS
 
   const widgets: InlineWidgetRun[] = []
@@ -1035,10 +1039,7 @@ function inlineRowRuns(mapping: RowInlineMapping | null, text: string): InlineRo
   return { widgets, classes }
 }
 
-/**
- * Rows carrying a run never take the chunked path: a chunk boundary falls on a fixed column stride,
- * which would cut a replacement's columns in two, and the box it paints into is one or nothing.
- */
+// Window boundaries expand around widgets so a replacement keeps one complete box.
 function setInlineRunRowText(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
@@ -1048,12 +1049,18 @@ function setInlineRunRowText(
   runs: InlineRowRuns,
 ): void {
   const { text } = content
-  setLeftSpacerWidth(row, 0)
-  const placements = runs.widgets.map((run) => inlineWidgetPlacement(view, run))
-  const maxTextNodeLength = bidiTextNodeLength(view, content)
+  const window = inlineRowWindow(view, content, runs.widgets)
+  const placements = runs.widgets
+    .filter((run) => run.localStart < window.end && run.localEnd > window.start)
+    .map((run) => inlineWidgetPlacement(view, run))
+  const classes = inlineClassesInWindow(runs.classes, window)
+  const leftWidth =
+    estimatedDisplayCellForColumn(content, window.start, view.tabSize) * characterWidth(view) +
+    inlineWidgetAdvanceDelta(view, content, runs.widgets, window.start)
+  setLeftSpacerWidth(row, Math.round(leftWidth))
   const chunk = row.chunks[0]
-  if (chunk && reusesInlineRunRowText(row, chunk, text, placements, runs.classes)) {
-    syncDirectRowChunk(row, text, startOffset, mapping, chunk.parts, chunk.textNode)
+  if (chunk && reusesInlineRunRowText(row, chunk, text, placements, classes, window)) {
+    syncRowChunkOffsets(row, startOffset, mapping)
     return
   }
 
@@ -1062,17 +1069,114 @@ function setInlineRunRowText(
     text,
     characterWidth(view),
     placements,
-    runs.classes,
-    maxTextNodeLength,
+    classes,
+    bidiTextNodeLength(view, content),
+    window,
   )
   if (rendered.oversizedGrapheme) {
     setUnmeasurableBidiRowText(row, text, startOffset, mapping, 'grapheme-length')
     return
   }
 
-  row.element.replaceChildren(...rendered.nodes)
+  row.element.replaceChildren(row.leftSpacerElement, ...rendered.nodes)
   setTextRenderMode(row, 'widget')
-  syncDirectRowChunk(row, text, startOffset, mapping, rendered.parts, rendered.textNode)
+  updateMutableRowChunks(row, [
+    {
+      startOffset: offsetForLocalIndex(mapping, startOffset, window.start, 'before'),
+      endOffset: offsetForLocalIndex(mapping, startOffset, window.end, 'after'),
+      localStart: window.start,
+      localEnd: window.end,
+      text: sliceTextContent(text, window.start, window.end),
+      element: null,
+      textNode: rendered.textNode,
+      parts: rendered.parts,
+      mountedPaint: captureMountedPaint(rendered.parts),
+    },
+  ])
+}
+
+function inlineRowWindow(
+  view: VirtualizedTextViewInternal,
+  content: MeasuredText,
+  widgets: readonly InlineWidgetRun[],
+  snapshot = view.virtualizer.getSnapshot(),
+): HorizontalChunkWindow {
+  if (!shouldChunkLine(view, content)) return { start: 0, end: content.text.length }
+  measureUnobservedInlineWidgets(view, widgets)
+  const window = horizontalChunkWindow(view, content, snapshot, widgets)
+  let start = window.start
+  let end = window.end
+  for (const run of widgets) {
+    if (run.localStart >= end || run.localEnd <= start) continue
+    start = Math.min(start, run.localStart)
+    end = Math.max(end, run.localEnd)
+  }
+  return { start, end }
+}
+
+function measureUnobservedInlineWidgets(
+  view: VirtualizedTextViewInternal,
+  widgets: readonly InlineWidgetRun[],
+): void {
+  const hosts = inlineWidgetsByView.get(view)?.hosts
+  if (!hosts) return
+  for (const widget of widgets) {
+    const host = hosts.get(widget.id)
+    if (!host || host.measuredWidth !== null || !host.element.isConnected) continue
+    measureInlineWidget(view, host.element)
+  }
+}
+
+function inlineWidgetAdvanceDelta(
+  view: VirtualizedTextViewInternal,
+  content: MeasuredText,
+  widgets: readonly InlineWidgetRun[],
+  localOffset: number,
+): number {
+  let delta = 0
+  for (const widget of widgets) {
+    if (widget.localEnd > localOffset) break
+    const width = inlineWidgetsByView.get(view)?.hosts.get(widget.id)?.measuredWidth
+    if (width === null || width === undefined) continue
+    const start = estimatedDisplayCellForColumn(content, widget.localStart, view.tabSize)
+    const end = estimatedDisplayCellForColumn(content, widget.localEnd, view.tabSize)
+    delta += width - (end - start) * characterWidth(view)
+  }
+  return delta
+}
+
+function columnBeforeWidgetAdvances(
+  view: VirtualizedTextViewInternal,
+  content: MeasuredText,
+  widgets: readonly InlineWidgetRun[],
+  column: number,
+  bias: 'before' | 'after',
+): number {
+  let delta = 0
+  const cellWidth = characterWidth(view)
+  for (const widget of widgets) {
+    const width = inlineWidgetsByView.get(view)?.hosts.get(widget.id)?.measuredWidth
+    if (width === null || width === undefined) continue
+    const start = estimatedDisplayCellForColumn(content, widget.localStart, view.tabSize)
+    if (column < start + delta) break
+    const end = estimatedDisplayCellForColumn(content, widget.localEnd, view.tabSize)
+    if (column <= start + delta + width / cellWidth) return bias === 'before' ? start : end
+    delta += width / cellWidth - (end - start)
+  }
+  return column - delta
+}
+
+function inlineClassesInWindow(
+  classes: readonly InlineClassRun[],
+  window: HorizontalChunkWindow,
+): InlineClassRun[] {
+  return classes
+    .filter((run) => run.localStart < window.end && run.localEnd > window.start)
+    .map((run) => ({
+      ...run,
+      localStart: Math.max(window.start, run.localStart),
+      localEnd: Math.min(window.end, run.localEnd),
+    }))
 }
 
 /**
@@ -1082,13 +1186,17 @@ function setInlineRunRowText(
  */
 function createInlineRunParts(
   document: Document,
-  text: string,
+  text: TextContent,
   cellWidth: number,
   placements: readonly InlineWidgetPlacement[],
   classes: readonly InlineClassRun[],
   maxTextNodeLength: number,
+  window: HorizontalChunkWindow,
 ): RenderedChunkParts {
-  if (hasOversizedGrapheme(text, maxTextNodeLength)) {
+  if (
+    Number.isFinite(maxTextNodeLength) &&
+    hasOversizedGrapheme(text.slice(window.start, window.end), maxTextNodeLength)
+  ) {
     return {
       nodes: [],
       parts: [],
@@ -1099,7 +1207,7 @@ function createInlineRunParts(
 
   const nodes: Node[] = []
   const parts: VirtualizedTextChunkPart[] = []
-  let cursor = 0
+  let cursor = window.start
 
   for (const run of classes) {
     appendInlineRunSlice(
@@ -1123,7 +1231,7 @@ function createInlineRunParts(
     parts,
     text,
     cursor,
-    text.length,
+    window.end,
     cellWidth,
     placements,
     maxTextNodeLength,
@@ -1140,7 +1248,7 @@ function appendInlineRunSlice(
   document: Document,
   nodes: Node[],
   parts: VirtualizedTextChunkPart[],
-  text: string,
+  text: TextContent,
   localStart: number,
   localEnd: number,
   cellWidth: number,
@@ -1151,7 +1259,7 @@ function appendInlineRunSlice(
 
   const rendered = createRenderedChunkParts(
     document,
-    text.slice(localStart, localEnd),
+    sliceTextContent(text, localStart, localEnd),
     localStart,
     cellWidth,
     placements.filter(
@@ -1167,7 +1275,7 @@ function appendInlineClassRun(
   document: Document,
   nodes: Node[],
   parts: VirtualizedTextChunkPart[],
-  text: string,
+  text: TextContent,
   run: InlineClassRun,
   cellWidth: number,
   maxTextNodeLength: number,
@@ -1205,11 +1313,13 @@ function firstRowTextNode(parts: readonly VirtualizedTextChunkPart[]): Text | nu
 function reusesInlineRunRowText(
   row: MountedVirtualizedTextRow,
   chunk: VirtualizedTextChunk,
-  text: string,
+  text: TextContent,
   placements: readonly InlineWidgetPlacement[],
   classes: readonly InlineClassRun[],
+  window: HorizontalChunkWindow,
 ): boolean {
   if (row.text !== text || row.textRenderMode !== 'widget' || row.chunks.length !== 1) return false
+  if (chunk.localStart !== window.start || chunk.localEnd !== window.end) return false
 
   const mounted = chunk.parts.filter((part) => part.kind === 'widget')
   if (mounted.length !== placements.length) return false
@@ -1311,7 +1421,7 @@ function mountInlineWidget(
   const observer = createRowResizeObserver(() => measureInlineWidget(view, element))
   observer?.observe(element)
 
-  const host = { element, mountDisposable, observer }
+  const host: InlineWidgetHost = { element, mountDisposable, observer, measuredWidth: null }
   widgets.hosts.set(run.id, host)
   measureInlineWidget(view, element)
   return host
@@ -1329,6 +1439,9 @@ function applyInlineWidgetWidth(
   // A node that measures nothing has not been laid out yet — off-screen, or a host that answers no
   // rects at all. The columns it stands on are a better guess than collapsing it to nothing.
   if (!Number.isFinite(width) || width <= 0) return
+  const id = element.dataset.editorInlineWidget
+  const host = id === undefined ? undefined : inlineWidgetsByView.get(view)?.hosts.get(id)
+  if (host) host.measuredWidth = width
   if (!setInlineWidgetMeasuredWidth(element, width)) return
 
   // Row geometry is cached against the row's text and classes, none of which move when the node a
@@ -1441,7 +1554,7 @@ function setChunkedRowText(
 function reuseRowChunks(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
-  text: string,
+  text: TextContent,
   window: HorizontalChunkWindow,
   startOffset: number,
   mapping: RowInlineMapping | null,
@@ -1463,7 +1576,7 @@ function updateRowChunk(
   view: VirtualizedTextViewInternal,
   chunk: VirtualizedTextChunk,
   element: HTMLSpanElement,
-  text: string,
+  text: TextContent,
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): void {
@@ -1535,33 +1648,37 @@ function patchSimpleChunkText(
 
 function createRowChunks(
   view: VirtualizedTextViewInternal,
-  text: string,
+  text: TextContent,
   window: HorizontalChunkWindow,
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): VirtualizedTextChunk[] {
   const chunks: VirtualizedTextChunk[] = []
-
-  for (
-    let localStart = window.start;
-    localStart < window.end;
-    localStart += view.longLineChunkSize
-  ) {
-    chunks.push(createRowChunk(view, text, localStart, window.end, startOffset, mapping))
+  const simple = isSimpleRowText(text)
+  let localStart = window.start
+  while (localStart < window.end) {
+    const targetEnd = Math.min(localStart + view.longLineChunkSize, window.end)
+    const localEnd = simple ? targetEnd : graphemeChunkEnd(text, targetEnd)
+    chunks.push(createRowChunk(view, text, localStart, localEnd, startOffset, mapping))
+    localStart = localEnd
   }
-
   return chunks
+}
+
+function graphemeChunkEnd(text: TextContent, target: number): number {
+  if (target >= text.length) return text.length
+  const start = previousGraphemeBoundary(text, target)
+  return nextGraphemeBoundary(text, start)
 }
 
 function createRowChunk(
   view: VirtualizedTextViewInternal,
-  text: string,
+  text: TextContent,
   localStart: number,
-  windowEnd: number,
+  localEnd: number,
   startOffset: number,
   mapping: RowInlineMapping | null,
 ): VirtualizedTextChunk {
-  const localEnd = Math.min(localStart + view.longLineChunkSize, windowEnd)
   const element = view.scrollElement.ownerDocument.createElement('span')
   const chunkText = text.slice(localStart, localEnd)
   const rendered = createRowChunkParts(view, chunkText, localStart)
@@ -1639,6 +1756,7 @@ function createSplitTextChunkParts(
 
 function shouldChunkLine(view: VirtualizedTextViewInternal, content: MeasuredText): boolean {
   const { text } = content
+  if (typeof text !== 'string') return !memoizedContainsRTL(view, content)
   if (view.wrapEnabled) return false
   if (text.length <= view.longLineChunkThreshold) return false
   return !memoizedContainsRTL(view, content)
@@ -1671,7 +1789,7 @@ function hasOversizedGrapheme(text: string, maxLength: number): boolean {
 
 function setUnmeasurableBidiRowText(
   row: MountedVirtualizedTextRow,
-  text: string,
+  text: TextContent,
   startOffset: number,
   mapping: RowInlineMapping | null,
   refusal: BidiMeasurementRefusal,
@@ -1733,13 +1851,15 @@ function rowChunkKey(
   view: VirtualizedTextViewInternal,
   content: MeasuredText,
   snapshot = view.virtualizer.getSnapshot(),
+  mapping: RowInlineMapping | null = null,
 ): string {
   if (!shouldChunkLine(view, content)) return 'direct'
 
   // Only the aligned window bounds describe what the row rendered. Folding the raw scroll position
   // or viewport width in would invalidate the row — and the geometry measured for it — on every
   // pixel of horizontal scroll, even though the mounted chunks are identical.
-  const window = horizontalChunkWindow(view, content, snapshot)
+  const widgets = inlineRowRuns(mapping, content.text).widgets
+  const window = inlineRowWindow(view, content, widgets, snapshot)
   return `${window.start}:${window.end}`
 }
 
@@ -1747,6 +1867,7 @@ function horizontalChunkWindow(
   view: VirtualizedTextViewInternal,
   content: MeasuredText,
   snapshot = view.virtualizer.getSnapshot(),
+  widgets: readonly InlineWidgetRun[] = [],
 ): HorizontalChunkWindow {
   const { text } = content
   const viewportColumns = horizontalViewportColumns(view, snapshot.viewportWidth)
@@ -1758,15 +1879,25 @@ function horizontalChunkWindow(
   const endColumn = leftColumn + viewportColumns + view.horizontalOverscanColumns
   const startBufferColumn = bufferColumnForEstimatedColumn(
     content,
-    startColumn,
+    columnBeforeWidgetAdvances(view, content, widgets, startColumn, 'before'),
     'before',
     view.tabSize,
   )
-  const endBufferColumn = bufferColumnForEstimatedColumn(content, endColumn, 'after', view.tabSize)
+  const endBufferColumn = bufferColumnForEstimatedColumn(
+    content,
+    columnBeforeWidgetAdvances(view, content, widgets, endColumn, 'after'),
+    'after',
+    view.tabSize,
+  )
   const start = alignChunkStart(startBufferColumn, view.longLineChunkSize)
   const end = alignChunkEnd(Math.min(text.length, endBufferColumn), view.longLineChunkSize)
 
-  return { start, end: clamp(end, start, text.length) }
+  const clampedEnd = clamp(end, start, text.length)
+  if (isSimpleRowText(content)) return { start, end: clampedEnd }
+  return {
+    start: start === 0 ? 0 : previousGraphemeBoundary(text, start + 1),
+    end: graphemeChunkEnd(text, clampedEnd),
+  }
 }
 
 function bufferColumnForEstimatedColumn(
@@ -1811,7 +1942,9 @@ function horizontalWindowKey(
     const content = lineContent(view, item.index)
     if (!shouldChunkLine(view, content)) continue
 
-    const window = horizontalChunkWindow(view, content, snapshot)
+    const mapping = rowInlineMappingForDisplayRow(view.model.projection.getRow(item.index))
+    const widgets = inlineRowRuns(mapping, content.text).widgets
+    const window = inlineRowWindow(view, content, widgets, snapshot)
     key += `${item.index}:${window.start}:${window.end}|`
   }
 
@@ -2041,7 +2174,7 @@ function foldMarkerForVirtualRow(
 }
 
 function isPrimaryTextRow(view: VirtualizedTextViewInternal, row: number): boolean {
-  const displayRow = view.model.rows[row]
+  const displayRow = view.model.projection.getRow(row)
   if (!isDocumentTextDisplayRow(displayRow)) return false
   return displayRow.sourceStartColumn === 0
 }
@@ -2060,7 +2193,7 @@ function isRowCurrent(
   const bufferRow = bufferRowForVirtualRow(view, item.index)
   if (row.bufferRow !== bufferRow) return false
 
-  const displayRow = view.model.rows[item.index]
+  const displayRow = view.model.projection.getRow(item.index)
   if (row.source !== displayRowSource(displayRow)) return false
   if (row.injectedTextRowId !== injectedTextRowId(displayRow)) return false
   if (row.metadata !== displayRowMetadata(displayRow)) return false
@@ -2070,7 +2203,11 @@ function isRowCurrent(
   // Display text alone does not say what is behind it: a run that changed only how it paints — the
   // box it asks for, the node it renders — leaves every column of the row exactly where it was.
   if (row.inlineMapping?.line !== inlineRowForDisplayRow(displayRow)) return false
-  if (row.chunkKey !== rowChunkKey(view, lineContent(view, item.index), snapshot)) return false
+  if (
+    row.chunkKey !==
+    rowChunkKey(view, lineContent(view, item.index), snapshot, row.inlineMapping ?? null)
+  )
+    return false
   if (row.rowDecorationKey !== rowDecorationKey(view, item.index)) return false
 
   const foldMarker = foldMarkerForVirtualRow(view, item.index)
@@ -2102,7 +2239,7 @@ function rowDecorationForVirtualRow(
   view: VirtualizedTextViewInternal,
   virtualRow: number,
 ): VirtualizedTextRowDecoration | undefined {
-  const displayRow = view.model.rows[virtualRow]
+  const displayRow = view.model.projection.getRow(virtualRow)
   if (isInjectedTextDisplayRow(displayRow)) return injectedRowDecoration(displayRow)
 
   return view.rowDecorations.get(bufferRowForVirtualRow(view, virtualRow))
@@ -2405,7 +2542,7 @@ function gutterContributionWidth(
 
 function gutterWidthContext(view: VirtualizedTextViewInternal): EditorGutterWidthContext {
   return {
-    lineCount: view.lineStarts.length,
+    lineCount: view.model.lineCount,
     metrics: view.metrics,
   }
 }
@@ -2470,7 +2607,7 @@ function scanVisualColumns(
 // Only document text contributes to the horizontal extent; injected rows are measured for real
 // once they mount.
 function estimatedDisplayRowColumns(view: VirtualizedTextViewInternal, rowIndex: number): number {
-  const displayRow = view.model.rows[rowIndex]
+  const displayRow = view.model.projection.getRow(rowIndex)
   if (!isDocumentTextDisplayRow(displayRow)) return 0
   return visualColumnLength(displayRow, view.tabSize)
 }

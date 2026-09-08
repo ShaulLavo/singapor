@@ -5,6 +5,7 @@ import {
   type InlineReplacementRender,
   type InlineReplacement,
   type InlineRow,
+  type MaterializedInlineRow,
   type InvalidatedRange,
   inlineColumnToSourceColumn,
   sourceColumnToInlineColumn,
@@ -140,7 +141,8 @@ export const inlineRowForBufferRow = (
   map: InlineMap,
   bufferRow: number,
   sourceText: string,
-): InlineRow => createInlineRow(sourceText, inlineReplacementsForBufferRow(map, bufferRow))
+): MaterializedInlineRow =>
+  createInlineRow(sourceText, inlineReplacementsForBufferRow(map, bufferRow))
 
 export const bufferPointToInlinePoint = (
   row: InlineRow,

@@ -1,6 +1,6 @@
 # Editor backlog plan contract
 
-These plans are proposals commissioned on 2026-09-05. They authorize planning, not implementation
+These plans began with proposals commissioned on 2026-09-05. They authorize planning, not implementation
 or publication. Platform's [cross-project roadmap](../../platform/PLAN.md) remains the execution
 scheduler. The Editor backlog index recommends an order without scheduling work.
 
@@ -8,6 +8,8 @@ scheduler. The Editor backlog index recommends an order without scheduling work.
 
 Read Editor's `AGENTS.md`, the relevant `TODO.md` section, and the actual source before writing.
 The initial inspection baseline is Editor `9abb944f3a2b8d6516953fdec75e8df5e1a94811`.
+Later plans record their actual inspected commit in a per-entry `baseline` in `backlog.json`;
+otherwise the manifest's original baseline applies. Match the plan's inspected-baseline metadata.
 Record what already exists. Treat the old wishlist's missing-feature and performance claims as
 hypotheses until checked. Label proposed types and file paths as proposed, and link existing files.
 

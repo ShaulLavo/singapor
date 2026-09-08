@@ -228,7 +228,7 @@ function createUnsplitReferenceRow(row: MountedVirtualizedTextRow): HTMLDivEleme
   reference.style.width = `${row.element.offsetWidth}px`
   reference.style.left = '0'
   reference.style.top = '-10000px'
-  reference.append(row.element.ownerDocument.createTextNode(row.text))
+  reference.append(row.element.ownerDocument.createTextNode(row.text.slice(0, row.text.length)))
   row.element.ownerDocument.body.append(reference)
   return reference
 }

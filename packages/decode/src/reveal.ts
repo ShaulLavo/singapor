@@ -6,9 +6,6 @@ import { tokenizeLengths } from './tokenize'
 
 const MIN_LINE_MS = 50
 const MAX_LINE_MS = 1600
-// Equivalent to `inset(0 100% 0 0)` but in the same calc() form as the shown
-// keyframe, so WAAPI interpolates the right inset (0px → widthpx) unambiguously.
-const CLIP_HIDDEN = 'inset(0 calc(100% - 0px) 0 0)'
 
 type ScheduleItem = {
   readonly delay: number
@@ -171,7 +168,7 @@ function appendCharRow(
   item: ScheduleItem,
 ): void {
   const easing = `steps(${Math.max(1, row.length)}, end)`
-  animations.push(animateClip(row.element, row.width, item, easing))
+  animations.push(animateClip(row.element, row.width, item, easing, row.leftSpacerWidth))
   if (!caret) return
   animations.push(animateCaretTravel(caret, row.width, item, easing))
   animations.push(animateCaretOpacity(caret, item))
@@ -186,7 +183,7 @@ function appendTokenRow(
   item: ScheduleItem,
 ): void {
   const stops = tokenStops(row)
-  animations.push(animateSteppedClip(row.element, stops, item))
+  animations.push(animateSteppedClip(row.element, stops, item, row.leftSpacerWidth))
   if (!caret) return
   animations.push(animateSteppedCaret(caret, stops, item))
   animations.push(animateCaretOpacity(caret, item))
@@ -214,9 +211,13 @@ function animateClip(
   width: number,
   item: ScheduleItem,
   easing: string,
+  left: number,
 ): Animation {
   return element.animate(
-    [{ clipPath: CLIP_HIDDEN }, { clipPath: `inset(0 calc(100% - ${width}px) 0 0)` }],
+    [
+      { clipPath: `inset(0 calc(100% - ${left}px) 0 0)` },
+      { clipPath: `inset(0 calc(100% - ${left + width}px) 0 0)` },
+    ],
     { duration: item.duration, delay: item.delay, easing, fill: 'both' },
   )
 }
@@ -228,15 +229,19 @@ function animateSteppedClip(
   element: HTMLElement,
   stops: readonly number[],
   item: ScheduleItem,
+  left: number,
 ): Animation {
   const frames = steppedFrames(stops, (width) => ({
-    clipPath: `inset(0 calc(100% - ${width}px) 0 0)`,
+    clipPath: `inset(0 calc(100% - ${left + width}px) 0 0)`,
   }))
-  return element.animate([{ clipPath: CLIP_HIDDEN, offset: 0, easing: 'step-end' }, ...frames], {
-    duration: item.duration,
-    delay: item.delay,
-    fill: 'both',
-  })
+  return element.animate(
+    [{ clipPath: `inset(0 calc(100% - ${left}px) 0 0)`, offset: 0, easing: 'step-end' }, ...frames],
+    {
+      duration: item.duration,
+      delay: item.delay,
+      fill: 'both',
+    },
+  )
 }
 
 function animateSteppedCaret(

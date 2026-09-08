@@ -28,7 +28,7 @@ import {
   type DocumentLogicalRevisionScope,
   type DocumentSyncPoint,
 } from './editChain'
-import type { LineStartsView } from '../virtualization/lineStartIndex'
+import { LineStartsView } from '../virtualization/lineStartIndex'
 import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
 import { appendTiming, nowMs } from './timing'
 import { copyTokenProjectionMetadata, projectTokensThroughEdit } from './tokenProjection'
@@ -181,6 +181,7 @@ import type { EditorDocument, EditorToken, TextEdit } from '../tokens'
 import {
   createStringTextSnapshot,
   defineLazyFullTextProperty,
+  getPieceTreeSnapshot,
   type TextSnapshot,
 } from '../documentTextSnapshot'
 import { clamp } from '../style-utils'
@@ -378,11 +379,6 @@ export class Editor {
 
   private get text(): string {
     return this.document.text
-  }
-
-  private set text(text: string) {
-    this.document.setRenderedText(text)
-    this.recordDetachedTextChange(null)
   }
 
   private get textSnapshot(): TextSnapshot {
@@ -672,9 +668,11 @@ export class Editor {
     this.renderContent(text)
   }
 
-  private renderContent(text: string): void {
-    this.text = text
-    this.view.setText(text)
+  private renderContent(text: string | TextSnapshot): void {
+    const textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
+    this.document.setRenderedTextSnapshot(textSnapshot)
+    this.recordDetachedTextChange(null)
+    this.view.setText(textSnapshot)
     this.retagDisplayProjectionSources()
     this.syncInjectedTextRows()
     this.setTokens([])
@@ -1381,7 +1379,7 @@ export class Editor {
         this.syntax.adoptPreparedReadyResults(prepared)
       })
     } else {
-      this.renderDocument({ text: attachment.fullText, tokens: [] })
+      this.renderContent(attachment.textSnapshot)
     }
     // A host handing over its own session is replacing the document just as much as opening one is.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()
@@ -1471,7 +1469,7 @@ export class Editor {
     this.adoptDocumentTabSize(attachment.fullText)
     // Asked for before the text lands, so the replacement renders the restored viewport directly.
     this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
-    this.renderDocument({ text: attachment.fullText, tokens: [] })
+    this.renderContent(attachment.textSnapshot)
     // After the text is in, so what is rebuilt here is measured against the document that arrived.
     if (replacingDocument) this.forgetOutgoingDocumentProjections()
     this.applyRangeDecorations()
@@ -1526,7 +1524,8 @@ export class Editor {
     textSnapshot: TextSnapshot,
     prepared: EditorPreparedDocumentPayload,
   ): void {
-    this.text = text
+    this.document.setRenderedTextSnapshot(textSnapshot)
+    this.recordDetachedTextChange(null)
     const tokens = this.syntax.stagePreparedReadyTokens(prepared)
     this.view.setText(text, textSnapshot, prepared.lineStarts, tokens)
     this.retagDisplayProjectionSources()
@@ -2753,7 +2752,7 @@ export class Editor {
     const lineStartsView =
       cachedView && cachedView.textVersion === this.textVersion
         ? cachedView.view
-        : this.view.getLineStartsView()
+        : new LineStartsView(textSnapshot)
     this.lineStartsViewCache = { textVersion: this.textVersion, view: lineStartsView }
     const sync = this.currentDocumentEditChain()
     return createEditorViewSnapshot(
@@ -3060,6 +3059,8 @@ export class Editor {
       this.syntax.projectCacheForChange(change)
       const renderStart = nowMs()
       measureEditorPerformance('editor.renderSessionChange', () => this.renderSessionChange(change))
+      // Rebuild suggestions against the new text before the flush synchronizes the DOM selection.
+      if (this.inputSelection.syncInlineSuggestion(change.snapshot)) this.refreshInlineMap()
       invalidateRowRectMeasurements()
       operation.record(
         appendTiming(change, 'editor.render', renderStart),
@@ -3068,11 +3069,6 @@ export class Editor {
         options,
       )
     })
-
-    // After the view has taken the change, because a map is only accepted while it describes text of
-    // the same length as the one on screen. An edit leaves a suggestion describing text that no
-    // longer exists, and the map carrying it is rebuilt rather than patched.
-    if (this.inputSelection.syncInlineSuggestion(change.snapshot)) this.refreshInlineMap()
   }
 
   private withOperation<T>(run: (operation: EditorOperation) => T): T {
@@ -3288,6 +3284,22 @@ export class Editor {
       return
     }
 
+    const renderedSnapshot = getPieceTreeSnapshot(this.textSnapshot)
+    if (renderedSnapshot === change.snapshot) return
+    const transaction = change.transaction
+    const expectedSnapshot =
+      change.kind === 'undo' ? transaction?.snapshotAfter : transaction?.snapshotBefore
+    if (renderedSnapshot && expectedSnapshot && renderedSnapshot !== expectedSnapshot) {
+      recordEditorPerformanceDiagnostic('editor.document.projectionReset', {
+        kind: change.kind,
+        renderedLength: renderedSnapshot.length,
+        expectedLength: expectedSnapshot.length,
+        targetLength: change.snapshot.length,
+      })
+      this.renderContent(change.textSnapshot)
+      return
+    }
+
     if (edit && change.edits.length === 1) {
       const previousTextSnapshot = this.textSnapshot
       const syntaxFolds = this.syntaxFoldProjection()
@@ -3322,7 +3334,7 @@ export class Editor {
 
     this.dropManualFolds()
     this.clearSyntaxFolds()
-    this.renderDocument({ text: change.textSnapshot.materializeFullText(), tokens: [] })
+    this.renderContent(change.textSnapshot)
   }
 
   /**

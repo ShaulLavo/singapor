@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import '../src/style.css'
 
 import {
@@ -12,6 +12,7 @@ import {
   offsetToX,
   xToOffset,
 } from '../src/virtualization/virtualizedTextViewGeometry'
+import { createInlineMap } from '../src/inlineMap'
 import type { VirtualizedTextViewInternal } from '../src/virtualization/virtualizedTextViewInternals'
 
 const mounted: { host: HTMLElement; view: VirtualizedTextView }[] = []
@@ -22,9 +23,80 @@ afterEach(() => {
     host.remove()
   }
   mounted.length = 0
+  vi.restoreAllMocks()
 })
 
 describe('indexed long-line geometry', () => {
+  it.each([160, 8_000])(
+    'keeps a %ipx inline widget advance after scrolling it out of the window',
+    (widgetWidth) => {
+      const source = 'a'.repeat(20_000)
+      const buffer = createEditorTextBuffer(source)
+      const view = mountView(4)
+      view.setText(buffer.getTextSnapshot())
+      view.setScrollMetrics(0, 100, 360)
+      view.setInlineMap(
+        createInlineMap(buffer.getSnapshot(), [
+          {
+            id: 'wide-widget',
+            startIndex: 10,
+            endIndex: 10,
+            insertion: true,
+            text: 'IMG',
+            render: (host) => {
+              const widget = host.ownerDocument.createElement('span')
+              widget.style.display = 'inline-block'
+              widget.style.width = `${widgetWidth}px`
+              widget.style.height = '16px'
+              host.append(widget)
+            },
+          },
+        ]),
+      )
+      const widget = view
+        .getState()
+        .mountedRows[0]!.element.querySelector<HTMLElement>('[data-editor-inline-widget]')!
+      const width = widget.getBoundingClientRect().width
+      expect(width).toBe(widgetWidth)
+      const { characterWidth } = view.getState().metrics
+      const target = 5_000
+      view.setScrollMetrics(0, 100, 360, (target - 8) * characterWidth + width)
+      const row = view.getState().mountedRows[0]!
+      const caret = view.createRange(target, target)!
+      const x = caret.getBoundingClientRect().left - row.element.getBoundingClientRect().left
+      expect(x).toBeCloseTo(target * characterWidth + width, 0)
+      const internal = Reflect.get(view, 'view') as VirtualizedTextViewInternal
+      expect(offsetToX(internal, row, target)).toBeCloseTo(x, 0)
+      expect(xToOffset(internal, row, x)).toBe(target)
+    },
+  )
+
+  it('materializes bounded text windows across a giant grapheme-bearing line', () => {
+    const source = 'a'.repeat(511) + '😀e\u0301' + 'a'.repeat(1_048_576)
+    const buffer = createEditorTextBuffer(source)
+    const snapshot = buffer.getTextSnapshot()
+    const reads = vi.spyOn(snapshot, 'readRange')
+    const view = mountView(4)
+    view.setText(snapshot)
+    view.setScrollMetrics(0, 100, 360)
+    const { characterWidth } = view.getState().metrics
+    for (const column of [510, 500_000, source.length - 40, 0]) {
+      view.setScrollMetrics(0, 100, 360, column * characterWidth)
+      const row = view.getState().mountedRows[0]!
+      expect(typeof row.text).toBe('object')
+      expect(row.chunks.reduce((length, chunk) => length + chunk.text.length, 0)).toBeLessThan(
+        2_048,
+      )
+      for (const chunk of row.chunks) {
+        expect(chunk.text).toBe(source.slice(chunk.localStart, chunk.localEnd))
+        expect(chunk.text).not.toMatch(/^[\udc00-\udfff]|[\ud800-\udbff]$/)
+        expect(chunk.text.charAt(0)).not.toBe('\u0301')
+      }
+    }
+    expect(reads).toHaveBeenCalled()
+    expect(reads.mock.calls.every(([start, end]) => end - start <= 4_096)).toBe(true)
+  })
+
   it('keeps scrolled caret and hit-test positions through edits, undo, and redo in two tab sizes', () => {
     const original = 'abc\t😀e\u0301xyz\t' + 'a'.repeat(1_048_576)
     const buffer = createEditorTextBuffer(original)
@@ -107,7 +179,10 @@ function checkCaret(view: VirtualizedTextView, text: string, offset: number): vo
   view.setScrollMetrics(0, 100, 360, Math.max(0, (column - 12) * characterWidth))
   view.setSelection(offset, offset)
   const row = view.getState().mountedRows[0]!
-  expect(row.text).toBe(text)
+  expect(row.text.length).toBe(text.length)
+  expect(row.text.slice(Math.max(0, offset - 8), offset + 8)).toBe(
+    text.slice(Math.max(0, offset - 8), offset + 8),
+  )
   expect(row.chunks.some((chunk) => chunk.startOffset <= offset && chunk.endOffset >= offset)).toBe(
     true,
   )

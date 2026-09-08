@@ -8,6 +8,7 @@ import type {
 import { PIECE_ORDER_STEP } from './orders'
 import { DEFAULT_PIECE_TABLE_PRIORITY_SEED } from './priority'
 import { DEFAULT_DOCUMENT_LINE_ENDING, type DocumentLineEnding } from './lineEndings'
+import { recordEditorPerformanceDiagnostic } from '../editor/performanceDiagnostics'
 
 export const BUFFER_CHUNK_SIZE = 16 * 1024
 const BUFFER_ID_PREFIX = 'buffer:'
@@ -16,6 +17,10 @@ const LINE_INDEX_MIN_CAPACITY = 64
 const CARRIAGE_RETURN = 0x0d
 const HIGH_SURROGATE_FIRST = 0xd800
 const HIGH_SURROGATE_LAST = 0xdbff
+const retainedLineIndexes = new WeakMap<
+  PieceBufferChunks,
+  Map<PieceBufferId, PieceBufferLineIndex>
+>()
 
 class PieceBufferChunkStore implements PieceBufferChunks {
   public readonly [Symbol.toStringTag] = 'PieceBufferChunkStore'
@@ -152,46 +157,51 @@ export const countLineBreaks = (text: string, start = 0, end = text.length): num
   return count
 }
 
-// Buffers are append-only: existing text never changes, the tail chunk only
-// grows. One lazily extended '\n' offset index per buffer therefore serves
-// every snapshot that references the buffer, including undo history, and
-// turns per-piece line-break scans from O(piece bytes) into O(log breaks).
-//
-// Append-only holds along one line of history, not across a branch. A buffer id
-// is a sequence number, and undo restores a snapshot that rolls the sequence
-// back, so the next edit re-mints an id a discarded branch already filled with
-// different text — while the index Map, propagated by spread, still carries the
-// dead branch's offsets under that id. So the cached entry names the string it
-// scanned and is only reused for that string or a growth of it.
+// Immutable chunk stores retain their branch's index. A grown index also
+// serves shorter ancestors; each lookup stays within that snapshot's text.
 const bufferLineIndex = (
   buffers: PieceTableBuffers,
   buffer: PieceBufferId,
   text: string,
 ): PieceBufferLineIndex => {
+  const retained = retainedLineIndexes.get(buffers.chunks)?.get(buffer)
+  if (retained) return retained
   const holder = buffers as PieceTableBuffers & {
     lineIndexes?: Map<PieceBufferId, PieceBufferLineIndex>
   }
   holder.lineIndexes ??= new Map()
 
   const cached = holder.lineIndexes.get(buffer)
-  let index = cached && describesPrefixOf(cached, text) ? cached : undefined
+  let index = cached && sharesIndexedPrefix(cached, text) ? cached : undefined
   if (!index) {
     index = { offsets: new Uint32Array(0), count: 0, scannedLength: 0, text }
     holder.lineIndexes.set(buffer, index)
   }
   if (index.scannedLength < text.length) extendBufferLineIndex(index, text)
+  retainBufferLineIndex(buffers.chunks, buffer, index)
 
   return index
 }
 
-// Offsets depend on nothing but the content they were scanned from, so an entry
-// stays valid exactly while `text` still opens with that content. The reference
-// check answers the common case without touching a character; the prefix
-// comparison only runs once per tail growth, over at most one chunk.
-const describesPrefixOf = (index: PieceBufferLineIndex, text: string): boolean =>
-  index.text === text || (text.length > index.text.length && text.startsWith(index.text))
+function retainBufferLineIndex(
+  chunks: PieceBufferChunks,
+  buffer: PieceBufferId,
+  index: PieceBufferLineIndex,
+): void {
+  let retained = retainedLineIndexes.get(chunks)
+  if (!retained) {
+    retained = new Map()
+    retainedLineIndexes.set(chunks, retained)
+  }
+  retained.set(buffer, index)
+}
+
+// Only the first lookup for a chunk version compares text; retained lookups are O(1).
+const sharesIndexedPrefix = (index: PieceBufferLineIndex, text: string): boolean =>
+  index.text === text || text.startsWith(index.text) || index.text.startsWith(text)
 
 const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void => {
+  const scannedCodeUnits = text.length - index.scannedLength
   let at = text.indexOf('\n', index.scannedLength)
   while (at !== -1) {
     pushLineBreakOffset(index, at)
@@ -200,6 +210,12 @@ const extendBufferLineIndex = (index: PieceBufferLineIndex, text: string): void 
 
   index.scannedLength = text.length
   index.text = text
+  recordEditorPerformanceDiagnostic('textSnapshot.sourceIndex', () => ({
+    source: 'piece-buffer',
+    sourceBytesRead: scannedCodeUnits * 2,
+    scannedCodeUnits,
+    retainedIndexBytes: index.offsets.byteLength,
+  }))
 }
 
 // Four bytes per offset: a 5M-line document costs 20MB of index here, and the
@@ -240,7 +256,10 @@ export const countBufferLineBreaks = (
 
   const text = getBufferText(buffers, buffer)
   const index = bufferLineIndex(buffers, buffer, text)
-  return firstLineBreakAtOrAfter(index, end) - firstLineBreakAtOrAfter(index, start)
+  return (
+    firstLineBreakAtOrAfter(index, Math.min(end, text.length)) -
+    firstLineBreakAtOrAfter(index, Math.min(start, text.length))
+  )
 }
 
 // Absolute buffer offset of the ordinal-th (1-based) '\n' at or after start.
@@ -254,8 +273,8 @@ export const findBufferLineBreakOffset = (
   const index = bufferLineIndex(buffers, buffer, text)
   const at = firstLineBreakAtOrAfter(index, start) + ordinal - 1
   if (at >= index.count) return null
-
-  return index.offsets[at]!
+  const offset = index.offsets[at]!
+  return offset < text.length ? offset : null
 }
 
 export const getBufferText = (buffers: PieceTableBuffers, buffer: PieceBufferId): string => {
@@ -386,6 +405,7 @@ export const createInitialBuffers = (
   return {
     original: originalBuffer,
     textIndexes: new Map(),
+    lineIndexes: new Map(),
     chunks,
     nextBufferSequence: 1,
     prioritySeed: options.prioritySeed ?? DEFAULT_PIECE_TABLE_PRIORITY_SEED,

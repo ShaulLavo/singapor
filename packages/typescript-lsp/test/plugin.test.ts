@@ -1,10 +1,10 @@
+import { createStringTextSnapshot } from '@singapor/core/document'
 import type { EditorCommandId } from '@singapor/core/editor'
 import type {
   DocumentSessionChange,
   DocumentSyncPoint,
   DocumentSyncSegment,
   TextEdit,
-  TextSnapshot,
 } from '@singapor/core/document'
 import type {
   EditorCommandContributionContext,
@@ -983,6 +983,7 @@ describe('createTypeScriptLspPlugin', () => {
     await flushPromises()
 
     expect(context.setSelection).toHaveBeenCalledWith(6, 11, 'typescriptLsp.goToDefinition', {
+      revealBlock: 'center',
       revealOffset: 6,
     })
   })
@@ -1328,6 +1329,7 @@ describe('createTypeScriptLspPlugin', () => {
     await flushPromises()
 
     expect(context.setSelection).toHaveBeenCalledWith(0, 5, 'typescriptLsp.goToImplementation', {
+      revealBlock: 'center',
       revealOffset: 0,
     })
   })
@@ -1380,6 +1382,7 @@ describe('createTypeScriptLspPlugin', () => {
     await flushPromises()
 
     expect(context.setSelection).toHaveBeenCalledWith(29, 34, 'typescriptLsp.goToReferences', {
+      revealBlock: 'center',
       revealOffset: 29,
     })
   })
@@ -1687,7 +1690,7 @@ function snapshotWithThrowingText(
   const snapshot = editorSnapshot({
     ...options,
     fullText: text,
-    textSnapshot: stringTextSnapshot(text),
+    textSnapshot: createStringTextSnapshot(text),
     lineStarts: lineStarts(text),
   })
   Object.defineProperty(snapshot, 'fullText', {
@@ -1698,15 +1701,6 @@ function snapshotWithThrowingText(
     },
   })
   return snapshot
-}
-
-function stringTextSnapshot(text: string): TextSnapshot {
-  return {
-    length: text.length,
-    materializeFullText: () => text,
-    readRange: (start, end) => text.slice(start, end),
-    forEachTextChunk: (visit) => visit(text, 0, text.length),
-  }
 }
 
 function lineStarts(text: string): number[] {

@@ -1,11 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import type { DisplayRow, DisplayTextRow } from '../src/displayTransforms'
-import { createStringTextSnapshot } from '../src/documentTextSnapshot'
-import {
-  FixedRowVirtualizer,
-  type FixedRowVirtualizerSnapshot,
-} from '../src/virtualization/fixedRowVirtualizer'
-import { createLineStartOffsetIndex } from '../src/virtualization/lineStartIndex'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createDocumentTextSnapshot } from '../src/documentTextSnapshot'
+import { createPieceTableSnapshot, insertIntoPieceTable } from '../src/pieceTable'
+import type { FixedRowVirtualizerSnapshot } from '../src/virtualization/fixedRowVirtualizer'
+import { VirtualizedTextView } from '../src/virtualization/virtualizedTextView'
 import {
   createRowHeightIndex,
   rowHeightIndexStart,
@@ -13,10 +10,9 @@ import {
 } from '../src/virtualization/rowHeightIndex'
 import type { VirtualizedTextViewInternal } from '../src/virtualization/virtualizedTextViewInternals'
 import {
-  applySameLineTextLayout,
+  applyTextLayoutTransition,
   bufferLineStartOffset,
   getRowHeight,
-  materializeLineStarts,
   rowForCaretPosition,
   rowForOffset,
   rowTop,
@@ -24,39 +20,25 @@ import {
   virtualRowForBufferRow,
 } from '../src/virtualization/virtualizedTextViewLayout'
 
+const views: VirtualizedTextView[] = []
+
+afterEach(() => {
+  for (const view of views) view.dispose()
+  views.length = 0
+})
+
 describe('virtualized text view layout', () => {
-  it('maps plain offsets without scanning every display row', () => {
-    const lineCount = 100_000
-    const lineStarts = Array.from({ length: lineCount }, (_value, row) => row * 2)
-    const displayRows = lineStarts.map((start, row) => textRow(row, row, start, start + 1))
-    const view = layoutView({
-      text: 'x'.repeat(lineStarts.at(-1)! + 1),
-      lineStarts,
-      displayRows,
-      foldMap: null,
-      wrapEnabled: false,
-    })
+  it('maps distant plain offsets without materializing display rows', () => {
+    const view = layoutView('x\n'.repeat(99_999) + 'x')
+    const reads = vi.spyOn(view.model.textSnapshot, 'readRange')
 
-    const lastRow = lineCount - 1
-    const offsetRow = withThrowingArrayFind(() => rowForOffset(view, lineStarts[lastRow]!))
-    const virtualRow = withThrowingArrayFind(() => virtualRowForBufferRow(view, lastRow))
-
-    expect(offsetRow).toBe(lastRow)
-    expect(virtualRow).toBe(lastRow)
+    expect(rowForOffset(view, 199_998)).toBe(99_999)
+    expect(virtualRowForBufferRow(view, 99_999)).toBe(99_999)
+    expect(reads).not.toHaveBeenCalled()
   })
 
   it('keeps wrapped row boundary offsets on the preceding segment', () => {
-    const sourceText = 'abcdefghij'
-    const view = layoutView({
-      text: sourceText,
-      lineStarts: [0],
-      displayRows: [
-        textRow(0, 0, 0, 5, 'abcde', sourceText, 0),
-        textRow(1, 0, 5, 10, 'fghij', sourceText, 1),
-      ],
-      foldMap: null,
-      wrapEnabled: true,
-    })
+    const view = layoutView('abcdefghij', 5)
 
     expect(rowForOffset(view, 5)).toBe(0)
     expect(rowForOffset(view, 6)).toBe(1)
@@ -65,13 +47,7 @@ describe('virtualized text view layout', () => {
   })
 
   it('positions fixed rows with row gaps', () => {
-    const view = layoutView({
-      text: 'a\nb\nc',
-      lineStarts: [0, 2, 4],
-      displayRows: [textRow(0, 0, 0, 1), textRow(1, 1, 2, 3), textRow(2, 2, 4, 5)],
-      foldMap: null,
-      wrapEnabled: false,
-    })
+    const view = layoutView('a\nb\nc')
     view.rowGap = 4
 
     expect(getRowHeight(view)).toBe(20)
@@ -79,93 +55,80 @@ describe('virtualized text view layout', () => {
   })
 
   it('uses measured row metrics without re-entering the virtualizer', () => {
-    const view = layoutView({
-      text: 'x',
-      lineStarts: [0],
-      displayRows: [textRow(0, 0, 0, 1)],
-      foldMap: null,
-      wrapEnabled: false,
-    })
+    const view = layoutView('x')
+    const read = vi.spyOn(view.virtualizer, 'getSnapshot')
 
     expect(getRowHeight(view)).toBe(20)
     expect(scrollableHeight(view, fixedSnapshot({ totalSize: 20, viewportHeight: 60 }))).toBe(60)
+    expect(read).not.toHaveBeenCalled()
   })
 
-  it('applies same-line layout without rewriting suffix rows', () => {
-    const lineStarts = guardedSuffixLineStarts([0, 2, 4, 6])
-    const displayRows = guardedSuffixDisplayRows([
-      textRow(0, 0, 0, 1, 'a'),
-      textRow(1, 1, 2, 3, 'b'),
-      textRow(2, 2, 4, 5, 'c'),
-      textRow(3, 3, 6, 7, 'd'),
-    ])
-    const view = layoutView({
-      text: 'a\nb\nc\nd',
-      lineStarts,
-      displayRows,
-      foldMap: null,
-      wrapEnabled: false,
-    })
+  it('updates same-line source offsets from the new immutable snapshot', () => {
+    const before = createPieceTableSnapshot('a\nb\nc\nd')
+    const view = layoutView('a\nb\nc\nd')
+    const after = createDocumentTextSnapshot(insertIntoPieceTable(before, 1, 'X'))
 
-    applySameLineTextLayout(
-      view,
-      { rowIndex: 0, localFrom: 1, deleteLength: 0, text: 'X' },
-      createStringTextSnapshot('aX\nb\nc\nd'),
-    )
+    applyTextLayoutTransition(view, [{ from: 1, to: 1, text: 'X' }], after)
 
-    expect(view.model.rows[0]).toMatchObject({ text: 'aX' })
+    expect(view.model.projection.getRow(0)).toMatchObject({ text: 'aX' })
     expect(bufferLineStartOffset(view, 1)).toBe(3)
     expect(rowForOffset(view, 3)).toBe(1)
+    expect(view.model.textSnapshot).toBe(after)
   })
 
-  it('accumulates same-line suffix shifts across later row edits', () => {
-    const view = layoutView({
-      text: 'a\nb\nc',
-      lineStarts: [0, 2, 4],
-      displayRows: [textRow(0, 0, 0, 1, 'a'), textRow(1, 1, 2, 3, 'b'), textRow(2, 2, 4, 5, 'c')],
-      foldMap: null,
-      wrapEnabled: false,
-    })
+  it('publishes the final source coordinates across consecutive edits', () => {
+    const before = createPieceTableSnapshot('a\nb\nc')
+    const middle = insertIntoPieceTable(before, 1, 'X')
+    const after = insertIntoPieceTable(middle, 4, 'Y')
+    const view = layoutView('a\nb\nc')
 
-    applySameLineTextLayout(
+    applyTextLayoutTransition(
       view,
-      { rowIndex: 0, localFrom: 1, deleteLength: 0, text: 'X' },
-      createStringTextSnapshot('aX\nb\nc'),
+      [{ from: 1, to: 1, text: 'X' }],
+      createDocumentTextSnapshot(middle),
     )
-    applySameLineTextLayout(
+    applyTextLayoutTransition(
       view,
-      { rowIndex: 1, localFrom: 1, deleteLength: 0, text: 'Y' },
-      createStringTextSnapshot('aX\nbY\nc'),
+      [{ from: 4, to: 4, text: 'Y' }],
+      createDocumentTextSnapshot(after),
     )
 
-    expect(view.model.rows[1]).toMatchObject({ text: 'bY' })
+    expect(view.model.projection.getRow(1)).toMatchObject({ text: 'bY' })
     expect(bufferLineStartOffset(view, 1)).toBe(3)
     expect(bufferLineStartOffset(view, 2)).toBe(6)
     expect(rowForOffset(view, 6)).toBe(2)
+    expect(view.displayProjectionRevision).toBe(3)
   })
 
-  it('creates and clears line-start suffix shifts lazily', () => {
-    const view = layoutView({
-      text: 'a\nb\nc',
-      lineStarts: [0, 2, 4],
-      displayRows: [textRow(0, 0, 0, 1, 'a'), textRow(1, 1, 2, 3, 'b'), textRow(2, 2, 4, 5, 'c')],
-      foldMap: null,
-      wrapEnabled: false,
-    })
+  it('adds a top newline without reading the unchanged suffix text', () => {
+    const before = createPieceTableSnapshot('x\n'.repeat(99_999) + 'x')
+    const after = createDocumentTextSnapshot(insertIntoPieceTable(before, 0, 'new\n'))
+    const view = layoutView('x\n'.repeat(99_999) + 'x')
+    const reads = vi.spyOn(after, 'readRange')
 
-    expect(view.lineStartOffsetIndex).toBeNull()
+    applyTextLayoutTransition(view, [{ from: 0, to: 0, text: 'new\n' }], after)
 
-    applySameLineTextLayout(
-      view,
-      { rowIndex: 0, localFrom: 1, deleteLength: 0, text: 'X' },
-      createStringTextSnapshot('aX\nb\nc'),
-    )
-
-    expect(view.lineStartOffsetIndex?.dirty).toBe(true)
-    expect(materializeLineStarts(view)).toEqual([0, 3, 5])
-    expect(view.lineStartOffsetIndex).toBeNull()
+    expect(view.model.lineCount).toBe(100_001)
+    expect(view.model.visibleLineCount).toBe(100_001)
+    expect(bufferLineStartOffset(view, 100_000)).toBe(200_002)
+    expect(rowForOffset(view, 200_002)).toBe(100_000)
+    expect(reads).not.toHaveBeenCalled()
   })
 })
+
+function layoutView(text: string, wrapColumn: number | null = null): VirtualizedTextViewInternal {
+  const view = new VirtualizedTextView(document.createElement('div'), {
+    rowHeight: 20,
+    textMetrics: { rowHeight: 20, characterWidth: 8 },
+  })
+  views.push(view)
+  view.setText(createDocumentTextSnapshot(createPieceTableSnapshot(text)))
+  if (wrapColumn !== null) {
+    view.setScrollMetrics(0, 0, wrapColumn * 8)
+    view.setWrapEnabled(true)
+  }
+  return view['view']
+}
 
 describe('row height index', () => {
   it('re-sums only the rows after a settled row height', () => {
@@ -237,63 +200,6 @@ describe('row height index', () => {
   })
 })
 
-describe('line start offset index', () => {
-  it('tracks suffix shifts and materializes them in row order', () => {
-    const index = createLineStartOffsetIndex(4)
-
-    index.addSuffix(1, 2)
-    index.addSuffix(3, -1)
-    index.addSuffix(1, 3)
-
-    expect(index.dirty).toBe(true)
-    expect(index.offsetAt(0)).toBe(0)
-    expect(index.offsetAt(1)).toBe(5)
-    expect(index.offsetAt(3)).toBe(4)
-    expect(index.materialize([0, 2, 4, 6])).toEqual([0, 7, 9, 10])
-  })
-})
-
-type LayoutFields = Pick<VirtualizedTextViewInternal, 'text' | 'lineStarts' | 'wrapEnabled'> & {
-  readonly displayRows: DisplayRow[]
-  readonly foldMap: VirtualizedTextViewInternal['model']['foldMap']
-}
-
-function layoutView(fields: LayoutFields): VirtualizedTextViewInternal {
-  const textSnapshot = createStringTextSnapshot(fields.text)
-  const injectedTextRows: VirtualizedTextViewInternal['model']['injectedTextRows'] = []
-  return {
-    text: fields.text,
-    lineStarts: fields.lineStarts,
-    wrapEnabled: fields.wrapEnabled,
-    model: {
-      textSnapshot,
-      textLength: fields.text.length,
-      lineCount: Math.max(1, fields.lineStarts.length),
-      visibleLineCount: Math.max(1, fields.displayRows.length),
-      foldMap: fields.foldMap,
-      wrapColumn: null,
-      injectedTextRows,
-      tabSize: 4,
-      rows: fields.displayRows,
-    },
-    scrollElement: { scrollTop: 0 } as HTMLDivElement,
-    lineStartOffsetIndex: null,
-    virtualizer: throwingVirtualizer(),
-    metrics: { rowHeight: 20, characterWidth: 8 },
-    rowGap: 0,
-  } as VirtualizedTextViewInternal
-}
-
-function throwingVirtualizer(): VirtualizedTextViewInternal['virtualizer'] {
-  // A real virtualizer with its snapshot read poisoned: these layout paths must answer from the
-  // model, never by asking the virtualizer for a snapshot.
-  return Object.assign(new FixedRowVirtualizer({ count: 0, rowHeight: 20 }), {
-    getSnapshot: (): FixedRowVirtualizerSnapshot => {
-      throw new Error('unexpected virtualizer snapshot read')
-    },
-  })
-}
-
 function fixedSnapshot(
   fields: Pick<FixedRowVirtualizerSnapshot, 'totalSize' | 'viewportHeight'>,
 ): FixedRowVirtualizerSnapshot {
@@ -314,59 +220,6 @@ function fixedSnapshot(
   }
 }
 
-function textRow(
-  index: number,
-  bufferRow: number,
-  startOffset: number,
-  endOffset: number,
-  text = 'x',
-  sourceText = text,
-  wrapSegment = 0,
-): DisplayTextRow {
-  return {
-    kind: 'text',
-    source: 'document',
-    index,
-    bufferRow,
-    startOffset,
-    endOffset,
-    text,
-    sourceText,
-    sourceStartColumn: startOffset,
-    sourceEndColumn: endOffset,
-    displayStartColumn: startOffset,
-    displayEndColumn: endOffset,
-    wrapSegment,
-  }
-}
-
-function guardedSuffixLineStarts(lineStarts: number[]): number[] {
-  for (let index = 1; index < lineStarts.length; index += 1) {
-    guardArrayIndexWrite(lineStarts, index, 'unexpected suffix line start rewrite')
-  }
-
-  return lineStarts
-}
-
-function guardedSuffixDisplayRows(rows: DisplayRow[]): DisplayRow[] {
-  for (let index = 1; index < rows.length; index += 1) {
-    guardArrayIndexRead(rows, index, 'unexpected suffix display row read')
-  }
-
-  return rows
-}
-
-function guardArrayIndexWrite<T>(items: T[], index: number, message: string): void {
-  const value = items[index]
-  Object.defineProperty(items, index, {
-    configurable: true,
-    get: () => value,
-    set: () => {
-      throw new Error(message)
-    },
-  })
-}
-
 function countArrayIndexWrites(values: readonly number[]): { count: number } {
   const counter = { count: 0 }
   const items = values as number[]
@@ -383,31 +236,4 @@ function countArrayIndexWrites(values: readonly number[]): { count: number } {
   }
 
   return counter
-}
-
-function guardArrayIndexRead<T>(items: T[], index: number, message: string): void {
-  Object.defineProperty(items, index, {
-    configurable: true,
-    get: () => {
-      throw new Error(message)
-    },
-    set: (next) => {
-      throw new Error(`${message}: ${String(next)}`)
-    },
-  })
-}
-
-function withThrowingArrayFind<T>(run: () => T): T {
-  const originalFind = Array.prototype.find
-  Array.prototype.find = throwingArrayFind as typeof Array.prototype.find
-
-  try {
-    return run()
-  } finally {
-    Array.prototype.find = originalFind
-  }
-}
-
-function throwingArrayFind(): never {
-  throw new Error('unexpected linear Array.find')
 }

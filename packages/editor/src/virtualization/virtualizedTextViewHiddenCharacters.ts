@@ -1,6 +1,6 @@
+import type { TextContent } from '../textContent'
 import { measureWhitespaceDotGlyph, type WhitespaceDotGlyph } from './browserMetrics'
 import { setStyleValue } from './virtualizedTextViewHelpers'
-import { isDocumentTextDisplayRow } from '../displayTransforms'
 import { rangeSegments, unitRectForOffset } from './virtualizedTextViewGeometry'
 import {
   normalizeSuspiciousCharactersOptions,
@@ -43,7 +43,7 @@ type NonWhitespaceBounds = {
 
 /** `start` is where the row's own text sits in `text`, and is non-zero only on a wrapped row. */
 type SuspiciousCharacterScanLine = {
-  readonly text: string
+  readonly text: TextContent
   readonly start: number
 }
 
@@ -270,7 +270,7 @@ function appendWhitespaceMarkersForChunk(
   chunk: VirtualizedTextChunk,
 ): void {
   for (let index = chunk.localStart; index < chunk.localEnd; index += 1) {
-    const char = context.row.text[index]!
+    const char = context.row.text.charAt(index)
     appendWhitespaceMarker(markers, context, char, index)
   }
 }
@@ -365,13 +365,11 @@ function suspiciousCharacterScanLine(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): SuspiciousCharacterScanLine {
-  const mapping = row.inlineMapping
-  if (mapping) return { text: mapping.line.text, start: mapping.displayStartColumn }
-
-  const displayRow = view.model.rows[row.index]
-  if (!isDocumentTextDisplayRow(displayRow)) return { text: row.text, start: 0 }
-
-  return { text: displayRow.sourceText, start: displayRow.displayStartColumn }
+  const metrics = view.model.projection.getRowMetrics(row.index)
+  return {
+    text: view.model.projection.getLineText(row.index),
+    start: metrics?.displayStartColumn ?? 0,
+  }
 }
 
 function whitespaceKind(char: string): WhitespaceKind | null {
@@ -404,16 +402,16 @@ function isBoundarySpace(context: HiddenCharacterRowContext, localIndex: number)
   // Inside the text a lone space is a word separator and marking it shreds prose; two or more in a
   // row are alignment, which is the thing worth seeing.
   const { text } = context.row
-  return text[localIndex - 1] === ' ' || text[localIndex + 1] === ' '
+  return text.charAt(localIndex - 1) === ' ' || text.charAt(localIndex + 1) === ' '
 }
 
-function nonWhitespaceBounds(text: string): NonWhitespaceBounds {
+function nonWhitespaceBounds(text: TextContent): NonWhitespaceBounds {
   let first = 0
-  while (first < text.length && whitespaceKind(text[first]!)) first += 1
+  while (first < text.length && whitespaceKind(text.charAt(first))) first += 1
   if (first === text.length) return { first: -1, last: -1 }
 
   let last = text.length - 1
-  while (last > first && whitespaceKind(text[last]!)) last -= 1
+  while (last > first && whitespaceKind(text.charAt(last))) last -= 1
 
   return { first, last }
 }
@@ -426,8 +424,8 @@ function rowContinuesBelow(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
 ): boolean {
-  const next = view.model.rows[row.index + 1]
-  return isDocumentTextDisplayRow(next) && next.bufferRow === row.bufferRow
+  const next = view.model.projection.getRowMetrics(row.index + 1)
+  return next?.source === 'document' && next.bufferRow === row.bufferRow
 }
 
 function selectionContainsOffset(selection: VirtualizedStoredSelection, offset: number): boolean {

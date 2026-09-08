@@ -1,3 +1,4 @@
+import type { TextContent } from './textContent'
 import { nextGraphemeBoundary, previousGraphemeBoundary } from './graphemes'
 
 export type TextOffsetRange = {
@@ -29,11 +30,11 @@ export function wordSeparatorsForLanguage(languageId: string | null | undefined)
   return WORD_SEPARATORS_BY_LANGUAGE[languageId] ?? DEFAULT_WORD_SEPARATORS
 }
 
-export function clampTextOffset(text: string, offset: number): number {
+export function clampTextOffset(text: TextContent, offset: number): number {
   return Math.min(Math.max(0, offset), text.length)
 }
 
-export function clampTextOffsetRange(text: string, range: TextOffsetRange): TextOffsetRange {
+export function clampTextOffsetRange(text: TextContent, range: TextOffsetRange): TextOffsetRange {
   return {
     start: clampTextOffset(text, range.start),
     end: clampTextOffset(text, range.end),
@@ -45,7 +46,7 @@ export function compareTextOffsetRanges(left: TextOffsetRange, right: TextOffset
 }
 
 export function normalizeTextOffsetRanges(
-  text: string,
+  text: TextContent,
   ranges: readonly TextOffsetRange[],
 ): readonly TextOffsetRange[] {
   return ranges
@@ -64,38 +65,38 @@ export function lineRangeAtOffset(text: string, rawOffset: number): TextOffsetRa
   return { start: lineStart, end: lineEnd }
 }
 
-export function previousCodePointOffset(text: string, offset: number): number {
+export function previousCodePointOffset(text: TextContent, offset: number): number {
   return previousGraphemeBoundary(text, clampTextOffset(text, offset))
 }
 
-export function previousCodePointStart(text: string, offset: number): number | null {
+export function previousCodePointStart(text: TextContent, offset: number): number | null {
   if (offset <= 0) return null
   return previousCodePointOffset(text, offset)
 }
 
-export function nextCodePointOffset(text: string, offset: number): number {
+export function nextCodePointOffset(text: TextContent, offset: number): number {
   return nextGraphemeBoundary(text, clampTextOffset(text, offset))
 }
 
-export function codePointSizeAt(text: string, offset: number): number {
+export function codePointSizeAt(text: TextContent, offset: number): number {
   const codePoint = text.codePointAt(offset)
   if (codePoint === undefined) return 0
   return codePoint > 0xffff ? 2 : 1
 }
 
-export function isWordCodePointAt(text: string, offset: number): boolean {
+export function isWordCodePointAt(text: TextContent, offset: number): boolean {
   const codePoint = text.codePointAt(offset)
   if (codePoint === undefined) return false
   return WORD_PATTERN.test(String.fromCodePoint(codePoint))
 }
 
-export function isWordCodePointBefore(text: string, offset: number): boolean {
+export function isWordCodePointBefore(text: TextContent, offset: number): boolean {
   const previous = previousCodePointStart(text, offset)
   return previous !== null && isWordCodePointAt(text, previous)
 }
 
 export function characterClassAt(
-  text: string,
+  text: TextContent,
   offset: number,
   separators: string = DEFAULT_WORD_SEPARATORS,
 ): TextCharacterClass {
@@ -109,7 +110,7 @@ export function characterClassAt(
   return 'word'
 }
 
-export function previousWordOffset(text: string, offset: number, separators?: string): number {
+export function previousWordOffset(text: TextContent, offset: number, separators?: string): number {
   const cursor = skipBackward(text, clampTextOffset(text, offset), 'space', separators)
   const runClass = runClassAt(text, previousCodePointOffset(text, cursor), separators)
   if (runClass === null) return cursor
@@ -117,7 +118,7 @@ export function previousWordOffset(text: string, offset: number, separators?: st
   return skipBackward(text, cursor, runClass, separators)
 }
 
-export function nextWordOffset(text: string, offset: number, separators?: string): number {
+export function nextWordOffset(text: TextContent, offset: number, separators?: string): number {
   const cursor = skipForward(text, clampTextOffset(text, offset), 'space', separators)
   const runClass = runClassAt(text, cursor, separators)
   if (runClass === null) return cursor
@@ -126,7 +127,11 @@ export function nextWordOffset(text: string, offset: number, separators?: string
 }
 
 /** Where the previous word ends, leaving the whitespace in front of it for the caret to sit on. */
-export function previousWordEndOffset(text: string, offset: number, separators?: string): number {
+export function previousWordEndOffset(
+  text: TextContent,
+  offset: number,
+  separators?: string,
+): number {
   const cursor = clampTextOffset(text, offset)
   const beforeSpace = skipBackward(text, cursor, 'space', separators)
   if (beforeSpace !== cursor) return beforeSpace
@@ -138,7 +143,11 @@ export function previousWordEndOffset(text: string, offset: number, separators?:
 }
 
 /** Where the next word begins, once the caret's run and the whitespace after it are skipped. */
-export function nextWordStartOffset(text: string, offset: number, separators?: string): number {
+export function nextWordStartOffset(
+  text: TextContent,
+  offset: number,
+  separators?: string,
+): number {
   const cursor = clampTextOffset(text, offset)
   const runClass = runClassAt(text, cursor, separators)
   if (runClass === null) return cursor
@@ -146,7 +155,7 @@ export function nextWordStartOffset(text: string, offset: number, separators?: s
   return skipForward(text, skipForward(text, cursor, runClass, separators), 'space', separators)
 }
 
-export function wordRangeAtOffset(text: string, rawOffset: number): TextOffsetRange {
+export function wordRangeAtOffset(text: TextContent, rawOffset: number): TextOffsetRange {
   const offset = clampTextOffset(text, rawOffset)
   const probeOffset = wordProbeOffset(text, offset)
   if (probeOffset === null) return { start: offset, end: offset }
@@ -167,7 +176,7 @@ export function wordRangeAtOffset(text: string, rawOffset: number): TextOffsetRa
   return { start, end }
 }
 
-export function isWholeWordRange(text: string, range: TextOffsetRange): boolean {
+export function isWholeWordRange(text: TextContent, range: TextOffsetRange): boolean {
   const clamped = clampTextOffsetRange(text, range)
   if (clamped.start > clamped.end) return false
 
@@ -183,13 +192,17 @@ export function isWholeWordRange(text: string, range: TextOffsetRange): boolean 
  * Motion that runs past a line break puts the caret on a line the reader was not looking at, and
  * because no scan is ever asked for a run of newlines, refusing the class here is the whole guard.
  */
-function runClassAt(text: string, offset: number, separators?: string): TextCharacterClass | null {
+function runClassAt(
+  text: TextContent,
+  offset: number,
+  separators?: string,
+): TextCharacterClass | null {
   const characterClass = characterClassAt(text, offset, separators)
   return characterClass === 'newline' ? null : characterClass
 }
 
 function skipBackward(
-  text: string,
+  text: TextContent,
   offset: number,
   targetClass: TextCharacterClass,
   separators?: string,
@@ -206,7 +219,7 @@ function skipBackward(
 }
 
 function skipForward(
-  text: string,
+  text: TextContent,
   offset: number,
   targetClass: TextCharacterClass,
   separators?: string,
@@ -221,7 +234,7 @@ function skipForward(
   return cursor
 }
 
-function wordProbeOffset(text: string, offset: number): number | null {
+function wordProbeOffset(text: TextContent, offset: number): number | null {
   if (offset < text.length && isWordCodePointAt(text, offset)) return offset
 
   const previous = previousCodePointStart(text, offset)
@@ -230,14 +243,14 @@ function wordProbeOffset(text: string, offset: number): number | null {
   return null
 }
 
-function leftIsWordBoundary(text: string, start: number, length: number): boolean {
+function leftIsWordBoundary(text: TextContent, start: number, length: number): boolean {
   if (start === 0) return true
   if (!isWordCodePointBefore(text, start)) return true
   if (length === 0) return false
   return !isWordCodePointAt(text, start)
 }
 
-function rightIsWordBoundary(text: string, range: TextOffsetRange, length: number): boolean {
+function rightIsWordBoundary(text: TextContent, range: TextOffsetRange, length: number): boolean {
   if (range.end === text.length) return true
   if (!isWordCodePointAt(text, range.end)) return true
   if (length === 0) return false

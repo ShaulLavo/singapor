@@ -8,6 +8,9 @@ import type {
 } from '@singapor/core/extensions'
 import { createDecodePlugin, type DecodePluginOptions } from '../src/index'
 import { tokenizeLengths } from '../src/tokenize'
+import { collectRevealRows } from '../src/rows'
+import { RangeText } from '../../editor/dist/textContent'
+import { measureString } from '../../editor/dist/textMeasurements'
 
 const SAMPLE = 'function f() {\n  if (x) {\n    y()\n  }\n}\n'
 const TEST_DOCUMENT_SYNC_SEGMENT = Object.freeze(
@@ -292,6 +295,46 @@ describe('createDecodePlugin diffusion', () => {
   })
 })
 
+it('animates only mounted long-line text at its horizontal position', () => {
+  const context = viewContext()
+  const readRange = vi.fn(() => '')
+  const base = snapshot().visibleRows[0]!
+  const chunk = {
+    sourceStartOffset: 1000,
+    sourceEndOffset: 1064,
+    rowLocalStart: 1000,
+    rowLocalEnd: 1064,
+    text: new RangeText(64, readRange, measureString('x'.repeat(64))),
+    mountedPaint: { kind: 'replayable', parts: [{ kind: 'text', text: 'x'.repeat(64) }] },
+  } as const
+  const current = snapshot({
+    visibleRows: [
+      {
+        ...base,
+        text: new RangeText(1_000_000, readRange, measureString('x'.repeat(1_000_000))),
+        leftSpacerWidth: 8000,
+        chunks: [chunk],
+      },
+    ],
+  })
+  const element = document.createElement('div')
+  element.className = 'editor-virtualized-row'
+  element.dataset.editorVirtualRow = String(base.index)
+  element.textContent = chunk.mountedPaint.parts[0].text
+  context.scrollElement.appendChild(element)
+
+  const rows = collectRevealRows(context, current, 20)
+
+  expect(rows).toHaveLength(1)
+  expect(rows[0]).toMatchObject({
+    text: 'x'.repeat(64),
+    startOffset: 1000,
+    length: 64,
+    leftSpacerWidth: 8000,
+  })
+  expect(readRange).not.toHaveBeenCalled()
+})
+
 function mount(options: DecodePluginOptions = {}): {
   context: EditorViewContributionContext
   contribution: EditorViewContribution
@@ -312,7 +355,8 @@ function populateRows(scroll: HTMLElement, snap: EditorViewSnapshot): void {
     const element = document.createElement('div')
     element.className = 'editor-virtualized-row'
     element.dataset.editorVirtualRow = String(row.index)
-    element.textContent = row.text
+    element.textContent =
+      typeof row.text === 'string' ? row.text : row.text.slice(0, row.text.length)
     scroll.appendChild(element)
   }
 }

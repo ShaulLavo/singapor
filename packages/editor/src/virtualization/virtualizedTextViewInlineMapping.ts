@@ -1,3 +1,4 @@
+import type { TextContent } from '../textContent'
 import {
   type DisplayRow,
   type InlineRow,
@@ -23,7 +24,7 @@ export type RowInlineMapping = {
 
 export type InlineMappedRow = {
   readonly startOffset: number
-  readonly text: string
+  readonly text: TextContent
   readonly inlineMapping?: RowInlineMapping | null
 }
 

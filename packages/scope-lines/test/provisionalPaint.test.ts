@@ -1,0 +1,120 @@
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { Editor } from '@singapor/core/editor'
+import { VirtualizedTextView } from '@singapor/core/internal'
+import type { EditorHighlightResult, EditorPlugin } from '@singapor/core/extensions'
+import { createScopeLinesPlugin } from '../src/index'
+import scopeLinesStyles from '../src/style.css?raw'
+
+const editors: Editor[] = []
+const elements: HTMLElement[] = []
+
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(120)
+  const style = document.createElement('style')
+  style.textContent =
+    scopeLinesStyles + '.editor-scope-line { width: 1px; background-color: rgb(20, 30, 40); }'
+  document.head.append(style)
+  elements.push(style)
+})
+
+afterEach(() => {
+  for (const editor of editors.splice(0)) editor.dispose()
+  for (const element of elements.splice(0)) element.remove()
+  vi.restoreAllMocks()
+})
+
+test('native capture retains committed guide paint and replaces it synchronously with real guides', async () => {
+  const source = 'function start() {\n  const one = 1\n  const two = 2\n}\n'
+  const original = mount([createScopeLinesPlugin()])
+  original.editor.openDocument({ text: source, documentId: 'file-a', languageId: 'typescript' })
+  await expect
+    .poll(() => original.host.querySelectorAll('.editor-scope-line').length)
+    .toBeGreaterThan(0)
+  const capture = original.editor.captureSnapshot()
+  expect(capture).not.toBeNull()
+  if (!capture) return
+
+  let resolve: (result: EditorHighlightResult) => void = () => undefined
+  const pending = new Promise<EditorHighlightResult>((complete) => {
+    resolve = complete
+  })
+  const highlighter: EditorPlugin = {
+    activate: (context) =>
+      context.registerHighlighter({
+        createSession: () => ({ refresh: () => pending, applyChange: () => pending, dispose() {} }),
+      }),
+  }
+  const restored = mount([createScopeLinesPlugin(), highlighter], capture.paint)
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+  expect(restored.host.querySelectorAll('[data-editor-saved-paint-layer]').length).toBeGreaterThan(
+    0,
+  )
+  expect(restored.host.querySelectorAll('.editor-scope-line')).toHaveLength(0)
+  restored.editor.openDocument({ text: source, documentId: 'file-a', languageId: 'typescript' })
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+  resolve({ tokens: [] })
+  await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
+  expect(restored.host.querySelectorAll('[data-editor-saved-paint-layer]')).toHaveLength(0)
+  expect(restored.host.querySelectorAll('.editor-scope-line').length).toBeGreaterThan(0)
+  expect(restored.editor.captureSnapshot()).not.toBeNull()
+})
+
+test('late admission hides already mounted guides until authoritative takeover', async () => {
+  const source = 'function start() {\n  const one = 1\n  const two = 2\n}\n'
+  const original = mount([createScopeLinesPlugin()])
+  original.editor.openDocument({ text: source, documentId: 'file-a', languageId: 'typescript' })
+  await expect
+    .poll(() => original.host.querySelectorAll('.editor-scope-line').length)
+    .toBeGreaterThan(0)
+  const capture = original.editor.captureSnapshot()
+  expect(capture).not.toBeNull()
+  if (!capture) return
+
+  let resolve: (result: EditorHighlightResult) => void = () => undefined
+  const pending = new Promise<EditorHighlightResult>((complete) => {
+    resolve = complete
+  })
+  const highlighter: EditorPlugin = {
+    activate: (context) =>
+      context.registerHighlighter({
+        createSession: () => ({ refresh: () => pending, applyChange: () => pending, dispose() {} }),
+      }),
+  }
+  const restored = mount([createScopeLinesPlugin(), highlighter])
+  restored.editor.openDocument({ text: source, documentId: 'file-a', languageId: 'typescript' })
+  await expect
+    .poll(() => restored.host.querySelectorAll('.editor-scope-line').length)
+    .toBeGreaterThan(0)
+  const root = restored.host.querySelector<HTMLElement>('.editor-scope-lines')!
+  expect(getComputedStyle(root).visibility).not.toBe('hidden')
+  restored.editor.setSnapshot(capture.paint, 'file-a')
+  expect(restored.editor.getPresentationState()).toBe('provisional')
+  expect(getComputedStyle(root).visibility).toBe('hidden')
+  expect(restored.host.querySelectorAll('[data-editor-saved-paint-layer]').length).toBeGreaterThan(
+    0,
+  )
+
+  resolve({ tokens: [] })
+  await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
+  expect(getComputedStyle(root).visibility).not.toBe('hidden')
+  expect(restored.host.querySelectorAll('[data-editor-saved-paint-layer]')).toHaveLength(0)
+  expect(root.childElementCount).toBeGreaterThan(0)
+})
+
+function mount(plugins: readonly EditorPlugin[], snapshot: string | null = null) {
+  const host = document.createElement('div')
+  document.body.append(host)
+  elements.push(host)
+  const editor = new Editor(host, {
+    lineHeight: 20,
+    tabSize: 2,
+    plugins,
+    documentKey: 'file-a',
+    snapshot,
+  })
+  editors.push(editor)
+  const view: unknown = Reflect.get(editor, 'view')
+  if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 120, 600)
+  return { editor, host }
+}

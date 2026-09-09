@@ -1567,6 +1567,7 @@ function viewContributionContext(
   return {
     container: element,
     scrollElement: element,
+    contentElement: element,
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: () => snapshot,

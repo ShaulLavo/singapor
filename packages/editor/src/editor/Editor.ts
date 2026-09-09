@@ -1,3 +1,4 @@
+import { decodePaintSnapshot, encodePaintSnapshot } from './paintSnapshot'
 import { detectPlatform } from '@tanstack/hotkeys'
 import {
   documentSessionChangeTextSnapshot,
@@ -375,6 +376,14 @@ export class Editor {
     readonly entry: CursorHistoryEntry
   } | null = null
   private restoringCursorHistory = false
+  private snapshotAppearanceObserver: MutationObserver | null = null
+  private snapshotDocumentKey: string | null = null
+  private lastSnapshot: string | null = null
+  private snapshotGeneration: number | null = null
+  private snapshotSettled = false
+  private pendingDocumentScroll: EditorScrollPosition | null = null
+  private preparingDocument = false
+  private committingPresentation = false
   private disposed = false
 
   private get text(): string {
@@ -503,7 +512,18 @@ export class Editor {
       needsSyntaxCaptures: () => this.inlineReplacementProviders().length > 0,
       notifyChange: (change) => this.notifyChange(change),
       notifyViewUpdate: () => this.notifyViewContributions('tokens', null),
-      onInitialPaint: (event) => this.options.onInitialPaint?.(event),
+      onInitialPaint: (event) => {
+        if (event.phase === 'highlight-settled') {
+          this.snapshotSettled = true
+          this.lastSnapshot = null
+        }
+        const name =
+          event.phase === 'text'
+            ? 'editor.authoritative_text_paint'
+            : 'editor.authoritative_highlight_paint'
+        this.recordPresentation(name)
+        this.options.onInitialPaint?.(event)
+      },
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
     })
@@ -605,6 +625,7 @@ export class Editor {
       this.createInitialViewContributions(this.pluginHost.getViewContributionProviders()),
       () => this.createViewSnapshot(),
       (_contribution, phase, error) => this.logContributionFailure('view', phase, error),
+      () => !this.view.isProvisional,
     )
     this.pluginHost.setEvents({
       onPluginInstalled: (name, durationMs) =>
@@ -655,12 +676,255 @@ export class Editor {
       onInlineReplacementProvidersChanged: () => this.handleInlineReplacementProvidersChanged(),
     })
     this.inputSelection.install()
+    this.setSnapshot(options.snapshot ?? null, options.documentKey ?? null)
     this.initializeDefaultText()
     this.setRangeDecorations(options.rangeDecorations ?? [])
     const mountDurationMs = nowMs() - mountStart
     recordEditorMountTiming(mountDurationMs)
     this.logInitialPlugins()
     this.recordEditorMounted(mountDurationMs)
+  }
+
+  getPresentationState(): 'provisional' | 'live' | 'empty' {
+    if (this.view.isProvisional) return 'provisional'
+    return this.session ? 'live' : 'empty'
+  }
+
+  setSnapshot(snapshot: string | null, documentKey: string | null): void {
+    if (this.disposed) return
+    const changedTarget = documentKey !== this.snapshotDocumentKey
+    if (changedTarget) {
+      this.withdrawSnapshot()
+      this.snapshotDocumentKey = documentKey
+      this.snapshotSettled = false
+      this.lastSnapshot = null
+    }
+    if (snapshot === this.lastSnapshot) return
+    if (snapshot === null) {
+      this.lastSnapshot = null
+      this.withdrawSnapshot()
+      return
+    }
+    if (this.snapshotSettled || (this.session && this.syntax.renderDataReady)) {
+      this.recordSnapshotAdmission('generation-live')
+      return
+    }
+    this.lastSnapshot = snapshot
+    const paint = decodePaintSnapshot(snapshot)
+    if (!paint) {
+      this.recordSnapshotAdmission('invalid-paint')
+      return
+    }
+    this.view.measureSnapshotViewport()
+    const appearance = this.paintAppearance()
+    if (paint.appearance !== appearance) {
+      this.recordSnapshotAdmission('appearance', { savedAppearance: paint.appearance, appearance })
+      return
+    }
+    const state = this.view.getState()
+    if (
+      Math.abs(paint.viewportWidth - state.viewportWidth) > 1 ||
+      Math.abs(paint.viewportHeight - state.viewportHeight) > 1
+    ) {
+      this.recordSnapshotAdmission('viewport', {
+        savedWidth: paint.viewportWidth,
+        savedHeight: paint.viewportHeight,
+        width: state.viewportWidth,
+        height: state.viewportHeight,
+      })
+      return
+    }
+    this.snapshotGeneration = this.session ? this.documentVersion : null
+    if (!this.view.restorePaint(paint)) {
+      this.recordSnapshotAdmission('gutter-paint')
+      return
+    }
+    this.syncViewEditability()
+    this.options.onPresentationChange?.('provisional')
+    this.observeSnapshotAppearance()
+    this.recordSnapshotAdmission('admitted')
+    this.recordPresentation('editor.cached_visible_paint')
+  }
+
+  captureSnapshot() {
+    if (this.disposed || !this.session || this.view.isProvisional || this.preparingDocument)
+      return null
+    if (!this.syntax.renderDataReady) return null
+    const appearance = this.paintAppearance()
+    if (appearance === null) return null
+    const snapshot = this.viewContributions.captureSnapshot().toVisibleSnapshot()
+    if (!snapshot || snapshot.viewport.clientWidth <= 0 || snapshot.viewport.clientHeight <= 0)
+      return null
+    if (snapshot.documentId !== this.documentId || snapshot.textVersion !== this.textVersion)
+      return null
+    const gutters = this.view.captureGutterPaint()
+    if (!gutters) return null
+    const paint = encodePaintSnapshot(snapshot.toJSON(), appearance, gutters)
+    if (!paint) return null
+    const buffer = editorBufferSession(this.session)?.buffer ?? null
+    return {
+      paint,
+      documentKey: this.snapshotDocumentKey,
+      documentId: this.documentId,
+      textVersion: this.textVersion,
+      buffer,
+      bufferRevision: buffer?.getRevision() ?? null,
+    }
+  }
+
+  private paintAppearance(): string | null {
+    const window = this.el.ownerDocument.defaultView
+    if (!window) return null
+    const fonts = this.el.ownerDocument.fonts
+    if (fonts && fonts.status !== 'loaded') return null
+    const style = window.getComputedStyle(this.el)
+    const state = this.view.getState()
+    const layers = this.viewContributions.paintConfiguration()
+    if (layers === null) return null
+    return JSON.stringify({
+      font: [
+        style.fontFamily,
+        style.fontSize,
+        style.fontWeight,
+        style.fontStyle,
+        style.letterSpacing,
+        style.fontFeatureSettings,
+        style.fontVariationSettings,
+        style.lineHeight,
+        style.zoom,
+        style.color,
+        style.backgroundColor,
+      ],
+      devicePixelRatio: window.devicePixelRatio,
+      theme: this.resolvedTheme(),
+      metrics: state.metrics,
+      wrap: state.wrapActive,
+      tabSize: state.tabSize,
+      native: this.view.paintConfiguration(),
+      gutters: this.composedGutterContributions().map((contribution) => [
+        contribution.id,
+        contribution.snapshotRenderer?.key,
+      ]),
+      layers,
+    })
+  }
+
+  private withdrawSnapshot(): void {
+    this.disconnectSnapshotAppearanceObserver()
+    this.lastSnapshot = null
+    this.snapshotGeneration = null
+    this.pendingDocumentScroll = null
+    if (!this.view.isProvisional) return
+    this.snapshotSettled = true
+    this.view.commitProvisionalPaint()
+    this.syncViewEditability()
+    if (this.session) this.viewContributions.notify('document', null)
+    if (this.session) this.syntax.notifyBaseTextPainted()
+    this.options.onPresentationChange?.(this.getPresentationState())
+  }
+
+  private commitSnapshotIfReady(): boolean {
+    if (!this.view.isProvisional || this.preparingDocument || this.committingPresentation)
+      return false
+    if (this.snapshotGeneration !== this.documentVersion || !this.session) return false
+    if (!this.syntax.renderDataReady) return false
+    this.committingPresentation = true
+    const saved = this.view.savedPaint
+    const pendingReveal = this.view.hasPendingReveal
+    try {
+      this.flushFallbackFoldProjection()
+      this.disconnectSnapshotAppearanceObserver()
+      this.view.commitProvisionalPaint()
+      if (this.pendingDocumentScroll && !pendingReveal)
+        this.applyScrollPosition(this.pendingDocumentScroll)
+      this.pendingDocumentScroll = null
+      this.inputSelection.syncDomSelection()
+      this.viewContributions.notify('document', null)
+      this.viewContributions.finishRestoration()
+      this.snapshotGeneration = null
+      this.lastSnapshot = null
+      this.snapshotSettled = true
+      this.syncViewEditability()
+      this.syntax.notifyBaseTextPainted()
+      this.options.onPresentationChange?.('live')
+      return true
+    } catch (error) {
+      this.snapshotGeneration = null
+      this.snapshotSettled = true
+      if (saved && this.view.restorePaint(saved)) this.observeSnapshotAppearance()
+      this.syncViewEditability()
+      this.el.dataset.editorPresentationError = 'authoritative-commit'
+      this.log({
+        action: 'editor.presentation.commit_failed',
+        level: 'error',
+        error: {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        },
+      })
+      return false
+    } finally {
+      this.committingPresentation = false
+    }
+  }
+
+  private observeSnapshotAppearance(): void {
+    this.disconnectSnapshotAppearanceObserver()
+    const Observer = this.el.ownerDocument.defaultView?.MutationObserver
+    if (!Observer) return
+    const observer = new Observer(() => {
+      if (this.invalidateIncompatibleSnapshot()) this.remeasureTextMetrics()
+    })
+    for (let element: HTMLElement | null = this.el; element; element = element.parentElement) {
+      observer.observe(element, { attributes: true, attributeFilter: ['class', 'style'] })
+    }
+    this.snapshotAppearanceObserver = observer
+  }
+
+  private disconnectSnapshotAppearanceObserver(): void {
+    this.snapshotAppearanceObserver?.disconnect()
+    this.snapshotAppearanceObserver = null
+  }
+
+  private invalidateIncompatibleSnapshot(): boolean {
+    const paint = this.view.savedPaint
+    if (!paint || this.preparingDocument || this.committingPresentation) return false
+    const state = this.view.getState()
+    const matches =
+      Math.abs(state.viewportWidth - paint.viewportWidth) <= 1 &&
+      Math.abs(state.viewportHeight - paint.viewportHeight) <= 1 &&
+      this.paintAppearance() === paint.appearance
+    if (matches) return false
+    this.withdrawSnapshot()
+    return true
+  }
+
+  private recordSnapshotAdmission(
+    reason: string,
+    fields: Readonly<Record<string, unknown>> = {},
+  ): void {
+    const detail = {
+      reason,
+      documentKey: this.snapshotDocumentKey,
+      documentId: this.documentId,
+      generation: this.documentVersion,
+      hasSession: this.session !== null,
+      ...fields,
+    }
+    this.log({ action: 'editor.snapshot.admission', level: 'debug', snapshot: detail })
+    recordEditorPerformanceDiagnostic('editor.snapshot.admission', detail)
+    this.el.ownerDocument.defaultView?.performance.mark('editor.snapshot.admission', { detail })
+  }
+
+  private recordPresentation(name: string): void {
+    const detail = {
+      documentKey: this.snapshotDocumentKey,
+      documentId: this.documentId,
+      documentGeneration: this.documentVersion,
+      textVersion: this.textVersion,
+    }
+    recordEditorPerformanceDiagnostic(name, detail)
+    this.el.ownerDocument.defaultView?.performance.mark(name, { detail })
   }
 
   setContent(text: string): void {
@@ -1313,6 +1577,7 @@ export class Editor {
   }
 
   dispatchCommand(command: EditorCommandId, context: EditorCommandContext = {}): boolean {
+    if (this.view.isProvisional) return false
     const scope = beginEditorPerformanceCommand(command)
     try {
       return this.dispatchCommandInOperation(command, context)
@@ -1341,9 +1606,14 @@ export class Editor {
   }
 
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
+    this.preparingDocument = true
+    const savedScroll = this.pendingDocumentScroll ?? this.view.provisionalScrollPosition
+    if (!options.scrollPosition && savedScroll)
+      options = { ...options, scrollPosition: savedScroll }
     const replacingDocument = this.session !== null
     this.disposeBufferSubscriptions()
     const attachment = this.document.attachSession(session, options)
+    if (this.view.isProvisional) this.snapshotGeneration = attachment.documentVersion
     this.subscribeToBufferSession(session)
     const syntaxDocument = {
       documentId: attachment.internalDocumentId,
@@ -1389,7 +1659,9 @@ export class Editor {
     this.inputSelection.syncDomSelection()
     if (prepared) this.notifyViewContributions('content', null)
     this.notifyViewContributions('document', null)
-    this.syntax.notifyBaseTextPainted()
+    this.preparingDocument = false
+    if (!this.commitSnapshotIfReady() && !this.view.isProvisional)
+      this.syntax.notifyBaseTextPainted()
     this.notifyChange(null)
     this.refreshSyntax(attachment.documentVersion, null)
     this.lifecycleSummary.document.attachedCount += 1
@@ -1405,6 +1677,8 @@ export class Editor {
   }
 
   clear(): void {
+    this.withdrawSnapshot()
+    this.snapshotSettled = true
     this.detachedEditChain.rotate()
     this.disposeBufferSubscriptions()
     this.document.clear()
@@ -1422,6 +1696,8 @@ export class Editor {
     if (this.disposed) return
 
     this.disposed = true
+    this.lastSnapshot = null
+    this.disconnectSnapshotAppearanceObserver()
     this.lifecycleSummary.disposingAt = new Date().toISOString()
     this.environmentRegistrations.dispose()
     this.secondaryWork.dispose()
@@ -1452,12 +1728,17 @@ export class Editor {
     document: EditorOpenDocumentOptions,
     options: ResetOwnedDocumentOptions,
   ): number {
+    this.preparingDocument = true
+    const savedScroll = this.pendingDocumentScroll ?? this.view.provisionalScrollPosition
+    if (!options.scrollPosition && savedScroll)
+      options = { ...options, scrollPosition: savedScroll }
     // Asked before the swap, because afterwards there is a document either way. An owner that
     // registered ranges before the editor ever held one meant them for the document it was waiting
     // for, and that document is the one arriving here.
     const replacingDocument = this.session !== null
     this.disposeBufferSubscriptions()
     const attachment = this.document.resetOwnedDocument(document, options)
+    if (this.view.isProvisional) this.snapshotGeneration = attachment.documentVersion
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
       languageId: attachment.languageId,
@@ -1476,7 +1757,9 @@ export class Editor {
     this.applyDocumentScrollPosition(options.scrollPosition)
     this.inputSelection.syncDomSelection()
     this.notifyViewContributions('document', null)
-    this.syntax.notifyBaseTextPainted()
+    this.preparingDocument = false
+    if (!this.commitSnapshotIfReady() && !this.view.isProvisional)
+      this.syntax.notifyBaseTextPainted()
     return attachment.documentVersion
   }
 
@@ -1582,6 +1865,10 @@ export class Editor {
   }
 
   private applyScrollPosition(scrollPosition: EditorScrollPosition): void {
+    if (this.view.isProvisional) {
+      this.pendingDocumentScroll = scrollPosition
+      return
+    }
     const viewState = this.view.getState()
     const scrollTop = normalizeScrollOffset(
       scrollPosition.top,
@@ -2447,6 +2734,7 @@ export class Editor {
     return {
       container,
       scrollElement: this.el,
+      contentElement: this.view.contentElement,
       highlightPrefix: this.highlightPrefix,
       hasDocument: () => this.session !== null,
       getSnapshot: () => this.createViewSnapshot(),
@@ -2583,6 +2871,7 @@ export class Editor {
     return {
       container,
       scrollElement: this.el,
+      contentElement: this.view.contentElement,
       highlightPrefix: this.highlightPrefix,
       hasDocument: () => this.session !== null,
       log: (event) => this.log(event),
@@ -2607,6 +2896,7 @@ export class Editor {
   }
 
   private canEditDocument(): boolean {
+    if (this.view.isProvisional) return false
     if (!this.document.canEditDocument()) return false
     const session = editorBufferSession(this.session)
     if (!session) return true
@@ -2764,6 +3054,7 @@ export class Editor {
         textVersion: this.textVersion,
         initialHighlightStatus: this.syntax.initialHighlightStatus,
         syntaxStatus: this.syntax.status,
+        geometryCommitted: !this.view.isProvisional,
         documentSyncPoint: sync.point,
         changesSinceDocumentSyncPoint: (
           point: DocumentSyncPoint,
@@ -2828,8 +3119,12 @@ export class Editor {
     kind: EditorViewContributionUpdateKind,
     change?: DocumentSessionChange | null,
   ): void {
-    if (!this.viewContributions) return
-
+    if (!this.viewContributions || this.committingPresentation) return
+    if (this.view.isProvisional) {
+      if (this.invalidateIncompatibleSnapshot()) return
+      this.commitSnapshotIfReady()
+      return
+    }
     this.viewContributions.notify(kind, change ?? null)
   }
 
@@ -2988,6 +3283,13 @@ export class Editor {
   }
 
   private syntaxRangeAroundMountedRows(before: number, after: number): EditorSyntaxRange | null {
+    if (this.view.isProvisional) {
+      const range = this.view.preparedVisibleRange()
+      return {
+        startIndex: Math.max(0, range.startIndex - before),
+        endIndex: Math.min(this.textSnapshot.length, range.endIndex + after),
+      }
+    }
     const rows = this.view.getState().mountedRows
     const first = rows[0]
     const last = rows.at(-1)
@@ -3764,6 +4066,7 @@ export class Editor {
 
   private applyResolvedTheme(): void {
     this.view.setTheme(this.resolvedTheme())
+    if (this.viewContributions) this.invalidateIncompatibleSnapshot()
   }
 
   private resolvedTheme(): EditorTheme | null {

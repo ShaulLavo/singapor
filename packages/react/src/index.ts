@@ -2,6 +2,7 @@ import {
   createEditorOptionSync,
   EDITOR_OPTION_DESCRIPTORS,
   type EditorControlledSelection,
+  type EditorOptionDescriptor,
   type EditorOptionSync,
 } from '@singapor/core'
 import {
@@ -162,6 +163,7 @@ type ReactEditorSelectorSubscription<T> = {
 }
 
 type ReactEditorDocumentState = {
+  generation(): number
   key(): ReactEditorDocumentKey
   identityKey(): ReactEditorDocumentKey
   setKey(key: ReactEditorDocumentKey, identityKey?: ReactEditorDocumentKey): void
@@ -170,6 +172,11 @@ type ReactEditorDocumentState = {
 
 type ReactEditorDocumentKey = string | typeof NO_DOCUMENT
 
+type ReactEditorSnapshotEligibility = {
+  readonly documentKey: string | null
+  readonly snapshot: string | null
+}
+
 type ReactEditorControllerPrivate = ReactEditorController & {
   readonly [CONTROLLER_PRIVATE]: ReactEditorControllerImplementation
 }
@@ -177,6 +184,13 @@ type ReactEditorControllerPrivate = ReactEditorController & {
 const CONTROLLER_PRIVATE = Symbol('controller-private')
 const NO_DOCUMENT = Symbol('no-document')
 const EMPTY_PLUGINS: readonly EditorPlugin[] = []
+const DOCUMENT_OPTION_NAMES = new Set(['rangeDecorations', 'selection', 'scrollPosition'])
+const CONFIGURATION_OPTIONS = EDITOR_OPTION_DESCRIPTORS.filter(
+  (descriptor) => !DOCUMENT_OPTION_NAMES.has(descriptor.name),
+)
+const DOCUMENT_OPTIONS = EDITOR_OPTION_DESCRIPTORS.filter((descriptor) =>
+  DOCUMENT_OPTION_NAMES.has(descriptor.name),
+)
 const useEditorLayoutEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect
 
 const selectEditor = (snapshot: ReactEditorStoreSnapshot): Editor | null => snapshot.editor
@@ -257,6 +271,8 @@ class ReactEditorControllerImplementation implements ReactEditorController {
   private readonly optionSync: EditorOptionSync = createEditorOptionSync()
   private syncedPlugins: readonly EditorPlugin[] | null = null
   private syncedStoreSyncMode: ReactEditorStoreSyncMode | null = null
+  private syncedSnapshotEligibility: ReactEditorSnapshotEligibility | null = null
+  private requestedDocumentGeneration = 0
   private editorIncarnation = 0
   private mountedElement: HTMLElement | null = null
   private scheduledDisposeGeneration: number | null = null
@@ -316,6 +332,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
       this.documentState.clear()
       this.optionSync.reset()
       this.clearSyncedPlugins()
+      this.syncedSnapshotEligibility = null
     })
   }
 
@@ -380,11 +397,19 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     useEditorSelector(this, selectUpdateKind)
 
   public syncDocumentOption(): void {
-    syncDocument(this.getEditor(), this.options.document, this.documentState)
+    const editor = this.getEditor()
+    if (!editor) return
+
+    this.syncSnapshotEligibility(editor)
+    this.syncAuthoritativeDocument(editor)
   }
 
-  public syncControlledOptions(): void {
-    this.applyControlledOptions(this.getEditor())
+  public syncConfigurationOptions(): void {
+    this.applyControlledOptions(this.getEditor(), CONFIGURATION_OPTIONS)
+  }
+
+  public syncDocumentControls(): void {
+    this.applyControlledOptions(this.getEditor(), DOCUMENT_OPTIONS)
   }
 
   public syncPluginsOption(): void {
@@ -402,6 +427,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     change: DocumentSessionChange | null,
   ): void {
     if (!this.shouldSyncStore()) return
+    if (this.getEditor()?.getPresentationState() === 'provisional') return
 
     const patch = {
       snapshot,
@@ -429,12 +455,14 @@ class ReactEditorControllerImplementation implements ReactEditorController {
     const editorIncarnation = this.editorIncarnation
     const instance = new Editor(element, this.createConstructorOptions(editorIncarnation))
     this.markPluginsSynced(this.options)
+    this.syncedSnapshotEligibility = snapshotEligibility(this.options)
 
     this.store.update({
       editor: instance,
       state: instance.getState(),
       textSnapshot: instance.getTextSnapshot(),
     })
+    if (instance.getPresentationState() === 'provisional') this.clearPresentedSnapshot()
     this.syncMountedOptions(instance)
   }
 
@@ -444,6 +472,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
       hiddenCharacters,
       onChange: _onChange,
       onInitialPaint: _onInitialPaint,
+      onPresentationChange: _onPresentationChange,
       plugins: _plugins,
       scrollPosition: _scrollPosition,
       selection: _selection,
@@ -454,6 +483,7 @@ class ReactEditorControllerImplementation implements ReactEditorController {
 
     return {
       ...constructorOptions,
+      snapshot: snapshotEligibility(this.options).snapshot,
       hiddenCharacters,
       theme: theme ?? undefined,
       plugins: editorPluginsForOptions(this.reactSyncPlugin, this.options),
@@ -462,26 +492,75 @@ class ReactEditorControllerImplementation implements ReactEditorController {
         this.options.onChange?.(state, change)
       },
       onInitialPaint: (event) => this.forwardInitialPaint(event, editorIncarnation),
+      onPresentationChange: (state) => this.forwardPresentationChange(state, editorIncarnation),
     }
   }
 
   private forwardInitialPaint(event: EditorInitialPaintEvent, editorIncarnation: number): void {
+    const documentGeneration = this.documentState.generation()
+    const requestedDocumentKey = this.options.documentKey
     // @justification Defers delivery until the mount survives React's synchronous StrictMode
     // replay; the incarnation guard cancels disposed mounts, and no editor work is scheduled.
     queueMicrotask(() => {
       if (editorIncarnation !== this.editorIncarnation) return
+      if (documentGeneration !== this.documentState.generation()) return
+      if (requestedDocumentKey !== this.options.documentKey) return
 
       this.options.onInitialPaint?.(event)
     })
   }
 
   private syncMountedOptions(editor: Editor): void {
-    syncDocument(editor, this.options.document, this.documentState)
+    this.syncAuthoritativeDocument(editor)
     this.applyControlledOptions(editor)
   }
 
-  private applyControlledOptions(editor: Editor | null): void {
-    for (const descriptor of EDITOR_OPTION_DESCRIPTORS) {
+  private syncAuthoritativeDocument(editor: Editor): void {
+    const document = this.options.documentKey === null ? null : this.options.document
+    syncDocument(editor, document, this.documentState)
+  }
+
+  private syncSnapshotEligibility(editor: Editor): void {
+    const next = snapshotEligibility(this.options)
+    const previous = this.syncedSnapshotEligibility
+    if (previous?.documentKey === next.documentKey && previous.snapshot === next.snapshot) return
+
+    if (previous && previous.documentKey !== next.documentKey) {
+      this.requestedDocumentGeneration += 1
+      editor.clearDocument()
+      this.documentState.clear()
+    }
+
+    this.syncedSnapshotEligibility = next
+    editor.setSnapshot(next.snapshot, next.documentKey)
+  }
+
+  private forwardPresentationChange(
+    state: ReturnType<Editor['getPresentationState']>,
+    editorIncarnation: number,
+  ): void {
+    if (state === 'provisional') this.clearPresentedSnapshot()
+    const requestedDocumentKey = this.options.documentKey
+    const requestedDocumentGeneration = this.requestedDocumentGeneration
+    queueMicrotask(() => {
+      if (editorIncarnation !== this.editorIncarnation) return
+      if (requestedDocumentKey !== this.options.documentKey) return
+      if (requestedDocumentGeneration !== this.requestedDocumentGeneration) return
+      if (this.getEditor()?.getPresentationState() !== state) return
+
+      this.options.onPresentationChange?.(state)
+    })
+  }
+
+  private clearPresentedSnapshot(): void {
+    this.store.update({ snapshot: null, updateKind: null })
+  }
+
+  private applyControlledOptions(
+    editor: Editor | null,
+    descriptors: readonly EditorOptionDescriptor[] = EDITOR_OPTION_DESCRIPTORS,
+  ): void {
+    for (const descriptor of descriptors) {
       this.optionSync.apply(editor, descriptor, this.options[descriptor.name])
     }
   }
@@ -620,9 +699,21 @@ function useControlledOptionSync(
     () => controller.syncPluginsOption(),
     [controller, options.plugins, options.storeSync],
   )
-  useEditorLayoutEffect(() => controller.syncDocumentOption(), [controller, documentIdentity])
+  // Admission reads current appearance; document offsets wait until after attachment.
+  useEditorLayoutEffect(() => controller.syncConfigurationOptions())
+  useEditorLayoutEffect(
+    () => controller.syncDocumentOption(),
+    [controller, documentIdentity, options.documentKey, options.snapshot],
+  )
   // Runs on every render because the descriptors, not a dependency list, decide what moved.
-  useEditorLayoutEffect(() => controller.syncControlledOptions())
+  useEditorLayoutEffect(() => controller.syncDocumentControls())
+}
+
+function snapshotEligibility(options: ReactEditorOptions): ReactEditorSnapshotEligibility {
+  return {
+    documentKey: options.documentKey ?? null,
+    snapshot: options.documentKey === null ? null : (options.snapshot ?? null),
+  }
 }
 
 function createReactSyncPlugin(controller: ReactEditorControllerImplementation): EditorPlugin {
@@ -766,17 +857,21 @@ function createCommands(
 }
 
 function createDocumentState(): ReactEditorDocumentState {
+  let generation = 0
   let key: ReactEditorDocumentKey = NO_DOCUMENT
   let identityKey: ReactEditorDocumentKey = NO_DOCUMENT
 
   return {
+    generation: () => generation,
     key: () => key,
     identityKey: () => identityKey,
     setKey: (nextKey, nextIdentityKey = nextKey) => {
+      generation += 1
       key = nextKey
       identityKey = nextIdentityKey
     },
     clear: () => {
+      generation += 1
       key = NO_DOCUMENT
       identityKey = NO_DOCUMENT
     },

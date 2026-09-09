@@ -114,6 +114,7 @@ function createScopeLinesContribution(
 }
 
 class ScopeLinesContribution implements EditorViewContribution {
+  public readonly snapshotKey: string
   private readonly context: EditorViewContributionContext
   private readonly root: HTMLDivElement
   private readonly options: ResolvedScopeLinesOptions
@@ -126,6 +127,7 @@ class ScopeLinesContribution implements EditorViewContribution {
   public constructor(context: EditorViewContributionContext, options: ResolvedScopeLinesOptions) {
     this.context = context
     this.options = options
+    this.snapshotKey = `scope-lines:${JSON.stringify(options)}`
     this.root = createRoot(context, options)
     this.update(context.getSnapshot(), 'document')
   }
@@ -135,6 +137,7 @@ class ScopeLinesContribution implements EditorViewContribution {
     kind: EditorViewContributionUpdateKind,
     _change?: DocumentSessionChange | null,
   ): void {
+    if (snapshot.geometryCommitted === false) return
     if (kind === 'content') {
       this.scheduleContentUpdate(snapshot)
       return
@@ -178,7 +181,7 @@ class ScopeLinesContribution implements EditorViewContribution {
     const snapshot = this.pendingContentSnapshot
     this.pendingContentFrame = null
     this.pendingContentSnapshot = null
-    if (!snapshot) return
+    if (!snapshot || this.context.getSnapshot().geometryCommitted === false) return
 
     this.renderSnapshot(snapshot)
     this.context.requestViewUpdate()
@@ -280,7 +283,7 @@ function createRoot(
   root.className = 'editor-scope-lines'
   root.setAttribute('aria-hidden', 'true')
   if (options.className) root.classList.add(options.className)
-  context.scrollElement.appendChild(root)
+  context.contentElement.appendChild(root)
   return root
 }
 

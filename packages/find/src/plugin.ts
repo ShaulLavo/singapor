@@ -118,6 +118,12 @@ class EditorFindViewContribution implements EditorViewContribution {
     kind: EditorViewContributionUpdateKind,
     change?: DocumentSessionChange | null,
   ): void {
+    if (
+      kind === 'layout' ||
+      snapshot.viewport.clientWidth !== this.latestSnapshot.viewport.clientWidth
+    ) {
+      this.syncTrailingInset()
+    }
     this.latestSnapshot = snapshot
     // Scrolling is the one thing that moves rows under the marks without an edit
     // having happened yet, which is the only moment left to start following the
@@ -202,7 +208,17 @@ class EditorFindViewContribution implements EditorViewContribution {
   }
 
   private syncTrailingInset(): void {
-    this.widget?.setTrailingInset(this.context.getReservedOverlayWidth?.('right') ?? 0)
+    if (!this.widget) return
+
+    const { container, scrollElement } = this.context
+    const containerRight =
+      container.getBoundingClientRect().left + container.clientLeft + container.clientWidth
+    const viewportRight =
+      scrollElement.getBoundingClientRect().left +
+      scrollElement.clientLeft +
+      scrollElement.clientWidth
+    const reservedWidth = this.context.getReservedOverlayWidth?.('right') ?? 0
+    this.widget.setTrailingInset(reservedWidth + Math.max(0, containerRight - viewportRight))
   }
 
   private createWidgetOptions(): EditorFindWidgetOptions {

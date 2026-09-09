@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EditorViewSnapshot } from '@singapor/core/extensions'
 import { resolveMinimapOptions } from '../src/options'
+import { MinimapWorkerRenderer } from '../src/renderer'
 import { canUseMinimapWorker, MinimapWorkerClient, type MinimapHost } from '../src/workerClient'
 
 describe.skipIf(!canUseMinimapWorker())('MinimapWorkerClient', () => {
@@ -26,7 +27,85 @@ describe.skipIf(!canUseMinimapWorker())('MinimapWorkerClient', () => {
     host.root.remove()
     host.colorScope.remove()
   })
+
+  it.each([1, 1.25, 2])('paints long lines to the right edge beneath markers at DPR %s', (dpr) => {
+    const renderer = new MinimapWorkerRenderer()
+    const mainCanvas = new OffscreenCanvas(1, 1)
+    const decorationsCanvas = new OffscreenCanvas(1, 1)
+    const options = resolveMinimapOptions({ renderCharacters: false })
+    renderer.init({
+      mainCanvas,
+      decorationsCanvas,
+      options,
+      styles: {
+        background: { r: 0, g: 0, b: 0, a: 255 },
+        foreground: { r: 255, g: 255, b: 255, a: 255 },
+        foregroundOpacity: 1,
+        selection: { r: 0, g: 0, b: 255, a: 255 },
+        minimapBackground: { r: 0, g: 0, b: 0, a: 0 },
+        slider: 'transparent',
+        sliderHover: 'transparent',
+        sliderActive: 'transparent',
+        fontFamily: 'monospace',
+      },
+    })
+    const text = 'X'.repeat(options.maxColumn)
+    renderer.setDocument({
+      textLength: text.length,
+      lineStarts: [0],
+      lines: [{ text, length: text.length }],
+      tokens: [],
+      selections: [],
+      decorations: [],
+    })
+    renderer.updateLayout(
+      { rowHeight: 20, characterWidth: 8, devicePixelRatio: dpr },
+      {
+        scrollTop: 0,
+        scrollLeft: 0,
+        scrollHeight: 80,
+        scrollWidth: 2000,
+        clientHeight: 80,
+        clientWidth: 2000,
+        minimapHeight: 80,
+        reservedWidth: 0,
+        visibleStart: 0,
+        visibleEnd: 1,
+      },
+    )
+
+    try {
+      renderer.render()
+      const codeBefore = rightmostPixel(mainCanvas)
+      expect(codeBefore?.[3]).toBeGreaterThan(0)
+      expect(rightmostPixel(decorationsCanvas)?.[3]).toBe(0)
+
+      renderer.setExternalDecorations([
+        {
+          startLineNumber: 1,
+          endLineNumber: 1,
+          startColumn: 1,
+          endColumn: text.length + 1,
+          position: 'gutter',
+          color: '#ff0000',
+        },
+      ])
+      renderer.render()
+
+      expect(rightmostPixel(mainCanvas)).toEqual(codeBefore)
+      const marker = rightmostPixel(decorationsCanvas)
+      expect(marker?.[0]).toBe(255)
+      expect(marker?.[1]).toBe(0)
+      expect(marker?.[3]).toBeGreaterThan(0)
+    } finally {
+      renderer.dispose()
+    }
+  })
 })
+
+function rightmostPixel(canvas: OffscreenCanvas): Uint8ClampedArray | undefined {
+  return canvas.getContext('2d')?.getImageData(canvas.width - 1, 0, 1, 1).data
+}
 
 function createHost(): MinimapHost {
   const root = document.createElement('div')

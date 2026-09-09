@@ -1,4 +1,4 @@
-import { Editor, observeEditorMountTiming } from '@singapor/core/editor'
+import { Editor, observeEditorMountTiming, type EditorHighlightResult } from '@singapor/core/editor'
 import type { EditorInitialPaintEvent, EditorPlugin } from '@singapor/core/extensions'
 import {
   createDocumentSession,
@@ -53,6 +53,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   Reflect.deleteProperty(globalThis, 'Highlight')
   Reflect.deleteProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT')
   Reflect.deleteProperty(globalThis, '__EDITOR_PERFORMANCE_DIAGNOSTICS__')
@@ -123,6 +124,170 @@ describe('useEditor', () => {
     expect(events.map((event) => event.phase)).toEqual(['text', 'highlight-settled'])
     expect(new Set(events.map((event) => event.documentGeneration)).size).toBe(1)
 
+    mounted.dispose()
+  })
+
+  it('drops queued paint callbacks from earlier visits to the same target', async () => {
+    const events: EditorInitialPaintEvent[] = []
+    const options = {
+      documentKey: 'a.ts',
+      document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
+      onInitialPaint: (event: EditorInitialPaintEvent) => events.push(event),
+    }
+    const mounted = mountReactEditor(options)
+    const instance = mounted.controller.getEditor()
+
+    mounted.render({
+      ...options,
+      documentKey: 'b.ts',
+      document: { text: 'beta', documentId: 'b.ts', revision: 1 },
+    })
+    mounted.render(options)
+    await flushInitialPaintCallbacks()
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(events.map((event) => event.phase)).toEqual(['text', 'highlight-settled'])
+    expect(new Set(events.map((event) => event.documentGeneration)).size).toBe(1)
+    expect(mounted.controller.materializeFullText()).toBe('alpha')
+    mounted.dispose()
+  })
+
+  it('clears an outgoing target while the next document is unavailable without remounting', () => {
+    const mounted = mountReactEditor({
+      documentKey: 'a.ts',
+      document: { text: 'alpha', documentId: 'a.ts' },
+    })
+    const instance = mounted.controller.getEditor()
+
+    mounted.render({ documentKey: 'b.ts', document: null })
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(mounted.controller.materializeFullText()).toBe('')
+
+    mounted.render({
+      documentKey: 'b.ts',
+      document: { text: 'beta', documentId: 'b.ts' },
+    })
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(mounted.controller.materializeFullText()).toBe('beta')
+    expect(mounted.controller.getState()?.documentId).toBe('b.ts')
+    mounted.dispose()
+  })
+
+  it('treats an explicit missing target as a clear even if the document prop remains populated', () => {
+    const document = { text: 'alpha', documentId: 'a.ts' }
+    const mounted = mountReactEditor({ documentKey: 'a.ts', document })
+    const instance = mounted.controller.getEditor()
+
+    mounted.render({ documentKey: null, document })
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(mounted.controller.materializeFullText()).toBe('')
+    expect(mounted.controller.getState()?.documentId).toBeNull()
+
+    mounted.render({ documentKey: 'a.ts', document })
+
+    expect(mounted.controller.materializeFullText()).toBe('alpha')
+    mounted.dispose()
+  })
+
+  it('keeps saved paint for initial null and replaces it with an authoritative empty file', () => {
+    const snapshot = captureSavedPaint('saved text')
+    const options = { documentKey: 'a.ts', document: null, snapshot }
+    const mounted = mountSnapshotEditor(options)
+    const instance = mounted.controller.getEditor()
+
+    expect(instance?.getPresentationState()).toBe('provisional')
+    expect(mounted.host.textContent).toContain('saved text')
+    expect(mounted.controller.materializeFullText()).toBe('')
+    expect(instance?.captureSnapshot()).toBeNull()
+
+    mounted.render({ ...options })
+
+    expect(instance?.getPresentationState()).toBe('provisional')
+    expect(mounted.host.textContent).toContain('saved text')
+
+    mounted.render({ ...options, document: { text: '', documentId: 'a.ts' } })
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(instance?.getPresentationState()).toBe('live')
+    expect(mounted.host.textContent).not.toContain('saved text')
+    expect(mounted.controller.getState()?.documentId).toBe('a.ts')
+    mounted.dispose()
+  })
+
+  it('applies a newly available theme before admitting paint in the same render', () => {
+    const theme = { backgroundColor: '#112233', syntax: { keyword: '#445566' } }
+    const snapshot = captureSavedPaint('saved text', { theme })
+    const mounted = mountSnapshotEditor({ documentKey: 'a.ts', document: null })
+    const instance = mounted.controller.getEditor()
+
+    mounted.render({ documentKey: 'a.ts', document: null, snapshot, theme })
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(instance?.getPresentationState()).toBe('provisional')
+    expect(mounted.host.textContent).toContain('saved text')
+    expect(mounted.controller.materializeFullText()).toBe('')
+    mounted.dispose()
+  })
+
+  it('holds saved paint with the real document attached until highlighting completes', async () => {
+    const snapshot = captureSavedPaint('saved text')
+    const highlighting = delayedHighlighter()
+    const presentations: ReturnType<Editor['getPresentationState']>[] = []
+    const options = {
+      documentKey: 'a.ts',
+      document: { text: 'authoritative text', documentId: 'a.ts' },
+      snapshot,
+      plugins: [highlighting.plugin],
+      onPresentationChange: (state: ReturnType<Editor['getPresentationState']>) =>
+        presentations.push(state),
+    }
+    const mounted = mountSnapshotEditor(options)
+    const instance = mounted.controller.getEditor()
+    await flushInitialPaintCallbacks()
+
+    expect(mounted.controller.materializeFullText()).toBe('authoritative text')
+    expect(instance?.getPresentationState()).toBe('provisional')
+    expect(mounted.host.textContent).toContain('saved text')
+    expect(mounted.host.textContent).not.toContain('authoritative text')
+    expect(mounted.controller.getSnapshot()).toBeNull()
+    expect(instance?.captureSnapshot()).toBeNull()
+
+    mounted.render({ ...options })
+    await highlighting.release()
+    await vi.waitFor(() => expect(instance?.getPresentationState()).toBe('live'))
+    await flushInitialPaintCallbacks()
+
+    expect(mounted.host.textContent).toContain('authoritative text')
+    expect(mounted.host.textContent).not.toContain('saved text')
+    expect(presentations.filter((state) => state === 'live')).toHaveLength(1)
+    expect(instance?.captureSnapshot()).toMatchObject({
+      documentKey: 'a.ts',
+      documentId: 'a.ts',
+      textVersion: mounted.controller.getSnapshot()?.textVersion,
+    })
+
+    mounted.render({ ...options, snapshot: captureSavedPaint('late saved text') })
+
+    expect(instance?.getPresentationState()).toBe('live')
+    expect(mounted.host.textContent).toContain('authoritative text')
+    expect(mounted.host.textContent).not.toContain('late saved text')
+    mounted.dispose()
+  })
+
+  it('withdraws a pending snapshot when eligibility becomes null', () => {
+    const snapshot = captureSavedPaint('saved text')
+    const mounted = mountSnapshotEditor({ documentKey: 'a.ts', document: null, snapshot })
+    const instance = mounted.controller.getEditor()
+
+    expect(instance?.getPresentationState()).toBe('provisional')
+
+    mounted.render({ documentKey: 'a.ts', document: null, snapshot: null })
+
+    expect(instance?.getPresentationState()).toBe('empty')
+    expect(mounted.host.textContent).not.toContain('saved text')
     mounted.dispose()
   })
 
@@ -546,6 +711,30 @@ describe('useEditor', () => {
     mounted.dispose()
   })
 
+  it('applies selection and explicit scroll after attaching the replacement document', () => {
+    const mounted = mountReactEditor({
+      document: { text: 'a', documentId: 'a.ts' },
+      selection: { anchor: 0 },
+      scrollPosition: { top: 0, left: 0 },
+    })
+    const instance = mounted.controller.getEditor()
+
+    mounted.render({
+      document: { text: 'alpha\nbravo\ncharlie', documentId: 'b.ts' },
+      selection: { anchor: 12, head: 14, revealOffset: 14 },
+      scrollPosition: { top: 12, left: 4 },
+      theme: { backgroundColor: '#112233' },
+    })
+
+    expect(mounted.controller.getEditor()).toBe(instance)
+    expect(mounted.controller.getSnapshot()?.selections[0]).toMatchObject({
+      anchorOffset: 12,
+      headOffset: 14,
+    })
+    expect(instance?.getScrollPosition()).toEqual({ top: 12, left: 4 })
+    mounted.dispose()
+  })
+
   it('applies keymap changes without recreating the editor', () => {
     const mounted = mountReactEditor({
       document: { text: 'alpha', documentId: 'a.ts', revision: 1 },
@@ -821,6 +1010,63 @@ function mountReactEditor(options: ReactEditorOptions = {}, strict = false): Mou
 
 async function flushInitialPaintCallbacks(): Promise<void> {
   await new Promise<void>((resolve) => queueMicrotask(resolve))
+}
+
+function mountSnapshotEditor(options: ReactEditorOptions): MountedEditor {
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(320)
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(80)
+  const mounted = mountReactEditor(options)
+  const editor = mounted.controller.getEditor()
+  const view: unknown = editor && Reflect.get(editor, 'view')
+  if (
+    view &&
+    typeof view === 'object' &&
+    'setScrollMetrics' in view &&
+    typeof view.setScrollMetrics === 'function'
+  ) {
+    const measure = view.setScrollMetrics.bind(view)
+    act(() => measure(0, 80, 320))
+  }
+  return mounted
+}
+
+function captureSavedPaint(text: string, options: ReactEditorOptions = {}): string {
+  const mounted = mountSnapshotEditor({
+    ...options,
+    documentKey: 'a.ts',
+    document: { text, documentId: 'a.ts' },
+  })
+  const capture = mounted.controller.getEditor()?.captureSnapshot()
+  mounted.dispose()
+  expect(capture).not.toBeNull()
+  expect(capture?.paint).toBeTypeOf('string')
+  return capture?.paint ?? ''
+}
+
+function delayedHighlighter() {
+  let resolve!: (result: EditorHighlightResult) => void
+  const completion = new Promise<EditorHighlightResult>((complete) => {
+    resolve = complete
+  })
+  const session = {
+    refresh: () => completion,
+    applyChange: () => completion,
+    dispose: () => undefined,
+  }
+  const plugin: EditorPlugin = {
+    activate: (context) =>
+      context.registerHighlighter({
+        createSession: () => session,
+      }),
+  }
+
+  return {
+    plugin,
+    release: async () => {
+      resolve({ tokens: [] })
+      await completion
+    },
+  }
 }
 
 function editorElement(host: HTMLElement): HTMLElement | null {

@@ -193,17 +193,11 @@ class StickyScrollContribution implements EditorViewContribution {
     snapshot: EditorViewSnapshot,
     header: StickyScrollHeader,
   ): void {
-    // Re-read per pass rather than once: a reservation staked while this pass is already running is
-    // announced in a notification the host drops, so the next pass is what picks it up.
-    const leading = this.context.getReservedOverlayWidth?.('left') ?? 0
-    const trailing = this.context.getReservedOverlayWidth?.('right') ?? 0
     const key = [
       header.top,
       header.bottom,
       header.stackHeight,
-      leading,
-      trailing,
-      snapshot.contentWidth,
+      snapshot.viewport.scrollWidth,
       snapshot.viewport.clientWidth,
     ].join(':')
     this.root.hidden = false
@@ -214,10 +208,8 @@ class StickyScrollContribution implements EditorViewContribution {
     this.root.style.height = `${header.bottom - header.top}px`
     this.root.style.setProperty(
       '--editor-sticky-scroll-content-width',
-      `${snapshot.contentWidth}px`,
+      `${snapshot.viewport.scrollWidth}px`,
     )
-    this.root.style.setProperty('--editor-sticky-scroll-leading', `${leading}px`)
-    this.root.style.setProperty('--editor-sticky-scroll-trailing', `${trailing}px`)
     this.root.style.setProperty(
       '--editor-sticky-scroll-viewport-width',
       `${snapshot.viewport.clientWidth}px`,
@@ -246,7 +238,7 @@ function createRoot(context: EditorViewContributionContext): HTMLDivElement {
   root.className = 'editor-sticky-scroll'
   root.setAttribute('aria-hidden', 'true')
   root.hidden = true
-  context.scrollElement.appendChild(root)
+  context.contentElement.appendChild(root)
   return root
 }
 

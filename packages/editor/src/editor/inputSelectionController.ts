@@ -1570,11 +1570,15 @@ export class InputSelectionController {
       this.snippet.advance(change.snapshot, change.edits)
     }
 
+    const revealOptions =
+      options === undefined && change.edits.length > 0
+        ? { revealOffset: this.primarySelectionHeadOffset(change) }
+        : options
     this.options.applySessionChange(
       change,
       totalName,
       totalStart,
-      selectionRevealOptions(change, options),
+      selectionRevealOptions(change, revealOptions),
     )
   }
 

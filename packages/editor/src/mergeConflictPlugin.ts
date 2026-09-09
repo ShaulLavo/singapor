@@ -284,7 +284,7 @@ class MergeConflictActionsContribution implements EditorViewContribution {
     this.latestSnapshot = context.getSnapshot()
     this.root = document.createElement('div')
     this.root.className = 'editor-merge-conflict-actions-layer'
-    context.scrollElement.appendChild(this.root)
+    context.contentElement.appendChild(this.root)
     this.subscription = controller.subscribe(() => this.render(context.getSnapshot()))
     this.controller.activateFromSnapshot(this.latestSnapshot, 'document')
     this.render(this.latestSnapshot)

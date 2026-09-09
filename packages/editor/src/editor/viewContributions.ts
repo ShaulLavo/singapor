@@ -1,3 +1,4 @@
+import { createError } from '../logging/evlog'
 import type { DocumentSessionChange } from '../documentSession'
 import type {
   EditorViewContribution,
@@ -41,8 +42,69 @@ export class EditorViewContributionController {
     contributions: readonly EditorViewContribution[],
     private readonly createSnapshot: () => EditorViewSnapshot,
     private readonly onFailure: EditorViewContributionFailureHandler = () => undefined,
+    private readonly canPresent: () => boolean = () => true,
   ) {
     this.contributions = Array.from(contributions)
+  }
+
+  captureSnapshot(): EditorViewSnapshot {
+    if (this.currentSnapshot && this.contributions.length > 0) return this.currentSnapshot
+    const snapshot = this.createSnapshot()
+    this.currentSnapshot = snapshot
+    finalizeEditorViewSnapshotPaint(snapshot, () => this.captureVisiblePaint(snapshot))
+    return snapshot
+  }
+
+  finishRestoration(): void {
+    const snapshot = this.currentSnapshot
+    if (!snapshot) return
+    const failed = this.removeUnreadyContributions(snapshot)
+    if (!failed) return
+    this.currentSnapshot = null
+    this.notify('document')
+  }
+
+  private removeUnreadyContributions(snapshot: EditorViewSnapshot): boolean {
+    let failed = false
+    this.notifying = true
+    try {
+      for (const contribution of Array.from(this.contributions)) {
+        failed = this.rejectUnreadyContribution(contribution, snapshot) || failed
+      }
+    } finally {
+      this.notifying = false
+      this.pendingLayout = false
+    }
+    return failed
+  }
+
+  private rejectUnreadyContribution(
+    contribution: EditorViewContribution,
+    snapshot: EditorViewSnapshot,
+  ): boolean {
+    if (!contribution.captureVisiblePaint) return false
+    try {
+      if (contribution.captureVisiblePaint(snapshot).status === 'ready') return false
+      throw createError({
+        code: 'EDITOR_RESTORE_CONTRIBUTION_PENDING',
+        status: 500,
+        message: 'A snapshot contribution did not finish its authoritative paint synchronously',
+        why: 'Restoration cannot publish a frame with an unfinished required paint layer.',
+        fix: 'Finish the contribution in update, or remove snapshot support from its configuration.',
+      })
+    } catch (error) {
+      this.removeFailedContribution(contribution, 'capture-visible-paint', error)
+      return true
+    }
+  }
+
+  paintConfiguration(): string | null {
+    const ids: string[] = []
+    for (const contribution of this.contributions) {
+      if (contribution.captureVisiblePaint && !contribution.snapshotKey) return null
+      if (contribution.snapshotKey) ids.push(contribution.snapshotKey)
+    }
+    return JSON.stringify(ids.sort())
   }
 
   add(contribution: EditorViewContribution): void {
@@ -76,7 +138,7 @@ export class EditorViewContributionController {
     kind: EditorViewContributionUpdateKind,
     change: DocumentSessionChange | null = null,
   ): void {
-    if (this.contributions.length === 0) return
+    if (!this.canPresent() || this.contributions.length === 0) return
     if (this.notifying) {
       this.queueReentrantUpdate(kind)
       return

@@ -65,6 +65,18 @@ describe('gutter plugins', () => {
       'decimal-leading-zero',
     )
     expect(cell.classList.contains('editor-virtualized-line-number-active')).toBe(true)
+
+    const paint = contribution.snapshotRenderer?.capture(cell)
+    const restored = contribution.createCell(document)
+    expect(contribution.snapshotRenderer?.restore(restored, paint ?? '')).toBe(true)
+    expect(restored.style.counterSet).toBe('editor-line 5')
+    expect(restored.classList.contains('editor-virtualized-line-number-active')).toBe(true)
+    expect(
+      contribution.snapshotRenderer?.restore(
+        restored,
+        '{"counter":"url(evil)","hidden":false,"active":true}',
+      ),
+    ).toBe(false)
   })
 
   it('supports source line offsets and minimum digits', () => {
@@ -201,6 +213,67 @@ describe('gutter plugins', () => {
     expect(cell.querySelector("[data-test-fold-icon='custom']")).not.toBeNull()
     button?.click()
     expect(toggleFold).toHaveBeenCalledOnce()
+    expect(contribution.snapshotRenderer).toBeUndefined()
+  })
+
+  it('restores fold paint without source identity or input handlers', () => {
+    const contribution = createFoldGutterContribution({
+      width: 16,
+      expandedIndicator: '⌄',
+      collapsedIndicator: '›',
+      iconClassName: 'custom-fold-icon',
+    })
+    const cell = contribution.createCell(document)
+    const toggleFold = vi.fn()
+    const row = {
+      index: 0,
+      bufferRow: 0,
+      source: 'document',
+      startOffset: 0,
+      endOffset: 12,
+      text: '',
+      kind: 'text',
+      primaryText: true,
+      cursorLine: false,
+      cursorLineHighlight: { gutterBackground: true, gutterNumber: false, rowBackground: true },
+      foldMarker: {
+        key: 'live-fold',
+        startRow: 0,
+        endRow: 3,
+        startOffset: 0,
+        endOffset: 12,
+        collapsed: true,
+      },
+      lineCount: 4,
+      toggleFold,
+    } satisfies Parameters<typeof contribution.updateCell>[1]
+    contribution.updateCell(cell, row)
+    const paint = contribution.snapshotRenderer?.capture(cell)
+    const restored = contribution.createCell(document)
+    expect(contribution.snapshotRenderer?.restore(restored, paint ?? '')).toBe(true)
+    const button = restored.querySelector<HTMLButtonElement>('.editor-virtualized-fold-toggle')
+    expect(button?.textContent).toBe('›')
+    expect(button?.disabled).toBe(true)
+    expect(button?.dataset.editorFoldKey).toBeUndefined()
+    expect(button?.dataset.editorFoldState).toBe('collapsed')
+    expect(restored.querySelector('.custom-fold-icon')).not.toBeNull()
+    button?.click()
+    expect(toggleFold).not.toHaveBeenCalled()
+    expect(contribution.snapshotRenderer?.restore(restored, '<script>')).toBe(false)
+
+    const toggleCurrentFold = vi.fn()
+    contribution.updateCell(restored, {
+      ...row,
+      foldMarker: { ...row.foldMarker, key: 'current-fold', collapsed: false },
+      toggleFold: toggleCurrentFold,
+    })
+    expect(restored.querySelector('.editor-virtualized-fold-toggle')).toBe(button)
+    expect(button?.disabled).toBe(false)
+    expect(button?.textContent).toBe('⌄')
+    expect(button?.dataset.editorFoldKey).toBe('current-fold')
+    button?.click()
+    expect(toggleFold).not.toHaveBeenCalled()
+    expect(toggleCurrentFold).toHaveBeenCalledWith(expect.objectContaining({ key: 'current-fold' }))
   })
 })
 

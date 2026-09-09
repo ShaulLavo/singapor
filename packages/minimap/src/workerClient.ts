@@ -323,7 +323,7 @@ export class MinimapWorkerClient {
       metrics: this.metrics(snapshot),
       viewport: this.viewport(snapshot),
     })
-    this.latestLayoutSignature = layoutSignature(snapshot)
+    this.latestLayoutSignature = layoutSignature(snapshot, this.minimapHeight(snapshot))
     this.postRender(snapshot)
   }
 
@@ -396,7 +396,7 @@ export class MinimapWorkerClient {
   }
 
   private postLayoutIfNeeded(snapshot: EditorViewSnapshot): boolean {
-    const signature = layoutSignature(snapshot)
+    const signature = layoutSignature(snapshot, this.minimapHeight(snapshot))
     if (signature === this.latestLayoutSignature) return false
 
     this.latestLayoutSignature = signature
@@ -575,7 +575,7 @@ export class MinimapWorkerClient {
 
   private applyImmediateViewport(snapshot: EditorViewSnapshot, scrollTop: number): void {
     const slider = immediateSlider(
-      snapshot,
+      this.viewport(snapshot),
       scrollTop,
       this.latestSliderHeight,
       this.latestSliderNeeded,
@@ -667,7 +667,9 @@ export class MinimapWorkerClient {
     const fallbackClientHeight =
       snapshotViewport.clientHeight > 0 ? 0 : this.host.colorScope.clientHeight
     const fallbackClientWidth =
-      snapshotViewport.clientWidth > 0 ? 0 : this.host.colorScope.clientWidth
+      snapshotViewport.clientWidth > 0
+        ? 0
+        : Math.max(0, this.host.colorScope.clientWidth - this.reservedLane())
     const clientHeight = positiveOrFallback(snapshotViewport.clientHeight, fallbackClientHeight)
     const clientWidth = positiveOrFallback(snapshotViewport.clientWidth, fallbackClientWidth)
     const fallbackScrollHeight =
@@ -682,10 +684,18 @@ export class MinimapWorkerClient {
       scrollWidth: Math.max(snapshotViewport.scrollWidth, fallbackScrollWidth, clientWidth),
       clientHeight,
       clientWidth,
+      minimapHeight: this.minimapHeight(snapshot),
       reservedWidth: Math.max(0, this.reservedLane()),
       visibleStart: snapshotViewport.visibleRange.start,
       visibleEnd: snapshotViewport.visibleRange.end,
     }
+  }
+
+  private minimapHeight(snapshot: EditorViewSnapshot): number {
+    const height = Number.parseFloat(this.host.root.style.height)
+    if (Number.isFinite(height)) return Math.max(0, height)
+    if (snapshot.viewport.clientHeight > 0) return snapshot.viewport.clientHeight
+    return this.host.colorScope.clientHeight
   }
 
   private baseStyles(): MinimapBaseStyles {
@@ -721,7 +731,7 @@ export class MinimapWorkerClient {
   }
 
   private sizeCanvasElements(snapshot: EditorViewSnapshot): void {
-    const height = `${this.viewport(snapshot).clientHeight}px`
+    const height = `${this.minimapHeight(snapshot)}px`
     setStyleValue(this.host.mainCanvas, 'height', height)
     setStyleValue(this.host.decorationsCanvas, 'height', height)
   }
@@ -755,9 +765,9 @@ export class MinimapWorkerClient {
 
   private applyLayout(width: number, canvasWidth: number, canvasHeight: number): void {
     this.onLayoutWidth(width)
-    setStyleValue(this.host.root, 'width', `${width}px`)
     setStyleValue(this.host.mainCanvas, 'width', `${canvasWidth}px`)
     setStyleValue(this.host.decorationsCanvas, 'width', `${canvasWidth}px`)
+    setStyleValue(this.host.sliderHorizontal, 'width', `${canvasWidth}px`)
     setStyleValue(this.host.mainCanvas, 'height', `${canvasHeight}px`)
     setStyleValue(this.host.decorationsCanvas, 'height', `${canvasHeight}px`)
   }
@@ -1433,7 +1443,7 @@ function incrementalTextEdits(
 }
 
 function immediateSlider(
-  snapshot: EditorViewSnapshot,
+  viewport: MinimapViewport,
   scrollTop: number,
   sliderHeight: number,
   sliderNeeded: boolean,
@@ -1442,9 +1452,8 @@ function immediateSlider(
   readonly top: number
   readonly height: number
 } {
-  const viewport = snapshot.viewport
   const scrollable = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-  const trackHeight = Math.max(1, viewport.clientHeight)
+  const trackHeight = Math.max(1, viewport.minimapHeight)
   const height = Math.max(0, sliderHeight)
   const maxTop = Math.max(0, trackHeight - height)
   const top = scrollable > 0 ? (clamp(scrollTop, 0, scrollable) / scrollable) * maxTop : 0
@@ -1470,13 +1479,14 @@ function baseStylesSignature(styles: MinimapBaseStyles): string {
   return JSON.stringify(styles)
 }
 
-function layoutSignature(snapshot: EditorViewSnapshot): string {
+function layoutSignature(snapshot: EditorViewSnapshot, minimapHeight: number): string {
   return [
     snapshot.metrics.rowHeight,
     snapshot.metrics.characterWidth,
     globalThis.devicePixelRatio || 1,
     snapshot.viewport.clientHeight,
     snapshot.viewport.clientWidth,
+    minimapHeight,
     snapshot.lineCount,
   ].join(':')
 }

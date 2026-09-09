@@ -889,6 +889,7 @@ function viewContributionContext(options: {
   return {
     container: options.element,
     scrollElement: options.element,
+    contentElement: options.element,
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: options.getSnapshot,

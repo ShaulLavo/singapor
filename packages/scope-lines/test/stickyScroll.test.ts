@@ -193,30 +193,50 @@ describe('createStickyScrollPlugin', () => {
     const registration = registeredProvider(createStickyScrollPlugin())
     const testContext = context(scrolledSnapshot(60))
     const contribution = registration?.createContribution(testContext)
-    // Every render pass re-reads what the overlays on each edge reserved, so a pass that ran at all
-    // asks for those widths.
-    const reserved = vi.spyOn(testContext, 'getReservedOverlayWidth')
+    contribution?.update(scrolledSnapshot(100), 'selection')
 
-    contribution?.update(scrolledSnapshot(60), 'selection')
+    expect(mirroredLines(testContext)).toEqual(['function outer() {', '  if (a) {'])
 
-    expect(reserved).not.toHaveBeenCalled()
+    contribution?.update(scrolledSnapshot(100), 'viewport')
 
-    contribution?.update(scrolledSnapshot(60), 'viewport')
-
-    expect(reserved).toHaveBeenCalled()
+    expect(mirroredLines(testContext)).toEqual(['function outer() {'])
   })
 
-  it('keeps clear of the width another overlay reserved', () => {
+  it('uses the text viewport without subtracting the minimap lane again', () => {
     const registration = registeredProvider(createStickyScrollPlugin())
-    const testContext = context(scrolledSnapshot(60), { left: 6, right: 44 })
+    const viewSnapshot = scrolledSnapshot(60)
+    const testContext = context({
+      ...viewSnapshot,
+      viewport: { ...viewSnapshot.viewport, scrollWidth: 372 },
+    })
+    const reservedWidth = vi.fn(() => 44)
+    testContext.getReservedOverlayWidth = reservedWidth
 
-    registration?.createContribution(testContext)
+    const contribution = registration?.createContribution(testContext)
 
     const root = stickyRoot(testContext)
-    expect(root?.style.getPropertyValue('--editor-sticky-scroll-trailing')).toBe('44px')
-    expect(root?.style.getPropertyValue('--editor-sticky-scroll-leading')).toBe('6px')
+    expect(root?.parentElement).toBe(testContext.contentElement)
     expect(root?.style.getPropertyValue('--editor-sticky-scroll-viewport-width')).toBe('320px')
-    expect(root?.style.getPropertyValue('--editor-sticky-scroll-content-width')).toBe('160px')
+    expect(root?.style.getPropertyValue('--editor-sticky-scroll-content-width')).toBe('372px')
+    expect(reservedWidth).not.toHaveBeenCalled()
+
+    contribution?.update(
+      { ...viewSnapshot, viewport: { ...viewSnapshot.viewport, scrollWidth: 412 } },
+      'viewport',
+    )
+
+    expect(root?.style.getPropertyValue('--editor-sticky-scroll-content-width')).toBe('412px')
+
+    contribution?.update(
+      {
+        ...viewSnapshot,
+        viewport: { ...viewSnapshot.viewport, clientWidth: 240, scrollWidth: 412 },
+      },
+      'viewport',
+    )
+    expect(root?.style.getPropertyValue('--editor-sticky-scroll-viewport-width')).toBe('240px')
+    expect(reservedWidth).not.toHaveBeenCalled()
+    contribution?.dispose()
   })
 
   it('carries the tokens of the rows it mirrors, rewritten into the stack', () => {
@@ -364,22 +384,21 @@ function createPluginContext(
   }
 }
 
-function context(
-  viewSnapshot = snapshot(),
-  reserved: { readonly left: number; readonly right: number } = { left: 0, right: 0 },
-): EditorViewContributionContext {
+function context(viewSnapshot = snapshot()): EditorViewContributionContext {
   const container = document.createElement('div')
   const scrollElement = document.createElement('div')
+  const contentElement = document.createElement('div')
+  scrollElement.appendChild(contentElement)
   container.appendChild(scrollElement)
   document.body.appendChild(container)
   return {
     container,
     scrollElement,
+    contentElement,
     highlightPrefix: 'sticky-test',
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
     requestViewUpdate: vi.fn(),
-    getReservedOverlayWidth: (side) => (side === 'left' ? reserved.left : reserved.right),
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
     focusEditor: vi.fn(),

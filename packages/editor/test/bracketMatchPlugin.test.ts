@@ -241,6 +241,7 @@ function viewContext(getSnapshot: () => EditorViewSnapshot): EditorViewContribut
     reserveOverlayWidth: vi.fn(),
     revealLine: vi.fn(),
     scrollElement: scrollElement as HTMLDivElement,
+    contentElement: scrollElement,
     setRangeHighlight: vi.fn(),
     setScrollTop: vi.fn(),
     setSelection: vi.fn(),

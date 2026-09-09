@@ -161,6 +161,10 @@ export class FixedRowVirtualizer {
   private cachedRowGap = DEFAULT_ROW_GAP
   private stableVirtualWindow: FixedRowVisibleRange | null = null
   private logicalScrollProperties: LogicalScrollProperties | null = null
+  private provisionalScrollGeometry: {
+    readonly scrollTop: number
+    readonly scrollHeight: number
+  } | null = null
   private requestedScrollTop: number | null = null
 
   public constructor(options: FixedRowVirtualizerOptions) {
@@ -482,6 +486,13 @@ export class FixedRowVirtualizer {
     this.stableVirtualWindow = null
   }
 
+  public setProvisionalScrollGeometry(
+    geometry: { readonly scrollTop: number; readonly scrollHeight: number } | null,
+  ): void {
+    this.provisionalScrollGeometry = geometry
+    this.syncAttachedNativeScrollTop(true)
+  }
+
   private syncScrollPositionFromElement(): void {
     const element = this.attached?.element
     if (!element) return
@@ -490,7 +501,9 @@ export class FixedRowVirtualizer {
     const viewportHeight = resizeMetrics?.viewportHeight ?? this.viewportHeight
     this.applyScrollMetrics(
       {
-        scrollTop: this.logicalScrollTopFromNativeElement(viewportHeight),
+        scrollTop: this.provisionalScrollGeometry
+          ? this.scrollTop
+          : this.logicalScrollTopFromNativeElement(viewportHeight),
         scrollLeft: this.scrollLeftFromElement(viewportHeight),
         borderBoxHeight: resizeMetrics?.borderBoxHeight ?? this.borderBoxHeight,
         borderBoxWidth: resizeMetrics?.borderBoxWidth ?? this.borderBoxWidth,
@@ -617,6 +630,10 @@ export class FixedRowVirtualizer {
   }
 
   private setScrollTopFromElement(value: number): void {
+    if (this.provisionalScrollGeometry) {
+      this.syncAttachedNativeScrollTop(true)
+      return
+    }
     if (this.isStaticMode()) return
 
     const resizeMetrics = this.takePendingResizeMetrics()
@@ -641,7 +658,8 @@ export class FixedRowVirtualizer {
     if (!properties) return
 
     properties.writeNativeScrollTop(
-      nativeScrollTopForLogical(this.scrollTop, this.scrollGeometry()),
+      this.provisionalScrollGeometry?.scrollTop ??
+        nativeScrollTopForLogical(this.scrollTop, this.scrollGeometry()),
       force,
     )
   }
@@ -662,8 +680,9 @@ export class FixedRowVirtualizer {
     if (attached.scrollListenerAttached) return
 
     this.logicalScrollProperties = installLogicalScrollProperties(attached.element, {
-      getScrollHeight: () => this.scrollGeometry().scrollHeight,
-      getScrollTop: () => this.scrollTop,
+      getScrollHeight: () =>
+        this.provisionalScrollGeometry?.scrollHeight ?? this.scrollGeometry().scrollHeight,
+      getScrollTop: () => this.provisionalScrollGeometry?.scrollTop ?? this.scrollTop,
       setScrollTop: (value) => this.setScrollTopFromElement(value),
     })
     attached.element.addEventListener('scroll', attached.onScroll, { passive: true })

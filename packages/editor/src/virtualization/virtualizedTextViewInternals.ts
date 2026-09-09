@@ -76,7 +76,11 @@ export type SameLineTokenEdit = {
 }
 
 export interface VirtualizedTextViewInternal {
+  provisional: boolean
   readonly scrollElement: HTMLDivElement
+  readonly extentElement: HTMLDivElement
+  readonly viewportElement: HTMLDivElement
+  readonly contentElement: HTMLDivElement
   readonly inputElement: HTMLTextAreaElement
   readonly spacer: HTMLDivElement
   readonly gutterElement: HTMLDivElement

@@ -64,24 +64,52 @@ describe('overlay stacking scale', () => {
 })
 
 describe('overlay width reservation', () => {
-  it('pads the edge the overlay actually sits on', () => {
+  it('reserves text insets and reveals the caret without moving native scrollbars', async () => {
     const container = document.createElement('div')
+    container.style.display = 'flex'
+    container.style.flexDirection = 'column'
     container.style.height = '120px'
     container.style.width = '360px'
     document.body.append(container)
     const view = new VirtualizedTextView(container, { rowHeight: 20, overscan: 0 })
     const scroll = container.querySelector<HTMLElement>('.editor-virtualized')!
+    const bounds = container.getBoundingClientRect()
+    const text = 'long line '.repeat(100)
+    view.setText(text)
 
     view.reserveOverlayWidth('right', 96)
 
+    expect(scroll.getBoundingClientRect().right).toBe(bounds.right)
+    expect(scroll.getBoundingClientRect().left).toBe(bounds.left)
     expect(getComputedStyle(scroll).paddingRight).toBe('96px')
-    expect(getComputedStyle(scroll).paddingLeft).toBe('0px')
+    await expect.poll(() => scroll.scrollWidth).toBeGreaterThan(scroll.clientWidth)
+    scroll.scrollLeft = scroll.scrollWidth
+    expect(scroll.scrollLeft).toBeGreaterThan(0)
+
+    scroll.scrollLeft = 0
+    await expect.poll(() => view.getState().viewportWidth).toBe(scroll.clientWidth - 96)
+    await expect.poll(() => view.getState().scrollLeft).toBe(0)
+    view.setSelection(text.length, text.length)
+    view.revealOffset(text.length)
+    const caret = scroll.querySelector<HTMLElement>('.editor-virtualized-caret')!
+    await expect.poll(() => caret.getBoundingClientRect().width).toBeGreaterThan(0)
+    expect(caret.getBoundingClientRect().right).toBeLessThanOrEqual(
+      scroll.getBoundingClientRect().right - 96,
+    )
+    expect(scroll.scrollLeft).toBeGreaterThan(0)
 
     view.reserveOverlayWidth('right', 0)
     view.reserveOverlayWidth('left', 48)
 
+    expect(scroll.getBoundingClientRect().left).toBe(bounds.left)
+    expect(scroll.getBoundingClientRect().right).toBe(bounds.right)
     expect(getComputedStyle(scroll).paddingLeft).toBe('48px')
     expect(getComputedStyle(scroll).paddingRight).toBe('0px')
+
+    view.reserveOverlayWidth('left', 0)
+
+    expect(scroll.getBoundingClientRect().width).toBe(bounds.width)
+    expect(getComputedStyle(scroll).paddingLeft).toBe('0px')
 
     view.dispose()
     container.remove()

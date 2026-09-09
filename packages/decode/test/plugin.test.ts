@@ -100,6 +100,7 @@ describe('createDecodePlugin', () => {
     expect(caretElements(context)).toHaveLength(expected.length)
     expect(caretAnimations().length).toBeGreaterThan(0)
     expect(caretLayer(context)).not.toBeNull()
+    expect(caretLayer(context)?.parentElement).toBe(context.contentElement)
   })
 
   it('starts immediately when the opened document is already tokenized', () => {
@@ -247,6 +248,7 @@ describe('createDecodePlugin diffusion', () => {
 
     const visibleChars = SAMPLE.replace(/\s/g, '').length
     expect(glyphLayer(context)).not.toBeNull()
+    expect(glyphLayer(context)?.parentElement).toBe(context.contentElement)
     expect(glyphs(context)).toHaveLength(visibleChars)
     // Real rows stay clipped-hidden the whole time; the overlay is all you see.
     expect(context.scrollElement.classList.contains('editor-decode-active')).toBe(true)
@@ -341,7 +343,7 @@ function mount(options: DecodePluginOptions = {}): {
 } {
   const provider = registeredProvider(createDecodePlugin(options))
   const context = viewContext()
-  populateRows(context.scrollElement, snapshot())
+  populateRows(context.contentElement, snapshot())
   const contribution = provider?.createContribution(context)
   if (!contribution) throw new Error('decode contribution was not created')
   return { context, contribution }
@@ -393,10 +395,13 @@ function pluginContext(
 function viewContext(): EditorViewContributionContext {
   const container = document.createElement('div')
   const scrollElement = document.createElement('div')
+  const contentElement = document.createElement('div')
+  scrollElement.appendChild(contentElement)
   container.appendChild(scrollElement)
   return {
     container,
     scrollElement,
+    contentElement,
     log: vi.fn(),
     hasDocument: () => true,
     getSnapshot: () => snapshot({ tokens: someTokens() }),

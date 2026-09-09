@@ -13,16 +13,11 @@ import type {
 } from '@singapor/core/extensions'
 import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
 import { mergeDenseDecorations } from './decorationMerge'
+import { computeRenderLayout } from './layout'
 import { resolveMinimapOptions } from './options'
 import type { EditorMinimapOptions, ResolvedMinimapOptions } from './types'
+import { minimapViewportGeometry, type MinimapScrollGeometry } from './viewportGeometry'
 import { canUseMinimapWorker, MinimapWorkerClient, type MinimapHost } from './workerClient'
-
-const THIN_SCROLLBAR_GUTTER_FALLBACK = 7
-// An overlay scrollbar takes no layout width, so nothing in the measurement chain can
-// report one — but it is still painted over the scroller and still has to be grabbable,
-// and the minimap paints above it. Step clear by its hit region instead of covering it.
-const OVERLAY_SCROLLBAR_GUTTER = 15
-const WEBKIT_SCROLLBAR_PSEUDO_ELEMENT = '::-webkit-scrollbar'
 
 export function createMinimapPlugin(options: EditorMinimapOptions = {}): EditorPlugin {
   const resolved = resolveMinimapOptions(options)
@@ -68,6 +63,7 @@ function createMinimapContribution(
 }
 
 class MinimapContribution implements EditorViewContribution {
+  public readonly snapshotKey: string
   private readonly context: EditorViewContributionContext
   private readonly options: ResolvedMinimapOptions
   private readonly host: MinimapHost
@@ -75,13 +71,8 @@ class MinimapContribution implements EditorViewContribution {
   private readonly decorationSubscription: EditorDisposable
   private latestSnapshot: EditorViewSnapshot
   private activeSliderDrag: SliderDrag | null = null
-  private reservedWidth = 0
   private appliedReservedWidth = 0
-  private verticalScrollbarWidth = -1
-  private horizontalScrollbarHeight = -1
-  private scrollbarGutterSignature = ''
-  private readonly scrollElementBorderMetrics: ScrollElementBorderMetrics
-  private readonly scrollbarGutterFallback: ScrollbarGutterFallbackMetrics
+  private layoutSignature = ''
   private pendingSliderScrollTop: number | null = null
   private sliderScrollFrame = 0
   private disposed = false
@@ -93,11 +84,10 @@ class MinimapContribution implements EditorViewContribution {
   ) {
     this.context = context
     this.options = options
+    this.snapshotKey = `minimap:${JSON.stringify(options)}`
     this.latestSnapshot = context.getSnapshot()
     this.host = createHost(context, options)
-    this.scrollElementBorderMetrics = readScrollElementBorderMetrics(context.scrollElement)
-    this.scrollbarGutterFallback = measureScrollbarGutterFallback(context.scrollElement)
-    this.updateNativeScrollbarGutter()
+    if (this.latestSnapshot.geometryCommitted !== false) this.synchronizeLayoutReservation()
     this.client = new MinimapWorkerClient({
       host: this.host,
       options,
@@ -119,7 +109,10 @@ class MinimapContribution implements EditorViewContribution {
     if (this.disposed) return
 
     this.latestSnapshot = snapshot
-    this.updateNativeScrollbarGutter()
+    if (snapshot.geometryCommitted === false) return
+    if (kind === 'document' || kind === 'layout' || kind === 'viewport') {
+      this.synchronizeLayoutReservation()
+    }
     this.client.update(snapshot, kind, change)
   }
 
@@ -139,18 +132,110 @@ class MinimapContribution implements EditorViewContribution {
     this.host.slider.addEventListener('pointerdown', this.handleSliderPointerDown)
   }
 
-  private readonly reserveWidth = (width: number): void => {
-    const nextWidth = Math.ceil(width)
-    if (nextWidth === this.reservedWidth) return
+  private readonly reserveWidth = (_width: number): void => {
+    if (this.context.getSnapshot().geometryCommitted === false) return
+    this.synchronizeLayoutReservation()
+  }
 
-    this.reservedWidth = nextWidth
-    // The gutter no longer depends on the minimap's own width, and the padding
-    // this writes is what the next snapshot measures around.
-    this.reserveEditorOverlayWidth(this.verticalScrollbarWidth)
+  private synchronizeLayoutReservation(): void {
+    const snapshot = this.latestSnapshot
+    const scroll = this.measureScrollGeometry()
+    const { clientWidth, clientHeight } = scroll
+    const signature = [
+      scroll.width,
+      scroll.height,
+      clientWidth,
+      clientHeight,
+      scroll.overflowsX,
+      scroll.overflowsY,
+      scroll.borders.left,
+      scroll.borders.right,
+      scroll.borders.top,
+      scroll.borders.bottom,
+      scroll.overlayScrollbars.vertical,
+      scroll.overlayScrollbars.horizontal,
+      snapshot.metrics.characterWidth,
+      snapshot.metrics.rowHeight,
+      this.context.scrollElement.ownerDocument.defaultView?.devicePixelRatio ?? 1,
+      this.options.size === 'proportional' ? 0 : snapshot.lineCount,
+    ].join(':')
+    if (signature === this.layoutSignature) return
+    this.layoutSignature = signature
+    const minimapHeight = minimapViewportGeometry(this.options.side, 0, scroll).height
+    const minimapWidth = Math.ceil(
+      this.currentLayoutWidth(clientWidth, clientHeight, minimapHeight),
+    )
+    const geometry = minimapViewportGeometry(this.options.side, minimapWidth, scroll)
+    this.host.root.style.width = `${minimapWidth}px`
+    this.host.root.style.top = `${geometry.top}px`
+    this.host.root.style.height = `${geometry.height}px`
+    const side = this.options.side
+    this.host.root.style[side] = `${geometry[side]}px`
+    const nextWidth = geometry.reservedWidth
+    if (nextWidth === this.appliedReservedWidth) return
+
+    const previousWidth = this.appliedReservedWidth
+    this.appliedReservedWidth = nextWidth
+    this.logLane(previousWidth, scroll, geometry)
+    this.context.reserveOverlayWidth(this.options.side, nextWidth)
+  }
+
+  private measureScrollGeometry(): MinimapScrollGeometry {
+    const element = this.context.scrollElement
+    const viewport = this.latestSnapshot.viewport
+    const style = element.ownerDocument.defaultView?.getComputedStyle(element)
+    const clientWidth =
+      element.clientWidth ||
+      (viewport.clientWidth > 0 ? viewport.clientWidth + this.appliedReservedWidth : 0)
+    const clientHeight = element.clientHeight || viewport.clientHeight
+    return {
+      width: element.offsetWidth || viewport.borderBoxWidth || clientWidth,
+      height: element.offsetHeight || viewport.borderBoxHeight || clientHeight,
+      clientWidth,
+      clientHeight,
+      borders: {
+        left: cssPixels(style?.borderLeftWidth),
+        right: cssPixels(style?.borderRightWidth),
+        top: cssPixels(style?.borderTopWidth),
+        bottom: cssPixels(style?.borderBottomWidth),
+      },
+      overlayScrollbars: overlayScrollbarDimensions(element, style),
+      overflowsX: viewport.clientWidth > 0 && viewport.scrollWidth > viewport.clientWidth,
+      overflowsY:
+        clientHeight > 0 &&
+        Math.max(viewport.scrollHeight, this.latestSnapshot.totalHeight) > clientHeight,
+    }
+  }
+
+  private currentLayoutWidth(
+    clientWidth: number,
+    clientHeight: number,
+    minimapHeight: number,
+  ): number {
+    const snapshot = this.latestSnapshot
+    const element = this.context.scrollElement
+    return computeRenderLayout({
+      minimap: this.options,
+      lineCount: snapshot.lineCount,
+      metrics: {
+        ...snapshot.metrics,
+        devicePixelRatio: element.ownerDocument.defaultView?.devicePixelRatio ?? 1,
+      },
+      viewport: {
+        ...snapshot.viewport,
+        clientWidth,
+        clientHeight,
+        minimapHeight,
+        reservedWidth: 0,
+        visibleStart: snapshot.viewport.visibleRange.start,
+        visibleEnd: snapshot.viewport.visibleRange.end,
+      },
+    }).width
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
     if (event.button !== 0) return
+    if (this.context.getSnapshot().geometryCommitted === false) return
     if (event.target === this.host.slider || this.host.slider.contains(event.target as Node)) return
 
     event.preventDefault()
@@ -160,6 +245,7 @@ class MinimapContribution implements EditorViewContribution {
 
   private readonly handleSliderPointerDown = (event: PointerEvent): void => {
     if (event.button !== 0) return
+    if (this.context.getSnapshot().geometryCommitted === false) return
 
     event.preventDefault()
     this.stopSliderDrag()
@@ -174,6 +260,10 @@ class MinimapContribution implements EditorViewContribution {
     const ratio = scrollable / trackHeight
 
     const onMove = (move: PointerEvent): void => {
+      if (this.context.getSnapshot().geometryCommitted === false) {
+        this.stopSliderDrag()
+        return
+      }
       const scrollTop = clamp(startScrollTop + (move.clientY - startY) * ratio, 0, scrollable)
       this.client.previewScrollTop(this.latestSnapshot, scrollTop)
       this.scheduleSliderScroll(scrollTop)
@@ -226,6 +316,7 @@ class MinimapContribution implements EditorViewContribution {
     const scrollTop = this.pendingSliderScrollTop
     this.pendingSliderScrollTop = null
     if (scrollTop === null) return
+    if (this.context.getSnapshot().geometryCommitted === false) return
 
     setScrollTop(this.context.scrollElement, scrollTop)
   }
@@ -253,66 +344,11 @@ class MinimapContribution implements EditorViewContribution {
     return Math.floor(ratio * Math.max(1, this.latestSnapshot.lineCount))
   }
 
-  private updateNativeScrollbarGutter(): void {
-    const signature = nativeScrollbarGutterSignature(this.latestSnapshot, this.appliedReservedWidth)
-    if (signature === this.scrollbarGutterSignature) return
-
-    this.scrollbarGutterSignature = signature
-    const gutter = nativeScrollbarGutter(
-      this.latestSnapshot,
-      this.measureScrollbarGutter(),
-      this.scrollbarGutterFallback,
-    )
-    if (
-      gutter.vertical === this.verticalScrollbarWidth &&
-      gutter.horizontal === this.horizontalScrollbarHeight
-    ) {
-      return
-    }
-
-    const previousVertical = this.verticalScrollbarWidth
-    this.verticalScrollbarWidth = gutter.vertical
-    this.horizontalScrollbarHeight = gutter.horizontal
-    this.host.root.style.bottom = `${gutter.horizontal}px`
-    this.reserveEditorOverlayWidth(previousVertical)
-    if (this.options.side === 'right') {
-      this.host.root.style.right = `${gutter.vertical}px`
-      this.host.root.style.left = ''
-      return
-    }
-
-    this.host.root.style.left = '0'
-    this.host.root.style.right = ''
-  }
-
-  /**
-   * `clientWidth` already includes the lane's padding and `offsetWidth` includes it too,
-   * so the lane cancels and what is left is border plus scrollbar. Both come from one
-   * layout, so they cannot disagree with each other.
-   *
-   * Deriving this from the snapshot instead — border box minus content box minus the lane
-   * believed to be applied — cannot be made correct: the content box describes whichever
-   * lane was applied when it was measured, the plugin reserves the lane from the answer,
-   * and the two chase each other. Three separate oscillations came from that one shortcut.
-   */
-  private measureScrollbarGutter(): { readonly vertical: number; readonly horizontal: number } {
-    const element = this.context.scrollElement
-    const offsetWidth = element.offsetWidth
-    if (offsetWidth <= 0) return { vertical: 0, horizontal: 0 }
-
-    return {
-      vertical: Math.max(0, offsetWidth - element.clientWidth - this.scrollElementBorderMetrics.x),
-      horizontal: Math.max(
-        0,
-        element.offsetHeight - element.clientHeight - this.scrollElementBorderMetrics.y,
-      ),
-    }
-  }
-
-  // Every lane change, whichever input moved it. The lane is padding on the scroll
-  // element, so a lane that keeps changing is the minimap sizing itself from a width
-  // its own reservation just shrank.
-  private logLane(previousWidth: number, previousVertical: number): void {
+  private logLane(
+    previousWidth: number,
+    scroll: MinimapScrollGeometry,
+    geometry: ReturnType<typeof minimapViewportGeometry>,
+  ): void {
     const viewport = this.latestSnapshot.viewport
     this.context.log?.({
       action: 'editor.minimap.lane_changed',
@@ -322,31 +358,15 @@ class MinimapContribution implements EditorViewContribution {
         scrollElementClass: this.context.scrollElement.className,
         containerClass: this.context.container.className,
         appliedOverlayWidth: this.appliedReservedWidth,
+        availableWidth: scroll.clientWidth,
         borderBoxWidth: viewport.borderBoxWidth ?? null,
         clientWidth: viewport.clientWidth,
-        fallbackVertical: this.scrollbarGutterFallback.vertical,
-        hasVerticalScrollbar: hasVerticalScrollbar(this.latestSnapshot),
-        horizontalScrollbar: this.horizontalScrollbarHeight,
         previousOverlayWidth: previousWidth,
-        previousVertical,
-        reservedWidth: this.reservedWidth,
-        scrollElementBorderWidth: this.scrollElementBorderMetrics.x,
         side: this.options.side,
-        vertical: this.verticalScrollbarWidth,
+        horizontalScrollbar: geometry.horizontalScrollbar,
+        verticalScrollbar: geometry.verticalScrollbar,
       },
     })
-  }
-
-  private reserveEditorOverlayWidth(previousVertical: number): void {
-    const scrollbarWidth =
-      this.options.side === 'right' ? Math.max(0, this.verticalScrollbarWidth) : 0
-    const nextWidth = this.reservedWidth + scrollbarWidth
-    if (nextWidth === this.appliedReservedWidth) return
-
-    const previousWidth = this.appliedReservedWidth
-    this.appliedReservedWidth = nextWidth
-    this.logLane(previousWidth, previousVertical)
-    this.context.reserveOverlayWidth(this.options.side, nextWidth)
   }
 
   private readonly handleDecorationsChanged = (): void => {
@@ -400,16 +420,6 @@ type SliderDrag = {
   readonly pointerId: number
   readonly onMove: (event: PointerEvent) => void
   readonly onEnd: () => void
-}
-
-type ScrollElementBorderMetrics = {
-  readonly x: number
-  readonly y: number
-}
-
-type ScrollbarGutterFallbackMetrics = {
-  readonly vertical: number
-  readonly horizontal: number
 }
 
 function createHost(
@@ -480,140 +490,22 @@ function cancelFrame(handle: number): void {
   clearTimeout(handle)
 }
 
-function nativeScrollbarGutter(
-  snapshot: EditorViewSnapshot,
-  measured: { readonly vertical: number; readonly horizontal: number },
-  fallback: ScrollbarGutterFallbackMetrics,
-): {
-  readonly vertical: number
-  readonly horizontal: number
-} {
-  const viewport = snapshot.viewport
-  const hasHorizontalScrollbar =
-    viewport.clientWidth > 0 && viewport.scrollWidth > viewport.clientWidth
-
-  return {
-    vertical: hasVerticalScrollbar(snapshot)
-      ? scrollbarGutterOrFallback(measured.vertical, fallback.vertical)
-      : 0,
-    horizontal: hasHorizontalScrollbar
-      ? scrollbarGutterOrFallback(measured.horizontal, fallback.horizontal)
-      : 0,
-  }
-}
-
-function hasVerticalScrollbar(snapshot: EditorViewSnapshot): boolean {
-  const viewport = snapshot.viewport
-  return (
-    viewport.clientHeight > 0 &&
-    Math.max(viewport.scrollHeight, snapshot.totalHeight) > viewport.clientHeight
-  )
-}
-
-function scrollbarGutterOrFallback(measured: number, fallback: number): number {
-  if (measured > 0) return measured
-  if (fallback > 0) return fallback
-  // Reached only when the scroller scrolls and every reading is still zero, which is
-  // what an overlay scrollbar looks like from here.
-  return OVERLAY_SCROLLBAR_GUTTER
-}
-
-function nativeScrollbarGutterSignature(
-  snapshot: EditorViewSnapshot,
-  appliedOverlayWidth: number,
-): string {
-  const viewport = snapshot.viewport
-  return [
-    viewport.clientHeight,
-    viewport.clientWidth,
-    viewport.scrollHeight,
-    viewport.scrollWidth,
-    viewport.borderBoxHeight ?? '',
-    viewport.borderBoxWidth ?? '',
-    snapshot.totalHeight,
-    appliedOverlayWidth,
-  ].join(':')
-}
-
-function readScrollElementBorderMetrics(element: HTMLElement): ScrollElementBorderMetrics {
-  const style = element.ownerDocument.defaultView?.getComputedStyle(element)
-  return {
-    x: cssPixels(style?.borderLeftWidth) + cssPixels(style?.borderRightWidth),
-    y: cssPixels(style?.borderTopWidth) + cssPixels(style?.borderBottomWidth),
-  }
-}
-
-function measureScrollbarGutterFallback(element: HTMLElement): ScrollbarGutterFallbackMetrics {
-  const cssDimensions = readScrollbarCssDimensions(element)
-  const keywordWidth = readScrollbarWidthKeyword(element)
-  const nativeDimensions = measureNativeScrollbarGutter(element.ownerDocument)
-
-  return {
-    vertical: cssDimensions.vertical ?? keywordWidth ?? nativeDimensions.vertical,
-    horizontal: cssDimensions.horizontal ?? keywordWidth ?? nativeDimensions.horizontal,
-  }
-}
-
-function measureNativeScrollbarGutter(document: Document): ScrollbarGutterFallbackMetrics {
-  const container = document.body ?? document.documentElement
-  if (!container) return { vertical: 0, horizontal: 0 }
-
-  const probe = document.createElement('div')
-  probe.style.height = '100px'
-  probe.style.left = '-10000px'
-  probe.style.overflow = 'scroll'
-  probe.style.position = 'absolute'
-  probe.style.top = '-10000px'
-  probe.style.visibility = 'hidden'
-  probe.style.width = '100px'
-  container.appendChild(probe)
-
-  const vertical = Math.max(0, probe.offsetWidth - probe.clientWidth)
-  const horizontal = Math.max(0, probe.offsetHeight - probe.clientHeight)
-  probe.remove()
-
-  return { vertical, horizontal }
-}
-
-function readScrollbarCssDimensions(element: HTMLElement): {
-  readonly vertical: number | null
-  readonly horizontal: number | null
-} {
-  const style = readComputedStyle(element, WEBKIT_SCROLLBAR_PSEUDO_ELEMENT)
-  return {
-    vertical: positiveCssPixels(style?.width),
-    horizontal: positiveCssPixels(style?.height),
-  }
-}
-
-function readScrollbarWidthKeyword(element: HTMLElement): number | null {
-  const value = readComputedStyle(element)?.getPropertyValue('scrollbar-width').trim()
-  if (value === 'none') return 0
-  if (value === 'thin') return THIN_SCROLLBAR_GUTTER_FALLBACK
-  return null
-}
-
-function readComputedStyle(
+function overlayScrollbarDimensions(
   element: HTMLElement,
-  pseudoElement?: string,
-): CSSStyleDeclaration | undefined {
-  try {
-    return element.ownerDocument.defaultView?.getComputedStyle(element, pseudoElement)
-  } catch {
-    return undefined
+  style: CSSStyleDeclaration | undefined,
+): MinimapScrollGeometry['overlayScrollbars'] {
+  const keyword = style?.getPropertyValue('scrollbar-width').trim()
+  if (keyword === 'none') return { vertical: 0, horizontal: 0 }
+  if (keyword === 'thin') return { vertical: 7, horizontal: 7 }
+
+  const pseudo = element.ownerDocument.defaultView?.getComputedStyle(element, '::-webkit-scrollbar')
+  return {
+    vertical: cssPixels(pseudo?.width, 15),
+    horizontal: cssPixels(pseudo?.height, 15),
   }
 }
 
-function positiveCssPixels(value: string | undefined): number | null {
-  const parsed = cssPixels(value)
-  if (parsed <= 0) return null
-  return parsed
-}
-
-function cssPixels(value: string | undefined): number {
-  if (!value) return 0
-
-  const parsed = Number.parseFloat(value)
-  if (!Number.isFinite(parsed)) return 0
-  return parsed
+function cssPixels(value: string | undefined, fallback = 0): number {
+  const parsed = Number.parseFloat(value ?? '')
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback
 }

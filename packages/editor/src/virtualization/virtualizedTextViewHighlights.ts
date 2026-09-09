@@ -242,6 +242,7 @@ export function clearSelection(view: VirtualizedTextViewInternal): void {
 }
 
 export function renderSelectionHighlight(view: VirtualizedTextViewInternal): void {
+  if (view.provisional) return
   renderCaret(view)
   if (!hasSelectionRanges(view.selections)) {
     clearSelectionHighlight(view)
@@ -286,6 +287,7 @@ export function setRangeHighlight(
 }
 
 export function renderRangeHighlight(view: VirtualizedTextViewInternal, name: string): void {
+  if (view.provisional) return
   const group = view.rangeHighlightGroups.get(name)
   if (!group || !view.highlightRegistry) return
 
@@ -380,6 +382,7 @@ export function clampStoredSelection(view: VirtualizedTextViewInternal): void {
 }
 
 export function renderTokenHighlights(view: VirtualizedTextViewInternal): void {
+  if (view.provisional) return
   const pendingEdit = view.sameLineTokenEdit
   if (
     !view.highlightRegistry ||
@@ -1470,6 +1473,7 @@ function hideSecondaryCaretElements(view: VirtualizedTextViewInternal, startInde
 }
 
 export function rebuildStyleRules(view: VirtualizedTextViewInternal): void {
+  if (view.provisional) return
   // Token highlight rules live in the shared per-document stylesheet
   // (sharedTokenHighlights), written once here per batch. The per-view style element only
   // carries range/decoration highlight rules, which are specific to this view's ranges.

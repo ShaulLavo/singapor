@@ -313,7 +313,7 @@ export class MinimapWorkerRenderer {
   private renderLine(options: RenderLineOptions): void {
     const state = this.requireState()
     const y = yForLineNumber(options.frame, options.line, options.layout.lineHeight)
-    const maxDx = maxTextX(options.layout)
+    const maxDx = options.layout.canvasInnerWidth - options.layout.charWidth
     let dx = MINIMAP_GUTTER_WIDTH
 
     visitTokenSegments(
@@ -526,12 +526,6 @@ function renderCharacter(
   return dx + options.layout.charWidth
 }
 
-function maxTextX(layout: MinimapRenderLayout): number {
-  const horizontalScale = layout.canvasInnerWidth / Math.max(1, layout.canvasOuterWidth)
-  const rightGutterWidth = MINIMAP_RIGHT_GUTTER_WIDTH * horizontalScale
-  return layout.canvasInnerWidth - rightGutterWidth - layout.charWidth
-}
-
 function visitTokenSegments(
   text: string,
   lineStart: number,
@@ -738,6 +732,7 @@ function defaultViewport(): MinimapViewport {
     scrollWidth: 0,
     clientHeight: 0,
     clientWidth: 0,
+    minimapHeight: 0,
     visibleStart: 0,
     reservedWidth: 0,
     visibleEnd: 1,

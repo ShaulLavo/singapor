@@ -26,6 +26,34 @@ describe('minimap layout', () => {
     expect(layout.lineHeight).toBe(8)
   })
 
+  it('fits the slider above the horizontal scrollbar without changing the editor scroll range', () => {
+    const metrics = { rowHeight: 20, characterWidth: 8, devicePixelRatio: 1 }
+    const editorViewport = viewport({
+      clientHeight: 600,
+      minimapHeight: 580,
+      scrollHeight: 6000,
+      scrollTop: 5400,
+    })
+    const renderLayout = computeRenderLayout({
+      minimap: resolveMinimapOptions({ size: 'fill' }),
+      metrics,
+      viewport: editorViewport,
+      lineCount: 300,
+    })
+    const frame = computeFrameLayout({
+      renderLayout,
+      metrics,
+      viewport: editorViewport,
+      lineCount: 300,
+      realLineCount: 300,
+      previous: null,
+    })
+
+    expect(renderLayout.height).toBe(580)
+    expect(frame.sliderHeight).toBe(58)
+    expect(frame.sliderTop + frame.sliderHeight).toBeCloseTo(580)
+  })
+
   // The lane the minimap reserves is padding, and padding leaves the content box, so
   // sizing from `clientWidth` alone makes the minimap an input to its own width. The
   // gain is under 1, so it converges in the reals — but `floor`/`ceil` park it in a
@@ -253,6 +281,7 @@ function viewport(overrides: Partial<MinimapViewport> = {}): MinimapViewport {
     scrollWidth: 800,
     clientHeight: 600,
     clientWidth: 800,
+    minimapHeight: overrides.clientHeight ?? 600,
     reservedWidth: 0,
     visibleStart: 0,
     visibleEnd: 30,

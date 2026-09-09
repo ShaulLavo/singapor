@@ -48,6 +48,20 @@ export function createLineGutterContribution(
 
   return {
     id: 'line-gutter',
+    snapshotRenderer: labelForRow
+      ? undefined
+      : {
+          key: JSON.stringify([
+            'line-gutter',
+            1,
+            counterStyle,
+            minLabelColumns,
+            minWidth,
+            startLine,
+          ]),
+          capture: captureLineGutterPaint,
+          restore: restoreLineGutterPaint,
+        },
     createCell(document) {
       const element = document.createElement('span')
       element.className = labelForRow
@@ -72,6 +86,41 @@ export function createLineGutterContribution(
     updateCell(element, row) {
       updateLineGutterCell(element, row, startLine, labelForRow)
     },
+  }
+}
+
+function captureLineGutterPaint(element: HTMLElement): string | null {
+  const counter = element.hidden ? '' : element.style.counterSet
+  if (counter && !/^editor-line [0-9]+$/.test(counter)) return null
+  return JSON.stringify({
+    counter,
+    hidden: element.hidden,
+    active: element.classList.contains('editor-virtualized-line-number-active'),
+  })
+}
+
+function restoreLineGutterPaint(element: HTMLElement, paint: string): boolean {
+  const parsed = parseLineGutterPaint(paint)
+  if (!parsed) return false
+  setElementHidden(element, parsed.hidden)
+  setCounterSet(element, parsed.counter)
+  element.classList.toggle('editor-virtualized-line-number-active', parsed.active)
+  return true
+}
+
+function parseLineGutterPaint(paint: string) {
+  if (paint.length > 256) return null
+  try {
+    const value: unknown = JSON.parse(paint)
+    if (value === null || typeof value !== 'object') return null
+    if (!('counter' in value) || typeof value.counter !== 'string') return null
+    if (!('hidden' in value) || typeof value.hidden !== 'boolean') return null
+    if (!('active' in value) || typeof value.active !== 'boolean') return null
+    if (!value.hidden && !/^editor-line [0-9]+$/.test(value.counter)) return null
+    if (value.hidden && value.counter !== '') return null
+    return { counter: value.counter, hidden: value.hidden, active: value.active }
+  } catch {
+    return null
   }
 }
 

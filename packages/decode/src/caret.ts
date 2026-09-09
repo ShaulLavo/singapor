@@ -28,7 +28,7 @@ export function buildCarets(
 
   const carets = rows.map((row) => createCaret(document, row))
   for (const caret of carets) layer.appendChild(caret)
-  context.scrollElement.appendChild(layer)
+  context.contentElement.appendChild(layer)
   return { layer, carets }
 }
 

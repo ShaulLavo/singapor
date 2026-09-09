@@ -7,6 +7,9 @@
   ],
   "type": "module",
   "sideEffects": [
+    "./src/lineGutter.css",
+    "./src/foldGutter.css",
+    "./src/style.css",
     "./dist/lineGutter.css",
     "./dist/foldGutter.css",
     "./dist/style.css"

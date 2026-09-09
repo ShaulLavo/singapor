@@ -209,6 +209,7 @@ async function connectedEditor(options: {
   const contribution = provider.createContribution({
     container: element,
     scrollElement: element,
+    contentElement: element,
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: () => snapshot,

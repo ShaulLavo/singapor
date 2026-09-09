@@ -108,11 +108,28 @@
   color: var(--editor-foreground);
   background: var(--editor-background);
   contain: layout paint style;
+  /* Keep native scrolling on the compositor while the main thread renders rows. */
+  will-change: transform;
 }
 
 .editor-virtualized[data-editor-scroll-mode='static'] {
   overflow-x: auto;
   overflow-y: clip;
+}
+
+.editor-virtualized-viewport {
+  /* A clip-path clips fixed descendants without capturing their containing block. */
+  clip-path: inset(0);
+  left: 0;
+  position: sticky;
+  top: 0;
+}
+
+.editor-virtualized-content {
+  /* The native scroller is the fixed containing block, so paint scrolls inside the sticky clip. */
+  position: fixed;
+  /* Without promotion, Chromium culls visible text after scrolling past the initial clip. */
+  will-change: transform;
 }
 
 .editor-virtualized-spacer {

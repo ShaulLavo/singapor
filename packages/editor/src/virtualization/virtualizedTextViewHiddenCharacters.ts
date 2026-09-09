@@ -145,6 +145,7 @@ export function setSuspiciousCharacters(
  * settle the one before it. Splitting them means the pass settles at most once.
  */
 export function renderHiddenCharacters(view: VirtualizedTextViewInternal): void {
+  if (view.provisional) return
   const pass: HiddenCharacterPass = {
     mode: view.hiddenCharacters,
     selectionKey: hiddenCharacterSelectionKey(view),

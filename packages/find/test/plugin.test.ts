@@ -118,6 +118,36 @@ describe('createEditorFindPlugin', () => {
     viewContribution?.dispose()
   })
 
+  it('anchors before the native scrollbar and updates when its width changes', () => {
+    const providers = createEditorFindContributionProviders()
+    const context = viewContext()
+    Object.defineProperties(context.container, {
+      clientLeft: { value: 3 },
+      clientWidth: { value: 642 },
+    })
+    Object.defineProperties(context.scrollElement, {
+      clientLeft: { value: 7 },
+      clientWidth: { value: 578, configurable: true },
+    })
+    vi.spyOn(context.container, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(10, 0, 650, 200),
+    )
+    vi.spyOn(context.scrollElement, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(25, 0, 620, 200),
+    )
+    const contribution = providers.view.createContribution(context)
+    context.reserveOverlayWidth('right', 120)
+    openFindWidget(providers)
+
+    expect(findWidgetElement(context).style.marginRight).toBe('165px')
+
+    Object.defineProperty(context.scrollElement, 'clientWidth', { value: 608 })
+    contribution?.update(context.getSnapshot(), 'layout')
+
+    expect(findWidgetElement(context).style.marginRight).toBe('135px')
+    contribution?.dispose()
+  })
+
   // A reservation staked mid-layout is never announced to the contributions
   // that already ran in that pass, so no update call follows it here.
   it('follows a reservation the host never announces', async () => {
@@ -227,6 +257,7 @@ function viewContext(viewSnapshot = snapshot()): EditorViewContributionContext {
   return {
     container,
     scrollElement,
+    contentElement: scrollElement,
     highlightPrefix: 'editor-find-test',
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,

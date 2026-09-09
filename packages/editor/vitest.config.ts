@@ -49,6 +49,12 @@ export default defineConfig({
                 const image = await row.screenshot({ animations: 'disabled' })
                 return image.toString('base64')
               },
+              proofViewportScreenshot: async ({ iframe }, hostId: string) => {
+                const image = await iframe
+                  .locator(`#${hostId}`)
+                  .screenshot({ animations: 'disabled' })
+                return image.toString('base64')
+              },
             },
             instances: [{ browser: 'chromium' }],
           },

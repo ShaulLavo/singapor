@@ -255,6 +255,7 @@ function context(viewSnapshot = snapshot()) {
   return {
     container,
     scrollElement,
+    contentElement: scrollElement,
     painted,
     cleared,
     hasDocument: () => true,

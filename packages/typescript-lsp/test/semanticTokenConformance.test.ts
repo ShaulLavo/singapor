@@ -320,6 +320,7 @@ class EditorFixture {
     this.context = {
       container,
       scrollElement: container as unknown as HTMLDivElement,
+      contentElement: container,
       highlightPrefix: 'editor-test-',
       hasDocument: () => true,
       getSnapshot: () => this.snapshot(),

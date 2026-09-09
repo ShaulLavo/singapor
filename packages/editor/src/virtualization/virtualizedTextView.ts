@@ -1,3 +1,4 @@
+import type { SavedPaint } from '../editor/paintSnapshot'
 import type { TextContent } from '../textContent'
 import type { FoldMap } from '../foldMap'
 import { nextGraphemeBoundary, previousGraphemeBoundary } from '../graphemes'
@@ -110,6 +111,7 @@ import { rowLocalIndexForOffset, rowOffsetForLocalIndex } from './virtualizedTex
 import { BIDI_CONTROL_CODE_POINTS, isSimpleRowText } from '../textCharacters'
 import {
   applyRowHeight,
+  captureGutterPaint,
   disposeGutterCells,
   disposeInlineWidgets,
   ensureOffsetMounted,
@@ -117,6 +119,7 @@ import {
   gutterWidth,
   horizontalViewportColumns,
   pageRowDelta,
+  paintProvisionalRows,
   positionInputAtCaret,
   renderRows,
   resetContentWidthScan,
@@ -126,6 +129,7 @@ import {
   scrollOffsetIntoView,
   scrollOffsetToViewportBlock,
   scrollToRow,
+  spacerWidth,
   textOffsetFromDomBoundary,
   updateContentWidth,
   updateGutterContributions,
@@ -248,10 +252,14 @@ function setScrollModeAttribute(
 
 export class VirtualizedTextView {
   public readonly scrollElement: HTMLDivElement
+  public readonly contentElement: HTMLDivElement
   public readonly inputElement: HTMLTextAreaElement
   private readonly view: VirtualizedTextViewInternal
   private readonly disposeForegroundHighlightRestore: () => void
   private cancelContentWidthMeasurement: (() => void) | null = null
+  private provisionalPaint: { readonly paint: SavedPaint; readonly release: () => void } | null =
+    null
+  private pendingOverlayWidths: Map<'left' | 'right', number> | null = null
   private viewportVisible = false
   private atomicRenderDepth = 0
   private atomicRenderPending = false
@@ -276,6 +284,9 @@ export class VirtualizedTextView {
     const scrollMode = normalizeScrollMode(options.scrollMode)
     const rowPositioning = options.rowPositioning ?? 'transform'
     const inputElement = createInputElement(container)
+    const extentElement = container.ownerDocument.createElement('div')
+    const viewportElement = container.ownerDocument.createElement('div')
+    const contentElement = container.ownerDocument.createElement('div')
     const spacer = container.ownerDocument.createElement('div')
     const gutterElement = container.ownerDocument.createElement('div')
     const caretLayerElement = container.ownerDocument.createElement('div')
@@ -301,9 +312,14 @@ export class VirtualizedTextView {
     })
 
     this.scrollElement = scrollElement
+    this.contentElement = contentElement
     this.inputElement = inputElement
     this.view = {
+      provisional: false,
       scrollElement,
+      extentElement,
+      viewportElement,
+      contentElement,
       inputElement,
       spacer,
       gutterElement,
@@ -382,6 +398,9 @@ export class VirtualizedTextView {
     setScrollModeAttribute(scrollElement, scrollMode)
     scrollElement.dataset.editorRowPositioning = rowPositioning
     applyRowHeight(this.view, rowHeight)
+    extentElement.className = 'editor-virtualized-extent'
+    viewportElement.className = 'editor-virtualized-viewport'
+    contentElement.className = 'editor-virtualized-content'
     spacer.className = 'editor-virtualized-spacer'
     gutterElement.className = 'editor-virtualized-gutter'
     caretLayerElement.className = 'editor-virtualized-caret-layer'
@@ -390,8 +409,12 @@ export class VirtualizedTextView {
     caretLayerElement.appendChild(caretElement)
     if (gutterContributions.length > 0 || gutterWidthProvider) spacer.appendChild(gutterElement)
     spacer.appendChild(caretLayerElement)
-    scrollElement.appendChild(spacer)
+    contentElement.appendChild(spacer)
+    viewportElement.appendChild(contentElement)
+    extentElement.appendChild(viewportElement)
+    scrollElement.appendChild(extentElement)
     scrollElement.appendChild(inputElement)
+    this.synchronizeContentOrigin()
 
     virtualizer.attachScrollElement(
       scrollElement,
@@ -405,6 +428,7 @@ export class VirtualizedTextView {
   }
 
   public dispose(): void {
+    this.releaseProvisionalPaint()
     const view = this.view
     this.pendingReveal = null
     this.cancelContentWidthMeasurement?.()
@@ -438,6 +462,145 @@ export class VirtualizedTextView {
   public requestScrollTop(value: number): void {
     this.pendingReveal = null
     this.view.virtualizer.requestScrollTop(value)
+  }
+
+  public paintConfiguration(): string {
+    const view = this.view
+    return JSON.stringify({
+      rowGap: view.rowGap,
+      rowPositioning: view.rowPositioning,
+      scrollMode: view.scrollMode,
+      hiddenCharacters: view.hiddenCharacters,
+      suspiciousCharacters: view.suspiciousCharacters,
+      cursorLineHighlight: view.cursorLineHighlight,
+      reservedLeft: this.reservedOverlayWidth('left'),
+      reservedRight: this.reservedOverlayWidth('right'),
+    })
+  }
+
+  public captureGutterPaint() {
+    return captureGutterPaint(this.view)
+  }
+
+  public get hasPendingReveal(): boolean {
+    return this.pendingReveal !== null
+  }
+
+  public get savedPaint(): SavedPaint | null {
+    return this.provisionalPaint?.paint ?? null
+  }
+
+  public measureSnapshotViewport(): void {
+    if (this.view.virtualizer.getSnapshot().viewportWidth > 0) return
+    const padding = scrollElementPadding(this.scrollElement)
+    this.view.virtualizer.setScrollMetrics({
+      scrollTop: 0,
+      scrollLeft: 0,
+      viewportWidth: Math.max(0, this.scrollElement.clientWidth - padding.left - padding.right),
+      viewportHeight: Math.max(0, this.scrollElement.clientHeight - padding.top - padding.bottom),
+      borderBoxWidth: this.scrollElement.offsetWidth,
+      borderBoxHeight: this.scrollElement.offsetHeight,
+    })
+  }
+
+  public get isProvisional(): boolean {
+    return this.view.provisional
+  }
+
+  public get provisionalScrollPosition(): { top: number; left: number } | null {
+    const paint = this.provisionalPaint?.paint
+    return paint ? { top: paint.scrollTop, left: paint.scrollLeft } : null
+  }
+
+  public restorePaint(paint: SavedPaint): boolean {
+    this.releaseProvisionalPaint()
+    clearTokenHighlights(this.view)
+    clearSelectionHighlight(this.view)
+    this.view.caretLayerElement.hidden = true
+    this.view.provisional = true
+    this.pendingOverlayWidths = new Map()
+    this.scrollElement.dataset.editorPresentation = 'provisional'
+    this.scrollElement.setAttribute('aria-busy', 'true')
+    this.scrollElement.inert = true
+    this.inputElement.readOnly = true
+    this.view.spacer.style.height = `${paint.scrollHeight}px`
+    this.view.spacer.style.width = `${paint.scrollWidth}px`
+    this.view.extentElement.style.height = `${paint.scrollHeight}px`
+    this.view.extentElement.style.width = `${paint.scrollWidth}px`
+    this.synchronizeViewportSize(paint.viewportWidth, paint.viewportHeight)
+    this.view.spacer.style.transform = ''
+    this.scrollElement.style.setProperty('--editor-gutter-width', `${paint.gutterWidth}px`)
+    const release = paintProvisionalRows(this.view, paint)
+    if (!release) {
+      this.commitProvisionalPaint()
+      return false
+    }
+    this.provisionalPaint = { paint, release }
+    this.view.virtualizer.setProvisionalScrollGeometry(paint)
+    this.scrollElement.addEventListener('wheel', this.preventProvisionalInput, {
+      passive: false,
+      capture: true,
+    })
+    this.scrollElement.addEventListener('touchmove', this.preventProvisionalInput, {
+      passive: false,
+      capture: true,
+    })
+    this.scrollElement.addEventListener('scroll', this.freezeProvisionalScroll, true)
+    this.freezeProvisionalScroll()
+    return true
+  }
+
+  public commitProvisionalPaint(): void {
+    if (!this.view.provisional) return
+    const overlayWidths = this.pendingOverlayWidths
+    this.releaseProvisionalPaint()
+    for (const [side, width] of overlayWidths ?? []) this.reserveOverlayWidth(side, width)
+    const view = this.view
+    view.lastRenderedRowsKey = ''
+    view.gutterContributionWidths = new Map()
+    view.lastSpacerHeight = ''
+    view.lastSpacerWidth = ''
+    view.lastSpacerTransform = ''
+    view.gutterWidthDirty = true
+    clearRowTokenState(view)
+    clearRowGeometryCaches(view)
+    resetContentWidthScan(view)
+    this.renderSnapshot(view.virtualizer.getSnapshot())
+  }
+
+  public preparedVisibleRange(): { startIndex: number; endIndex: number } {
+    const view = this.view
+    const snapshot = view.virtualizer.getSnapshot()
+    const first = snapshot.virtualItems[0]?.index ?? 0
+    const last = snapshot.virtualItems.at(-1)?.index ?? first
+    return { startIndex: lineStartOffset(view, first), endIndex: lineEndOffset(view, last) }
+  }
+
+  private releaseProvisionalPaint(): void {
+    this.provisionalPaint?.release()
+    this.provisionalPaint = null
+    this.pendingOverlayWidths = null
+    this.view.provisional = false
+    this.view.virtualizer.setProvisionalScrollGeometry(null)
+    this.scrollElement.inert = false
+    this.view.caretLayerElement.hidden = false
+    this.scrollElement.dataset.editorPresentation = 'live'
+    this.scrollElement.removeAttribute('aria-busy')
+    this.scrollElement.removeEventListener('wheel', this.preventProvisionalInput, true)
+    this.scrollElement.removeEventListener('touchmove', this.preventProvisionalInput, true)
+    this.scrollElement.removeEventListener('scroll', this.freezeProvisionalScroll, true)
+  }
+
+  private readonly preventProvisionalInput = (event: Event): void => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+
+  private readonly freezeProvisionalScroll = (): void => {
+    const paint = this.provisionalPaint?.paint
+    if (!paint) return
+    this.scrollElement.scrollTop = paint.scrollTop
+    this.scrollElement.scrollLeft = paint.scrollLeft
   }
 
   public runAtomicRender<T>(update: () => T): T {
@@ -611,6 +774,7 @@ export class VirtualizedTextView {
   }
 
   public setEditable(editable: boolean): void {
+    if (this.view.provisional) editable = false
     if (editable) {
       this.inputElement.readOnly = false
       return
@@ -621,10 +785,12 @@ export class VirtualizedTextView {
 
   /** The text an IME is still assembling, drawn at the caret; empty text takes it back down. */
   public setCompositionPreedit(text: string): void {
+    if (this.view.provisional) return
     setCompositionPreedit(this.view, text)
   }
 
   public focusInput(): void {
+    if (this.view.provisional) return
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
     const scrollTop = snapshot.scrollTop
@@ -705,18 +871,20 @@ export class VirtualizedTextView {
   }
 
   public reserveOverlayWidth(side: 'left' | 'right', width: number): boolean {
+    if (this.view.provisional) {
+      this.pendingOverlayWidths?.set(side, width)
+      return false
+    }
     const value = width > 0 && Number.isFinite(width) ? `${Math.ceil(width)}px` : ''
     const property = overlayPaddingProperty(side)
     if (this.scrollElement.style[property] === value) return false
 
     this.scrollElement.style[property] = value
+    this.synchronizeContentOrigin()
     return true
   }
 
-  /**
-   * How much of each horizontal edge shows something other than text: the padding an overlay
-   * reserved, plus the sticky gutter parked on the left. The same insets the hit test works in.
-   */
+  /** Overlay padding and the sticky gutter inside the native scroll viewport. */
   public textViewportInsets(): { readonly left: number; readonly right: number } {
     const padding = scrollElementPadding(this.scrollElement)
     return { left: padding.left + gutterWidth(this.view), right: padding.right }
@@ -728,6 +896,10 @@ export class VirtualizedTextView {
   }
 
   public scrollToRow(row: number): void {
+    if (this.view.provisional) {
+      this.pendingReveal = { offset: lineStartOffset(this.view, row), block: 'nearest' }
+      return
+    }
     scrollToRow(this.view, row)
   }
 
@@ -744,6 +916,10 @@ export class VirtualizedTextView {
   }
 
   private reveal(offset: number, block: RevealBlock, affinity?: SelectionAffinity): void {
+    if (this.view.provisional) {
+      this.pendingReveal = { offset, block, affinity }
+      return
+    }
     const view = this.view
     this.pendingReveal = null
     // Initial navigation can arrive before ResizeObserver measures the viewport.
@@ -826,6 +1002,7 @@ export class VirtualizedTextView {
     endOffset: number,
     options: CreateRangeOptions = {},
   ): Range | null {
+    if (this.view.provisional) return null
     const view = this.view
     if (options.scrollIntoView !== false) ensureOffsetMounted(view, startOffset)
 
@@ -863,14 +1040,14 @@ export class VirtualizedTextView {
       scrollHeight: Math.max(snapshot.viewportHeight, snapshot.scrollHeight),
       scrollLeft: snapshot.scrollLeft,
       scrollTop: snapshot.scrollTop,
-      scrollWidth: Math.max(snapshot.viewportWidth, view.contentWidth + gutterWidth(view)),
+      scrollWidth: spacerWidth(view, snapshot.viewportWidth),
       borderBoxHeight: snapshot.borderBoxHeight,
       borderBoxWidth: snapshot.borderBoxWidth,
       totalHeight: snapshot.totalSize,
       viewportHeight: snapshot.viewportHeight,
       viewportWidth: snapshot.viewportWidth,
       visibleRange: snapshot.visibleRange,
-      mountedRows: getMountedRows(view),
+      mountedRows: view.provisional ? [] : getMountedRows(view),
       foldMarkers: view.foldMarkers,
       wrapActive: view.wrapEnabled,
       tabSize: view.tabSize,
@@ -906,6 +1083,7 @@ export class VirtualizedTextView {
     clientX: number,
     clientY: number,
   ): VirtualizedTextHitPosition | null {
+    if (this.view.provisional) return null
     return this.textPositionFromViewportPoint(clientX, clientY)
   }
 
@@ -913,6 +1091,7 @@ export class VirtualizedTextView {
     clientX: number,
     clientY: number,
   ): VirtualizedTextHitPosition | null {
+    if (this.view.provisional) return null
     const view = this.view
     const metrics = viewportPointMetrics(view, clientX, clientY)
     const row = rowForViewportY(view, metrics.y)
@@ -1026,12 +1205,18 @@ export class VirtualizedTextView {
   }
 
   private renderSnapshot(snapshot: FixedRowVirtualizerSnapshot): void {
+    if (this.view.provisional) {
+      this.freezeProvisionalScroll()
+      this.view.onViewportChange?.()
+      return
+    }
     if (this.atomicRenderDepth > 0) {
       this.atomicRenderPending = true
       return
     }
 
     const view = this.view
+    this.synchronizeViewportSize(snapshot.viewportWidth, snapshot.viewportHeight)
     const visible = snapshot.viewportHeight > 0
     if (visible) {
       const first = snapshot.virtualItems[0]?.index ?? 0
@@ -1069,6 +1254,26 @@ export class VirtualizedTextView {
     renderSelectionHighlight(view)
     view.onViewportChange?.()
     this.flushPendingReveal()
+  }
+
+  private synchronizeViewportSize(width: number, height: number): void {
+    const { viewportElement, contentElement } = this.view
+    const nextWidth = `${Math.max(0, width)}px`
+    const nextHeight = `${Math.max(0, height)}px`
+    if (viewportElement.style.width === nextWidth && viewportElement.style.height === nextHeight)
+      return
+
+    this.synchronizeContentOrigin()
+    viewportElement.style.width = nextWidth
+    viewportElement.style.height = nextHeight
+    contentElement.style.width = nextWidth
+    contentElement.style.height = nextHeight
+  }
+
+  private synchronizeContentOrigin(): void {
+    const padding = scrollElementPadding(this.scrollElement)
+    this.contentElement.style.left = `${padding.left}px`
+    this.contentElement.style.top = `${padding.top}px`
   }
 
   private flushPendingReveal(): void {
@@ -1235,6 +1440,7 @@ export class VirtualizedTextView {
   private finishTextReplacement(lineCountChanged: boolean): void {
     const view = this.view
     if (lineCountChanged) view.gutterWidthDirty = true
+    if (view.provisional) updateGutterWidthIfNeeded(view)
     refreshDisplayProjection(view, horizontalViewportColumns(view))
     clampStoredSelection(view)
     clearRowTokenState(view)
@@ -2556,7 +2762,6 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
 
-// A reservation is stored as scroll-element padding and has no other record.
 function overlayPaddingProperty(side: 'left' | 'right'): 'paddingLeft' | 'paddingRight' {
   return side === 'left' ? 'paddingLeft' : 'paddingRight'
 }

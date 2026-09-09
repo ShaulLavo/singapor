@@ -466,6 +466,7 @@ function viewContributionContext(): EditorViewContributionContext {
   return {
     container: element,
     scrollElement: element as unknown as HTMLDivElement,
+    contentElement: element,
     highlightPrefix: 'editor-test',
     hasDocument: () => true,
     getSnapshot: () => snapshot(),
@@ -726,6 +727,7 @@ function layerContext(
   return {
     container: element,
     scrollElement: element as unknown as HTMLDivElement,
+    contentElement: element,
     highlightPrefix: 'editor-test-',
     hasDocument: () => true,
     getSnapshot,

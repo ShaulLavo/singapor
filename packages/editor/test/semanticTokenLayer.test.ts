@@ -48,6 +48,7 @@ function harness(options: Partial<SemanticTokenLayerOptions> = {}): Harness {
   const context: EditorViewContributionContext = {
     container: document.createElement('div'),
     scrollElement: document.createElement('div') as HTMLDivElement,
+    contentElement: document.createElement('div'),
     highlightPrefix: 'test-',
     hasDocument: () => true,
     getSnapshot: () => snapshot,

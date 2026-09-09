@@ -75,6 +75,7 @@ export function createFoldGutterContribution(
 
   return {
     id: 'fold-gutter',
+    snapshotRenderer: createFoldSnapshotRenderer(options, renderOptions, width),
     createCell(document) {
       const cell = document.createElement('span')
       const button = createFoldButton(document, options.buttonClassName)
@@ -96,6 +97,52 @@ export function createFoldGutterContribution(
       disposeFoldButton(button)
     },
   }
+}
+
+function createFoldSnapshotRenderer(
+  options: FoldGutterPluginOptions,
+  renderOptions: FoldGutterRenderOptions,
+  width: number,
+): EditorGutterContribution['snapshotRenderer'] {
+  if (
+    [options.icon, options.expandedIcon, options.collapsedIcon].some(
+      (icon) => typeof icon === 'function',
+    )
+  )
+    return undefined
+  return {
+    key: JSON.stringify(['fold-gutter', 1, width, options.buttonClassName, renderOptions]),
+    capture: captureFoldPaint,
+    restore: (element, paint) => restoreFoldPaint(element, paint, renderOptions),
+  }
+}
+
+function captureFoldPaint(element: HTMLElement): string | null {
+  const button = foldButtonFromCell(element)
+  if (!button) return null
+  if (button.hidden) return 'hidden'
+  const state = button.dataset.editorFoldState
+  return isFoldGutterState(state) ? state : null
+}
+
+function restoreFoldPaint(
+  element: HTMLElement,
+  paint: string,
+  options: FoldGutterRenderOptions,
+): boolean {
+  const button = foldButtonFromCell(element)
+  if (!button || (paint !== 'hidden' && !isFoldGutterState(paint))) return false
+  hideFoldButton(button)
+  if (paint === 'hidden') return true
+  const source = resolveFoldIconSource(options, paint)
+  if (typeof source.icon !== 'string') return false
+  const icon = createFoldIconElement(button.ownerDocument, options.iconClassName)
+  appendFoldIconContent(icon, source.icon)
+  button.replaceChildren(icon)
+  button.dataset.editorFoldState = paint
+  syncFoldIndicatorDataset(button, source.icon)
+  setElementHidden(button, false)
+  return true
 }
 
 function createFoldButton(document: Document, className: string | undefined): HTMLButtonElement {

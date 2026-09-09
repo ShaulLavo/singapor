@@ -245,6 +245,7 @@ function hoverController(
   const context = {
     container: element,
     scrollElement: element,
+    contentElement: element,
     getSnapshot: () => snapshot,
     focusEditor: vi.fn(),
     textOffsetFromPoint: vi.fn(() => 6),

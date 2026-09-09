@@ -92,6 +92,9 @@ export type EditorState = {
 export type EditorChangeHandler = (state: EditorState, change: DocumentSessionChange | null) => void
 
 export type EditorOptions = {
+  readonly documentKey?: string | null
+  readonly snapshot?: string | null
+  readonly onPresentationChange?: (state: 'provisional' | 'live' | 'empty') => void
   readonly defaultText?: string
   readonly documentMode?: EditorDocumentMode
   readonly editability?: EditorEditability

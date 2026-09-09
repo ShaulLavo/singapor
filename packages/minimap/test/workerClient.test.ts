@@ -6,6 +6,7 @@ import {
 } from '@singapor/core/document'
 import type { EditorViewSnapshot } from '@singapor/core/extensions'
 import { resolveMinimapOptions } from '../src/options'
+import { computeRenderLayout } from '../src/layout'
 import { MinimapWorkerClient, type MinimapHost } from '../src/workerClient'
 import type { MinimapWorkerRequest, MinimapWorkerResponse } from '../src/types'
 
@@ -249,6 +250,63 @@ describe('MinimapWorkerClient', () => {
     }
   })
 
+  it.each([1, 1.25])(
+    'matches the painted slider to the CSS canvas width at DPR %s across layout changes',
+    (devicePixelRatio) => {
+      const runtime = installMinimapRuntime()
+      const host = createHost()
+      const view = snapshot()
+      host.root.style.width = '140px'
+      host.slider.style.width = '100%'
+      const client = new MinimapWorkerClient({
+        host,
+        options: resolveMinimapOptions(),
+        snapshot: view,
+        decorations: [],
+        onLayoutWidth: vi.fn(),
+        reservedLane: () => 146,
+      })
+
+      try {
+        const worker = runtime.workers[0]!
+        for (const [clientWidth, maxColumn] of [
+          [780, 120],
+          [600, 120],
+          [100, 4],
+        ] as const) {
+          const layout = computeRenderLayout({
+            minimap: resolveMinimapOptions({ maxColumn }),
+            metrics: { ...view.metrics, devicePixelRatio },
+            viewport: {
+              ...view.viewport,
+              clientWidth,
+              minimapHeight: view.viewport.clientHeight,
+              reservedWidth: 0,
+              visibleStart: view.viewport.visibleRange.start,
+              visibleEnd: view.viewport.visibleRange.end,
+            },
+            lineCount: view.lineCount,
+          })
+          worker.send({ type: 'layout', sequence: 1, layout })
+
+          expect(Number.parseFloat(host.sliderHorizontal.style.width)).toBeCloseTo(
+            layout.canvasOuterWidth,
+          )
+          expect(Number.parseFloat(host.mainCanvas.style.width)).toBe(layout.canvasOuterWidth)
+          expect(host.decorationsCanvas.style.width).toBe(host.mainCanvas.style.width)
+          expect(host.root.style.width).toBe('140px')
+          expect(host.slider.style.width).toBe('100%')
+          expect(host.mainCanvas.width).toBe(300)
+        }
+      } finally {
+        client.dispose()
+        host.root.remove()
+        host.colorScope.remove()
+        runtime.restore()
+      }
+    },
+  )
+
   it('opens documents through the secondary projection text snapshot', () => {
     const runtime = installMinimapRuntime()
     try {
@@ -320,43 +378,49 @@ describe('MinimapWorkerClient', () => {
     }
   })
 
-  it('uses mounted scroll element dimensions when initial snapshot viewport is zero-sized', () => {
-    const runtime = installMinimapRuntime()
-    try {
-      const host = createHost()
-      setElementBox(host.colorScope, { clientHeight: 320, clientWidth: 640 })
-      const client = new MinimapWorkerClient({
-        host,
-        options: resolveMinimapOptions(),
-        snapshot: snapshot({ clientHeight: 0, clientWidth: 0, scrollHeight: 0, scrollWidth: 0 }),
-        decorations: [],
-        onLayoutWidth: vi.fn(),
-        reservedLane: () => 0,
-      })
-      const worker = runtime.workers[0]!
-      const layoutRequest = worker.postMessage.mock.calls
-        .map((call) => call[0] as MinimapWorkerRequest)
-        .find((request): request is Extract<MinimapWorkerRequest, { type: 'updateLayout' }> => {
-          return request.type === 'updateLayout'
+  it.each([0, 100])(
+    'uses the mounted content box with a %dpx reserved lane before viewport measurement',
+    (reservedWidth) => {
+      const runtime = installMinimapRuntime()
+      try {
+        const host = createHost()
+        setElementBox(host.colorScope, { clientHeight: 320, clientWidth: 640 })
+        host.root.style.height = '300px'
+        const client = new MinimapWorkerClient({
+          host,
+          options: resolveMinimapOptions(),
+          snapshot: snapshot({ clientHeight: 0, clientWidth: 0, scrollHeight: 0, scrollWidth: 0 }),
+          decorations: [],
+          onLayoutWidth: vi.fn(),
+          reservedLane: () => reservedWidth,
         })
+        const worker = runtime.workers[0]!
+        const layoutRequest = worker.postMessage.mock.calls
+          .map((call) => call[0] as MinimapWorkerRequest)
+          .find((request): request is Extract<MinimapWorkerRequest, { type: 'updateLayout' }> => {
+            return request.type === 'updateLayout'
+          })
 
-      runtime.flushAnimationFrames()
+        runtime.flushAnimationFrames()
 
-      expect(layoutRequest?.viewport).toMatchObject({
-        clientHeight: 320,
-        clientWidth: 640,
-        scrollHeight: 320,
-        scrollWidth: 640,
-      })
-      expect(host.mainCanvas.style.height).toBe('320px')
+        expect(layoutRequest?.viewport).toMatchObject({
+          clientHeight: 320,
+          minimapHeight: 300,
+          clientWidth: 640 - reservedWidth,
+          scrollHeight: 320,
+          scrollWidth: 640 - reservedWidth,
+          reservedWidth,
+        })
+        expect(host.mainCanvas.style.height).toBe('300px')
 
-      client.dispose()
-      host.root.remove()
-      host.colorScope.remove()
-    } finally {
-      runtime.restore()
-    }
-  })
+        client.dispose()
+        host.root.remove()
+        host.colorScope.remove()
+      } finally {
+        runtime.restore()
+      }
+    },
+  )
 
   it('skips layout updates for scroll-only viewport changes', () => {
     const runtime = installMinimapRuntime()

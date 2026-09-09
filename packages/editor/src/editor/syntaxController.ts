@@ -155,6 +155,7 @@ const syntaxWorkTags = (
 export class EditorSyntaxController {
   private disposed = false
   private syntaxStatus: EditorSyntaxStatus = 'plain'
+  private applyingRenderData = false
   private initialHighlightState: EditorInitialHighlightStatus = 'plain'
   private initialPaintDocumentVersion = 0
   private initialTextPainted = false
@@ -244,6 +245,14 @@ export class EditorSyntaxController {
     if (coverage.kind === 'full') return true
     const range = this.options.getVisibleSyntaxRange()
     return range !== null && syntaxRangeCoverage(range, [coverage.range]) === 'full'
+  }
+
+  get renderDataReady(): boolean {
+    return (
+      !this.applyingRenderData &&
+      this.initialHighlightState !== 'loading' &&
+      this.status !== 'loading'
+    )
   }
 
   get initialHighlightStatus(): EditorInitialHighlightStatus {
@@ -1113,6 +1122,20 @@ export class EditorSyntaxController {
     if (configurationGeneration !== this.initialHighlightConfigurationGeneration) return false
     if (loadResult.contentVersion !== this.syntaxContentVersion) return false
 
+    this.applyingRenderData = true
+    try {
+      return this.publishSyntaxResult(loadResult, documentVersion, configurationGeneration)
+    } finally {
+      this.applyingRenderData = false
+      this.options.notifyViewUpdate()
+    }
+  }
+
+  private publishSyntaxResult(
+    loadResult: EditorSyntaxLoadResult,
+    documentVersion: number,
+    configurationGeneration: number,
+  ): boolean {
     if (editorPerformanceDiagnosticsEnabled()) {
       recordEditorPerformanceDiagnostic('editor.syntax.structural.accepted', () => ({
         documentVersion,
@@ -1175,7 +1198,6 @@ export class EditorSyntaxController {
         configurationGeneration,
       )
     }
-    this.options.notifyViewUpdate()
     this.options.log?.({
       action: 'editor.syntax.structural_applied',
       level: 'debug',

@@ -83,6 +83,7 @@ export type MinimapViewport = {
   readonly scrollWidth: number
   readonly clientHeight: number
   readonly clientWidth: number
+  readonly minimapHeight: number
   /**
    * The overlay lane the minimap already holds. `clientWidth` is the content box, which
    * excludes it, so layout adds it back: a minimap sized from the space left after itself

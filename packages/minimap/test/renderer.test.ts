@@ -19,6 +19,7 @@ describe('MinimapWorkerRenderer', () => {
       scrollWidth: 20,
       clientHeight: 20,
       clientWidth: 20,
+      minimapHeight: 20,
       visibleStart: 0,
       reservedWidth: 0,
       visibleEnd: 1,

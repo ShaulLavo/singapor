@@ -2,9 +2,9 @@
   --editor-minimap-background: #1e1e1e;
   --editor-minimap-background-opacity: 0.5;
   --editor-minimap-selection-highlight: rgba(56, 189, 248, 0.5);
-  --editor-minimap-slider-background: rgba(121, 121, 121, 0.25);
-  --editor-minimap-slider-hover-background: rgba(121, 121, 121, 0.4);
-  --editor-minimap-slider-active-background: rgba(121, 121, 121, 0.55);
+  --editor-minimap-slider-background: rgba(121, 121, 121, 0.12);
+  --editor-minimap-slider-hover-background: rgba(121, 121, 121, 0.2);
+  --editor-minimap-slider-active-background: rgba(121, 121, 121, 0.3);
 
   bottom: 0;
   overflow: hidden;
@@ -19,6 +19,11 @@
 
 .editor-minimap-left {
   left: 0;
+}
+
+.editor[data-editor-presentation='provisional'] ~ .editor-minimap {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .editor-minimap-canvas,

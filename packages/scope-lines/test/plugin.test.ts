@@ -47,6 +47,9 @@ describe('createScopeLinesPlugin', () => {
     const lines = [...testContext.scrollElement.querySelectorAll<HTMLElement>('.editor-scope-line')]
 
     expect(contribution).not.toBeNull()
+    expect(testContext.contentElement.querySelector('.editor-scope-lines')?.parentElement).toBe(
+      testContext.contentElement,
+    )
     expect(lines).toHaveLength(2)
     expect(lines[0]?.style.left).toBe('0px')
     expect(lines[0]?.style.top).toBe('21px')
@@ -500,10 +503,13 @@ function createContext(
 function context(viewSnapshot = snapshot()): EditorViewContributionContext {
   const container = document.createElement('div')
   const scrollElement = document.createElement('div')
+  const contentElement = document.createElement('div')
+  scrollElement.appendChild(contentElement)
   container.appendChild(scrollElement)
   return {
     container,
     scrollElement,
+    contentElement,
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,
     requestViewUpdate: vi.fn(),

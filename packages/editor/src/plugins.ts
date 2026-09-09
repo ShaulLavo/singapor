@@ -447,6 +447,7 @@ export type EditorViewSnapshot = {
   readonly fullText: string
   readonly textVersion: number
   readonly initialHighlightStatus: EditorInitialHighlightStatus
+  readonly geometryCommitted?: boolean
   readonly syntaxStatus: EditorSyntaxStatus
   /** Null until every paint contribution has committed this exact snapshot. */
   readonly paintLayers: readonly EditorVisiblePaintLayer[] | null
@@ -516,6 +517,8 @@ export type EditorTrackedPoint = {
 export type EditorViewContributionContext = {
   readonly container: HTMLElement
   readonly scrollElement: HTMLDivElement
+  /** Document paint parent inside the code viewport, separate from native scrollbars. */
+  readonly contentElement: HTMLDivElement
   readonly highlightPrefix?: string
   hasDocument(): boolean
   getSnapshot(): EditorViewSnapshot
@@ -610,6 +613,8 @@ export type EditorViewContributionUpdateKind =
  * needs first, into plain data, and writes only once the last of them is in hand.
  */
 export type EditorViewContribution = EditorDisposable & {
+  /** Capture contributors opt into synchronous restoration with a configuration-specific key. */
+  readonly snapshotKey?: string
   captureVisiblePaint?(snapshot: EditorViewSnapshot): EditorVisiblePaintCapture
   update(
     snapshot: EditorViewSnapshot,
@@ -633,6 +638,7 @@ export type EditorSelectionRange = {
 export type EditorFeatureDomContributionContext = {
   readonly container: HTMLElement
   readonly scrollElement: HTMLDivElement
+  readonly contentElement: HTMLDivElement
   readonly highlightPrefix: string
 }
 
@@ -883,6 +889,11 @@ export type EditorInjectedTextRowProvider = {
 }
 
 export type EditorGutterContribution = {
+  readonly snapshotRenderer?: {
+    readonly key: string
+    capture(cell: HTMLElement): string | null
+    restore(cell: HTMLElement, paint: string): boolean
+  }
   readonly id: string
   readonly className?: string
   createCell(document: Document): HTMLElement

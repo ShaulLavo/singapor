@@ -29,7 +29,7 @@ export function computeRenderLayout(options: {
   readonly lineCount: number
 }): MinimapRenderLayout {
   const pixelRatio = Math.max(1, options.metrics.devicePixelRatio)
-  const height = Math.max(0, options.viewport.clientHeight)
+  const height = Math.max(0, options.viewport.minimapHeight)
   const baseCharHeight = options.minimap.renderCharacters
     ? Constants.BASE_CHAR_HEIGHT
     : Constants.BASE_CHAR_HEIGHT + 1

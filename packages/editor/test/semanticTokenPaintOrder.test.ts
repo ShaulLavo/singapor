@@ -89,6 +89,7 @@ function viewContext(
   return {
     container,
     scrollElement: container as HTMLDivElement,
+    contentElement: view.contentElement,
     highlightPrefix: 'test-',
     hasDocument: () => true,
     getSnapshot: () => snapshot(),

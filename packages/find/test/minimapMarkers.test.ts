@@ -180,6 +180,7 @@ function viewContext(
   return {
     container,
     scrollElement,
+    contentElement: scrollElement,
     highlightPrefix: 'editor-find-test',
     hasDocument: () => true,
     getSnapshot: () => viewSnapshot,

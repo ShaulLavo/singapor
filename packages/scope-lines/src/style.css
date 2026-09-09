@@ -61,6 +61,10 @@
   width: var(--editor-scope-line-width);
 }
 
+.editor-virtualized[data-editor-presentation='provisional'] .editor-scope-lines {
+  visibility: hidden;
+}
+
 .editor-scope-line[data-editor-scope-line-level='0'] {
   background: var(--editor-scope-line-color-0);
 }
@@ -119,11 +123,8 @@
    on screen and is slid up and out of it, pixel by pixel, as the box's end passes — which is the
    push-out, computed by the browser on every frame instead of on every notification. */
 .editor-sticky-scroll {
-  /* Resolved here, on a box that inherits the editor's gutter width, because the stack is a text
-     view of its own and shadows that width with a gutter width of its own. */
-  --editor-sticky-scroll-inset: calc(
-    var(--editor-gutter-width, 0px) + var(--editor-sticky-scroll-leading, 0px)
-  );
+  /* Resolve the parent gutter here before the secondary text view shadows it. */
+  --editor-sticky-scroll-inset: var(--editor-gutter-width, 0px);
 
   left: 0;
   min-width: max(100%, var(--editor-sticky-scroll-content-width, 0px));
@@ -137,10 +138,7 @@
 .editor-virtualized.editor-sticky-scroll-lines {
   --editor-sticky-scroll-shadow: rgba(0, 0, 0, 0.42);
 
-  /* The insets hold the stack clear of the gutter and of whatever width another overlay claimed on
-     an edge, so it covers text and nothing else. Sticking sideways as well as vertically keeps it
-     off the gutter no matter how far the content is scrolled. The shadow is what separates a
-     mirrored line from the real line beneath it. */
+  /* The stack stays clear of the gutter while its parent handles minimap clipping. */
   box-shadow: 0 6px 6px -6px var(--editor-sticky-scroll-shadow);
   left: var(--editor-sticky-scroll-inset, 0px);
   /* Nothing about the stack is scrollable: its height is exactly the lines it holds, and a scrollbar
@@ -150,7 +148,6 @@
   position: sticky;
   top: 0;
   width: calc(
-    var(--editor-sticky-scroll-viewport-width, 0px) - var(--editor-sticky-scroll-inset, 0px) -
-      var(--editor-sticky-scroll-trailing, 0px)
+    var(--editor-sticky-scroll-viewport-width, 0px) - var(--editor-sticky-scroll-inset, 0px)
   );
 }

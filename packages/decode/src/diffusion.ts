@@ -65,7 +65,7 @@ export function runDiffusion(
   layer.setAttribute('aria-hidden', 'true')
 
   const cells = buildCells(document, layer, rows, tokens)
-  context.scrollElement.appendChild(layer)
+  context.contentElement.appendChild(layer)
 
   return drive(cells, layer, options.maxDurationMs, onDone)
 }

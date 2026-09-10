@@ -20,6 +20,7 @@ Options:
 - `--steps=120` changes each timing sample's scroll count.
 - `--trials=3` repeats each timing configuration.
 - `--all-motions` also measures 2px steps, reverse scrolling, and jumps beyond the cached bitmap.
+- `--scenario=large-jumps` selects one scenario for a focused repeat.
 - `--build-root=/path/to/saved-build` replays the exact saved bundle without rebuilding sources.
 - `--visual-step=2 --visual-tokens=0` captures slow scrolling without token updates.
 - `--visual-only` skips timing samples.

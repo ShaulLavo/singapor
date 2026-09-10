@@ -766,7 +766,8 @@ describe('VirtualizedTextView', () => {
 
     const spacer = container.querySelector('.editor-virtualized-spacer') as HTMLElement
     expect(view.scrollElement.style.getPropertyValue('--editor-gutter-width')).toBe('50px')
-    expect(spacer.style.width).toBe('122px')
+    // 50px gutter, 72px text, and one 8px cell for the end-of-line caret.
+    expect(spacer.style.width).toBe('130px')
   })
 
   it('keeps the spacer at least as wide as the viewport', () => {

@@ -269,6 +269,31 @@ describe('VirtualizedTextView', () => {
     expect(view.getLineStarts()).toEqual([0, 6])
   })
 
+  it.each(['wrapped', 'folded'])('projects fractional scroll through %s display rows', (layout) => {
+    view.dispose()
+    view = new VirtualizedTextView(container, {
+      wrap: layout === 'wrapped',
+      textMetrics: { characterWidth: 8, rowHeight: 20 },
+      gutterWidth: 0,
+    })
+    const text = layout === 'wrapped' ? 'abcdefghij'.repeat(20) : 'a\nb\nc\nd'
+    view.setText(text)
+    if (layout === 'folded') {
+      view.setFoldMap(
+        createFoldMap(createPieceTableSnapshot(text), [
+          { startIndex: 2, endIndex: 4, startLine: 1, endLine: 2, type: 'block' },
+        ]),
+      )
+    }
+    view.setScrollMetrics(30, 20, 80)
+
+    expect(view.getViewport()).toMatchObject({ scrollTop: 30, scrollRow: 1.5 })
+    expect(view.getState().scrollRow).toBe(1.5)
+    expect(view.getState().mountedRows.find((row) => row.index === 1)?.bufferRow).toBe(
+      layout === 'wrapped' ? 0 : 1,
+    )
+  })
+
   it('mounts all rows without vertical spacer churn in static scroll mode', () => {
     view.dispose()
     view = new VirtualizedTextView(container, {

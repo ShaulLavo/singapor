@@ -205,6 +205,7 @@ function fixedSnapshot(
 ): FixedRowVirtualizerSnapshot {
   const scrollHeight = Math.max(fields.totalSize, fields.viewportHeight)
   return {
+    scrollRow: 0,
     scrollTop: 0,
     scrollLeft: 0,
     viewportWidth: 0,

@@ -114,6 +114,7 @@ function baseSnapshot(): EditorViewSnapshot {
     foldMarkers: [],
     visibleRows: visibleRows(0, 2),
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: 0,

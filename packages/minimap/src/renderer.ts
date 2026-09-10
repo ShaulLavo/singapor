@@ -1,4 +1,5 @@
 import type { TextEdit } from '@singapor/core/document'
+import { createError } from '@singapor/core/logging/evlog'
 import { parseCssColor, relativeLuminance, rgbaToCss, transparent } from './color'
 import {
   computeFrameLayout,
@@ -9,7 +10,7 @@ import {
   yForLineNumber,
 } from './layout'
 import { MinimapCharRendererFactory } from './minimapCharRendererFactory'
-import { Constants } from './minimapCharSheet'
+import { RasterBuffer } from './raster'
 import { findSectionHeaderDecorations, findSectionHeaderDecorationsInRange } from './sectionHeaders'
 import type {
   EditorMinimapDecoration,
@@ -42,6 +43,9 @@ type RendererState = {
   viewport: MinimapViewport
   layout: MinimapRenderLayout | null
   previousFrame: MinimapFrameLayout | null
+  raster: RasterBuffer | null
+  tokenIndex: TokenIndex | null
+  surface: RasterSurface | null
   linesDirty: boolean
   decorationsDirty: boolean
 }
@@ -83,6 +87,9 @@ export class MinimapWorkerRenderer {
       viewport: defaultViewport(),
       layout: null,
       previousFrame: null,
+      raster: null,
+      tokenIndex: null,
+      surface: null,
       linesDirty: true,
       decorationsDirty: true,
     }
@@ -163,6 +170,7 @@ export class MinimapWorkerRenderer {
   public setBaseStyles(styles: MinimapBaseStyles): void {
     if (!this.state) return
     this.state.styles = styles
+    this.state.raster = null
     this.state.linesDirty = true
     this.state.decorationsDirty = true
   }
@@ -237,8 +245,12 @@ export class MinimapWorkerRenderer {
     const frameChanged =
       !this.state.previousFrame || !framesPaintSameWindow(this.state.previousFrame, frame)
 
-    if (this.state.linesDirty || frameChanged) this.renderLines(layout, frame)
-    if (this.state.decorationsDirty || frameChanged) this.renderDecorations(layout, frame)
+    const surface = this.surfaceForLayout(layout)
+    if (this.state.linesDirty || frameChanged) this.renderLines(layout, frame, surface.mainContext)
+    if (this.state.decorationsDirty || frameChanged) {
+      this.renderDecorations(layout, frame, surface.decorationsContext)
+    }
+    this.presentSurface(layout, frame, surface)
     this.state.previousFrame = frame
     this.state.linesDirty = false
     this.state.decorationsDirty = false
@@ -266,20 +278,71 @@ export class MinimapWorkerRenderer {
     })
   }
 
-  private renderLines(layout: MinimapRenderLayout, frame: FrameLike): void {
+  private renderLines(
+    layout: MinimapRenderLayout,
+    frame: FrameLike,
+    context: OffscreenCanvasRenderingContext2D,
+  ): void {
     const state = this.requireState()
-    const imageData = createBackgroundImageData(
-      state.mainContext,
-      layout.canvasInnerWidth,
-      layout.canvasInnerHeight,
-      state.styles.minimapBackground,
-    )
+    const raster = this.rasterForLayout(layout, context)
+    const previous = state.linesDirty ? null : state.previousFrame
+    const reusedStart = Math.max(frame.startLineNumber, previous?.startLineNumber ?? Infinity)
+    const reusedEnd = Math.min(frame.endLineNumber, previous?.endLineNumber ?? -Infinity)
+
+    if (previous && reusedStart <= reusedEnd) {
+      const sourceY = yForLineNumber(previous, reusedStart, layout.lineHeight)
+      const destinationY = yForLineNumber(frame, reusedStart, layout.lineHeight)
+      const reusedHeight = (reusedEnd - reusedStart + 1) * layout.lineHeight
+      raster.copyRows(sourceY, destinationY, reusedHeight)
+      raster.clearRows(0, destinationY)
+      raster.clearRows(destinationY + reusedHeight, raster.imageData.height)
+      this.renderLineRange(layout, frame, raster.imageData, frame.startLineNumber, reusedStart - 1)
+      this.renderLineRange(layout, frame, raster.imageData, reusedEnd + 1, frame.endLineNumber)
+    } else {
+      raster.clearRows(0, raster.imageData.height)
+      this.renderLineRange(
+        layout,
+        frame,
+        raster.imageData,
+        frame.startLineNumber,
+        frame.endLineNumber,
+      )
+    }
+
+    context.putImageData(raster.imageData, 0, 0)
+  }
+
+  private rasterForLayout(
+    layout: MinimapRenderLayout,
+    context: OffscreenCanvasRenderingContext2D,
+  ): RasterBuffer {
+    const state = this.requireState()
+    const width = Math.max(1, layout.canvasInnerWidth)
+    const height = rasterHeight(layout)
+    if (state.raster?.imageData.width === width && state.raster.imageData.height === height) {
+      return state.raster
+    }
+
+    state.raster = new RasterBuffer(context, width, height, state.styles.minimapBackground)
+    return state.raster
+  }
+
+  private renderLineRange(
+    layout: MinimapRenderLayout,
+    frame: FrameLike,
+    imageData: ImageData,
+    startLineNumber: number,
+    endLineNumber: number,
+  ): void {
+    if (startLineNumber > endLineNumber) return
+
+    const state = this.requireState()
     const charRenderer = MinimapCharRendererFactory.create(layout.scale, state.styles.fontFamily)
     const useLighterFont = relativeLuminance(state.styles.background) >= 0.5
     const renderBackground = state.styles.background
-    let tokenCursor = 0
+    let tokenCursor = this.tokenCursorForOffset(this.lineStartOffset(startLineNumber))
 
-    for (let line = frame.startLineNumber; line <= frame.endLineNumber; line += 1) {
+    for (let line = startLineNumber; line <= endLineNumber; line += 1) {
       const text = this.lineText(line)
       const lineStart = this.lineStartOffset(line)
       const lineEnd = lineStart + text.length
@@ -306,8 +369,15 @@ export class MinimapWorkerRenderer {
         renderBackgroundAlpha: state.styles.minimapBackground.a,
       })
     }
+  }
 
-    state.mainContext.putImageData(imageData, 0, 0)
+  private tokenCursorForOffset(offset: number): number {
+    const state = this.requireState()
+    const tokens = state.document.tokens
+    if (state.tokenIndex?.tokens !== tokens) {
+      state.tokenIndex = { tokens, maxEnds: tokenMaxEnds(tokens) }
+    }
+    return firstTokenEndingAfter(state.tokenIndex.maxEnds, offset)
   }
 
   private renderLine(options: RenderLineOptions): void {
@@ -331,26 +401,37 @@ export class MinimapWorkerRenderer {
     )
   }
 
-  private renderDecorations(layout: MinimapRenderLayout, frame: FrameLike): void {
-    const state = this.requireState()
-    state.decorationsContext.clearRect(0, 0, layout.canvasInnerWidth, layout.canvasInnerHeight)
-    this.renderSelectionHighlights(layout, frame)
-    this.renderMinimapDecorations(layout, frame)
-    this.renderSectionHeaders(layout, frame)
+  private renderDecorations(
+    layout: MinimapRenderLayout,
+    frame: FrameLike,
+    context: OffscreenCanvasRenderingContext2D,
+  ): void {
+    context.clearRect(0, 0, layout.canvasInnerWidth, rasterHeight(layout))
+    this.renderSelectionHighlights(layout, frame, context)
+    this.renderMinimapDecorations(layout, frame, context)
+    this.renderSectionHeaders(layout, frame, context)
   }
 
-  private renderSelectionHighlights(layout: MinimapRenderLayout, frame: FrameLike): void {
+  private renderSelectionHighlights(
+    layout: MinimapRenderLayout,
+    frame: FrameLike,
+    context: OffscreenCanvasRenderingContext2D,
+  ): void {
     const state = this.requireState()
     const color = transparent(state.styles.selection, 0.5)
-    state.decorationsContext.fillStyle = rgbaToCss(color)
+    context.fillStyle = rgbaToCss(color)
 
     for (const selection of state.document.selections) {
       const range = this.offsetRangeToLineRange(selection.startOffset, selection.endOffset)
-      fillLineRange(state.decorationsContext, layout, frame, range.start, range.end)
+      fillLineRange(context, layout, frame, range.start, range.end)
     }
   }
 
-  private renderMinimapDecorations(layout: MinimapRenderLayout, frame: FrameLike): void {
+  private renderMinimapDecorations(
+    layout: MinimapRenderLayout,
+    frame: FrameLike,
+    context: OffscreenCanvasRenderingContext2D,
+  ): void {
     const state = this.requireState()
     const decorations = state.document.decorations
       .filter((decoration) => !decoration.sectionHeaderStyle)
@@ -358,14 +439,17 @@ export class MinimapWorkerRenderer {
 
     for (const decoration of decorations) {
       const color = parseCssColor(decoration.color, state.styles.selection)
-      state.decorationsContext.fillStyle = rgbaToCss(transparent(color, 0.5))
-      fillDecorationRange(state.decorationsContext, layout, frame, decoration)
+      context.fillStyle = rgbaToCss(transparent(color, 0.5))
+      fillDecorationRange(context, layout, frame, decoration)
     }
   }
 
-  private renderSectionHeaders(layout: MinimapRenderLayout, frame: FrameLike): void {
+  private renderSectionHeaders(
+    layout: MinimapRenderLayout,
+    frame: FrameLike,
+    context: OffscreenCanvasRenderingContext2D,
+  ): void {
     const state = this.requireState()
-    const context = state.decorationsContext
     const fontSize = state.options.sectionHeaderFontSize * state.metrics.devicePixelRatio
     context.font = `500 ${fontSize}px ${state.styles.fontFamily}`
     context.fillStyle = rgbaToCss(transparent(state.styles.minimapBackground, 0.7))
@@ -425,6 +509,30 @@ export class MinimapWorkerRenderer {
     resizeCanvas(state.decorationsCanvas, layout.canvasInnerWidth, layout.canvasInnerHeight)
   }
 
+  private surfaceForLayout(layout: MinimapRenderLayout): RasterSurface {
+    const state = this.requireState()
+    state.surface ??= createRasterSurface()
+    resizeCanvas(state.surface.mainCanvas, layout.canvasInnerWidth, rasterHeight(layout))
+    resizeCanvas(state.surface.decorationsCanvas, layout.canvasInnerWidth, rasterHeight(layout))
+    return state.surface
+  }
+
+  private presentSurface(
+    layout: MinimapRenderLayout,
+    frame: MinimapFrameLayout,
+    surface: RasterSurface,
+  ): void {
+    const state = this.requireState()
+    const offsetY = frame.startLineFraction * layout.lineHeight
+    presentRaster(state.mainContext, surface.mainCanvas, state.mainCanvas, offsetY)
+    presentRaster(
+      state.decorationsContext,
+      surface.decorationsCanvas,
+      state.decorationsCanvas,
+      offsetY,
+    )
+  }
+
   private requireState(): RendererState {
     if (!this.state) throw new Error('Minimap renderer is not initialized')
     return this.state
@@ -469,6 +577,63 @@ type TokenRange = {
   readonly start: number
   readonly end: number
   readonly cursor: number
+}
+
+type TokenIndex = {
+  readonly tokens: readonly MinimapToken[]
+  readonly maxEnds: Float64Array
+}
+
+type RasterSurface = {
+  readonly mainCanvas: OffscreenCanvas
+  readonly decorationsCanvas: OffscreenCanvas
+  readonly mainContext: OffscreenCanvasRenderingContext2D
+  readonly decorationsContext: OffscreenCanvasRenderingContext2D
+}
+
+function createRasterSurface(): RasterSurface {
+  const mainCanvas = new OffscreenCanvas(1, 1)
+  const decorationsCanvas = new OffscreenCanvas(1, 1)
+  const mainContext = mainCanvas.getContext('2d')
+  const decorationsContext = decorationsCanvas.getContext('2d')
+  if (!mainContext || !decorationsContext) {
+    throw createError({
+      message: 'Unable to create minimap raster surface',
+      code: 'MINIMAP_RASTER_CONTEXT',
+      status: 500,
+      why: 'The browser did not provide a 2D context for the minimap raster.',
+      fix: 'Check OffscreenCanvas 2D support and canvas resource limits.',
+    })
+  }
+  return { mainCanvas, decorationsCanvas, mainContext, decorationsContext }
+}
+
+function rasterHeight(layout: MinimapRenderLayout): number {
+  return Math.max(
+    1,
+    (Math.ceil(layout.canvasInnerHeight / layout.lineHeight) + 1) * layout.lineHeight,
+  )
+}
+
+function presentRaster(
+  context: OffscreenCanvasRenderingContext2D,
+  source: OffscreenCanvas,
+  target: OffscreenCanvas,
+  offsetY: number,
+): void {
+  context.globalCompositeOperation = 'copy'
+  context.imageSmoothingEnabled = true
+  context.drawImage(
+    source,
+    0,
+    offsetY,
+    target.width,
+    target.height,
+    0,
+    0,
+    target.width,
+    target.height,
+  )
 }
 
 function renderSegment(
@@ -562,20 +727,28 @@ function tokensForLineFromCursor(
   return { start, end: index, cursor: start }
 }
 
-function createBackgroundImageData(
-  context: OffscreenCanvasRenderingContext2D,
-  width: number,
-  height: number,
-  background: RGBA8,
-): ImageData {
-  const imageData = context.createImageData(Math.max(1, width), Math.max(1, height))
-  for (let index = 0; index < imageData.data.length; index += Constants.RGBA_CHANNELS_CNT) {
-    imageData.data[index] = background.r
-    imageData.data[index + 1] = background.g
-    imageData.data[index + 2] = background.b
-    imageData.data[index + 3] = background.a
+function tokenMaxEnds(tokens: readonly MinimapToken[]): Float64Array {
+  const maxEnds = new Float64Array(tokens.length)
+  let maxEnd = 0
+  for (let index = 0; index < tokens.length; index += 1) {
+    maxEnd = Math.max(maxEnd, tokens[index]!.end)
+    maxEnds[index] = maxEnd
   }
-  return imageData
+  return maxEnds
+}
+
+function firstTokenEndingAfter(maxEnds: Float64Array, offset: number): number {
+  let low = 0
+  let high = maxEnds.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    if (maxEnds[middle]! <= offset) {
+      low = middle + 1
+      continue
+    }
+    high = middle
+  }
+  return low
 }
 
 function fillLineRange(
@@ -727,6 +900,7 @@ function defaultMetrics(): MinimapMetrics {
 function defaultViewport(): MinimapViewport {
   return {
     scrollTop: 0,
+    scrollRow: 0,
     scrollLeft: 0,
     scrollHeight: 0,
     scrollWidth: 0,

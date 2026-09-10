@@ -3,7 +3,10 @@ import { arrayLspLineStarts, type LspClient } from '@singapor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import { HoverDefinitionController } from '../src/hoverDefinitionController'
+import {
+  HoverDefinitionController,
+  type HoverDefinitionControllerOptions,
+} from '../src/hoverDefinitionController'
 import type { ActiveDocument } from '../src/pluginTypes'
 import type { LanguageServerHoverUpdate } from '../src/serverSet'
 import {
@@ -13,7 +16,7 @@ import {
   HOVER_REQUEST_DEBOUNCE_MS,
   TOOLTIP_HIDE_DELAY_MS,
 } from '../src/tooltip'
-import { connectedEditor, flushPromises } from './connectedEditor'
+import { connectedEditor, flushPromises, singleLineRange } from './connectedEditor'
 
 describe('hover timing and keyboard access', () => {
   afterEach(() => {
@@ -182,7 +185,7 @@ describe('definition link source spans', () => {
     async (character) => {
       const text = 'import { helper } from "@scope/nested/my-helper.ts"'
       const start = text.indexOf('"')
-      const { controller, context, element, request } = hoverController(
+      const { controller, context, element, request, onDefinitionLinkHover } = hoverController(
         () => Promise.resolve(null),
         text,
       )
@@ -212,6 +215,11 @@ describe('definition link source spans', () => {
         expect.any(Object),
       )
       expect(element.style.cursor).toBe('pointer')
+      expect(onDefinitionLinkHover).toHaveBeenCalledExactlyOnceWith({
+        path: 'nested/my-helper.ts',
+        uri: 'file:///nested/my-helper.ts',
+        range: singleLineRange(0, 1),
+      })
 
       vi.mocked(context.textOffsetFromPoint).mockReturnValue(text.indexOf('-'))
       element.dispatchEvent(
@@ -219,6 +227,7 @@ describe('definition link source spans', () => {
       )
       await flushPromises()
       expect(request).toHaveBeenCalledTimes(1)
+      expect(onDefinitionLinkHover).toHaveBeenCalledTimes(1)
 
       vi.mocked(context.textOffsetFromPoint).mockReturnValue(0)
       request.mockResolvedValue([])
@@ -232,6 +241,123 @@ describe('definition link source spans', () => {
   )
 })
 
+describe('definition link hover notification', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.replaceChildren()
+  })
+
+  it('passes the notification through the adapter factory', async () => {
+    const onDefinitionLinkHover = vi.fn()
+    const editor = await connectedEditor('const value = 1', 6, { onDefinitionLinkHover })
+
+    editor.pointerMove(40, 60, { metaKey: true })
+    await flushPromises()
+    const target = { uri: 'file:///helper.ts', range: singleLineRange(0, 5) }
+    editor.answerDefinition([target])
+    await flushPromises()
+
+    await vi.waitFor(() =>
+      expect(onDefinitionLinkHover).toHaveBeenCalledExactlyOnceWith({
+        ...target,
+        path: 'helper.ts',
+      }),
+    )
+    editor.dispose()
+  })
+
+  it.each(['metaKey', 'ctrlKey'])(
+    'reports the preferred jumpable target after rendering a %s link without navigating',
+    async (modifier) => {
+      const harness = hoverController(() => Promise.resolve(null))
+      const range = singleLineRange(0, 5)
+      harness.request.mockResolvedValue([
+        { uri: 'file:///repo/node_modules/library/index.ts', range },
+        { uri: 'file:///helper.ts', range },
+        { uri: 'file:///index.ts', range: singleLineRange(6, 11) },
+      ])
+      harness.onDefinitionLinkHover.mockImplementation(() => {
+        expect(harness.element.style.cursor).toBe('pointer')
+        expect(harness.context.setRangeHighlight).toHaveBeenCalled()
+      })
+
+      harness.element.dispatchEvent(
+        new PointerEvent('pointermove', { [modifier]: true, buttons: 0 }),
+      )
+      await flushPromises()
+
+      expect(harness.onDefinitionLinkHover).toHaveBeenCalledExactlyOnceWith({
+        path: 'helper.ts',
+        uri: 'file:///helper.ts',
+        range,
+      })
+      expect(harness.context.setSelection).not.toHaveBeenCalled()
+      expect(harness.onOpenDefinition).not.toHaveBeenCalled()
+      harness.controller.dispose()
+    },
+  )
+
+  it('does not notify for ordinary hover', async () => {
+    vi.useFakeTimers()
+    const harness = hoverController(() => Promise.resolve(hover('value')))
+
+    harness.element.dispatchEvent(new PointerEvent('pointermove', { buttons: 0 }))
+    await vi.advanceTimersByTimeAsync(HOVER_REQUEST_DEBOUNCE_MS)
+
+    expect(tooltip().textContent).toContain('value')
+    expect(harness.request).not.toHaveBeenCalled()
+    expect(harness.onDefinitionLinkHover).not.toHaveBeenCalled()
+    harness.controller.dispose()
+  })
+
+  it.each([
+    { targets: [] },
+    { targets: [{ uri: 'file:///index.ts', range: singleLineRange(6, 11) }] },
+  ])('does not notify when there is no jumpable target: $targets', async ({ targets }) => {
+    const harness = hoverController(() => Promise.resolve(null))
+    harness.request.mockResolvedValue(targets)
+
+    harness.element.dispatchEvent(new PointerEvent('pointermove', { metaKey: true, buttons: 0 }))
+    await flushPromises()
+
+    expect(harness.element.style.cursor).toBe('')
+    expect(harness.onDefinitionLinkHover).not.toHaveBeenCalled()
+    harness.controller.dispose()
+  })
+
+  it.each(['leave', 'release', 'edit', 'replace', 'dispose'] as const)(
+    'ignores a definition answer after %s',
+    async (change) => {
+      const harness = hoverController(() => Promise.resolve(null))
+      const response = deferred<readonly lsp.Location[]>()
+      harness.request.mockReturnValue(response.promise)
+      harness.element.dispatchEvent(new PointerEvent('pointermove', { metaKey: true, buttons: 0 }))
+      expect(harness.request).toHaveBeenCalledTimes(1)
+
+      invalidateDefinitionHover(harness, change)
+      response.resolve([{ uri: 'file:///helper.ts', range: singleLineRange(0, 5) }])
+      await flushPromises()
+
+      expect(harness.onDefinitionLinkHover).not.toHaveBeenCalled()
+      expect(harness.element.style.cursor).toBe('')
+      harness.controller.dispose()
+    },
+  )
+})
+
+function invalidateDefinitionHover(
+  harness: ReturnType<typeof hoverController>,
+  change: 'leave' | 'release' | 'edit' | 'replace' | 'dispose',
+) {
+  if (change === 'leave') return harness.element.dispatchEvent(new PointerEvent('pointerleave'))
+  if (change === 'release') {
+    return document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta' }))
+  }
+  if (change === 'edit') return harness.controller.update(harness.context.getSnapshot(), 'content')
+  if (change === 'replace') return harness.replaceDocument()
+  return harness.controller.dispose()
+}
+
 function hoverController(
   requestHover: (
     onUpdate: (update: LanguageServerHoverUpdate) => void,
@@ -240,7 +366,7 @@ function hoverController(
 ) {
   const element = document.createElement('div')
   document.body.append(element)
-  const active = activeDocument(text)
+  let active = activeDocument(text)
   const snapshot = hoverSnapshot(active)
   const context = {
     container: element,
@@ -255,6 +381,9 @@ function hoverController(
     clearRangeHighlight: vi.fn(),
   } as unknown as EditorViewContributionContext
   const request = vi.fn<LspClient['request']>()
+  const onDefinitionLinkHover =
+    vi.fn<NonNullable<HoverDefinitionControllerOptions['onDefinitionLinkHover']>>()
+  const onOpenDefinition = vi.fn()
   const client = {
     initialized: true,
     serverCapabilities: { hoverProvider: true },
@@ -272,9 +401,21 @@ function hoverController(
     getActiveDocument: () => active,
     getDiagnostics: () => [],
     completionContainsTarget: () => false,
+    onDefinitionLinkHover,
+    onOpenDefinition,
     onRequestError: vi.fn(),
   })
-  return { controller, context, element, request }
+  return {
+    controller,
+    context,
+    element,
+    request,
+    onDefinitionLinkHover,
+    onOpenDefinition,
+    replaceDocument: () => {
+      active = activeDocument('const other = 2')
+    },
+  }
 }
 
 function activeDocument(text = 'const value = 1'): ActiveDocument {

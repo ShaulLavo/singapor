@@ -432,7 +432,7 @@ function scrolledSnapshot(scrollTop: number): EditorViewSnapshot {
   return {
     ...snapshot(),
     visibleRows: visibleRows(firstRow, LINES.length - 1),
-    viewport: { ...snapshot().viewport, scrollTop },
+    viewport: { ...snapshot().viewport, scrollTop, scrollRow: scrollTop / ROW_HEIGHT },
   }
 }
 
@@ -465,6 +465,7 @@ function snapshot(): EditorViewSnapshot {
     foldMarkers: foldMarkers(),
     visibleRows: visibleRows(0, LINES.length - 1),
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: LINES.length * ROW_HEIGHT,
@@ -590,6 +591,7 @@ function deepSnapshot(): EditorViewSnapshot {
     viewport: {
       ...snapshot().viewport,
       scrollTop: DEEP_DEPTH * ROW_HEIGHT,
+      scrollRow: DEEP_DEPTH,
       scrollHeight: DEEP_LINES.length * ROW_HEIGHT,
     },
   }

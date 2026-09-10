@@ -19,6 +19,7 @@ export type MinimapFrameLayout = {
   readonly sliderHeight: number
   readonly topPaddingLineCount: number
   readonly startLineNumber: number
+  readonly startLineFraction: number
   readonly endLineNumber: number
 }
 
@@ -222,6 +223,7 @@ function containedFrameLayout(options: {
     sliderHeight,
     topPaddingLineCount: 0,
     startLineNumber: 1,
+    startLineFraction: 0,
     endLineNumber: Math.min(options.lineCount, maxLinesFitting),
   }
 }
@@ -256,11 +258,17 @@ function proportionalFrameLayout(options: {
       0,
       1,
       options.lineCount,
+      0,
     )
   }
 
-  const startLineNumber = proportionalStartLine(options, sliderTop, pixelRatio)
-  const endLineNumber = Math.min(options.lineCount, startLineNumber + minimapLinesFitting - 1)
+  const startLine = proportionalStartLine(options, sliderTop, pixelRatio)
+  const startLineNumber = Math.floor(startLine)
+  const startLineFraction = startLine - startLineNumber
+  const linesFitting = Math.ceil(
+    options.renderLayout.canvasInnerHeight / lineHeight + startLineFraction,
+  )
+  const endLineNumber = Math.min(options.lineCount, startLineNumber + linesFitting - 1)
   return frame(
     options.viewport,
     true,
@@ -270,6 +278,7 @@ function proportionalFrameLayout(options: {
     0,
     startLineNumber,
     endLineNumber,
+    startLineFraction,
   )
 }
 
@@ -282,17 +291,14 @@ function proportionalStartLine(
   sliderTop: number,
   pixelRatio: number,
 ): number {
-  const visibleStart = Math.max(1, options.viewport.visibleStart + 1)
-  const raw = Math.max(
-    1,
-    Math.floor(visibleStart - (sliderTop * pixelRatio) / options.renderLayout.lineHeight),
-  )
+  const visibleStart = Math.max(1, options.viewport.scrollRow + 1)
+  const raw = Math.max(1, visibleStart - (sliderTop * pixelRatio) / options.renderLayout.lineHeight)
   const previous = options.previous
   if (!previous || previous.scrollHeight !== options.viewport.scrollHeight) return raw
   if (previous.scrollTop > options.viewport.scrollTop)
-    return Math.min(raw, previous.startLineNumber)
+    return Math.min(raw, previous.startLineNumber + previous.startLineFraction)
   if (previous.scrollTop < options.viewport.scrollTop)
-    return Math.max(raw, previous.startLineNumber)
+    return Math.max(raw, previous.startLineNumber + previous.startLineFraction)
   return raw
 }
 
@@ -305,6 +311,7 @@ function frame(
   topPaddingLineCount: number,
   startLineNumber: number,
   endLineNumber: number,
+  startLineFraction: number,
 ): MinimapFrameLayout {
   return {
     scrollTop: viewport.scrollTop,
@@ -315,6 +322,7 @@ function frame(
     sliderHeight,
     topPaddingLineCount,
     startLineNumber,
+    startLineFraction,
     endLineNumber,
   }
 }

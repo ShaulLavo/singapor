@@ -87,6 +87,7 @@ class StubSocket implements LspWebSocketLike {
 }
 
 type Harness = {
+  readonly context: EditorViewContributionContext
   readonly socket: StubSocket
   readonly client: LspClient
   readonly initializeParams: lsp.InitializeParams
@@ -115,7 +116,8 @@ async function narrowPlugin(options: Partial<LanguageServerPluginOptions> = {}):
   })
 
   const provider = activate(plugin)
-  const contribution = provider.createContribution(viewContributionContext())
+  const context = viewContributionContext()
+  const contribution = provider.createContribution(context)
   if (!contribution) throw new Error('missing contribution')
   await flushPromises()
 
@@ -128,6 +130,7 @@ async function narrowPlugin(options: Partial<LanguageServerPluginOptions> = {}):
   if (!initialize) throw new Error('missing initialize request')
 
   return {
+    context,
     socket,
     client: connection.client,
     initializeParams: initialize.params as lsp.InitializeParams,
@@ -147,6 +150,33 @@ async function narrowPlugin(options: Partial<LanguageServerPluginOptions> = {}):
 }
 
 describe('capabilities and clientInfo through the narrow factory', () => {
+  it('reports a resolved modifier-hover destination through the narrow and set factories', async () => {
+    const onDefinitionLinkHover = vi.fn()
+    const harness = await narrowPlugin({ onDefinitionLinkHover })
+    await harness.answerInitialize({ definitionProvider: true })
+    harness.context.scrollElement.dispatchEvent(
+      new PointerEvent('pointermove', { metaKey: true, buttons: 0 }),
+    )
+    await flushPromises()
+    const request = harness.socket.find('textDocument/definition')
+    expect(request).toBeDefined()
+    const target = {
+      uri: 'file:///src/helper.ts',
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+    }
+
+    harness.socket.receive({ jsonrpc: '2.0', id: request?.id, result: [target] })
+    await flushPromises()
+
+    await vi.waitFor(() =>
+      expect(onDefinitionLinkHover).toHaveBeenCalledExactlyOnceWith({
+        ...target,
+        path: 'src/helper.ts',
+      }),
+    )
+    harness.dispose()
+  })
+
   it('registers and disposes the host document-sync controller with each lane', async () => {
     const controller = new LanguageServerDocumentSyncController()
     const dispose = vi.fn()
@@ -507,6 +537,7 @@ function snapshot(): EditorViewSnapshot {
     foldMarkers: [],
     visibleRows: [],
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: 0,
@@ -708,6 +739,7 @@ function layerSnapshot(
     foldMarkers: [],
     visibleRows: rows,
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: 0,

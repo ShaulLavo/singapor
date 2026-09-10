@@ -201,6 +201,8 @@ export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
   ) => LanguageServerDiagnosticMarkerClaim
   readonly onInteractiveReady?: () => void
   readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
+  /** Reports the selected destination when Ctrl/Cmd-hover renders a jumpable link. */
+  readonly onDefinitionLinkHover?: (target: LanguageServerDefinitionTarget) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -239,6 +241,7 @@ export type LanguageServerSetPluginOptions = Pick<
   | 'onDidNavigateDiagnostic'
   | 'onInteractiveReady'
   | 'onRequestError'
+  | 'onDefinitionLinkHover'
   | 'onOpenDefinition'
   | 'onOpenReferences'
   | 'onError'

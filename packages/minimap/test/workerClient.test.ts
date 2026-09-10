@@ -438,17 +438,93 @@ describe('MinimapWorkerClient', () => {
       worker.send(renderedResponse(1))
       worker.postMessage.mockClear()
 
-      client.update(snapshot({ scrollTop: 120, visibleRange: { start: 6, end: 18 } }), 'viewport')
+      client.update(snapshot({ scrollTop: 125, visibleRange: { start: 6, end: 18 } }), 'viewport')
       runtime.flushAnimationFrames()
 
       const requests = worker.postMessage.mock.calls.map((call) => call[0] as { type: string })
 
       expect(requests.map((request) => request.type)).toEqual(['updateViewport', 'render'])
+      expect(requests[0]).toEqual({
+        type: 'updateViewport',
+        viewport: expect.objectContaining({ scrollTop: 125, scrollRow: 6.25 }),
+      })
+
+      worker.postMessage.mockClear()
+      client.updateViewport(
+        snapshot({ scrollTop: 125, visibleRange: { start: 6, end: 18 } }).viewport,
+      )
+      expect(worker.postMessage).not.toHaveBeenCalled()
 
       client.dispose()
       host.root.remove()
       host.colorScope.remove()
     } finally {
+      runtime.restore()
+    }
+  })
+
+  it('updates the worker layout when a full viewport update resizes the minimap lane', () => {
+    const runtime = installMinimapRuntime()
+    const host = createHost()
+    const client = new MinimapWorkerClient({
+      host,
+      options: resolveMinimapOptions(),
+      snapshot: snapshot(),
+      decorations: [],
+      onLayoutWidth: vi.fn(),
+      reservedLane: () => 0,
+    })
+    try {
+      const worker = runtime.workers[0]!
+      runtime.flushTimers()
+      worker.send(renderedResponse(lastRenderSequence(worker)))
+      worker.postMessage.mockClear()
+      host.root.style.height = '85px'
+
+      client.update(snapshot({ clientHeight: 85 }), 'viewport')
+      expect(worker.postMessage).toHaveBeenCalledWith({
+        type: 'updateLayout',
+        metrics: expect.any(Object),
+        viewport: expect.objectContaining({ clientHeight: 85, minimapHeight: 85 }),
+      })
+    } finally {
+      client.dispose()
+      host.root.remove()
+      host.colorScope.remove()
+      runtime.restore()
+    }
+  })
+
+  it('sends the latest viewport while token updates wait for a quiet period', () => {
+    const runtime = installMinimapRuntime()
+    const host = createHost()
+    const client = new MinimapWorkerClient({
+      host,
+      options: resolveMinimapOptions(),
+      snapshot: snapshot(),
+      decorations: [],
+      onLayoutWidth: vi.fn(),
+      reservedLane: () => 0,
+    })
+    try {
+      const worker = runtime.workers[0]!
+      worker.send(renderedResponse(1))
+      worker.postMessage.mockClear()
+      const tokens = [{ start: 0, end: 6, style: { color: '#ff0000' } }]
+      client.update(snapshot({}, { tokens }), 'tokens')
+      client.update(snapshot({ scrollTop: 120 }, { tokens }), 'viewport')
+
+      const requests = worker.postMessage.mock.calls.map((call) => call[0])
+      expect(requests).toContainEqual({
+        type: 'updateViewport',
+        viewport: expect.objectContaining({ scrollTop: 120 }),
+      })
+      expect(requests.some((request) => request.type === 'updateTokenRange')).toBe(false)
+      expect(requests.some((request) => request.type === 'updateTokens')).toBe(false)
+    } finally {
+      client.dispose()
+      host.root.remove()
+      host.colorScope.remove()
       runtime.restore()
     }
   })
@@ -489,6 +565,79 @@ describe('MinimapWorkerClient', () => {
       host.root.remove()
       host.colorScope.remove()
     } finally {
+      runtime.restore()
+    }
+  })
+
+  it('keeps the latest viewport while an older worker frame finishes', () => {
+    const runtime = installMinimapRuntime()
+    const host = createHost()
+    const client = new MinimapWorkerClient({
+      host,
+      options: resolveMinimapOptions(),
+      snapshot: snapshot(),
+      decorations: [],
+      onLayoutWidth: vi.fn(),
+      reservedLane: () => 0,
+    })
+    try {
+      const worker = runtime.workers[0]!
+      runtime.flushTimers()
+      worker.send(renderedResponse(lastRenderSequence(worker)))
+      client.updateViewport(snapshot({ scrollTop: 80 }).viewport)
+      runtime.flushTimers()
+      const sequence = lastRenderSequence(worker)
+      worker.postMessage.mockClear()
+      client.updateViewport(snapshot({ scrollTop: 160 }).viewport)
+      const transform = host.slider.style.transform
+
+      expect(worker.postMessage).toHaveBeenCalledWith({
+        type: 'updateViewport',
+        viewport: expect.objectContaining({ scrollTop: 160 }),
+      })
+      worker.send(renderedResponse(sequence))
+      expect(host.slider.style.transform).toBe(transform)
+      runtime.flushTimers()
+      expect(lastRenderSequence(worker)).not.toBe(sequence)
+    } finally {
+      client.dispose()
+      host.root.remove()
+      host.colorScope.remove()
+      runtime.restore()
+    }
+  })
+
+  it('flushes ready token updates after a scrolling frame without restarting the delay', () => {
+    const runtime = installMinimapRuntime()
+    const host = createHost()
+    const client = new MinimapWorkerClient({
+      host,
+      options: resolveMinimapOptions(),
+      snapshot: snapshot(),
+      decorations: [],
+      onLayoutWidth: vi.fn(),
+      reservedLane: () => 0,
+    })
+    try {
+      const worker = runtime.workers[0]!
+      runtime.flushTimers()
+      worker.send(renderedResponse(lastRenderSequence(worker)))
+      const tokens = [{ start: 0, end: 6, style: { color: '#ff0000' } }]
+      client.update(snapshot({}, { tokens }), 'tokens')
+      client.updateViewport(snapshot({ scrollTop: 120 }).viewport)
+      runtime.flushTimers()
+      const sequence = lastRenderSequence(worker)
+      worker.postMessage.mockClear()
+
+      worker.send(renderedResponse(sequence))
+
+      const requests = worker.postMessage.mock.calls.map((call) => call[0])
+      expect(requests.some((request) => request.type === 'updateTokenRange')).toBe(true)
+      expect(host.slider.style.transform).not.toBe('translate3d(0, 0px, 0)')
+    } finally {
+      client.dispose()
+      host.root.remove()
+      host.colorScope.remove()
       runtime.restore()
     }
   })
@@ -1010,6 +1159,38 @@ describe('MinimapWorkerClient', () => {
     }
   })
 
+  it('keeps the current scroll position when external markers change', () => {
+    const runtime = installMinimapRuntime()
+    const host = createHost()
+    const initial = snapshot()
+    const client = new MinimapWorkerClient({
+      host,
+      options: resolveMinimapOptions(),
+      snapshot: initial,
+      decorations: [],
+      onLayoutWidth: vi.fn(),
+      reservedLane: () => 0,
+    })
+    try {
+      const worker = runtime.workers[0]!
+      runtime.flushTimers()
+      worker.send(renderedResponse(lastRenderSequence(worker)))
+      client.updateViewport(snapshot({ scrollTop: 125 }).viewport)
+      const transform = host.slider.style.transform
+
+      client.setExternalDecorations([])
+      expect(host.slider.style.transform).toBe(transform)
+      runtime.flushTimers()
+      worker.send(renderedResponse(lastRenderSequence(worker)))
+      expect(host.slider.style.transform).toBe(transform)
+    } finally {
+      client.dispose()
+      host.root.remove()
+      host.colorScope.remove()
+      runtime.restore()
+    }
+  })
+
   it('sends external decoration updates without a full decoration payload', () => {
     const runtime = installMinimapRuntime()
     try {
@@ -1034,7 +1215,7 @@ describe('MinimapWorkerClient', () => {
         color: '#ff0000',
         position: 'inline' as const,
       }
-      client.setExternalDecorations(snapshot(), [decoration])
+      client.setExternalDecorations([decoration])
       runtime.flushAnimationFrames()
 
       const requests = worker.postMessage.mock.calls.map((call) => call[0] as MinimapWorkerRequest)
@@ -1192,6 +1373,7 @@ function snapshot(
     visibleRows: [],
     viewport: {
       scrollTop: 0,
+      scrollRow: (viewport.scrollTop ?? 0) / 20,
       scrollLeft: 0,
       scrollHeight: 400,
       scrollWidth: contentWidth,

@@ -468,6 +468,34 @@ describe('createMinimapPlugin', () => {
     }
   })
 
+  it('forwards continuous viewport updates without reading layout or document snapshots', () => {
+    const restoreRuntime = installMinimapRuntime()
+    try {
+      const initial = documentSnapshot(200, 100)
+      const testContext = context(initial)
+      const contribution = activateMinimap().view?.createContribution(testContext)
+      const snapshots = vi.spyOn(testContext, 'getSnapshot')
+      const measurements = vi.spyOn(window, 'getComputedStyle')
+      const viewport = { ...initial.viewport, scrollTop: 15, visibleRange: { start: 0, end: 6 } }
+
+      contribution?.updateViewport?.(viewport)
+
+      expect(
+        postedRequests().findLast((request) => request.type === 'updateViewport'),
+      ).toMatchObject({
+        type: 'updateViewport',
+        viewport: { scrollTop: 15, visibleStart: 0, visibleEnd: 6 },
+      })
+      expect(snapshots).not.toHaveBeenCalled()
+      expect(measurements).not.toHaveBeenCalled()
+      measurements.mockRestore()
+      snapshots.mockRestore()
+      contribution?.dispose()
+    } finally {
+      restoreRuntime()
+    }
+  })
+
   it('merges the bands a source registers while the minimap is already open', () => {
     const restoreRuntime = installMinimapRuntime()
     const timers = installTimers()
@@ -671,6 +699,7 @@ function snapshot(viewport: Partial<EditorViewSnapshot['viewport']> = {}): Edito
     visibleRows: [],
     viewport: {
       scrollTop: 0,
+      scrollRow: (viewport.scrollTop ?? 0) / 20,
       scrollLeft: 0,
       scrollHeight: 20,
       scrollWidth: 0,

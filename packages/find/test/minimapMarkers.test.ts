@@ -241,6 +241,7 @@ function snapshot(text: string, selection: readonly [number, number]): EditorVie
     foldMarkers: [],
     visibleRows: [],
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: lineStarts.length * 20,

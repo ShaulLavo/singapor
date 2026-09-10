@@ -28,6 +28,7 @@ export type LanguageServerResolvedOptions = {
   ) => LanguageServerDiagnosticMarkerClaim
   readonly onInteractiveReady?: () => void
   readonly onApplyWorkspaceEdit?: OnApplyWorkspaceEdit
+  readonly onDefinitionLinkHover?: (target: LanguageServerDefinitionTarget) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,

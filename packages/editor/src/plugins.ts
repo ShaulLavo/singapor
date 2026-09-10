@@ -250,6 +250,8 @@ export type EditorVisibleGutterLayoutJSON = {
 
 export type EditorViewportSnapshot = {
   readonly scrollTop: number
+  /** Continuous display-row coordinate at scrollTop, including the gap following each row. */
+  readonly scrollRow: number
   readonly scrollLeft: number
   readonly scrollHeight: number
   readonly scrollWidth: number
@@ -262,6 +264,7 @@ export type EditorViewportSnapshot = {
 
 export type EditorViewportSnapshotJSON = {
   readonly scrollTop: number
+  readonly scrollRow: number
   readonly scrollLeft: number
   readonly scrollHeight: number
   readonly scrollWidth: number
@@ -616,6 +619,8 @@ export type EditorViewContribution = EditorDisposable & {
   /** Capture contributors opt into synchronous restoration with a configuration-specific key. */
   readonly snapshotKey?: string
   captureVisiblePaint?(snapshot: EditorViewSnapshot): EditorVisiblePaintCapture
+  /** Scroll feedback at display rate, without rebuilding the document or mounted-row snapshot. */
+  updateViewport?(viewport: EditorViewportSnapshot): void
   update(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,

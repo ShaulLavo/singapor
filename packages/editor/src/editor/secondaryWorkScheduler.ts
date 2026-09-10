@@ -1,9 +1,4 @@
-import { EditorWorkScheduler, type EditorWorkSchedulerOptions } from './workScheduler'
-
-export type EditorSecondaryWorkSchedulerOptions = {
-  readonly setTimeout?: typeof globalThis.setTimeout
-  readonly clearTimeout?: typeof globalThis.clearTimeout
-}
+import { EditorWorkScheduler } from './workScheduler'
 
 export type EditorSecondaryWorkOptions = {
   readonly key: string
@@ -20,14 +15,10 @@ type ScheduledSecondaryWork = {
 }
 
 export class EditorSecondaryWorkScheduler {
-  private readonly scheduler: EditorWorkScheduler
+  private readonly scheduler = new EditorWorkScheduler()
   private readonly scheduled = new Map<string, ScheduledSecondaryWork>()
   private nextVersion = 0
   private disposed = false
-
-  constructor(options: EditorSecondaryWorkSchedulerOptions = {}) {
-    this.scheduler = new EditorWorkScheduler(toWorkSchedulerOptions(options))
-  }
 
   schedule(options: EditorSecondaryWorkOptions): void {
     if (this.disposed) return
@@ -88,13 +79,4 @@ export class EditorSecondaryWorkScheduler {
 function normalizeDelayMs(delayMs: number | undefined): number {
   if (!delayMs || delayMs <= 0) return 0
   return delayMs
-}
-
-function toWorkSchedulerOptions(
-  options: EditorSecondaryWorkSchedulerOptions,
-): EditorWorkSchedulerOptions {
-  return {
-    setTimeout: options.setTimeout,
-    clearTimeout: options.clearTimeout,
-  }
 }

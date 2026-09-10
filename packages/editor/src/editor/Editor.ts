@@ -115,7 +115,10 @@ import type {
   EditorSyntaxStatus,
 } from './types'
 import { registerBuiltInPasteHandlers } from './pasteHandlers'
-import { EditorViewContributionController } from './viewContributions'
+import {
+  EditorViewContributionController,
+  type EditorViewContributionFailurePhase,
+} from './viewContributions'
 import type { FoldMap } from '../foldMap'
 import { createInlineMap, type InlineMap, type InlineReplacementSpec } from '../inlineMap'
 import type { BracketInfo, EditorSyntaxCapture } from '../syntax/session'
@@ -165,6 +168,7 @@ import {
   type EditorViewContributionProvider,
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
+  type EditorViewportSnapshot,
 } from '../plugins'
 import { lastAddedSelectionIndex, markSelectionSetDirty, resolveSelection } from '../selections'
 import { type EditorSyntaxLanguageId } from '../syntax/session'
@@ -231,12 +235,7 @@ const PLUGIN_INJECTED_ROWS_PROJECTION_OWNER = 'editor.injectedRows.plugins'
 
 type SyntaxScrollDirection = -1 | 0 | 1
 type EditorContributionKind = 'capability' | 'command' | 'decoration' | 'edit' | 'feature' | 'view'
-type EditorContributionFailurePhase =
-  | 'dispose'
-  | 'factory'
-  | 'initial-update'
-  | 'update'
-  | 'capture-visible-paint'
+type EditorContributionFailurePhase = EditorViewContributionFailurePhase | 'factory'
 
 type TrackedAnchorRange = {
   readonly start: PieceTableAnchor
@@ -479,6 +478,7 @@ export class Editor {
       wrap: options.wordWrap ?? false,
       onFoldToggle: this.handleFoldToggle,
       onViewportChange: this.handleViewportChange,
+      onViewportScroll: this.handleViewportScroll,
       selectionHighlightName: `${this.highlightPrefix}-selection`,
     })
     this.foldState = new EditorFoldState(
@@ -3026,6 +3026,7 @@ export class Editor {
     const textSnapshot = this.textSnapshot
     const viewport = {
       scrollTop: viewState.scrollTop,
+      scrollRow: viewState.scrollRow,
       scrollLeft: viewState.scrollLeft,
       scrollHeight: viewState.scrollHeight,
       scrollWidth: viewState.scrollWidth,
@@ -3235,6 +3236,13 @@ export class Editor {
       top: scrollTop,
       left: this.view.getState().scrollLeft,
     })
+  }
+
+  private readonly readViewport = (): EditorViewportSnapshot => this.view.getViewport()
+
+  private readonly handleViewportScroll = (): void => {
+    if (!this.viewContributions || this.committingPresentation || this.view.isProvisional) return
+    this.viewContributions.notifyViewport(this.readViewport)
   }
 
   private readonly handleViewportChange = (): void => {

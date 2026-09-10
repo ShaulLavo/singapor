@@ -530,6 +530,7 @@ function copyViewport(
 ): EditorViewportSnapshotJSON {
   return {
     scrollTop: finite('viewport.scrollTop', viewport.scrollTop),
+    scrollRow: finite('viewport.scrollRow', viewport.scrollRow),
     scrollLeft: finite('viewport.scrollLeft', viewport.scrollLeft),
     scrollHeight: finite('viewport.scrollHeight', viewport.scrollHeight),
     scrollWidth: finite('viewport.scrollWidth', viewport.scrollWidth),

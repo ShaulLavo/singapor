@@ -7,7 +7,11 @@ import { type InlineMap, revealInlineMap } from '../inlineMap'
 import { normalizeTabSize, type InjectedTextRow } from '../displayTransforms'
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
 import type { EditorTheme } from '../theme'
-import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
+import type {
+  EditorGutterContribution,
+  EditorGutterWidthContext,
+  EditorViewportSnapshot,
+} from '../plugins'
 import type { SelectionAffinity, SelectionGoal } from '../selections'
 import type { EditorToken, TextEdit } from '../tokens'
 import { applyEditorTheme } from '../theme'
@@ -421,7 +425,7 @@ export class VirtualizedTextView {
       (snapshot) => {
         this.renderSnapshot(snapshot)
       },
-      { readInitialScrollPosition: false },
+      { readInitialScrollPosition: false, onScroll: options.onViewportScroll },
     )
     this.disposeForegroundHighlightRestore = subscribeToForegroundHighlightRestore(this.view)
     rebuildStyleRules(this.view)
@@ -1016,6 +1020,23 @@ export class VirtualizedTextView {
     return range
   }
 
+  public getViewport(): EditorViewportSnapshot {
+    const view = this.view
+    const snapshot = view.virtualizer.getViewportSnapshot()
+    return {
+      scrollTop: snapshot.scrollTop,
+      scrollRow: snapshot.scrollRow,
+      scrollLeft: snapshot.scrollLeft,
+      scrollHeight: Math.max(snapshot.viewportHeight, snapshot.scrollHeight),
+      scrollWidth: spacerWidth(view, snapshot.viewportWidth),
+      clientHeight: snapshot.viewportHeight,
+      clientWidth: snapshot.viewportWidth,
+      borderBoxHeight: snapshot.borderBoxHeight,
+      borderBoxWidth: snapshot.borderBoxWidth,
+      visibleRange: snapshot.visibleRange,
+    }
+  }
+
   public getState(): VirtualizedTextViewState {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
@@ -1040,6 +1061,7 @@ export class VirtualizedTextView {
       scrollHeight: Math.max(snapshot.viewportHeight, snapshot.scrollHeight),
       scrollLeft: snapshot.scrollLeft,
       scrollTop: snapshot.scrollTop,
+      scrollRow: snapshot.scrollRow,
       scrollWidth: spacerWidth(view, snapshot.viewportWidth),
       borderBoxHeight: snapshot.borderBoxHeight,
       borderBoxWidth: snapshot.borderBoxWidth,

@@ -47,8 +47,6 @@ export type EditorWorkContext = {
 }
 
 export type EditorWorkSchedulerOptions = {
-  readonly setTimeout?: typeof globalThis.setTimeout
-  readonly clearTimeout?: typeof globalThis.clearTimeout
   now?(): number
   onEvent?(event: EditorWorkEvent): void
 }
@@ -115,18 +113,7 @@ const PRIORITY_RANK: Record<EditorWorkPriority, number> = {
   idle: 4,
 }
 
-const defaultSetTimeout = ((handler: () => void, timeout?: number) =>
-  /**
-   * @justification Phase 3 scheduler owner; all delayed editor work enters through EditorWorkScheduler, which
-   * provides keyed cancellation, stale-result checks, budget aborts, and observability.
-   */
-  setTimeout(handler, timeout)) as typeof globalThis.setTimeout
-const defaultClearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) =>
-  clearTimeout(handle)) as typeof globalThis.clearTimeout
-
 export class EditorWorkScheduler {
-  private readonly setTimer: typeof globalThis.setTimeout
-  private readonly clearTimer: typeof globalThis.clearTimeout
   private readonly now: () => number
   private readonly onEvent?: (event: EditorWorkEvent) => void
   private readonly scheduled = new Map<string, ScheduledEditorWork>()
@@ -136,8 +123,6 @@ export class EditorWorkScheduler {
   private disposed = false
 
   constructor(options: EditorWorkSchedulerOptions = {}) {
-    this.setTimer = options.setTimeout ?? defaultSetTimeout
-    this.clearTimer = options.clearTimeout ?? defaultClearTimeout
     this.now = options.now ?? nowMs
     this.onEvent = options.onEvent
   }
@@ -206,7 +191,7 @@ export class EditorWorkScheduler {
       return
     }
 
-    work.timer = this.setTimer(() => this.start(work), delayMs)
+    work.timer = globalThis.setTimeout(() => this.start(work), delayMs)
   }
 
   // The requested delay, clamped by whatever remains of the burst's maximum
@@ -241,7 +226,7 @@ export class EditorWorkScheduler {
   private scheduleQueueFlush(): void {
     if (this.queueTimer !== null) return
 
-    this.queueTimer = this.setTimer(() => this.flushQueuedWork(), 0)
+    this.queueTimer = globalThis.setTimeout(() => this.flushQueuedWork(), 0)
   }
 
   private flushQueuedWork(): void {
@@ -375,7 +360,7 @@ export class EditorWorkScheduler {
     const budgetMs = normalizeBudgetMs(work.options.budgetMs)
     if (budgetMs === null) return
 
-    work.budgetTimer = this.setTimer(() => this.timeoutWork(work), budgetMs)
+    work.budgetTimer = globalThis.setTimeout(() => this.timeoutWork(work), budgetMs)
   }
 
   private timeoutWork(work: ScheduledEditorWork): void {
@@ -391,21 +376,21 @@ export class EditorWorkScheduler {
   private clearTimerIfScheduled(work: ScheduledEditorWork): void {
     if (work.timer === null) return
 
-    this.clearTimer(work.timer)
+    globalThis.clearTimeout(work.timer)
     work.timer = null
   }
 
   private clearQueueTimer(): void {
     if (this.queueTimer === null) return
 
-    this.clearTimer(this.queueTimer)
+    globalThis.clearTimeout(this.queueTimer)
     this.queueTimer = null
   }
 
   private clearBudgetTimer(work: ScheduledEditorWork): void {
     if (work.budgetTimer === null) return
 
-    this.clearTimer(work.budgetTimer)
+    globalThis.clearTimeout(work.budgetTimer)
     work.budgetTimer = null
   }
 

@@ -13,7 +13,16 @@ export type FoldGutterIconContext = {
   readonly marker: VirtualizedFoldMarker
 }
 
-export type FoldGutterIcon = string | ((context: FoldGutterIconContext) => string | Node)
+export type FoldGutterSvgIcon = {
+  readonly kind: 'svg'
+  readonly viewBox: string
+  readonly path: string
+}
+
+export type FoldGutterIcon =
+  | string
+  | FoldGutterSvgIcon
+  | ((context: FoldGutterIconContext) => string | Node)
 
 export type FoldGutterPluginOptions = {
   readonly width?: number
@@ -135,12 +144,13 @@ function restoreFoldPaint(
   hideFoldButton(button)
   if (paint === 'hidden') return true
   const source = resolveFoldIconSource(options, paint)
-  if (typeof source.icon !== 'string') return false
+  if (typeof source.icon === 'function') return false
+  const content = createStaticFoldIconContent(button.ownerDocument, source.icon)
   const icon = createFoldIconElement(button.ownerDocument, options.iconClassName)
-  appendFoldIconContent(icon, source.icon)
+  appendFoldIconContent(icon, content)
   button.replaceChildren(icon)
   button.dataset.editorFoldState = paint
-  syncFoldIndicatorDataset(button, source.icon)
+  syncFoldIndicatorDataset(button, content)
   setElementHidden(button, false)
   return true
 }
@@ -263,8 +273,25 @@ function createFoldIconContent(
   state: FoldGutterState,
   icon: FoldGutterIcon,
 ): string | Node {
+  if (typeof icon === 'function') return icon({ document, state, marker })
+  return createStaticFoldIconContent(document, icon)
+}
+
+function createStaticFoldIconContent(
+  document: Document,
+  icon: string | FoldGutterSvgIcon,
+): string | SVGSVGElement {
   if (typeof icon === 'string') return icon
-  return icon({ document, state, marker })
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', icon.viewBox)
+  svg.setAttribute('width', '100%')
+  svg.setAttribute('height', '100%')
+  svg.setAttribute('fill', 'currentColor')
+  svg.setAttribute('focusable', 'false')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', icon.path)
+  svg.appendChild(path)
+  return svg
 }
 
 function createFoldIconElement(document: Document, className: string | undefined): HTMLSpanElement {

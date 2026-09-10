@@ -31,6 +31,7 @@ import { createLanguageServerAdapterPlugin } from '../src/plugin'
 import type {
   ApplyWorkspaceEditRequest,
   ApplyWorkspaceEditResult,
+  LanguageServerPluginOptions,
   LanguageServerRenamePrompt,
 } from '../src/types'
 import { documentSyncSnapshotFields, viewSnapshotStructuralFields } from './documentSyncSnapshot'
@@ -82,13 +83,14 @@ export type ConnectedEditor = {
   scroll(by: number): void
   /** The same anchor movement a scroll makes, reported as the view being laid out again. */
   relayout(by: number): void
-  pointerMove(clientX: number, clientY: number): void
+  pointerMove(clientX: number, clientY: number, modifiers?: PointerEventInit): void
   editElsewhere(edit: TextEdit): void
   pressKey(key: string, modifiers?: KeyboardEventInit): KeyboardEvent
   breakAcceptance(): void
   answerCompletion(items: readonly lsp.CompletionItem[], isIncomplete?: boolean): void
   answerResolve(item: lsp.CompletionItem): void
   answerHover(hover: lsp.Hover | null): void
+  answerDefinition(definition: readonly lsp.Location[]): void
   answerSignatureHelp(help: lsp.SignatureHelp | null): void
   answerCodeAction(actions: readonly (lsp.Command | lsp.CodeAction)[] | null): void
   answerCodeActionResolve(action: lsp.CodeAction): void
@@ -129,6 +131,7 @@ export type ConnectedEditorOptions = {
     request: ApplyWorkspaceEditRequest,
   ) => Promise<ApplyWorkspaceEditResult>
   readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
+  readonly onDefinitionLinkHover?: LanguageServerPluginOptions['onDefinitionLinkHover']
 }
 
 /**
@@ -252,9 +255,15 @@ export async function connectedEditor(
     },
     scroll: (by) => moveView(by, 'viewport'),
     relayout: (by) => moveView(by, 'layout'),
-    pointerMove: (clientX, clientY) => {
+    pointerMove: (clientX, clientY, modifiers = {}) => {
       element.dispatchEvent(
-        new PointerEvent('pointermove', { bubbles: true, buttons: 0, clientX, clientY }),
+        new PointerEvent('pointermove', {
+          bubbles: true,
+          buttons: 0,
+          clientX,
+          clientY,
+          ...modifiers,
+        }),
       )
     },
     pressKey: (key, modifiers = {}) => {
@@ -274,6 +283,7 @@ export async function connectedEditor(
       answer('textDocument/completion', { isIncomplete, items }),
     answerResolve: (item) => answer('completionItem/resolve', item),
     answerHover: (hover) => answer('textDocument/hover', hover),
+    answerDefinition: (definition) => answer('textDocument/definition', definition),
     answerSignatureHelp: (help) => answer('textDocument/signatureHelp', help),
     answerCodeAction: (actions) => answer('textDocument/codeAction', actions),
     answerCodeActionResolve: (action) => answer('codeAction/resolve', action),
@@ -370,6 +380,7 @@ function activateProvider(
       return options.onApplyWorkspaceEdit?.(request) ?? { status: 'applied' }
     },
     onRequestRenameName: options.onRequestRenameName,
+    onDefinitionLinkHover: options.onDefinitionLinkHover,
     onRequestError: (_serverId, _method, error) => errors.push(error),
   }).activate({
     registerHighlighter: () => disposable,
@@ -475,6 +486,7 @@ function editorSnapshot(
     foldMarkers: [],
     visibleRows: [],
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: 0,

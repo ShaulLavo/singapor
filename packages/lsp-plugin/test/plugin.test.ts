@@ -804,6 +804,7 @@ function editorSnapshot(fullText = '# Notes', documentId = 'README.md'): EditorV
     foldMarkers: [],
     visibleRows: [],
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: 0,

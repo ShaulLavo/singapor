@@ -153,6 +153,7 @@ function snapshot(): EditorViewSnapshot {
     foldMarkers: [],
     visibleRows: rows,
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: 0,

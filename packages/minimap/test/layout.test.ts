@@ -4,6 +4,7 @@ import {
   computeRenderLayout,
   MINIMAP_GUTTER_WIDTH,
   MINIMAP_RIGHT_GUTTER_WIDTH,
+  type MinimapFrameLayout,
   yForLineNumber,
 } from '../src/layout'
 import { resolveMinimapOptions } from '../src/options'
@@ -253,16 +254,28 @@ describe('minimap layout', () => {
     }
     const first = computeFrameLayout({
       renderLayout,
-      metrics: { rowHeight: 2.5, characterWidth: 8, devicePixelRatio: 1 },
-      viewport: viewport({ visibleStart: 25, scrollTop: 50, scrollHeight: 500 }),
+      metrics: { rowHeight: 20, characterWidth: 8, devicePixelRatio: 1 },
+      viewport: viewport({
+        visibleStart: 25,
+        scrollRow: 25,
+        scrollTop: 500,
+        scrollHeight: 4000,
+        clientHeight: 100,
+      }),
       lineCount: 200,
       realLineCount: 200,
       previous: null,
     })
     const second = computeFrameLayout({
       renderLayout,
-      metrics: { rowHeight: 2.5, characterWidth: 8, devicePixelRatio: 1 },
-      viewport: viewport({ visibleStart: 40, scrollTop: 80, scrollHeight: 500 }),
+      metrics: { rowHeight: 20, characterWidth: 8, devicePixelRatio: 1 },
+      viewport: viewport({
+        visibleStart: 40,
+        scrollRow: 40,
+        scrollTop: 800,
+        scrollHeight: 4000,
+        clientHeight: 100,
+      }),
       lineCount: 200,
       realLineCount: 200,
       previous: first,
@@ -271,11 +284,88 @@ describe('minimap layout', () => {
     expect(second.startLineNumber).toBeGreaterThanOrEqual(first.startLineNumber)
     expect(second.endLineNumber).toBeLessThanOrEqual(200)
   })
+
+  it('moves between raster rows while keeping the viewport aligned with the slider', () => {
+    const metrics = { rowHeight: 20, characterWidth: 8, devicePixelRatio: 1.25 }
+    const base = viewport({ clientHeight: 85, scrollHeight: 40_000 })
+    const renderLayout = computeRenderLayout({
+      minimap: resolveMinimapOptions(),
+      metrics,
+      viewport: base,
+      lineCount: 2000,
+    })
+    let previous: MinimapFrameLayout | null = null
+    let previousOrigin = 0
+    for (let scrollTop = 1000; scrollTop <= 1020; scrollTop += 1) {
+      const current = {
+        ...base,
+        scrollTop,
+        scrollRow: scrollTop / 20,
+        visibleStart: Math.floor(scrollTop / 20),
+      }
+      const next = computeFrameLayout({
+        renderLayout,
+        metrics,
+        viewport: current,
+        lineCount: 2000,
+        realLineCount: 2000,
+        previous,
+      })
+      const origin = next.startLineNumber - 1 + next.startLineFraction
+      const pixelRatio = renderLayout.canvasInnerHeight / renderLayout.canvasOuterHeight
+      const rowUnderSlider = origin + (next.sliderTop * pixelRatio) / renderLayout.lineHeight
+      expect(rowUnderSlider).toBeCloseTo(current.scrollRow, 10)
+      expect(next.startLineFraction).toBeGreaterThanOrEqual(0)
+      expect(next.startLineFraction).toBeLessThan(1)
+      expect(
+        (next.endLineNumber - next.startLineNumber + 1 - next.startLineFraction) *
+          renderLayout.lineHeight,
+      ).toBeGreaterThanOrEqual(renderLayout.canvasInnerHeight)
+      if (previous) {
+        expect(origin).toBeGreaterThan(previousOrigin)
+        expect(origin - previousOrigin).toBeLessThan(0.1)
+      }
+      previous = next
+      previousOrigin = origin
+    }
+  })
+
+  it('uses the fractional row slot when a gap advances the visible range', () => {
+    const metrics = { rowHeight: 20, characterWidth: 8, devicePixelRatio: 1 }
+    const current = viewport({
+      clientHeight: 85,
+      scrollHeight: 40_000,
+      scrollTop: 2800,
+      scrollRow: 137.25,
+      visibleStart: 138,
+    })
+    const renderLayout = computeRenderLayout({
+      minimap: resolveMinimapOptions(),
+      metrics,
+      viewport: current,
+      lineCount: 2000,
+    })
+    const frame = computeFrameLayout({
+      renderLayout,
+      metrics,
+      viewport: current,
+      lineCount: 2000,
+      realLineCount: 2000,
+      previous: null,
+    })
+    const rowUnderSlider =
+      frame.startLineNumber -
+      1 +
+      frame.startLineFraction +
+      frame.sliderTop / renderLayout.lineHeight
+    expect(rowUnderSlider).toBeCloseTo(137.25, 10)
+  })
 })
 
 function viewport(overrides: Partial<MinimapViewport> = {}): MinimapViewport {
   return {
     scrollTop: 0,
+    scrollRow: 0,
     scrollLeft: 0,
     scrollHeight: 1000,
     scrollWidth: 800,

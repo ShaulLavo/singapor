@@ -78,6 +78,7 @@ export type VirtualizedTextViewOptions = {
   readonly highlightRegistry?: HighlightRegistry
   readonly onFoldToggle?: (marker: VirtualizedFoldMarker) => void
   readonly onViewportChange?: () => void
+  readonly onViewportScroll?: () => void
   readonly wrap?: boolean
   readonly injectedTextRows?: readonly InjectedTextRow[]
   readonly gutterContributions?: readonly EditorGutterContribution[]
@@ -208,6 +209,7 @@ export type VirtualizedTextViewState = {
   readonly scrollHeight: number
   readonly scrollLeft: number
   readonly scrollTop: number
+  readonly scrollRow: number
   readonly scrollWidth: number
   readonly borderBoxHeight: number
   readonly borderBoxWidth: number

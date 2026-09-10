@@ -159,6 +159,7 @@ function snapshot(options: SnapshotOptions = {}): EditorViewSnapshot {
       clientWidth: 80,
       scrollHeight: 20,
       scrollLeft: 0,
+      scrollRow: 0,
       scrollTop: 0,
       scrollWidth: 80,
       visibleRange: { end: 1, start: 0 },

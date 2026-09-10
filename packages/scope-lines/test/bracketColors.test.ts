@@ -325,6 +325,7 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
       },
     ],
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: 20,

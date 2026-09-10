@@ -10,6 +10,7 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
+  EditorViewportSnapshot,
 } from '@singapor/core/extensions'
 import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
 import { mergeDenseDecorations } from './decorationMerge'
@@ -70,6 +71,7 @@ class MinimapContribution implements EditorViewContribution {
   private readonly client: MinimapWorkerClient
   private readonly decorationSubscription: EditorDisposable
   private latestSnapshot: EditorViewSnapshot
+  private latestViewport: EditorViewportSnapshot
   private activeSliderDrag: SliderDrag | null = null
   private appliedReservedWidth = 0
   private layoutSignature = ''
@@ -86,6 +88,7 @@ class MinimapContribution implements EditorViewContribution {
     this.options = options
     this.snapshotKey = `minimap:${JSON.stringify(options)}`
     this.latestSnapshot = context.getSnapshot()
+    this.latestViewport = this.latestSnapshot.viewport
     this.host = createHost(context, options)
     if (this.latestSnapshot.geometryCommitted !== false) this.synchronizeLayoutReservation()
     this.client = new MinimapWorkerClient({
@@ -109,11 +112,18 @@ class MinimapContribution implements EditorViewContribution {
     if (this.disposed) return
 
     this.latestSnapshot = snapshot
+    this.latestViewport = snapshot.viewport
     if (snapshot.geometryCommitted === false) return
     if (kind === 'document' || kind === 'layout' || kind === 'viewport') {
       this.synchronizeLayoutReservation()
     }
     this.client.update(snapshot, kind, change)
+  }
+
+  public updateViewport(viewport: EditorViewportSnapshot): void {
+    if (this.disposed || this.latestSnapshot.geometryCommitted === false) return
+    this.latestViewport = viewport
+    this.client.updateViewport(viewport)
   }
 
   public dispose(): void {
@@ -182,7 +192,7 @@ class MinimapContribution implements EditorViewContribution {
 
   private measureScrollGeometry(): MinimapScrollGeometry {
     const element = this.context.scrollElement
-    const viewport = this.latestSnapshot.viewport
+    const viewport = this.latestViewport
     const style = element.ownerDocument.defaultView?.getComputedStyle(element)
     const clientWidth =
       element.clientWidth ||
@@ -222,13 +232,13 @@ class MinimapContribution implements EditorViewContribution {
         devicePixelRatio: element.ownerDocument.defaultView?.devicePixelRatio ?? 1,
       },
       viewport: {
-        ...snapshot.viewport,
+        ...this.latestViewport,
         clientWidth,
         clientHeight,
         minimapHeight,
         reservedWidth: 0,
-        visibleStart: snapshot.viewport.visibleRange.start,
-        visibleEnd: snapshot.viewport.visibleRange.end,
+        visibleStart: this.latestViewport.visibleRange.start,
+        visibleEnd: this.latestViewport.visibleRange.end,
       },
     }).width
   }
@@ -250,11 +260,11 @@ class MinimapContribution implements EditorViewContribution {
     event.preventDefault()
     this.stopSliderDrag()
     const startY = event.clientY
-    const startScrollTop = this.latestSnapshot.viewport.scrollTop
+    const startScrollTop = this.latestViewport.scrollTop
     const sliderHeight = Math.max(1, this.host.slider.getBoundingClientRect().height)
     const scrollable = Math.max(
       1,
-      this.latestSnapshot.viewport.scrollHeight - this.latestSnapshot.viewport.clientHeight,
+      this.latestViewport.scrollHeight - this.latestViewport.clientHeight,
     )
     const trackHeight = Math.max(1, this.host.root.clientHeight - sliderHeight)
     const ratio = scrollable / trackHeight
@@ -349,7 +359,7 @@ class MinimapContribution implements EditorViewContribution {
     scroll: MinimapScrollGeometry,
     geometry: ReturnType<typeof minimapViewportGeometry>,
   ): void {
-    const viewport = this.latestSnapshot.viewport
+    const viewport = this.latestViewport
     this.context.log?.({
       action: 'editor.minimap.lane_changed',
       level: 'info',
@@ -370,7 +380,7 @@ class MinimapContribution implements EditorViewContribution {
   }
 
   private readonly handleDecorationsChanged = (): void => {
-    this.client.setExternalDecorations(this.latestSnapshot, this.collectDecorations())
+    this.client.setExternalDecorations(this.collectDecorations())
   }
 
   // The height a whole document is projected onto is the editor's own, so how
@@ -379,7 +389,7 @@ class MinimapContribution implements EditorViewContribution {
   private collectDecorations(): readonly EditorMinimapDecoration[] {
     return mergeDenseDecorations(
       this.decorations.getDecorations(),
-      this.latestSnapshot.viewport.clientHeight,
+      this.latestViewport.clientHeight,
       this.latestSnapshot.lineCount,
     )
   }

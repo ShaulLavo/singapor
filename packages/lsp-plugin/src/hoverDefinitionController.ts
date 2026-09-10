@@ -54,6 +54,7 @@ export type HoverDefinitionControllerOptions = {
   getActiveDocument(): ActiveDocument | null
   getDiagnostics(): readonly lsp.Diagnostic[]
   completionContainsTarget(target: EventTarget | null): boolean
+  onDefinitionLinkHover?(target: LanguageServerDefinitionTarget): void
   onOpenDefinition?(
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -470,12 +471,18 @@ export class HoverDefinitionController {
     if (requestId !== this.definitionHoverRequestId) return
     if (active !== this.options.getActiveDocument()) return
     const sourceRange = result.sourceRange ?? range
-    if (!preferredJumpableDefinitionTarget(active.uri, active.fullText, sourceRange, result))
-      return this.clearDefinitionLink()
+    const target = preferredJumpableDefinitionTarget(
+      active.uri,
+      active.fullText,
+      sourceRange,
+      result,
+    )
+    if (!target) return this.clearDefinitionLink()
 
     this.linkRange = sourceRange
     this.context.setRangeHighlight?.(this.linkHighlightName, [sourceRange], LINK_HIGHLIGHT_STYLE)
     this.context.scrollElement.style.cursor = 'pointer'
+    this.options.onDefinitionLinkHover?.(target)
   }
 
   private handleNavigationResult(

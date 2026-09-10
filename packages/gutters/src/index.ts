@@ -9,4 +9,5 @@ export {
   type FoldGutterIcon,
   type FoldGutterIconContext,
   type FoldGutterPluginOptions,
+  type FoldGutterSvgIcon,
 } from './foldGutter'

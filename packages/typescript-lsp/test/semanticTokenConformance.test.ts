@@ -429,6 +429,7 @@ class EditorFixture {
       foldMarkers: [],
       visibleRows: rows,
       viewport: {
+        scrollRow: 0,
         scrollTop: 0,
         scrollLeft: 0,
         scrollHeight: rows.length * ROW_HEIGHT,

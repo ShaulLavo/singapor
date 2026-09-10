@@ -71,11 +71,13 @@ describe('editor view snapshot serialization', () => {
     expect(Object.getOwnPropertyDescriptor(visible, 'toJSON')?.enumerable).toBe(false)
 
     const visibleJSON = visible!.toJSON()
+    expect(visibleJSON.viewport.scrollRow).toBe(harness.snapshot.viewport.scrollRow)
     expect(visibleJSON.viewport.borderBoxHeight).toBeNull()
     expect(visible!.toJSON()).toEqual(visibleJSON)
     expect(() => structuredClone(visibleJSON)).not.toThrow()
 
     const fullJSON = harness.snapshot.toJSON()
+    expect(fullJSON.viewport.scrollRow).toBe(harness.snapshot.viewport.scrollRow)
     expect(harness.materializeFullText).toHaveBeenCalledTimes(1)
     expect(harness.readLineStarts).toHaveBeenCalledTimes(1)
     expect(harness.lineStartsViewToArray).not.toHaveBeenCalled()
@@ -581,6 +583,7 @@ describe('editor view snapshot serialization', () => {
     const empty = snapshotHarness({
       rows: [],
       viewport: {
+        scrollRow: 0,
         scrollTop: 0,
         scrollLeft: 0,
         scrollHeight: 0,
@@ -660,6 +663,85 @@ describe('editor view snapshot serialization', () => {
 })
 
 describe('visible contribution paint snapshots', () => {
+  it('defers reentrant layout work and prevents recursive continuous viewport delivery', () => {
+    const snapshot = snapshotHarness().snapshot
+    const createSnapshot = vi.fn(() => snapshot)
+    const update = vi.fn()
+    const updateViewport = vi.fn(() => {
+      controller.notify('layout')
+      if (updateViewport.mock.calls.length < 3) controller.notifyViewport(() => snapshot.viewport)
+    })
+    const controller = new EditorViewContributionController(
+      [{ update, updateViewport, dispose: vi.fn() }],
+      createSnapshot,
+    )
+
+    controller.notifyViewport(() => snapshot.viewport)
+
+    expect(updateViewport).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledExactlyOnceWith(snapshot, 'layout', null)
+    expect(createSnapshot).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
+  it('disposes failed viewport contributors and continues delivering to the remaining ones', () => {
+    const snapshot = snapshotHarness().snapshot
+    const failure = new TypeError('viewport contribution failed')
+    const onFailure = vi.fn()
+    const failed = {
+      update: vi.fn(),
+      updateViewport: vi.fn(() => {
+        throw failure
+      }),
+      dispose: vi.fn(),
+    }
+    const healthy = { update: vi.fn(), updateViewport: vi.fn(), dispose: vi.fn() }
+    const controller = new EditorViewContributionController(
+      [failed, healthy],
+      () => snapshot,
+      onFailure,
+    )
+
+    controller.notifyViewport(() => snapshot.viewport)
+    controller.notifyViewport(() => snapshot.viewport)
+
+    expect(onFailure).toHaveBeenCalledExactlyOnceWith(failed, 'viewport', failure)
+    expect(failed.updateViewport).toHaveBeenCalledTimes(1)
+    expect(failed.dispose).toHaveBeenCalledTimes(1)
+    expect(healthy.updateViewport).toHaveBeenCalledTimes(2)
+    controller.dispose()
+    expect(failed.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers continuous viewport updates only to opted-in contributions without snapshots', () => {
+    const harness = snapshotHarness()
+    const createSnapshot = vi.fn(() => harness.snapshot)
+    const createViewport = vi.fn(() => harness.snapshot.viewport)
+    const update = vi.fn()
+    const updateViewport = vi.fn()
+    const contribution = { update, updateViewport, dispose: vi.fn() }
+    const controller = new EditorViewContributionController(
+      [{ update, dispose: vi.fn() }],
+      createSnapshot,
+    )
+
+    controller.notifyViewport(createViewport)
+    expect(createViewport).not.toHaveBeenCalled()
+    controller.add(contribution)
+    createSnapshot.mockClear()
+    update.mockClear()
+
+    controller.notifyViewport(createViewport)
+    expect(updateViewport).toHaveBeenCalledExactlyOnceWith(harness.snapshot.viewport)
+    expect(createSnapshot).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+
+    controller.dispose()
+    controller.notifyViewport(createViewport)
+    expect(createViewport).toHaveBeenCalledTimes(1)
+    expect(contribution.dispose).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps built-in folded paint pending without any optional paint contributors', () => {
     const snapshots: EditorViewSnapshot[] = []
     let syntaxStatus: EditorViewSnapshot['syntaxStatus'] = 'loading'
@@ -1008,6 +1090,7 @@ function snapshotHarness(
     viewport:
       options.viewport ??
       ({
+        scrollRow: 0,
         scrollTop: 0,
         scrollLeft: 24,
         scrollHeight: 20,
@@ -1069,6 +1152,7 @@ function snapshotHarnessFromView(
     gutterLayout: state.gutterLayout,
     foldMarkers: foldMarkers ?? state.foldMarkers,
     viewport: {
+      scrollRow: state.scrollRow,
       scrollTop: state.scrollTop,
       scrollLeft: state.scrollLeft,
       scrollHeight: state.scrollHeight,

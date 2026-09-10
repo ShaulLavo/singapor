@@ -176,6 +176,7 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
   ) => LanguageServerDiagnosticMarkerClaim
   readonly onInteractiveReady?: () => void
   readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
+  readonly onDefinitionLinkHover?: (target: LanguageServerDefinitionTarget) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -217,6 +218,7 @@ type LanguageServerResolvedAdapterOptions = {
   readonly onInteractiveReady?: () => void
   readonly onRequestError?: (serverId: string, method: string, error: unknown) => void
   readonly onApplyWorkspaceEdit?: LanguageServerLaneHostOptions['onApplyWorkspaceEdit']
+  readonly onDefinitionLinkHover?: (target: LanguageServerDefinitionTarget) => void
   readonly onOpenDefinition?: (
     target: LanguageServerDefinitionTarget,
     options?: LanguageServerNavigationOptions,
@@ -236,6 +238,7 @@ export function createLanguageServerPlugin(
     semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
     onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
+    onDefinitionLinkHover: options.onDefinitionLinkHover,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
     onRequestError: options.onRequestError,
@@ -480,6 +483,7 @@ class LanguageServerContribution implements EditorViewContribution {
       getActiveDocument: () => this.activeDocument(),
       getDiagnostics: () => this.diagnostics.diagnostics,
       completionContainsTarget: (target) => this.completion.containsTarget(target),
+      onDefinitionLinkHover: options.onDefinitionLinkHover,
       onOpenDefinition: options.onOpenDefinition,
       onOpenReferences: options.onOpenReferences,
       onRequestSuccess: () => options.onInteractiveReady?.(),
@@ -1051,6 +1055,7 @@ function resolveAdapterOptions(
     semanticTokens: options.semanticTokens ? () => options.semanticTokens! : undefined,
     onDiagnostics: options.onDiagnostics,
     onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
+    onDefinitionLinkHover: options.onDefinitionLinkHover,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
     onRequestRenameName: options.onRequestRenameName,
@@ -1083,6 +1088,7 @@ function resolveLanguageServerSetOptions(
     onDiagnostics: options.onDiagnostics,
     onDidNavigateDiagnostic: options.onDidNavigateDiagnostic,
     onInteractiveReady: options.onInteractiveReady,
+    onDefinitionLinkHover: options.onDefinitionLinkHover,
     onOpenDefinition: options.onOpenDefinition,
     onOpenReferences: options.onOpenReferences,
     onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,

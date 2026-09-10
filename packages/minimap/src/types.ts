@@ -78,6 +78,7 @@ export type MinimapSelection = {
 
 export type MinimapViewport = {
   readonly scrollTop: number
+  readonly scrollRow: number
   readonly scrollLeft: number
   readonly scrollHeight: number
   readonly scrollWidth: number

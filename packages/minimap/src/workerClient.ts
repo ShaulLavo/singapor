@@ -4,6 +4,7 @@ import { createError } from '@singapor/core/logging/evlog'
 import type {
   EditorMinimapDecoration,
   EditorResolvedSelection,
+  EditorViewportSnapshot,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
 import {
@@ -216,6 +217,8 @@ export class MinimapWorkerClient {
   private readonly reservedLane: () => number
   private externalDecorations: readonly EditorMinimapDecoration[]
   private pendingUpdate: PendingMinimapUpdate | null = null
+  private pendingUpdateReady = false
+  private pendingRender = false
   private activeRenderToken = 0
   private renderInFlight = false
   private latestSliderHeight = 0
@@ -225,6 +228,8 @@ export class MinimapWorkerClient {
   private latestLayoutSignature = ''
   private latestThemeSignature = ''
   private latestSnapshot: EditorViewSnapshot
+  private latestViewport: EditorViewportSnapshot
+  private postedViewport: MinimapViewport | null = null
   private latestFullDocumentSnapshot: EditorViewSnapshot | null = null
   // Mirror of the worker's current document summary; the authoritative
   // pre-edit baseline for incremental patch accounting.
@@ -239,6 +244,7 @@ export class MinimapWorkerClient {
     this.reservedLane = options.reservedLane
     this.externalDecorations = options.decorations
     this.latestSnapshot = options.snapshot
+    this.latestViewport = options.snapshot.viewport
     this.latestTokenSource = options.snapshot.tokens
     this.colorResolver = new ColorResolver(options.host.colorScope)
     this.workerOwner = new MinimapWorkerOwner({
@@ -264,14 +270,40 @@ export class MinimapWorkerClient {
     }
 
     const previousSnapshot = this.latestSnapshot
-    const update = createPendingUpdate(snapshot, kind, change, previousSnapshot)
     this.latestSnapshot = snapshot
+    if (kind === 'viewport') {
+      this.latestViewport = snapshot.viewport
+      const layoutUpdated = this.postLayoutIfNeeded(snapshot)
+      this.updateViewport(snapshot.viewport)
+      if (layoutUpdated) this.requestRender()
+      return
+    }
+
+    const update = createPendingUpdate(snapshot, kind, change, previousSnapshot)
+    this.latestViewport = snapshot.viewport
     this.applyImmediateViewport(snapshot, snapshot.viewport.scrollTop)
+    this.queueUpdate(update)
+  }
+
+  private queueUpdate(update: PendingMinimapUpdate): void {
     this.pendingUpdate = mergePendingUpdate(this.pendingUpdate, update)
     recordMinimapPerformanceDiagnostic('minimap.updateClassification', () =>
       pendingUpdateDiagnostics(update),
     )
     if (!this.renderInFlight) this.scheduleFlush()
+  }
+
+  public updateViewport(viewport: EditorViewportSnapshot): void {
+    if (this.disposed) return
+
+    this.latestViewport = viewport
+    this.applyImmediateViewport(this.latestSnapshot, viewport.scrollTop)
+    const next = this.viewport(this.latestSnapshot)
+    if (sameViewport(this.postedViewport, next)) return
+
+    this.postedViewport = next
+    this.post({ type: 'updateViewport', viewport: next })
+    this.requestRender()
   }
 
   public previewScrollTop(snapshot: EditorViewSnapshot, scrollTop: number): void {
@@ -280,14 +312,13 @@ export class MinimapWorkerClient {
     this.applyImmediateViewport(snapshot, scrollTop)
   }
 
-  public setExternalDecorations(
-    snapshot: EditorViewSnapshot,
-    decorations: readonly EditorMinimapDecoration[],
-  ): void {
+  public setExternalDecorations(decorations: readonly EditorMinimapDecoration[]): void {
     if (this.disposed) return
 
     this.externalDecorations = decorations
-    this.update(snapshot, 'decorations')
+    this.queueUpdate(
+      createPendingUpdate(this.latestSnapshot, 'decorations', null, this.latestSnapshot),
+    )
   }
 
   public dispose(): void {
@@ -318,10 +349,11 @@ export class MinimapWorkerClient {
     this.post(request, [mainCanvas, decorationsCanvas])
     this.post({ type: 'openDocument', document: this.trackedDocumentPayload(snapshot) })
     this.latestFullDocumentSnapshot = snapshot
+    this.postedViewport = this.viewport(snapshot)
     this.post({
       type: 'updateLayout',
       metrics: this.metrics(snapshot),
-      viewport: this.viewport(snapshot),
+      viewport: this.postedViewport,
     })
     this.latestLayoutSignature = layoutSignature(snapshot, this.minimapHeight(snapshot))
     this.postRender(snapshot)
@@ -330,6 +362,10 @@ export class MinimapWorkerClient {
   private scheduleFlush(): void {
     const pending = this.pendingUpdate
     if (!pending) return
+    if (this.pendingUpdateReady) {
+      this.scheduleFrameFlush()
+      return
+    }
     if (shouldDeferMinimapUpdate(pending)) {
       this.scheduleDeferredFlush()
       return
@@ -366,6 +402,7 @@ export class MinimapWorkerClient {
 
   private flushDeferredUpdate = (): void => {
     this.cancelDeferredFlush()
+    this.pendingUpdateReady = true
     this.scheduleFrameFlush()
   }
 
@@ -385,6 +422,7 @@ export class MinimapWorkerClient {
 
   private flushPendingUpdateNow(pending: PendingMinimapUpdate): void {
     this.pendingUpdate = null
+    this.pendingUpdateReady = false
     measureMinimapPerformance(
       'minimap.postUpdate',
       () => this.postUpdate(pending),
@@ -400,10 +438,11 @@ export class MinimapWorkerClient {
     if (signature === this.latestLayoutSignature) return false
 
     this.latestLayoutSignature = signature
+    this.postedViewport = this.viewport(snapshot)
     this.post({
       type: 'updateLayout',
       metrics: this.metrics(snapshot),
-      viewport: this.viewport(snapshot),
+      viewport: this.postedViewport,
     })
     return true
   }
@@ -416,7 +455,8 @@ export class MinimapWorkerClient {
     if (layoutUpdated) return
     if (!syncViewport) return
 
-    this.post({ type: 'updateViewport', viewport: this.viewport(snapshot) })
+    this.postedViewport = this.viewport(snapshot)
+    this.post({ type: 'updateViewport', viewport: this.postedViewport })
   }
 
   private postUpdate(update: PendingMinimapUpdate): void {
@@ -538,7 +578,16 @@ export class MinimapWorkerClient {
     return latest === snapshot
   }
 
+  private requestRender(): void {
+    if (this.renderInFlight) {
+      this.pendingRender = true
+      return
+    }
+    this.postRender(this.latestSnapshot)
+  }
+
   private postRender(snapshot: EditorViewSnapshot): void {
+    this.pendingRender = false
     let renderToken = 0
     const handle = this.scheduler.schedule({
       key: MINIMAP_RENDER_KEY,
@@ -562,6 +611,7 @@ export class MinimapWorkerClient {
   private postScheduledRender(snapshot: EditorViewSnapshot, token: number): void {
     if (token !== this.activeRenderToken) return
 
+    this.pendingRender = false
     this.sizeCanvasElements(snapshot)
     this.post({ type: 'render', sequence: token })
   }
@@ -586,7 +636,7 @@ export class MinimapWorkerClient {
     setStyleValue(this.host.sliderHorizontal, 'height', `${slider.height}px`)
     setClassName(
       this.host.shadow,
-      shadowVisible(snapshot)
+      shadowVisible(this.latestViewport)
         ? 'editor-minimap-shadow editor-minimap-shadow-visible'
         : 'editor-minimap-shadow editor-minimap-shadow-hidden',
     )
@@ -663,7 +713,7 @@ export class MinimapWorkerClient {
   }
 
   private viewport(snapshot: EditorViewSnapshot): MinimapViewport {
-    const snapshotViewport = snapshot.viewport
+    const snapshotViewport = this.latestViewport
     const fallbackClientHeight =
       snapshotViewport.clientHeight > 0 ? 0 : this.host.colorScope.clientHeight
     const fallbackClientWidth =
@@ -679,6 +729,7 @@ export class MinimapWorkerClient {
 
     return {
       scrollTop: snapshotViewport.scrollTop,
+      scrollRow: snapshotViewport.scrollRow,
       scrollLeft: snapshotViewport.scrollLeft,
       scrollHeight: Math.max(snapshotViewport.scrollHeight, fallbackScrollHeight, clientHeight),
       scrollWidth: Math.max(snapshotViewport.scrollWidth, fallbackScrollWidth, clientWidth),
@@ -753,10 +804,9 @@ export class MinimapWorkerClient {
       this.scheduler.cancel(MINIMAP_RENDER_KEY)
       this.renderInFlight = false
       this.activeRenderToken = 0
-      if (this.pendingUpdate) {
-        this.scheduleFlush()
-        return
-      }
+      if (this.pendingUpdate) this.scheduleFlush()
+      if (this.renderInFlight) return
+      if (this.pendingRender) this.requestRender()
 
       this.applyRenderedResponse(response)
       return
@@ -777,16 +827,7 @@ export class MinimapWorkerClient {
   ): void {
     this.latestSliderHeight = response.sliderHeight
     this.latestSliderNeeded = response.sliderNeeded
-    setStyleValue(this.host.slider, 'display', response.sliderNeeded ? 'block' : 'none')
-    setStyleValue(this.host.slider, 'transform', `translate3d(0, ${response.sliderTop}px, 0)`)
-    setStyleValue(this.host.slider, 'height', `${response.sliderHeight}px`)
-    setStyleValue(this.host.sliderHorizontal, 'height', `${response.sliderHeight}px`)
-    setClassName(
-      this.host.shadow,
-      response.shadowVisible
-        ? 'editor-minimap-shadow editor-minimap-shadow-visible'
-        : 'editor-minimap-shadow editor-minimap-shadow-hidden',
-    )
+    this.applyImmediateViewport(this.latestSnapshot, this.latestViewport.scrollTop)
   }
 
   private handleWorkerError = (error: Error): void => {
@@ -1465,8 +1506,24 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-function shadowVisible(snapshot: EditorViewSnapshot): boolean {
-  const viewport = snapshot.viewport
+function sameViewport(previous: MinimapViewport | null, next: MinimapViewport): boolean {
+  if (!previous) return false
+  return (
+    previous.scrollTop === next.scrollTop &&
+    previous.scrollRow === next.scrollRow &&
+    previous.scrollLeft === next.scrollLeft &&
+    previous.scrollHeight === next.scrollHeight &&
+    previous.scrollWidth === next.scrollWidth &&
+    previous.clientHeight === next.clientHeight &&
+    previous.clientWidth === next.clientWidth &&
+    previous.minimapHeight === next.minimapHeight &&
+    previous.reservedWidth === next.reservedWidth &&
+    previous.visibleStart === next.visibleStart &&
+    previous.visibleEnd === next.visibleEnd
+  )
+}
+
+function shadowVisible(viewport: EditorViewportSnapshot): boolean {
   return viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth
 }
 

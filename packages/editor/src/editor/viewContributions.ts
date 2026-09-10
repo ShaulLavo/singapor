@@ -4,6 +4,7 @@ import type {
   EditorViewContribution,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
+  EditorViewportSnapshot,
   EditorVisiblePaintLayer,
 } from '../plugins'
 import {
@@ -22,6 +23,7 @@ export type EditorViewContributionFailurePhase =
   | 'dispose'
   | 'initial-update'
   | 'update'
+  | 'viewport'
   | 'capture-visible-paint'
 
 export type EditorViewContributionFailureHandler = (
@@ -37,6 +39,7 @@ export class EditorViewContributionController {
   private currentSnapshot: EditorViewSnapshot | null = null
   private readonly contributions: EditorViewContribution[]
   private readonly initialUpdates = new Set<EditorViewContribution>()
+  private readonly viewportContributions = new Set<EditorViewContribution>()
 
   constructor(
     contributions: readonly EditorViewContribution[],
@@ -45,6 +48,9 @@ export class EditorViewContributionController {
     private readonly canPresent: () => boolean = () => true,
   ) {
     this.contributions = Array.from(contributions)
+    for (const contribution of contributions) {
+      if (contribution.updateViewport) this.viewportContributions.add(contribution)
+    }
   }
 
   captureSnapshot(): EditorViewSnapshot {
@@ -110,6 +116,7 @@ export class EditorViewContributionController {
   add(contribution: EditorViewContribution): void {
     this.invalidateCurrentPaint()
     this.contributions.push(contribution)
+    if (contribution.updateViewport) this.viewportContributions.add(contribution)
     this.initialUpdates.add(contribution)
     this.notifyMembershipChange()
   }
@@ -119,6 +126,7 @@ export class EditorViewContributionController {
     if (index === -1) return
 
     this.contributions.splice(index, 1)
+    this.viewportContributions.delete(contribution)
     this.initialUpdates.delete(contribution)
     this.disposeContribution(contribution)
     this.notifyMembershipChange()
@@ -128,9 +136,39 @@ export class EditorViewContributionController {
     this.invalidateCurrentPaint()
     this.currentSnapshot = null
     this.initialUpdates.clear()
+    this.viewportContributions.clear()
     while (this.contributions.length > 0) {
       const contribution = this.contributions.pop()
       if (contribution) this.disposeContribution(contribution)
+    }
+  }
+
+  notifyViewport(createViewport: () => EditorViewportSnapshot): void {
+    if (!this.canPresent() || this.notifying || this.viewportContributions.size === 0) return
+    this.notifying = true
+    try {
+      const viewport = createViewport()
+      if (viewport.clientHeight === 0) return
+      for (const contribution of this.viewportContributions) {
+        this.updateContributionViewport(contribution, viewport)
+      }
+      this.flushPendingLayout()
+    } finally {
+      this.notifying = false
+      this.activeUpdateKind = null
+      this.pendingLayout = false
+    }
+  }
+
+  private updateContributionViewport(
+    contribution: EditorViewContribution,
+    viewport: EditorViewportSnapshot,
+  ): void {
+    try {
+      contribution.updateViewport?.(viewport)
+    } catch (error) {
+      this.removeFailedContribution(contribution, 'viewport', error)
+      this.notifyMembershipChange()
     }
   }
 
@@ -271,6 +309,7 @@ export class EditorViewContributionController {
     this.onFailure(contribution, phase, error)
     const index = this.contributions.indexOf(contribution)
     if (index !== -1) this.contributions.splice(index, 1)
+    this.viewportContributions.delete(contribution)
     this.initialUpdates.delete(contribution)
     this.disposeContribution(contribution)
   }

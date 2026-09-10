@@ -24,6 +24,60 @@ describe('fixed row virtualizer', () => {
     expect(range).toEqual({ start: 2, end: 5 })
   })
 
+  it.each([
+    {
+      layout: 'fixed',
+      rowSizes: undefined,
+      positions: [
+        [12, 0.5],
+        [22, 22 / 24],
+        [24, 1],
+        [36, 1.5],
+        [58, 2.5],
+        [500, 2.95],
+      ] satisfies readonly [number, number][],
+    },
+    {
+      layout: 'variable',
+      rowSizes: [20, 60, 20],
+      positions: [
+        [12, 0.5],
+        [22, 22 / 24],
+        [24, 1],
+        [56, 1.5],
+        [86, 1 + 62 / 64],
+        [98, 2.5],
+        [500, 2.95],
+      ] satisfies readonly [number, number][],
+    },
+  ])(
+    'projects continuous $layout row positions through gaps and the document bottom',
+    ({ rowSizes, positions }) => {
+      const virtualizer = new FixedRowVirtualizer({ count: 3, rowHeight: 20, rowGap: 4, rowSizes })
+      for (const [scrollTop, expected] of positions) {
+        virtualizer.setScrollMetrics({ scrollTop, viewportHeight: 1 })
+        expect(virtualizer.getViewportSnapshot().scrollRow).toBeCloseTo(expected)
+      }
+      virtualizer.dispose()
+    },
+  )
+
+  it('keeps the final row coordinate in trailing viewport padding and clears it while hidden', () => {
+    const virtualizer = new FixedRowVirtualizer({ count: 3, rowHeight: 20, rowGap: 4 })
+    virtualizer.setScrollMetrics({ scrollTop: 500, viewportHeight: 100 })
+    expect(virtualizer.getViewportSnapshot()).toMatchObject({
+      scrollTop: 48,
+      scrollRow: 2,
+      visibleRange: { start: 2, end: 3 },
+    })
+    virtualizer.setScrollMetrics({ scrollTop: 48, viewportHeight: 0 })
+    expect(virtualizer.getViewportSnapshot().scrollRow).toBe(0)
+    virtualizer.updateOptions({ count: 0 })
+    virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 100 })
+    expect(virtualizer.getViewportSnapshot().scrollRow).toBe(0)
+    virtualizer.dispose()
+  })
+
   it.each([0, -20, Number.NaN])('keeps a %s-height viewport empty', (viewportHeight) => {
     const range = computeFixedRowVisibleRange({
       count: 100,
@@ -201,6 +255,32 @@ describe('fixed row virtualizer', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('reports each scroll offset without rebuilding a stable virtual window', () => {
+    const onChange = vi.fn()
+    const offsets: number[] = []
+    const virtualizer = new FixedRowVirtualizer({ count: 100, rowHeight: 20, overscan: 2 })
+    virtualizer.attachScrollElement(document.createElement('div'), onChange, {
+      readInitialScrollPosition: false,
+      onScroll: () => offsets.push(virtualizer.getViewportSnapshot().scrollTop),
+    })
+    virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: 60 })
+    onChange.mockClear()
+    const snapshots = vi.spyOn(virtualizer, 'getSnapshot')
+
+    virtualizer.setScrollMetrics({ scrollTop: 5, viewportHeight: 60 })
+    virtualizer.setScrollMetrics({ scrollTop: 10, viewportHeight: 60 })
+    virtualizer.setScrollMetrics({ scrollTop: 10, viewportHeight: 60 })
+
+    expect(offsets).toEqual([5, 10])
+    expect(onChange).not.toHaveBeenCalled()
+    expect(snapshots).not.toHaveBeenCalled()
+
+    virtualizer.detachScrollElement()
+    virtualizer.setScrollMetrics({ scrollTop: 15, viewportHeight: 60 })
+    expect(offsets).toEqual([5, 10])
+    virtualizer.dispose()
   })
 
   it('emits every scroll change while the native scroll height is capped', () => {
@@ -723,6 +803,41 @@ describe('fixed row virtualizer', () => {
       resize.restore()
     }
   })
+
+  it.each([0, 600])(
+    'restores the end-of-file offset with an initial viewport height of %s',
+    (initialViewportHeight) => {
+      const virtualizer = new FixedRowVirtualizer({ count: 0, rowHeight: 20 })
+      const element = document.createElement('div')
+      let nativeScrollTop = 0
+      let nativeMaximum = 0
+      Object.defineProperty(element, 'scrollTop', {
+        configurable: true,
+        get: () => nativeScrollTop,
+        set: (value: number) => {
+          nativeScrollTop = Math.min(value, nativeMaximum)
+        },
+      })
+      virtualizer.attachScrollElement(
+        element,
+        (snapshot) => {
+          nativeMaximum = Math.max(0, snapshot.nativeScrollHeight - 600)
+        },
+        { readInitialScrollPosition: false },
+      )
+      if (initialViewportHeight > 0)
+        virtualizer.setScrollMetrics({ scrollTop: 0, viewportHeight: initialViewportHeight })
+      virtualizer.requestScrollTop(3_980)
+      virtualizer.updateOptions({ count: 200 })
+      expect(nativeScrollTop).toBe(initialViewportHeight > 0 ? 3_980 : 0)
+
+      virtualizer.setScrollMetrics({ scrollTop: 3_980, viewportHeight: 600 })
+
+      expect(virtualizer.getSnapshot().scrollTop).toBe(3_980)
+      expect(nativeScrollTop).toBe(3_980)
+      virtualizer.dispose()
+    },
+  )
 
   it('restores native scrolling after the revealed snapshot renders its spacer', () => {
     const virtualizer = new FixedRowVirtualizer({

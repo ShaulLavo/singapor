@@ -545,6 +545,7 @@ function snapshot(overrides: Partial<EditorViewSnapshot> = {}): EditorViewSnapsh
     foldMarkers: foldMarkers(),
     visibleRows: visibleRows(text),
     viewport: {
+      scrollRow: 0,
       scrollTop: 0,
       scrollLeft: 0,
       scrollHeight: 120,

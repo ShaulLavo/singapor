@@ -70,6 +70,7 @@ describe.skipIf(!canUseMinimapWorker())('MinimapWorkerClient', () => {
         minimapHeight: 80,
         reservedWidth: 0,
         visibleStart: 0,
+        scrollRow: 0,
         visibleEnd: 1,
       },
     )
@@ -160,6 +161,7 @@ function snapshot(text: string): EditorViewSnapshot {
     visibleRows: [],
     viewport: {
       scrollTop: 0,
+      scrollRow: 0,
       scrollLeft: 0,
       scrollHeight: 40,
       scrollWidth: 160,

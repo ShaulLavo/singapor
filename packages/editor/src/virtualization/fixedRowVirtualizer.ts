@@ -20,6 +20,7 @@ export type FixedRowVirtualItem = {
 
 export type FixedRowVirtualizerSnapshot = {
   readonly scrollTop: number
+  readonly scrollRow: number
   readonly scrollLeft: number
   readonly viewportWidth: number
   readonly viewportHeight: number
@@ -59,6 +60,7 @@ export type FixedRowVirtualizerChangeHandler = (snapshot: FixedRowVirtualizerSna
 
 export type FixedRowVirtualizerAttachOptions = {
   readonly readInitialScrollPosition?: boolean
+  readonly onScroll?: () => void
 }
 
 type AttachedScrollElement = {
@@ -152,6 +154,7 @@ export class FixedRowVirtualizer {
   private borderBoxHeight = 0
   private attached: AttachedScrollElement | null = null
   private changeHandler: FixedRowVirtualizerChangeHandler | null = null
+  private scrollHandler: (() => void) | null = null
   private scrollAnimationFrame = 0
   private resizeAnimationFrame = 0
   private trailingScrollEmitTimer: ReturnType<typeof setTimeout> | null = null
@@ -199,8 +202,9 @@ export class FixedRowVirtualizer {
     this.scrollTop = nextScrollTop
     this.stableVirtualWindow = null
     this.syncAttachedScrollMode()
-    this.syncAttachedNativeScrollTop()
     this.emitChange()
+    // An unmeasured viewport has no end padding yet, so native scrolling would clamp the restore.
+    if (this.viewportHeight > 0) this.syncAttachedNativeScrollTop()
     return true
   }
 
@@ -215,6 +219,7 @@ export class FixedRowVirtualizer {
   ): void {
     this.detachScrollElement()
     this.changeHandler = onChange ?? null
+    this.scrollHandler = options.onScroll ?? null
 
     const onScroll = (): void => this.scheduleScrollSync()
     const resizeObserver = createResizeObserver((entries) => this.syncFromResizeEntries(entries))
@@ -235,6 +240,7 @@ export class FixedRowVirtualizer {
     this.clearPendingResizeSync()
     this.cancelTrailingScrollEmit()
     this.attached = null
+    this.scrollHandler = null
   }
 
   public dispose(): void {
@@ -283,6 +289,7 @@ export class FixedRowVirtualizer {
       return
 
     const previousScrollTop = this.scrollTop
+    const previousScrollLeft = this.scrollLeft
     const geometryChanged =
       measurementChanged ||
       restoreScrollPosition ||
@@ -300,6 +307,17 @@ export class FixedRowVirtualizer {
     this.borderBoxWidth = nextBorderBoxWidth
     this.borderBoxHeight = nextBorderBoxHeight
     if (viewportHeightChanged) this.stableVirtualWindow = null
+    this.finishScrollMetrics(previousScrollTop, geometryChanged, restoreScrollPosition)
+    if (this.scrollTop !== previousScrollTop || this.scrollLeft !== previousScrollLeft) {
+      this.scrollHandler?.()
+    }
+  }
+
+  private finishScrollMetrics(
+    previousScrollTop: number,
+    geometryChanged: boolean,
+    restoreScrollPosition: boolean,
+  ): void {
     if (restoreScrollPosition) {
       this.nativeScrollNeedsRestore = false
       this.emitChange()
@@ -308,11 +326,13 @@ export class FixedRowVirtualizer {
       return
     }
 
-    this.syncAttachedNativeScrollTop()
     if (this.shouldEmitImmediately(previousScrollTop, geometryChanged)) {
+      // Render the new scroll extent before a native write can be clamped to the old one.
       this.emitChange()
+      this.syncAttachedNativeScrollTop()
       return
     }
+    this.syncAttachedNativeScrollTop()
     this.scheduleTrailingScrollEmit()
   }
 
@@ -371,6 +391,11 @@ export class FixedRowVirtualizer {
   }
 
   public getSnapshot(): FixedRowVirtualizerSnapshot {
+    const snapshot = this.getViewportSnapshot()
+    return { ...snapshot, virtualItems: this.getVirtualItems(snapshot.visibleRange) }
+  }
+
+  public getViewportSnapshot(): Omit<FixedRowVirtualizerSnapshot, 'virtualItems'> {
     const visibleRange = this.getVisibleRange()
     const totalSize = computeTotalSize(this.options)
     const viewportHeight = this.snapshotViewportHeight(totalSize)
@@ -378,6 +403,7 @@ export class FixedRowVirtualizer {
     const geometry = this.scrollGeometry(viewportHeight, totalSize)
     return {
       scrollTop,
+      scrollRow: scrollRowForViewport(this.options, visibleRange, scrollTop, totalSize),
       scrollLeft: this.scrollLeft,
       viewportWidth: this.viewportWidth,
       viewportHeight,
@@ -388,7 +414,6 @@ export class FixedRowVirtualizer {
       nativeScrollHeight: geometry.nativeScrollHeight,
       nativeScrollTop: nativeScrollTopForLogical(scrollTop, geometry),
       visibleRange,
-      virtualItems: this.getVirtualItems(visibleRange),
     }
   }
 
@@ -1137,6 +1162,27 @@ function collectVariableVirtualItems(
   }
 
   return items
+}
+
+function scrollRowForViewport(
+  options: NormalizedFixedRowVirtualizerOptions,
+  visibleRange: FixedRowVisibleRange,
+  scrollTop: number,
+  totalSize: number,
+): number {
+  if (visibleRange.start === visibleRange.end) return 0
+  const index = options.rowHeightIndex
+  const stride = options.rowHeight + options.rowGap
+  let row = visibleRange.start
+  let top = index ? rowHeightIndexStart(index, row) : row * stride
+  // The first visible row skips a preceding gap; motion still belongs to that preceding row.
+  if (scrollTop < top && row > 0) {
+    row -= 1
+    top = index ? rowHeightIndexStart(index, row) : row * stride
+  }
+  const nextTop = index ? rowHeightIndexStart(index, row + 1) : (row + 1) * stride
+  const bottom = Math.min(totalSize, nextTop)
+  return row + clamp((scrollTop - top) / (bottom - top), 0, 1)
 }
 
 function fixedRowIndexAtOffset(

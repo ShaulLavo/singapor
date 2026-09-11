@@ -42,8 +42,10 @@ export function runRasterPixelOracle(): PixelOracleResult {
   }
   verifyOverlappingTokens(result)
   result.cases += 1
-  verifySubpixelMotion(result)
-  result.cases += 1
+  for (const dpr of [1, 1.25, 2]) {
+    verifyPixelSnappedMotion(dpr, result)
+    result.cases += 1
+  }
   return result
 }
 
@@ -223,7 +225,7 @@ function verifyLayoutChanges(pair: RasterPair, label: string, result: PixelOracl
   verifyFrame(pair, `${label} token replacement`, result)
 }
 
-function verifyFrame(pair: RasterPair, label: string, result: PixelOracleResult): void {
+function verifyFrame(pair: RasterPair, label: string, result: PixelOracleResult) {
   // Preserve prior geometry while forcing the reference to redraw every pixel.
   pair.expected.renderer.setBaseStyles(pair.styles)
   const actual = pair.actual.renderer.render()
@@ -236,6 +238,7 @@ function verifyFrame(pair: RasterPair, label: string, result: PixelOracleResult)
     `${label}: decorations`,
   )
   result.frames += 1
+  return actual
 }
 
 function compareCanvases(
@@ -276,8 +279,8 @@ function verifyOverlappingTokens(result: PixelOracleResult): void {
   }
 }
 
-function verifySubpixelMotion(result: PixelOracleResult): void {
-  const pair = createPair({ dpr: 1, renderCharacters: false, alpha: 0, scale: 1 })
+function verifyPixelSnappedMotion(dpr: number, result: PixelOracleResult): void {
+  const pair = createPair({ dpr, renderCharacters: false, alpha: 0, scale: 1 })
   pair.document = documentPayload(
     Array.from({ length: 300 }, (_, line) => (line === 8 ? 'XXXXX' : '')),
   )
@@ -295,37 +298,59 @@ function verifySubpixelMotion(result: PixelOracleResult): void {
     ])
   }
   try {
-    verifySubpixelFrames(pair, result)
+    verifySnappedFrames(pair, result)
   } finally {
     pair.actual.renderer.dispose()
     pair.expected.renderer.dispose()
   }
 }
 
-function verifySubpixelFrames(pair: RasterPair, result: PixelOracleResult): void {
-  verifyFrame(pair, 'subpixel origin', result)
-  let previousPixels = canvasPixels(pair.actual.main)
+function verifySnappedFrames(pair: RasterPair, result: PixelOracleResult): void {
+  const layout = pair.actual.renderer.updateLayout(pair.metrics, pair.viewport)
+  if (!layout) throw oracleError('Missing pixel-snapping layout')
+  verifyFrame(pair, 'pixel-snapped origin', result)
+  const initialPixels = canvasPixels(pair.actual.main)
+  const initialMarkers = canvasPixels(pair.actual.decorations)
   const initialCodeY = alphaCentroid(pair.actual.main, 2)
   const initialMarkerY = alphaCentroid(pair.actual.decorations, pair.actual.decorations.width - 1)
   for (let index = 0; index < 3; index += 1) pair.actual.renderer.render()
-  if (!pixelsEqual(previousPixels, canvasPixels(pair.actual.main))) {
-    throw oracleError('Unchanged fractional frame accumulates transparent pixels')
+  if (!pixelsEqual(initialPixels, canvasPixels(pair.actual.main))) {
+    throw oracleError('Unchanged snapped frame accumulates transparent pixels')
   }
-  for (let scrollTop = 2; scrollTop <= 20; scrollTop += 2) {
+  let movedOnePixel = false
+  for (let scrollTop = 2; scrollTop <= 60; scrollTop += 2) {
     scrollPair(pair, scrollTop)
-    verifyFrame(pair, `subpixel scroll ${scrollTop}`, result)
-    const pixels = canvasPixels(pair.actual.main)
-    if (pixelsEqual(previousPixels, pixels))
-      throw oracleError(`Subpixel code froze at ${scrollTop}px`)
-    previousPixels = pixels
+    const frame = verifyFrame(pair, `pixel-snapped scroll ${scrollTop}`, result)
+    if (!frame) throw oracleError('Missing pixel-snapping frame')
     const codeDelta = alphaCentroid(pair.actual.main, 2) - initialCodeY
     const markerDelta =
       alphaCentroid(pair.actual.decorations, pair.actual.decorations.width - 1) - initialMarkerY
-    if (Math.abs(codeDelta - markerDelta) > 0.03) {
-      throw oracleError(
-        `Code and marker moved differently at ${scrollTop}px: ${codeDelta}, ${markerDelta}`,
-      )
-    }
+    const shift = Math.round(codeDelta)
+    const pixelRatio = layout.canvasInnerHeight / layout.canvasOuterHeight
+    const continuousOffset =
+      pair.viewport.scrollRow * layout.lineHeight - frame.sliderTop * pixelRatio
+    if (Math.abs(codeDelta + continuousOffset) > 0.500001)
+      throw oracleError(`Snapped code exceeded half-pixel position error at ${scrollTop}px`)
+    if (Math.abs(codeDelta - shift) > 0.000001 || Math.abs(codeDelta - markerDelta) > 0.000001)
+      throw oracleError(`Code and marker must move together by whole pixels at ${scrollTop}px`)
+    compareShiftedPixels(pair.actual.main, initialPixels, shift, 'code')
+    compareShiftedPixels(pair.actual.decorations, initialMarkers, shift, 'marker')
+    movedOnePixel ||= shift === -1
+  }
+  if (!movedOnePixel) throw oracleError('Expected a physical-pixel step smaller than a minimap row')
+}
+
+function compareShiftedPixels(
+  canvas: OffscreenCanvas,
+  initial: Uint8ClampedArray,
+  shift: number,
+  label: string,
+): void {
+  const pixels = canvasPixels(canvas)
+  const offset = shift * canvas.width * 4
+  for (let index = 0; index < pixels.length; index += 1) {
+    if (pixels[index] === (initial[index - offset] ?? 0)) continue
+    throw oracleError(`Pixel-snapped ${label} changed color or opacity at byte ${index}`)
   }
 }
 

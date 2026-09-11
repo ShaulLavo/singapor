@@ -523,7 +523,8 @@ export class MinimapWorkerRenderer {
     surface: RasterSurface,
   ): void {
     const state = this.requireState()
-    const offsetY = frame.startLineFraction * layout.lineHeight
+    // Fractional pixel blending dims the glyphs while scrolling.
+    const offsetY = Math.round(frame.startLineFraction * layout.lineHeight)
     presentRaster(state.mainContext, surface.mainCanvas, state.mainCanvas, offsetY)
     presentRaster(
       state.decorationsContext,

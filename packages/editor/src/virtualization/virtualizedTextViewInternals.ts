@@ -1,3 +1,4 @@
+import type { ScrollViewport } from './scrollViewport'
 import type { InlineMap } from '../inlineMap'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
 import type { SelectionAffinity } from '../selections'
@@ -78,8 +79,7 @@ export type SameLineTokenEdit = {
 export interface VirtualizedTextViewInternal {
   provisional: boolean
   readonly scrollElement: HTMLDivElement
-  readonly extentElement: HTMLDivElement
-  readonly viewportElement: HTMLDivElement
+  readonly viewport: ScrollViewport
   readonly contentElement: HTMLDivElement
   readonly inputElement: HTMLTextAreaElement
   readonly spacer: HTMLDivElement
@@ -141,9 +141,6 @@ export interface VirtualizedTextViewInternal {
   inlineMapBase: InlineMap | null
   lastSelectionHighlightSignature: string
   lastRenderedRowsKey: string
-  lastSpacerHeight: string
-  lastSpacerTransform: string
-  lastSpacerWidth: string
   gutterContributionWidths: ReadonlyMap<string, number>
   gutterWidthDirty: boolean
   currentGutterWidth: number

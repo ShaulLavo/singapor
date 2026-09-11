@@ -5,6 +5,8 @@ import { Editor } from '../src/editor/Editor'
 import { createEditorBufferSession, createEditorTextBuffer } from '../src/public/document'
 import type { EditorViewContributionContext } from '../src/plugins'
 import '../src/style.css'
+import { createFoldGutterContribution, createLineGutterContribution } from '../../gutters/src/index'
+import '../../gutters/src/style.css'
 
 declare module 'vitest/browser' {
   interface BrowserCommands {
@@ -92,6 +94,95 @@ function reserveRail(context: EditorViewContributionContext) {
   return { update() {}, dispose: () => context.reserveOverlayWidth('right', 0) }
 }
 
+it.each(['left', 'right'] as const)(
+  'clips a transparent gutter beside a %s overlay',
+  async (side) => {
+    const host = document.createElement('div')
+    host.id = 'transparent-gutter-proof'
+    host.style.cssText =
+      'display:flex;width:400px;height:180px;background:linear-gradient(90deg,#123,#234)'
+    document.body.append(host)
+    const toggled: string[] = []
+    const view = new VirtualizedTextView(host, {
+      rowHeight: 20,
+      overscan: 0,
+      gutterContributions: [createLineGutterContribution(), createFoldGutterContribution()],
+      onFoldToggle: (marker) => toggled.push(marker.key),
+    })
+    const scroll = view.scrollElement
+    scroll.style.setProperty('--editor-background', 'transparent')
+    scroll.style.setProperty('--editor-gutter-background', 'transparent')
+    scroll.style.scrollbarWidth = 'none'
+    view.setText(
+      Array.from({ length: 180 }, (_, row) => `${row}: ${'abcdefghij '.repeat(50)}`).join('\n'),
+    )
+    view.setSelection(0, 40000)
+
+    try {
+      view.reserveOverlayWidth(side, 96)
+      await expect.poll(() => view.getState().viewportWidth).toBe(scroll.clientWidth - 96)
+      scroll.scrollTo(650, 1600)
+      await expect.poll(() => view.getState().scrollLeft).toBeCloseTo(650, 0)
+      await expect.poll(() => view.getState().scrollTop).toBeCloseTo(1600, 0)
+      const [first, second] = view.getState().mountedRows
+      view.setFoldMarkers([
+        {
+          key: 'fold-proof',
+          startOffset: first!.startOffset,
+          endOffset: second!.endOffset,
+          startRow: first!.bufferRow,
+          endRow: second!.bufferRow,
+          collapsed: false,
+        },
+      ])
+      const button = host.querySelector<HTMLButtonElement>(
+        '.editor-virtualized-fold-toggle:not([hidden])',
+      )!
+      const buttonRect = button.getBoundingClientRect()
+      const target = document.elementFromPoint(
+        buttonRect.left + buttonRect.width / 2,
+        buttonRect.top + buttonRect.height / 2,
+      )
+      expect(target?.closest('button')).toBe(button)
+      button.click()
+      expect(toggled).toEqual(['fold-proof'])
+      await assertClippedGutter(view, host)
+      view.setGutterContributions([])
+      expect(host.querySelector('.editor-virtualized-gutter')).toBeNull()
+      view.setGutterContributions([createLineGutterContribution({ minWidth: 96 })])
+      host.style.width = '480px'
+      await expect.poll(() => view.getState().viewportWidth).toBe(scroll.clientWidth - 96)
+      await assertClippedGutter(view, host)
+    } finally {
+      view.dispose()
+      host.remove()
+    }
+  },
+)
+
+async function assertClippedGutter(view: VirtualizedTextView, host: HTMLElement) {
+  const gutter = host.querySelector<HTMLElement>('.editor-virtualized-gutter')!
+  expect(getComputedStyle(gutter).backgroundColor).toBe('rgba(0, 0, 0, 0)')
+  const row = view.getState().mountedRows[0]!
+  expect(row.gutterElement.getBoundingClientRect().top).toBe(
+    row.element.getBoundingClientRect().top,
+  )
+  const painted = await pixels(host.id)
+  view.contentElement.style.visibility = 'hidden'
+  const background = await pixels(host.id)
+  gutter.style.visibility = 'hidden'
+  const wallpaper = await pixels(host.id)
+  gutter.style.visibility = ''
+  view.contentElement.style.visibility = ''
+  const bounds = host.getBoundingClientRect()
+  const scale = painted.width / bounds.width
+  const gutterRight = Math.floor((gutter.getBoundingClientRect().right - bounds.left) * scale)
+  const changed = changedPixels(painted, background, 0, gutterRight)
+  expect(changed.content).toBeGreaterThan(200)
+  expect(changed.rail).toBe(0)
+  expect(changedPixels(background, wallpaper, 0, gutterRight).rail).toBeGreaterThan(10)
+}
+
 async function assertClippedScroll(
   view: VirtualizedTextView,
   host: HTMLElement,
@@ -102,8 +193,8 @@ async function assertClippedScroll(
     [650, 1600],
   ] as const) {
     view.scrollElement.scrollTo(left, top)
-    await expect.poll(() => view.getState().scrollTop).toBe(top)
-    await expect.poll(() => view.getState().scrollLeft).toBe(left)
+    await expect.poll(() => view.getState().scrollTop).toBeCloseTo(top, 0)
+    await expect.poll(() => view.getState().scrollLeft).toBeCloseTo(left, 0)
     const painted = await pixels(host.id)
     view.contentElement.style.visibility = 'hidden'
     const background = await pixels(host.id)

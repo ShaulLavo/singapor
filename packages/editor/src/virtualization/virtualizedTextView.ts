@@ -1,3 +1,4 @@
+import { ScrollViewport } from './scrollViewport'
 import type { SavedPaint } from '../editor/paintSnapshot'
 import type { TextContent } from '../textContent'
 import type { FoldMap } from '../foldMap'
@@ -288,10 +289,9 @@ export class VirtualizedTextView {
     const scrollMode = normalizeScrollMode(options.scrollMode)
     const rowPositioning = options.rowPositioning ?? 'transform'
     const inputElement = createInputElement(container)
-    const extentElement = container.ownerDocument.createElement('div')
-    const viewportElement = container.ownerDocument.createElement('div')
-    const contentElement = container.ownerDocument.createElement('div')
-    const spacer = container.ownerDocument.createElement('div')
+    const viewport = new ScrollViewport(scrollElement)
+    const contentElement = viewport.textContent
+    const spacer = viewport.textSpacer
     const gutterElement = container.ownerDocument.createElement('div')
     const caretLayerElement = container.ownerDocument.createElement('div')
     const caretElement = container.ownerDocument.createElement('div')
@@ -321,8 +321,7 @@ export class VirtualizedTextView {
     this.view = {
       provisional: false,
       scrollElement,
-      extentElement,
-      viewportElement,
+      viewport,
       contentElement,
       inputElement,
       spacer,
@@ -378,9 +377,6 @@ export class VirtualizedTextView {
       inlineMapBase: null,
       lastSelectionHighlightSignature: '',
       lastRenderedRowsKey: '',
-      lastSpacerHeight: '',
-      lastSpacerTransform: '',
-      lastSpacerWidth: '',
       gutterContributionWidths: new Map(),
       gutterWidthDirty: true,
       currentGutterWidth: 0,
@@ -402,23 +398,16 @@ export class VirtualizedTextView {
     setScrollModeAttribute(scrollElement, scrollMode)
     scrollElement.dataset.editorRowPositioning = rowPositioning
     applyRowHeight(this.view, rowHeight)
-    extentElement.className = 'editor-virtualized-extent'
-    viewportElement.className = 'editor-virtualized-viewport'
-    contentElement.className = 'editor-virtualized-content'
-    spacer.className = 'editor-virtualized-spacer'
     gutterElement.className = 'editor-virtualized-gutter'
     caretLayerElement.className = 'editor-virtualized-caret-layer'
     caretElement.className = 'editor-virtualized-caret'
     caretElement.hidden = true
     caretLayerElement.appendChild(caretElement)
-    if (gutterContributions.length > 0 || gutterWidthProvider) spacer.appendChild(gutterElement)
+    if (gutterContributions.length > 0 || gutterWidthProvider) {
+      viewport.gutterSpacer.appendChild(gutterElement)
+    }
     spacer.appendChild(caretLayerElement)
-    contentElement.appendChild(spacer)
-    viewportElement.appendChild(contentElement)
-    extentElement.appendChild(viewportElement)
-    scrollElement.appendChild(extentElement)
     scrollElement.appendChild(inputElement)
-    this.synchronizeContentOrigin()
 
     virtualizer.attachScrollElement(
       scrollElement,
@@ -527,12 +516,9 @@ export class VirtualizedTextView {
     this.scrollElement.setAttribute('aria-busy', 'true')
     this.scrollElement.inert = true
     this.inputElement.readOnly = true
-    this.view.spacer.style.height = `${paint.scrollHeight}px`
-    this.view.spacer.style.width = `${paint.scrollWidth}px`
-    this.view.extentElement.style.height = `${paint.scrollHeight}px`
-    this.view.extentElement.style.width = `${paint.scrollWidth}px`
-    this.synchronizeViewportSize(paint.viewportWidth, paint.viewportHeight)
-    this.view.spacer.style.transform = ''
+    this.view.viewport.setDocumentWidth(paint.scrollWidth)
+    this.view.viewport.setDocumentHeight(paint.scrollHeight, 0)
+    this.view.viewport.setViewportSize(paint.viewportWidth, paint.viewportHeight)
     this.scrollElement.style.setProperty('--editor-gutter-width', `${paint.gutterWidth}px`)
     const release = paintProvisionalRows(this.view, paint)
     if (!release) {
@@ -562,9 +548,6 @@ export class VirtualizedTextView {
     const view = this.view
     view.lastRenderedRowsKey = ''
     view.gutterContributionWidths = new Map()
-    view.lastSpacerHeight = ''
-    view.lastSpacerWidth = ''
-    view.lastSpacerTransform = ''
     view.gutterWidthDirty = true
     clearRowTokenState(view)
     clearRowGeometryCaches(view)
@@ -879,13 +862,7 @@ export class VirtualizedTextView {
       this.pendingOverlayWidths?.set(side, width)
       return false
     }
-    const value = width > 0 && Number.isFinite(width) ? `${Math.ceil(width)}px` : ''
-    const property = overlayPaddingProperty(side)
-    if (this.scrollElement.style[property] === value) return false
-
-    this.scrollElement.style[property] = value
-    this.synchronizeContentOrigin()
-    return true
+    return this.view.viewport.reserveOverlayWidth(side, width)
   }
 
   /** Overlay padding and the sticky gutter inside the native scroll viewport. */
@@ -895,8 +872,7 @@ export class VirtualizedTextView {
   }
 
   public reservedOverlayWidth(side: 'left' | 'right'): number {
-    const width = Number.parseFloat(this.scrollElement.style[overlayPaddingProperty(side)])
-    return Number.isFinite(width) ? width : 0
+    return this.view.viewport.reservedOverlayWidth(side)
   }
 
   public scrollToRow(row: number): void {
@@ -1238,7 +1214,7 @@ export class VirtualizedTextView {
     }
 
     const view = this.view
-    this.synchronizeViewportSize(snapshot.viewportWidth, snapshot.viewportHeight)
+    this.view.viewport.setViewportSize(snapshot.viewportWidth, snapshot.viewportHeight)
     const visible = snapshot.viewportHeight > 0
     if (visible) {
       const first = snapshot.virtualItems[0]?.index ?? 0
@@ -1276,26 +1252,6 @@ export class VirtualizedTextView {
     renderSelectionHighlight(view)
     view.onViewportChange?.()
     this.flushPendingReveal()
-  }
-
-  private synchronizeViewportSize(width: number, height: number): void {
-    const { viewportElement, contentElement } = this.view
-    const nextWidth = `${Math.max(0, width)}px`
-    const nextHeight = `${Math.max(0, height)}px`
-    if (viewportElement.style.width === nextWidth && viewportElement.style.height === nextHeight)
-      return
-
-    this.synchronizeContentOrigin()
-    viewportElement.style.width = nextWidth
-    viewportElement.style.height = nextHeight
-    contentElement.style.width = nextWidth
-    contentElement.style.height = nextHeight
-  }
-
-  private synchronizeContentOrigin(): void {
-    const padding = scrollElementPadding(this.scrollElement)
-    this.contentElement.style.left = `${padding.left}px`
-    this.contentElement.style.top = `${padding.top}px`
   }
 
   private flushPendingReveal(): void {
@@ -2782,8 +2738,4 @@ function dirtyTokenProjectionStartRow(current: number | null, row: number): numb
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
-}
-
-function overlayPaddingProperty(side: 'left' | 'right'): 'paddingLeft' | 'paddingRight' {
-  return side === 'left' ? 'paddingLeft' : 'paddingRight'
 }

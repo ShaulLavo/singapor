@@ -366,7 +366,7 @@ function syncGutterHostElement(view: VirtualizedTextViewInternal): void {
 
   if (view.gutterElement.isConnected) return
 
-  view.spacer.insertBefore(view.gutterElement, view.caretLayerElement)
+  view.viewport.gutterSpacer.appendChild(view.gutterElement)
 }
 
 function gutterHostEnabled(view: VirtualizedTextViewInternal): boolean {
@@ -2630,12 +2630,7 @@ function applySpacerWidth(
   view: VirtualizedTextViewInternal,
   viewportWidth = view.virtualizer.getSnapshot().viewportWidth,
 ): void {
-  const width = `${spacerWidth(view, viewportWidth)}px`
-  if (view.lastSpacerWidth === width) return
-
-  view.lastSpacerWidth = width
-  view.spacer.style.width = width
-  view.extentElement.style.width = width
+  view.viewport.setDocumentWidth(spacerWidth(view, viewportWidth))
 }
 
 export function updateSpacerWidth(view: VirtualizedTextViewInternal, viewportWidth?: number): void {
@@ -2663,26 +2658,10 @@ function applyTotalHeight(
   view: VirtualizedTextViewInternal,
   snapshot: FixedRowVirtualizerSnapshot,
 ): void {
-  const height = `${snapshot.nativeScrollHeight}px`
-  const offset = snapshot.nativeScrollTop - snapshot.scrollTop
-  const transform = offset === 0 ? '' : `translateY(${offset}px)`
-  setSpacerHeight(view, height)
-  setSpacerTransform(view, transform)
-}
-
-function setSpacerHeight(view: VirtualizedTextViewInternal, height: string): void {
-  if (view.lastSpacerHeight === height) return
-
-  view.lastSpacerHeight = height
-  view.spacer.style.height = height
-  view.extentElement.style.height = height
-}
-
-function setSpacerTransform(view: VirtualizedTextViewInternal, transform: string): void {
-  if (view.lastSpacerTransform === transform) return
-
-  view.lastSpacerTransform = transform
-  view.spacer.style.transform = transform
+  view.viewport.setDocumentHeight(
+    snapshot.nativeScrollHeight,
+    snapshot.nativeScrollTop - snapshot.scrollTop,
+  )
 }
 
 export function getMountedRows(

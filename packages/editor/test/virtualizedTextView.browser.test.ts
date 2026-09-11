@@ -563,7 +563,10 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
     })
 
     it('restores a deep logical scroll beyond the native height cap', async () => {
-      const { view, host } = mount({ overscan: 0 })
+      const { view, host } = mount({
+        overscan: 0,
+        gutterContributions: [createLineGutterContribution()],
+      })
       const text = 'x\n'.repeat(900_000) + 'final'
       setHighlightedText(view, text)
       await browserFrames(3)
@@ -578,6 +581,9 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')(
       expect(state.scrollTop).toBeGreaterThan(16_000_000)
       expect(firstRow.bufferRow).toBeGreaterThanOrEqual(849_999)
       expect(firstRow.text).toBe('x')
+      expect(firstRow.gutterElement.getBoundingClientRect().top).toBe(
+        firstRow.element.getBoundingClientRect().top,
+      )
       assertNativeCaret(view, offset)
       const savedScroll = view.getState().scrollTop
       const savedRange = view.getState().visibleRange

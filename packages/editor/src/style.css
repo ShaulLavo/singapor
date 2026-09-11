@@ -125,6 +125,21 @@
   top: 0;
 }
 
+.editor-virtualized-clip {
+  inset: 0;
+  position: absolute;
+}
+
+.editor-virtualized-text-clip {
+  clip-path: inset(0 0 0 var(--editor-gutter-width));
+}
+
+.editor-virtualized-gutter-clip {
+  clip-path: inset(0 max(0px, calc(100% - var(--editor-gutter-width))) 0 0);
+  pointer-events: none;
+  z-index: var(--editor-z-gutter);
+}
+
 .editor-virtualized-content {
   /* The native scroller is the fixed containing block, so paint scrolls inside the sticky clip. */
   position: fixed;

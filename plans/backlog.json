@@ -412,14 +412,14 @@
     },
     {
       "id": "E034",
-      "reference": "../docs/performance/e034-snapshot-indentation-folds.md",
+      "file": "e034-snapshot-indentation-folds.md",
       "title": "Maintain indentation folds from document snapshots",
-      "status": "Completed",
+      "status": "Implemented; performance validation pending",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
       "effort": "L",
-      "baseline": "88cd55da61e895542cfe248082221cf992be74e5",
+      "baseline": "33e632a6ff8ee35a670c4f4636c0f6f84d36295a",
       "dependsOn": ["E003", "E032"],
       "topics": [
         "Reduce editor memory footprint",

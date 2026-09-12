@@ -245,6 +245,7 @@ function inputApplied() {
   const input = inputMeasurements.at(-1)
   if (inputOffset === null || !input || input.appliedAt !== null) return
   input.appliedAt = performance.now()
+  // @justification Measures the next input frame; each benchmark burst waits for it before disposal.
   requestAnimationFrame(() => {
     input.frameAt = performance.now()
   })

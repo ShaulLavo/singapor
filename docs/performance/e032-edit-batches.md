@@ -105,22 +105,32 @@ these fixtures, not calibrated latency budgets. Source-index scans are reported 
 The browser companion uses the built package and the existing E001 Playwright request routing.
 It opens no listening server. Each sample starts with an already painted editor, performs the
 same programmatic edit, then captures the final prefix row. Decorated groups additionally capture
-source row 2, which contains a retained token, and require at least 20 chromatic pixels. Protocol 2
+source row 2, which contains a retained token, and require at least 20 chromatic pixels. Protocol 3
 measures through completion of both required screenshots for decorated groups, or the prefix
 screenshot for plain groups. This is an upper bound on paint latency, not a trusted keyboard-input
 measurement. The candidate gate checks tokens and folds both synchronously and after those
-screenshots. Full-document correctness reads happen after timing and diagnostics.
+screenshots. It also requires zero synchronous and zero deferred full-document reads in each
+diagnostic sample. Full-document correctness reads happen after timing and diagnostics.
 
 ```sh
-TMPDIR=/work/tmp bun scripts/build-package.ts packages/editor
 TMPDIR=/work/tmp node packages/editor/bench/editBatchesBrowserRunner.mjs \
   --output /work/tmp/e032-browser.json --require-incremental
 ```
 
-Both runners accept `--core-directory` to compare a frozen package. The browser runner requires
-matching `src` and `dist` directories and checks both hashes before and after capture. The source
-runner likewise rejects source changes during capture. Baseline packages omit
-`--require-incremental` so their lost-token/lost-fold verdicts remain inspectable.
+Both runners accept `--core-directory` to compare a frozen package. Before capturing, the browser
+runner rebuilds that package with `scripts/build-package.ts`, which replaces its `dist` directory.
+The package must contain `src`, `package.json`, and reachable dependencies. An existing build is
+not required. The runner checks that source and build-input hashes stay unchanged during the
+build, then checks source and output hashes again after capture. Results record the package
+manifest, build script, root TypeScript configuration, and lockfile hashes under `buildProvenance`.
+The build runs outside all measured intervals. The source runner likewise rejects source changes
+during capture. Baseline packages omit `--require-incremental` so their lost-token and lost-fold
+verdicts remain inspectable.
+
+Protocol 2 checked only the existence and stability of `src` and `dist`. Those checks did not
+establish that the output came from the recorded source. Protocol 3 replaces that assumption with
+a fresh build and also adds the deferred-read assertion. Earlier control captures below retain
+their original protocol labels and fingerprints.
 
 The browser runner's optional `--group` selects one existing group and records the filter in
 the result. For example, `--group ordinary:single-edit:decorated --repetitions 100 --warmups 10`
@@ -133,7 +143,6 @@ The original baseline can be recreated without switching the checkout:
 mkdir -p /work/tmp/e032-baseline
 git archive 6492651 packages/editor/src packages/editor/package.json | tar -x -C /work/tmp/e032-baseline
 ln -sfn "$(pwd)/packages/editor/node_modules" /work/tmp/e032-baseline/node_modules
-TMPDIR=/work/tmp bun scripts/build-package.ts /work/tmp/e032-baseline/packages/editor
 bun packages/editor/bench/editBatches.mjs --core-directory /work/tmp/e032-baseline/packages/editor \
   --output /work/tmp/e032-before-source.json
 TMPDIR=/work/tmp node packages/editor/bench/editBatchesBrowserRunner.mjs \
@@ -146,7 +155,7 @@ The frozen reviewed candidate at `/work/tmp/e032-reviewed/packages/editor` passe
 source-work bound and every strengthened browser preservation check. Source capture contains
 two runs of 30 measured samples after five warmups per group, or 600 measured samples per
 revision. Its baseline captures are retained because the source harness is unchanged; candidate
-captures use the final reviewed source. Both browser revisions were recaptured with protocol 2,
+captures use the final reviewed source. Both browser revisions were recaptured with protocol 3,
 in baseline → candidate → candidate → baseline order. Each browser run contains ten measured
 samples after two warmups per group, or 200 measured samples per revision. Each run also has
 one separate diagnostic sample per group. The machine is an Intel Core i7-14700K with Bun 1.4.0,
@@ -203,41 +212,41 @@ With ten samples, the reported p95 is the largest observation in that run.
 
 | Fixture                        | Operation    | Commit before | Commit after | Screenshot before | Screenshot after |
 | ------------------------------ | ------------ | ------------: | -----------: | ----------------: | ---------------: |
-| 200 lines                      | Single edit  |     0.9 / 1.3 |    0.9 / 1.5 |              49.1 |             49.4 |
-| 200 lines                      | Sparse batch |     0.8 / 1.8 |    0.8 / 1.4 |              49.1 |             48.6 |
-| 200 lines, tokens and fold     | Single edit  |     1.4 / 2.1 |    1.5 / 2.2 |              98.6 |             99.2 |
-| 200 lines, tokens and fold     | Sparse batch |     1.7 / 1.9 |    1.2 / 2.5 |              98.8 |             99.1 |
-| Long line                      | Single edit  |     1.5 / 2.3 |    1.5 / 1.8 |              49.1 |             48.8 |
-| Long line                      | Sparse batch |     1.4 / 2.6 |    1.6 / 2.0 |              49.2 |             48.4 |
-| 500,000 lines                  | Single edit  |     0.9 / 1.3 |    1.0 / 1.4 |              48.5 |             48.8 |
-| 500,000 lines                  | Sparse batch |     0.9 / 2.0 |    0.8 / 1.4 |              47.7 |             48.6 |
-| 500,000 lines, tokens and fold | Single edit  |     3.1 / 3.9 |    3.2 / 4.0 |              98.7 |             98.3 |
-| 500,000 lines, tokens and fold | Sparse batch |     2.9 / 3.7 |    1.3 / 1.9 |             100.0 |             98.4 |
+| 200 lines                      | Single edit  |     0.9 / 1.2 |    0.9 / 1.4 |              48.8 |             49.1 |
+| 200 lines                      | Sparse batch |     0.8 / 1.2 |    0.8 / 1.2 |              48.7 |             49.0 |
+| 200 lines, tokens and fold     | Single edit  |     1.4 / 2.2 |    1.4 / 2.2 |              99.2 |             99.3 |
+| 200 lines, tokens and fold     | Sparse batch |     1.9 / 3.0 |    1.2 / 1.9 |             100.1 |             99.5 |
+| Long line                      | Single edit  |     1.6 / 1.8 |    1.6 / 2.7 |              86.1 |             49.2 |
+| Long line                      | Sparse batch |     1.4 / 1.7 |    1.5 / 2.4 |              48.9 |             49.1 |
+| 500,000 lines                  | Single edit  |     1.0 / 1.4 |    1.0 / 1.4 |              47.9 |             47.4 |
+| 500,000 lines                  | Sparse batch |     0.9 / 1.5 |    0.9 / 1.5 |              48.3 |             48.3 |
+| 500,000 lines, tokens and fold | Single edit  |     3.0 / 6.4 |    3.0 / 3.5 |              98.5 |             98.6 |
+| 500,000 lines, tokens and fold | Sparse batch |     2.8 / 4.7 |    1.4 / 2.0 |              98.2 |             98.0 |
 
 The small plain single-edit browser median is 0.9 ms in all four runs. The small decorated
-single-edit candidate records 1.5 / 2.2 and 1.4 / 2.0 ms, versus baseline 1.4 / 2.1 and
-1.3 / 2.2 ms. Its earlier repeated tail concern does not recur. The large decorated single
-edit records 3.2 / 4.0 and 3.0 / 4.0 ms, versus 3.1 / 3.9 and 3.0 / 3.7 ms. The candidate's
-pooled p95 is 0.3 ms above the baseline, compared with the baseline runs' 0.2 ms p95 spread.
-This small-sample tail difference prompted the focused final control below. These captures
-do not prove tail equivalence or a calibrated latency guarantee. Every sample is retained.
+single-edit candidate records 1.4 / 2.2 and 1.5 / 2.0 ms, versus baseline 1.4 / 2.2 and
+1.3 / 2.1 ms. Ten samples cannot distinguish repeat variation from a small slowdown. The focused
+protocol-3 control below examines that case with more samples. Large decorated single edits
+record 3.0 / 3.5 and 3.1 / 4.4 ms, versus 3.0 / 6.4 and 3.1 / 3.5 ms. Long-line single-edit
+candidate p95 is 2.7 and 1.8 ms, versus 1.8 and 2.1 ms before. These captures do not establish
+consistent tail changes. Every sample, including the larger observations, remains in the artifacts.
 
-The decorated 500,000-line batch has browser medians of 1.3 ms in both candidate runs, versus
-2.9 and 2.7 ms before. Its candidate p95 values are 1.9 and 2.6 ms, versus 3.7 and 3.6 ms.
-Decorated screenshot bounds are about 99 ms because protocol 2 includes a second required
-capture; plain bounds are about 49 ms. Both compared revisions use that same boundary.
+The decorated 500,000-line batch has browser medians of 1.4 ms in both candidate runs, versus
+2.8 and 2.9 ms before. Its candidate p95 values are 2.0 and 3.5 ms, versus 4.7 and 3.6 ms.
+Decorated screenshot bounds are about 99 ms because both revisions include a second required
+capture. Plain bounds are usually about 49 ms, with an 86.1 ms baseline long-line observation.
 These bounds include validation and screenshot overhead. No timing threshold was installed
 or relaxed, and the earlier protocol-1 paint bounds are not compared with these captures.
 
 For the 500,000-line plain batch, forced-GC retained main-renderer heap is 16.88 MiB before
-and 16.98 MiB after in both runs. The decorated batch retains 18.31–18.46 MiB before and
-18.76–18.77 MiB after. The candidate keeps the 10,000 projected tokens and collapsed fold that
+and 16.98 MiB after in both runs. The decorated batch retains 18.30 MiB before and
+18.76 to 18.77 MiB after. The candidate keeps the 10,000 projected tokens and collapsed fold that
 the baseline discards. Retained DOM nodes are 476 versus 477 for that decorated batch. These
 heap figures describe the complete browser benchmark state, including fixture data and editor
 history, rather than the incremental projection alone.
 
 The reviewed candidate built-package SHA-256 is
-`a77c4d46667866a10bfde858ee5217839ed3b2533b1ac5b9bc5e6b36f3d5b027`.
+`2a40bd71ad6935ab10c1f293191860d7301e5d94cecd39be9f938719133eec11`.
 Its browser source-directory SHA-256 is
 `84dc215d3831b5d96bd7ffdb20842f9d7c6b8d4ac8617eccd9c3ac866af2845d`.
 The artifacts record benchmark fingerprints, frozen package paths, source/fixture hashes,
@@ -249,20 +258,24 @@ browser/runtime versions, raw samples, diagnostic counters and correctness resul
 ## Browser guard calibration
 
 `--verify-guards` drives the real Chromium editor through a decorated single edit, then repeats
-with two injected failures. It calls the same candidate gate used by timing samples. Both the
-baseline single-edit control and the reviewed candidate produce these observations:
+with four injected failures. It calls the same candidate gate used by timing and diagnostic
+samples. Both the baseline single-edit control and the reviewed candidate produce these observations:
 
-| Control                                 | Source-row chromatic pixels | Synchronous token/fold state | After screenshots | Gate result                        |
-| --------------------------------------- | --------------------------: | ---------------------------- | ----------------- | ---------------------------------- |
-| Unmodified editor                       |                         129 | Correct                      | Correct           | Accepted                           |
-| Clear browser highlight registry        |                           0 | Correct                      | Correct           | Pixel guard rejects                |
-| Clear folds on the next animation frame |                         129 | Correct                      | Fold missing      | Post-screenshot fold guard rejects |
+| Control                                         | Source-row chromatic pixels | Synchronous token/fold state | After screenshots | Full reads, synchronous / deferred | Gate result                        |
+| ----------------------------------------------- | --------------------------: | ---------------------------- | ----------------- | ---------------------------------: | ---------------------------------- |
+| Unmodified decorated editor                     |                         129 | Correct                      | Correct           |                              0 / 0 | Accepted                           |
+| Clear browser highlight registry                |                           0 | Correct                      | Correct           |                              0 / 0 | Pixel guard rejects                |
+| Clear folds on the next animation frame         |                         129 | Correct                      | Fold missing      |                              0 / 0 | Post-screenshot fold guard rejects |
+| Full-document read on the next frame, plain     |                         N/A | N/A                          | N/A               |                              0 / 1 | Deferred-read guard rejects        |
+| Full-document read on the next frame, decorated |                         129 | Correct                      | Correct           |                              0 / 1 | Deferred-read guard rejects        |
 
 The registry control removes real `CSS.highlights` entries while leaving the editor's token
 model intact. The delayed control calls `Editor.setSyntaxFolds([])` from the next animation
-frame, after synchronous evidence was captured. These controls show that visible color and
-later projection loss are independently observable. The runner also asserts post-screenshot
-token offsets and count. [Raw guard evidence](e032-browser-guard-proof.json) records the
+frame, after synchronous evidence was captured. The full-read controls call
+`Editor.materializeFullText()` on the next animation frame before the post-edit prefix screenshot.
+They record one actual deferred read while synchronous reads remain zero, and both plain and
+decorated cases fail the gate. The runner also asserts post-screenshot token offsets and count.
+[Raw guard evidence](e032-browser-guard-proof.json) records the
 observations, benchmark fingerprint, and exact source/build hashes for both revisions.
 
 ```sh
@@ -271,13 +284,66 @@ TMPDIR=/work/tmp node packages/editor/bench/editBatchesBrowserRunner.mjs \
   --output /work/tmp/e032-reviewed-guard-proof.json
 ```
 
-## Final large single-edit control
+## Build correspondence control
 
+[`editBatchesBuildProof.mjs`](../../packages/editor/bench/editBatchesBuildProof.mjs) deliberately
+pairs baseline source with candidate output in a temporary package. The ordinary package loader
+accepts that pair, reproducing the review finding. The control invokes the same rebuild function
+as the browser runner and verifies unchanged baseline source, exact clean baseline output, and
+removal of an extra stale output file. It compares clean and repaired builds at the same path
+because the bundler embeds package paths in output comments. No hash normalization is used.
+[Raw build evidence](e032-browser-build-proof.json) records both revisions, the mismatched pair,
+the clean reference build, and the repaired build.
+
+```sh
+node packages/editor/bench/editBatchesBuildProof.mjs \
+	--baseline-core-directory /work/tmp/e032-baseline/packages/editor \
+	--candidate-core-directory /work/tmp/e032-reviewed/packages/editor \
+	--output /work/tmp/e032-build-proof.json
+```
+
+## Current small single-edit control
+
+The protocol-3 control repeats `ordinary:single-edit:decorated` with 100 measured samples and ten
+warmups per run, in baseline → candidate → candidate → baseline order. All four runs rebuild the
+selected package before capturing. The [control artifact](e032-browser-small-single-control.json.gz)
+retains all 400 samples, four diagnostic samples, build provenance, and benchmark fingerprints.
+Each sample preserves text, tokens, folds, and 129 chromatic source-row pixels. Each diagnostic
+sample records zero synchronous and zero deferred full-document reads.
+
+| Run | Revision  | p50 | p95 | p99 | Maximum |
+| --- | --------- | --: | --: | --: | ------: |
+| A1  | Baseline  | 1.0 | 1.3 | 1.6 |     1.7 |
+| B1  | Candidate | 1.0 | 1.6 | 1.7 |     1.7 |
+| B2  | Candidate | 1.0 | 1.3 | 1.7 |     1.8 |
+| A2  | Baseline  | 1.0 | 1.4 | 1.7 |     1.7 |
+
+Times are milliseconds. Both revisions have pooled p50 of 1.0 ms, p95 of 1.4 ms, and p99 of
+1.7 ms. The small median increase in the ten-sample matrix does not recur here. B1 still has a
+higher p95 than either baseline run, while B2 matches A1. These repeats do not establish a
+consistent slowdown or prove equal tails. The longer warmup and larger sample count make this
+a separate comparison from the ten-group matrix.
+
+```sh
+e032_control() {
+	TMPDIR=/work/tmp node packages/editor/bench/editBatchesBrowserRunner.mjs \
+		--group ordinary:single-edit:decorated --repetitions 100 --warmups 10 "$@"
+}
+e032_control --core-directory /work/tmp/e032-baseline/packages/editor --output /work/tmp/e032-control-a1.json
+e032_control --core-directory /work/tmp/e032-reviewed/packages/editor --output /work/tmp/e032-control-b1.json --require-incremental
+e032_control --core-directory /work/tmp/e032-reviewed/packages/editor --output /work/tmp/e032-control-b2.json --require-incremental
+e032_control --core-directory /work/tmp/e032-baseline/packages/editor --output /work/tmp/e032-control-a2.json
+```
+
+## Earlier large single-edit control
+
+This historical protocol-2 capture predates the rebuild requirement and deferred-read gate.
+It retains its original fingerprint and does not validate the protocol-3 changes above.
 The protocol-2 ten-sample runs left a small p95 difference for the decorated 500,000-line
 single edit. A separate control repeats only `short-lines:single-edit:decorated`, with 100
 measured samples and ten warmups per run, in baseline → candidate → candidate → baseline order.
 Both sample count and warmup changed, so its tail estimates remain separate from the ten-group
-captures. The [final control artifact](e032-browser-large-single-control.json.gz) retains all
+captures. The [historical control artifact](e032-browser-large-single-control.json.gz) retains all
 400 samples, exact configurations, capture order, benchmark fingerprint, and source/build hashes.
 
 | Run | Revision  | p50 | p95 | p99 | Maximum |
@@ -334,20 +400,9 @@ runs' p95 values, and B1 matches A1. This repeat-control comparison does not est
 consistent candidate slowdown. B2's unexplained spikes remain in the results, including its
 5.4 ms maximum. The measurements do not prove equal tails or a calibrated latency guarantee.
 
-To repeat that group and sampling sequence with the current protocol, run from the repository
-root with both frozen packages available. Protocol 2 has a later decorated screenshot boundary,
-so its paint bounds cannot be compared directly with the historical values:
-
-```sh
-e032_control() {
-	TMPDIR=/work/tmp node packages/editor/bench/editBatchesBrowserRunner.mjs \
-		--group ordinary:single-edit:decorated --repetitions 100 --warmups 10 "$@"
-}
-e032_control --core-directory /work/tmp/e032-baseline/packages/editor --output /work/tmp/e032-control-a1.json
-e032_control --core-directory /work/tmp/e032-reviewed/packages/editor --output /work/tmp/e032-control-b1.json --require-incremental
-e032_control --core-directory /work/tmp/e032-reviewed/packages/editor --output /work/tmp/e032-control-b2.json --require-incremental
-e032_control --core-directory /work/tmp/e032-baseline/packages/editor --output /work/tmp/e032-control-a2.json
-```
+The current small control above repeats this group with protocol 3 and the reviewed candidate.
+Protocol 3 has a later decorated screenshot boundary, so its paint bounds cannot be compared
+directly with these historical values.
 
 ## Measurement limits
 
@@ -360,8 +415,8 @@ frame; decorated groups wait for two screenshots. The harness retains fixture/so
 the editor is live, and clears its fixture/projection references on disposal. Browser process,
 GPU and worker memory are outside those numbers.
 
-The browser diagnostics separate synchronous editing from events observed before screenshot
-completion of the required screenshots. No syntax provider or plugin runs in this configuration, so these results do not
+The browser diagnostics separate synchronous editing from deferred events through completion
+of the required screenshots. No syntax provider or plugin runs in this configuration, so these results do not
 measure syntax throughput, indentation-fold fallback, injected text or wrapped-layout rebuilds.
 Token projection still scans the installed token list. The pathological long-line edit also
 rebuilds source measurement metadata; the baseline records about 2 MiB of source-index reads

@@ -91,4 +91,20 @@ function clearFoldsOnNextFrame() {
   })
 }
 
-export const bridge = { prepare, edit, inspect, dispose, clearFoldsOnNextFrame }
+function fullReadOnNextFrame() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      editor.materializeFullText()
+      resolve()
+    })
+  })
+}
+
+export const bridge = {
+  prepare,
+  edit,
+  inspect,
+  dispose,
+  clearFoldsOnNextFrame,
+  fullReadOnNextFrame,
+}

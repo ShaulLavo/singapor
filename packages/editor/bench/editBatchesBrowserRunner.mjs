@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { cpus } from 'node:os'
-import { extname, join, relative, resolve } from 'node:path'
+import { extname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromium, expect } from '@playwright/test'
 import { build } from 'vite'
 import { loadCorePackage } from '../../../examples/stress/core-package.mjs'
 import { paintEvidence } from '../../../examples/stress/scenarios.mjs'
+import { hashDirectory, rebuildPackage } from './editBatchesBuild.mjs'
 import {
   defaultSeed,
   generateFixture,
@@ -32,14 +33,14 @@ assert.ok(Number.isSafeInteger(repetitions) && repetitions > 0)
 assert.ok(Number.isSafeInteger(warmups) && warmups >= 0)
 assert.ok(
   !values['verify-guards'] || values.group === undefined,
-  '--verify-guards uses its fixed control group',
+  '--verify-guards uses its fixed control groups',
 )
 const selectedGroups = selectGroups(values.group)
 const minimumChromaticPixels = 20
 const decoratedHighlightRow = 2
-const core = await loadCorePackage(values['core-directory'])
-const sourceSha256 = await hashDirectory(core.sourceDirectory)
-const builtSha256 = await hashDirectory(resolve(core.directory, 'dist'))
+const coreBuild = await rebuildPackage(values['core-directory'], '@singapor/core')
+const core = await loadCorePackage(coreBuild.directory)
+const { sourceSha256, builtSha256 } = coreBuild
 const directory = await mkdtemp('/work/tmp/e032-browser-')
 const entry = resolve(import.meta.dirname, 'editBatchesBrowser.mjs')
 const html =
@@ -80,12 +81,13 @@ try {
     coreDirectory: core.directory,
     sourceSha256,
     builtSha256,
+    buildProvenance: coreBuild.provenance,
     browser: browser.version(),
     runtime: process.version,
     cpu: cpus()[0]?.model,
     generatorVersion,
     seed: defaultSeed,
-    benchmarkProtocolVersion: 2,
+    benchmarkProtocolVersion: 3,
     requireIncremental: values['require-incremental'],
     configuration: {
       viewport: { width: 1000, height: 1000 },
@@ -95,12 +97,13 @@ try {
       diagnosticsInTimingSamples: false,
       delivery: 'vite-production-playwright-route',
       groupFilter: values['verify-guards']
-        ? 'ordinary:single-edit:decorated'
+        ? ['ordinary:single-edit:plain', 'ordinary:single-edit:decorated']
         : (values.group ?? null),
       decoratedHighlightRow,
       minimumChromaticPixels,
       paintBoundary: 'completion-of-prefix-and-decorated-source-row-screenshots',
       projectionValidation: 'synchronous-and-after-required-screenshots',
+      fullTextReadValidation: 'synchronous-and-deferred-through-required-screenshots',
     },
     measurement:
       'Programmatic Editor.edit to completion of the required screenshots, not trusted input. Plain groups capture the prefix row; decorated groups also capture retained highlighted source text. The paint upper bound includes projection inspection, automation, and screenshot overhead. Synchronous commit is measured separately. Diagnostic runs include deferred consumers until the required captures finish. Forced-GC heap covers the main renderer with the final editor retained.',
@@ -222,6 +225,9 @@ async function sample(page, fixture, kind, instrumented, decorated, control = {}
   await expect(row).toBeVisible()
   await paintEvidence(page, row)
   const result = await page.evaluate(() => __e032.edit())
+  if (control.fault === 'full-read-next-frame') {
+    await page.evaluate(() => __e032.fullReadOnNextFrame())
+  }
   await expect(row).toContainText('prefix')
   const paint = await paintEvidence(page, row)
   await applyGuardFault(page, control.fault)
@@ -245,6 +251,7 @@ async function sample(page, fixture, kind, instrumented, decorated, control = {}
 
 function requireIncremental(result) {
   assert.equal(result.synchronous.fullTextReads, 0)
+  assert.equal(result.correctness.deferred.fullTextReads, 0, 'Deferred full-document read')
   if (!result.decorated) return
   assert.ok(result.projections, 'Synchronous projections are missing')
   assert.equal(result.projections.tokensCorrect, true)
@@ -289,6 +296,21 @@ async function verifyGuards() {
     fault: 'clear-folds-next-frame',
   })
   assert.throws(() => requireIncremental(folds), /Post-screenshot folds changed/)
+  const deferredReads = []
+  for (const decorated of [false, true]) {
+    const observation = await sample(page, 'ordinary', 'single-edit', true, decorated, {
+      enforce: false,
+      fault: 'full-read-next-frame',
+    })
+    assert.equal(observation.synchronous.fullTextReads, 0)
+    assert.equal(observation.correctness.deferred.fullTextReads, 1)
+    assert.throws(() => requireIncremental(observation), /Deferred full-document read/)
+    deferredReads.push({
+      fault: 'full-read-next-frame',
+      expected: 'deferred-full-read-guard-rejected',
+      observation,
+    })
+  }
   assert.deepEqual(errors, [])
   await context.close()
   return {
@@ -305,6 +327,7 @@ async function verifyGuards() {
         expected: 'post-screenshot-fold-guard-rejected',
         observation: folds,
       },
+      ...deferredReads,
     ],
   }
 }
@@ -329,15 +352,4 @@ async function serveAsset(route) {
 function percentile(samples, proportion) {
   const sorted = samples.toSorted((a, b) => a - b)
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * proportion) - 1)]
-}
-
-async function hashDirectory(directory) {
-  const entries = await readdir(directory, { recursive: true, withFileTypes: true })
-  const files = entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => join(entry.parentPath, entry.name))
-    .sort()
-  const hash = createHash('sha256')
-  for (const file of files) hash.update(relative(directory, file)).update(await readFile(file))
-  return hash.digest('hex')
 }

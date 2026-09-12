@@ -43,6 +43,8 @@ export type IndentationFoldWork = {
   readonly maxSliceMs: number
   readonly metadataSteps: number
   readonly maxMetadataStepsPerSlice: number
+  readonly stackSteps: number
+  readonly maxStackStepsPerSlice: number
   readonly retainedBytesEstimated: true
   readonly rowsRead: number
   readonly codeUnitsRead: number
@@ -137,6 +139,9 @@ export class IndentationFoldIndex {
   private metadata: FoldMetadataWork | null = null
   private metadataSteps = 0
   private maxMetadataStepsPerSlice = 0
+  private semanticWork: Generator<void, void> | null = null
+  private stackSteps = 0
+  private maxStackStepsPerSlice = 0
   private coldReason: IndentationFoldWork['coldReason'] = null
 
   constructor(options: IndentationFoldIndexOptions) {
@@ -193,6 +198,8 @@ export class IndentationFoldIndex {
       maxSliceMs: this.maxSliceMs,
       metadataSteps: this.metadataSteps,
       maxMetadataStepsPerSlice: this.maxMetadataStepsPerSlice,
+      stackSteps: this.stackSteps,
+      maxStackStepsPerSlice: this.maxStackStepsPerSlice,
       retainedBytesEstimated: true,
       rowsRead: this.rowsRead,
       codeUnitsRead: this.codeUnitsRead,
@@ -213,11 +220,14 @@ export class IndentationFoldIndex {
       readonly maxRows?: number
       readonly maxCodeUnits?: number
       readonly maxBlocks?: number
+      readonly maxStackSteps?: number
     } = {},
   ): boolean {
     if (this.ready || this.phase === 'cancelled') return this.ready
     const started = performance.now()
     const metadataStart = this.metadataSteps
+    const stackStart = this.stackSteps
+    const stackEnd = stackStart + Math.max(1, budget.maxStackSteps ?? budget.maxRows ?? 1024)
     const metadataEnd = metadataStart + Math.max(1, budget.maxBlocks ?? budget.maxRows ?? 1024)
     const rowEnd = this.rowsRead + this.propagation + (budget.maxRows ?? 1024)
     const unitEnd = this.codeUnitsRead + (budget.maxCodeUnits ?? 32768)
@@ -228,7 +238,8 @@ export class IndentationFoldIndex {
       this.rowsRead + this.propagation < rowEnd &&
       this.codeUnitsRead < unitEnd &&
       this.processedBlocks < blockEnd &&
-      this.metadataSteps < metadataEnd
+      this.metadataSteps < metadataEnd &&
+      this.stackSteps < stackEnd
     ) {
       this.advance(unitEnd - this.codeUnitsRead)
     }
@@ -239,6 +250,7 @@ export class IndentationFoldIndex {
       this.maxMetadataStepsPerSlice,
       this.metadataSteps - metadataStart,
     )
+    this.maxStackStepsPerSlice = Math.max(this.maxStackStepsPerSlice, this.stackSteps - stackStart)
     return this.ready
   }
 
@@ -252,6 +264,7 @@ export class IndentationFoldIndex {
     if (this.ready) return
     this.phase = 'cancelled'
     this.metadata = null
+    this.semanticWork = null
     this.reader = null
     this.tasks = []
     this.blocks = []
@@ -349,10 +362,23 @@ export class IndentationFoldIndex {
   }
 
   private advance(codeUnits: number): void {
+    if (this.semanticWork) return this.advanceSemanticWork()
     if (this.metadata) return this.advanceMetadata(this.metadata)
     if (this.phase === 'facts') return this.read(codeUnits)
-    if (this.phase === 'bottom') return this.analyzeBottom()
-    if (this.phase === 'accept') return this.acceptBlock()
+    if (this.phase === 'bottom') this.semanticWork = this.analyzeBottom()
+    if (this.phase === 'accept') this.semanticWork = this.acceptBlock()
+    this.advanceSemanticWork()
+  }
+
+  private advanceSemanticWork(): void {
+    const work = this.semanticWork
+    if (!work) return
+    if (!work.next().done) {
+      this.stackSteps += 1
+      return
+    }
+    this.semanticWork = null
+    this.processedBlocks += 1
   }
 
   private read(codeUnits: number): void {
@@ -537,25 +563,26 @@ export class IndentationFoldIndex {
     this.phase = 'accept'
   }
 
-  private analyzeBottom(): void {
+  private *analyzeBottom(): Generator<void, void> {
     if (this.bottomIndex < 0) {
       this.beginAcceptance()
       return
     }
-    this.processedBlocks += 1
     const index = this.bottomIndex--
     const block = this.blocks[index]!
-    if (block.analyzed && sameIndentationStack(this.bottom, block.below)) {
+    if (block.analyzed && (yield* sameIndentationStack(this.bottom, block.below))) {
       this.bottom = block.above!
       if (index <= this.dirtyFirst) this.beginAcceptance()
       return
     }
     const incoming = this.bottom
     const candidates: IndentationRegion[] = []
-    for (let row = block.facts.facts.length - 1; row >= 0; row -= 1)
-      this.consumeLine(block.facts, row, candidates)
+    for (let row = block.facts.facts.length - 1; row >= 0; row -= 1) {
+      const work = this.consumeLine(block.facts, row, candidates)
+      if (work) yield* work
+    }
     this.propagation += block.facts.facts.length
-    const converged = sameIndentationStack(this.bottom, block.above)
+    const converged = yield* sameIndentationStack(this.bottom, block.above)
     if (converged) this.bottom = block.above!
     this.candidateFirst = Math.min(this.candidateFirst, index)
     this.candidateLast = Math.max(this.candidateLast, index)
@@ -569,7 +596,11 @@ export class IndentationFoldIndex {
     if (converged && index <= this.dirtyFirst) this.beginAcceptance()
   }
 
-  private consumeLine(block: FoldFactBlock, index: number, folds: IndentationRegion[]): void {
+  private consumeLine(
+    block: FoldFactBlock,
+    index: number,
+    folds: IndentationRegion[],
+  ): Generator<void, void> | undefined {
     const fact = block.facts[index]!
     const line = foldLineReference(block, index)
     if (fact.indent === -1) {
@@ -587,16 +618,26 @@ export class IndentationFoldIndex {
       this.bottom = stackNode(fact.indent, line, line, marker.parent)
       return
     }
-    this.consumeIndent(fact.indent, line, folds)
+    if (this.bottom.indent > fact.indent) return this.consumeDedent(fact.indent, line, folds)
+    this.finishIndent(fact.indent, line)
   }
 
-  private consumeIndent(indent: number, line: FoldLineReference, folds: IndentationRegion[]): void {
-    if (this.bottom.indent > indent) {
-      while (this.bottom.indent > indent && this.bottom.parent) this.bottom = this.bottom.parent
-      const end = this.bottom.endAbove
-      if (this.position(end).row - 1 > this.position(line).row)
-        folds.push({ start: line, end, endBefore: true, type: 'indent' })
+  private *consumeDedent(
+    indent: number,
+    line: FoldLineReference,
+    folds: IndentationRegion[],
+  ): Generator<void, void> {
+    while (this.bottom.indent > indent && this.bottom.parent) {
+      this.bottom = this.bottom.parent
+      yield
     }
+    const end = this.bottom.endAbove
+    if (this.position(end).row - 1 > this.position(line).row)
+      folds.push({ start: line, end, endBefore: true, type: 'indent' })
+    this.finishIndent(indent, line)
+  }
+
+  private finishIndent(indent: number, line: FoldLineReference): void {
     if (this.bottom.indent === indent) {
       this.bottom = stackNode(indent, line, this.bottom.line, this.bottom.parent)
       return
@@ -604,24 +645,26 @@ export class IndentationFoldIndex {
     this.bottom = stackNode(indent, line, line, this.bottom)
   }
 
-  private acceptBlock(): void {
+  private *acceptBlock(): Generator<void, void> {
     if (this.acceptIndex === this.blocks.length) {
       this.phase = 'ready'
       return
     }
-    this.processedBlocks += 1
     const index = this.acceptIndex++
     const block = this.blocks[index]!
-    if (block.analyzed && sameAcceptedStack(this.accepted, block.incoming)) {
+    if (block.analyzed && (yield* sameAcceptedStack(this.accepted, block.incoming))) {
       this.accepted = block.outgoing
       if (index >= this.candidateLast) this.phase = 'ready'
       return
     }
     const incoming = this.accepted
     const accepted: IndentationRegion[] = []
-    for (const fold of block.candidates) this.acceptFold(fold, accepted)
+    for (const fold of block.candidates) {
+      const work = this.acceptFold(fold, accepted)
+      if (work) yield* work
+    }
     this.propagation += block.facts.facts.length
-    const converged = sameAcceptedStack(this.accepted, block.outgoing)
+    const converged = yield* sameAcceptedStack(this.accepted, block.outgoing)
     if (converged) this.accepted = block.outgoing
     this.publishBlock(index, {
       ...block,
@@ -633,12 +676,36 @@ export class IndentationFoldIndex {
     if (converged && index >= this.candidateLast) this.phase = 'ready'
   }
 
-  private acceptFold(fold: IndentationRegion, accepted: IndentationRegion[]): void {
+  private acceptFold(
+    fold: IndentationRegion,
+    accepted: IndentationRegion[],
+  ): Generator<void, void> | undefined {
     const start = this.position(fold.start).row
     const end = this.endRow(fold)
     if (end <= start) return
-    while (this.accepted && this.endRow(this.accepted.fold) <= start)
+    if (this.accepted && this.endRow(this.accepted.fold) <= start)
+      return this.expireAncestors(fold, accepted, start, end)
+    this.finishAcceptedFold(fold, accepted, end)
+  }
+
+  private *expireAncestors(
+    fold: IndentationRegion,
+    accepted: IndentationRegion[],
+    start: number,
+    end: number,
+  ): Generator<void, void> {
+    while (this.accepted && this.endRow(this.accepted.fold) <= start) {
       this.accepted = this.accepted.parent
+      yield
+    }
+    this.finishAcceptedFold(fold, accepted, end)
+  }
+
+  private finishAcceptedFold(
+    fold: IndentationRegion,
+    accepted: IndentationRegion[],
+    end: number,
+  ): void {
     if (this.accepted && end > this.endRow(this.accepted.fold)) return
     accepted.push(fold)
     this.accepted = { fold, parent: this.accepted }

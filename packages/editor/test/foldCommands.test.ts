@@ -478,11 +478,11 @@ describe('fold commands', () => {
     expect(visibleText()).not.toContain('}')
   })
 
-  it('lets projected syntax folds replace an authoritative empty result', async () => {
+  it('lets later syntax folds replace an authoritative empty result', async () => {
     await open(CROSSING_TEXT, [])
     expect(visibleFoldToggles()).toHaveLength(0)
 
-    editor['applySyntaxFoldProjection']([blockFold(CROSSING_TEXT, 2, 4)])
+    editor.setSyntaxFolds([blockFold(CROSSING_TEXT, 2, 4)])
 
     editor.setSelection(rowEnd(CROSSING_TEXT, 2))
     expect(editor.dispatchCommand('editor.fold')).toBe(true)

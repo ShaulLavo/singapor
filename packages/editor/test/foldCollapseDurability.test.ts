@@ -357,6 +357,48 @@ describe('fold collapse durability', () => {
     expect(rows.latest).toEqual(['while (b) {', '  two();', '  three();', '}'])
   })
 
+  it.each(['single', 'batch'] as const)(
+    'preserves syntax and manual collapses when a %s edit deletes an earlier block',
+    async (kind) => {
+      const text = 'a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl'
+      await openWithFold(
+        {
+          folds: [
+            {
+              startIndex: 1,
+              endIndex: 9,
+              startLine: 0,
+              endLine: 4,
+              type: 'statement_block',
+              languageId: 'typescript',
+            },
+            {
+              startIndex: 11,
+              endIndex: 13,
+              startLine: 5,
+              endLine: 6,
+              type: 'statement_block',
+              languageId: 'typescript',
+            },
+          ],
+        },
+        text,
+      )
+      editor.setSelection(16, 19)
+      expect(editor.dispatchCommand('editor.createFoldingRangeFromSelection')).toBe(true)
+      expect(editor.fold(10)).toBe(true)
+      expect(rows.latest).not.toContain('g')
+      expect(rows.latest).not.toContain('j')
+
+      const edits = [{ from: 0, to: 10, text: '' }]
+      if (kind === 'batch') edits.push({ from: text.length, to: text.length, text: '!' })
+      editor.edit(edits)
+
+      expect(editor.getState().cursor.row).toBe(3)
+      expect(rows.latest).toEqual(['f', 'h', 'i', 'k', kind === 'batch' ? 'l!' : 'l'])
+    },
+  )
+
   it('keeps a collapsed block folded when Enter above its opening brace moves it down a row', async () => {
     const delivery: FoldDelivery = { folds: [blockFold(0)] }
     await openWithFold(delivery)

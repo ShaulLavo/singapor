@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P1
 - Effort: L
-- Dependencies: [E007](e007-chunked-document-consumers.md), [E031](../docs/performance/e031-projection.md), [E032](../docs/performance/e032-edit-batches.md), [E034](../docs/performance/e034-snapshot-indentation-folds.md)
+- Dependencies: [E007](e007-chunked-document-consumers.md), [E031](../docs/performance/e031-projection.md), [E032](../docs/performance/e032-edit-batches.md), [E034](e034-snapshot-indentation-folds.md)
 - Inspected baseline: `ff1dfeda9e52b308f57915da7372f7ac6e5f04f9`, 2026-09-08; E003 scheduling changes landed during inspection, full-text boundaries unchanged.
 
 ## Outcome

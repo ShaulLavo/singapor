@@ -409,6 +409,62 @@ describe('fold ranges without a grammar', () => {
     expect(visibleText()).not.toContain('second()')
   })
 
+  it.each(['background', 'explicit-command'] as const)(
+    'finishes unsupported-provider folds through %s after yielding ordinary syntax publication',
+    async (completion) => {
+      vi.useFakeTimers()
+      const scans = recordFallbackScans()
+      const complete = vi.spyOn(IndentationFoldIndex.prototype, 'complete')
+      const step = vi.spyOn(IndentationFoldIndex.prototype, 'step')
+      setEditorSyntaxSessionFactory(() => ({
+        ...createEmptySyntaxSession(),
+        foldingSupport: 'unsupported',
+      }))
+      try {
+        editor.openDocument({
+          documentId: 'unsupported.txt',
+          languageId: 'unknown',
+          text: 'root\n  child\n'.repeat(2_000),
+        })
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(editor.getState().syntaxStatus).toBe('ready')
+        expect(complete).not.toHaveBeenCalled()
+        expect(step).not.toHaveBeenCalled()
+        expect(scans).toHaveLength(0)
+
+        await vi.advanceTimersByTimeAsync(150)
+
+        expect(step).toHaveBeenCalledOnce()
+        expect(step.mock.results[0]?.value).toBe(false)
+        expect(scans).toHaveLength(0)
+        expect(foldKeys()).toEqual([])
+
+        if (completion === 'explicit-command') {
+          expect(editor.fold(0)).toBe(true)
+          expect(complete).toHaveBeenCalledOnce()
+          expect(foldStates()[0]).toBe('collapsed')
+        }
+
+        await vi.runAllTimersAsync()
+
+        expect(scans).toHaveLength(1)
+        expect(scans[0]?.detail).toMatchObject({
+          trigger: completion === 'background' ? 'attach' : 'explicit-command',
+          outcome: 'completed',
+          rowsRead: 4_001,
+          foldCount: 2_000,
+          materializations: 0,
+        })
+        expect(complete).toHaveBeenCalledTimes(completion === 'background' ? 0 : 1)
+        expect(foldStates()[0]).toBe(completion === 'background' ? 'expanded' : 'collapsed')
+      } finally {
+        complete.mockRestore()
+        step.mockRestore()
+      }
+    },
+  )
+
   it('publishes usable text before scanning fallback folds, then publishes its markers', async () => {
     vi.useFakeTimers()
     const scans = recordFallbackScans()

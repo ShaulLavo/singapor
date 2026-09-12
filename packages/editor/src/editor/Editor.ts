@@ -1164,8 +1164,9 @@ export class Editor {
 
   setSyntaxFolds(folds: readonly FoldRange[]): void {
     this.runInOperation(() => {
-      this.adoptSyntaxFoldProjection(folds)
-      this.foldState.setFoldProjections(this.foldProjections(), this.fallbackFolds.index)
+      if (folds.length > 0) this.grammarDescribedFolds = true
+      this.setSyntaxFoldProjection(folds)
+      this.scheduleFallbackFoldProjection()
     })
   }
 
@@ -2462,14 +2463,6 @@ export class Editor {
     return true
   }
 
-  private adoptSyntaxFoldProjection(folds: readonly FoldRange[]): void {
-    if (folds.length > 0) this.grammarDescribedFolds = true
-    // The fallback leaves before the grammar enters: the registry validates the whole fold set,
-    // and the two descriptions of the same blocks may cross.
-    this.fallbackFolds.flush()
-    this.setSyntaxFoldProjection(folds)
-  }
-
   private logRejectedSyntaxFoldProjection(rejected: readonly FoldRangeRejection[]): void {
     const first = rejected[0]
     if (!first) return
@@ -3686,8 +3679,9 @@ export class Editor {
         previousTextSnapshot,
       )
       if (manualFolds) this.manualFolds = manualFolds
+      if (foldProjection) this.setSyntaxFoldProjection(foldProjection)
       this.renderEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
-      this.applySyntaxFoldProjection(foldProjection)
+      this.scheduleFallbackFoldProjection()
       if (rowDecorationsProjected) this.view.setRowDecorations(this.composedRowDecorations())
       return
     }
@@ -3715,21 +3709,14 @@ export class Editor {
       measureEditorPerformance('editor.view.applyEditBatch', () => this.view.applyEditBatch(batch))
       this.syncInjectedTextRows()
       if (manualFolds) this.manualFolds = manualFolds
+      if (folds) this.setSyntaxFoldProjection(folds)
       this.fallbackFolds.update(batch)
-      this.applySyntaxFoldProjection(folds)
+      this.scheduleFallbackFoldProjection()
       if (this.projectRowDecorationsThroughBatch(batch)) {
         this.view.setRowDecorations(this.composedRowDecorations())
       }
       this.adoptTokens(tokens)
     })
-  }
-
-  /** Structural projections and snapshot indentation facts advance independently. */
-  private applySyntaxFoldProjection(folds: readonly FoldRange[] | null): void {
-    if (folds && folds.length > 0) this.adoptSyntaxFoldProjection(folds)
-    if (folds?.length === 0) this.setSyntaxFoldProjection(folds)
-
-    this.scheduleFallbackFoldProjection()
   }
 
   private logSessionChange(change: DocumentSessionChange, timingName: string): void {

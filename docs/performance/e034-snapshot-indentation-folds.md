@@ -1,5 +1,11 @@
 # E034 snapshot indentation folds
 
+E034 is implemented with performance validation pending. The saved browser measurements below
+cover the original implementation committed as `33e632a`, before its review corrections.
+They establish reduced repeated work, but do not establish the required absence of p95 input
+and first-text regressions. The [executable plan](../../plans/e034-snapshot-indentation-folds.md)
+tracks the remaining acceptance checks.
+
 Snapshot indexing removes repeated whole-document scans from fallback folding.
 The E034 browser comparison measures fallback folding on the same 500,000-line document before
 and after the snapshot index. The baseline core is commit
@@ -305,3 +311,63 @@ indentation.
 Directory construction and tree traversal yield, but native descriptor-array slicing and
 concatenation still copy references in proportion to the number of fact blocks. The retained-byte
 estimate does not measure garbage-collector overhead or transient allocations.
+
+## Review corrections
+
+The review fixes publish projected syntax and manual folds before updating indentation folds.
+Collapse inheritance therefore sees one snapshot for both single edits and edit batches.
+Two regressions delete an earlier block beside a manual fold and verify that the surviving
+syntax and manual regions remain collapsed.
+
+An ordinary empty result from an unsupported structural provider now schedules fallback work.
+It no longer calls the synchronous completion path or reports an explicit-command trigger.
+The regression checks that publication performs no index step, the first background slice yields,
+and either background completion or an explicit command produces the exact folds.
+
+Deep ancestor removal, dedentation, and checkpoint comparisons now resume between stack nodes.
+`stackSteps` and `maxStackStepsPerSlice` count this work. The default stack budget follows the
+row budget, and cancellation drops the suspended continuation. Unchanged-topology edits retain
+their existing fast path.
+
+The [deep-stack comparison](e034-review-stack.json) uses 250,000 nested regions followed by a
+disjoint region: 500,005 rows, 5,750,033 code units, and 250,001 folds. Its baseline is `33e632a`.
+Both versions preserve the same fold count and perform zero materializations. Maximum position
+resolutions in one 128-row slice fall from 250,006 to 788. Cleanup now spans 1,953 slices that
+advance stack work without finishing a block, with at most 128 stack steps in each slice.
+The measured maximum slice is 14.40 ms before and 1.06 ms after. These elapsed times include
+runtime and host variation; the deterministic work counts establish the bound. The old version
+has no stack counter, so its recorded zero stack steps mean unavailable instrumentation.
+
+The current deep-stack case is reproducible with
+[`indentationFoldStack.ts`](../../packages/editor/bench/indentationFoldStack.ts):
+
+```sh
+bun packages/editor/bench/indentationFoldStack.ts --depth 250000 \
+	--output /work/tmp/editor-e034-fixes/deep-stack-after.json
+```
+
+The existing index benchmark also ran against frozen `33e632a` and the corrected source with
+the same CPU affinity. [Before](e034-review-index-before.json.gz) and
+[after](e034-review-index-after.json.gz) cold-work medians are 141.21 and 144.49 ms, a 2.3% increase
+in this pair. Content-only edits still read one row with zero topology propagation. This local
+index comparison does not establish the browser p95 acceptance gate.
+
+The corrected built core has hash
+`8ddb1bce942d6641aa2be0b20a77322107538d92ffab74bd60722c935e206225`.
+A separate [Chromium diagnostic run](e034-review-diagnostic.json.gz) checks direct and prepared
+attachment, cold and warm, with the fold gutter installed. All four samples pass exact text,
+fold-boundary, and disposal checks. Each 36-character typing run reads 36 rows and records zero
+fallback materializations. The image below is from that corrected build.
+
+```sh
+taskset -c 8,10,12,14 bun run --cwd examples/stress bench:first-paint \
+	--repetitions 1 --fixtures short-lines --plugins none --modes direct,prepared \
+	--fallback-cases --fold-gutter --diagnostics \
+	--output /work/tmp/editor-e034-fixes/browser-diagnostic.json
+```
+
+![Corrected fallback markers after thirty-six typed characters](e034-review-folds.png)
+
+The focused fold and rendering regressions, index tests, prepared-document and scheduler checks
+pass. Core build, typecheck, scoped lint, workspace format checks, architecture health, and the backlog verifier pass.
+The original production p95 evidence remains inconclusive, so E034 retains its executable plan.

@@ -67,28 +67,30 @@ export function stackNode(
   }
 }
 
-export function sameIndentationStack(
+export function* sameIndentationStack(
   left: IndentationStack | null,
   right: IndentationStack | null,
-): boolean {
+): Generator<void, boolean> {
   while (left !== right) {
     if (!left || !right || left.hash !== right.hash || left.indent !== right.indent) return false
     if (!sameFoldLine(left.endAbove, right.endAbove) || !sameFoldLine(left.line, right.line))
       return false
     left = left.parent
     right = right.parent
+    yield
   }
   return true
 }
 
-export function sameAcceptedStack(
+export function* sameAcceptedStack(
   left: AcceptedStack | null,
   right: AcceptedStack | null,
-): boolean {
+): Generator<void, boolean> {
   while (left !== right) {
     if (!left || !right || !sameRegion(left.fold, right.fold)) return false
     left = left.parent
     right = right.parent
+    yield
   }
   return true
 }

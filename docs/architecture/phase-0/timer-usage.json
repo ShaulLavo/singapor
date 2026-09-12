@@ -19,6 +19,14 @@
       "snippet": "if (index % 10 === 0) await new Promise((resolve) => setTimeout(resolve, 0))"
     },
     {
+      "api": "requestAnimationFrame",
+      "file": "examples/stress/src/firstPaint.ts",
+      "id": "examples/stress/src/firstPaint.ts:requestAnimationFrame:eb626b3f90",
+      "justification": "Measures the next input frame; each benchmark burst waits for it before disposal.",
+      "line": 249,
+      "snippet": "requestAnimationFrame(() => {"
+    },
+    {
       "api": "queueMicrotask",
       "file": "examples/stress/src/inputLatency.ts",
       "id": "examples/stress/src/inputLatency.ts:queueMicrotask:2bd1143d41",
@@ -87,7 +95,7 @@
       "file": "packages/editor/src/editor/workScheduler.ts",
       "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:97308acba5",
       "justification": "The scheduler owns this task budget deadline. Expiry checks task identity before aborting; completion, failure, cancellation, and disposal clear the budget timer.",
-      "line": 363,
+      "line": 381,
       "snippet": "work.budgetTimer = globalThis.setTimeout(() => this.timeoutWork(work), budgetMs)"
     },
     {
@@ -95,7 +103,7 @@
       "file": "packages/editor/src/editor/workScheduler.ts",
       "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:9ac9ef7b67",
       "justification": "The scheduler owns one deferred queue flush at a time, selects current tasks by priority, and drops cancelled or replaced work before starting it. Disposal clears the queue timer and queued work.",
-      "line": 229,
+      "line": 246,
       "snippet": "this.queueTimer = globalThis.setTimeout(() => this.flushQueuedWork(), 0)"
     },
     {
@@ -103,7 +111,7 @@
       "file": "packages/editor/src/editor/workScheduler.ts",
       "id": "packages/editor/src/editor/workScheduler.ts:setTimeout:b45245407c",
       "justification": "The scheduler owns delayed task starts and clamps repeated scheduling to the requested maximum delay. Cancellation and disposal clear the handle; task identity and stale-result checks guard execution and application.",
-      "line": 194,
+      "line": 195,
       "snippet": "work.timer = globalThis.setTimeout(() => this.start(work), delayMs)"
     },
     {
@@ -135,7 +143,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:requestAnimationFrame:f20775aa16",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 1336,
+      "line": 1340,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -143,7 +151,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:setTimeout:2ac189eec3",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 1337,
+      "line": 1341,
       "snippet": "return setTimeout(() => callback(nowMs()), 0) as unknown as number"
     },
     {
@@ -151,7 +159,7 @@
       "file": "packages/editor/src/virtualization/fixedRowVirtualizer.ts",
       "id": "packages/editor/src/virtualization/fixedRowVirtualizer.ts:setTimeout:7aa8053100",
       "justification": "The tail of a scroll, which has to be measured against the raw scroll events it follows rather than against editor work — pacing it with other tasks would make the settle time depend on what else was queued. Cancelled by `cancelTrailingScrollEmit` on every further scroll, so at most one is ever pending.",
-      "line": 366,
+      "line": 370,
       "snippet": "this.trailingScrollEmitTimer = setTimeout(() => {"
     },
     {
@@ -167,7 +175,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 1339,
+      "line": 1402,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -175,7 +183,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 1348,
+      "line": 1411,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -183,7 +191,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1477,
+      "line": 1497,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {

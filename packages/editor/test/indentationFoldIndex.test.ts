@@ -15,6 +15,13 @@ import {
 import { createTextEditBatch } from '../src/textEditBatch'
 import { IndentationFoldIndex } from '../src/editor/indentationFoldIndex'
 import {
+  sameAcceptedStack,
+  sameIndentationStack,
+  stackNode,
+  type AcceptedStack,
+  type IndentationStack,
+} from '../src/editor/indentationFoldStructure'
+import {
   EditorRegionMarkerClassifier,
   indentationFoldingRules,
 } from '../src/editor/languageConfiguration'
@@ -264,6 +271,88 @@ describe('snapshot indentation fold index', () => {
     expect(value.all()).toEqual(oracle(text))
   })
 
+  it('bounds ancestor cleanup when a disjoint region follows deeply nested regions', () => {
+    const depth = 4096
+    const text =
+      '// region\n'.repeat(depth) +
+      'body\n' +
+      '// endregion\n'.repeat(depth) +
+      '// region\nbody\n// endregion\n'
+    const value = new IndentationFoldIndex({
+      snapshot: guardedSnapshot(text),
+      languageId: null,
+      tabSize: 4,
+    })
+    const work = finishWithBoundedStackWork(value)
+    expect(work.maximumPositions).toBeLessThan(2048)
+    expect(work.stackOnlySlices).toBeGreaterThan(400)
+    expect(value.diagnostics.stackSteps).toBeGreaterThanOrEqual(depth)
+    expect(value.all()).toEqual(oracle(text))
+  })
+
+  it('resumes a deep dedent without exceeding the stack-work budget', () => {
+    const depth = 1024
+    const text = [
+      'root',
+      ...Array.from({ length: depth }, (_, row) => ' '.repeat(depth - row) + 'body'),
+    ].join('\n')
+    const value = new IndentationFoldIndex({
+      snapshot: guardedSnapshot(text),
+      languageId: null,
+      tabSize: 4,
+    })
+    const work = finishWithBoundedStackWork(value)
+    expect(work.stackOnlySlices).toBeGreaterThan(100)
+    expect(value.all()).toEqual(oracle(text))
+  })
+
+  it('compares every checkpoint node while allowing the caller to yield between nodes', () => {
+    const depth = 1024
+    let leftIndent: IndentationStack | null = null
+    let rightIndent: IndentationStack | null = null
+    let leftAccepted: AcceptedStack | null = null
+    let rightAccepted: AcceptedStack | null = null
+    for (let row = 0; row < depth; row += 1) {
+      const line = { owner: { id: row }, slot: 0 }
+      leftIndent = stackNode(-2, line, line, leftIndent)
+      rightIndent = stackNode(-2, line, line, rightIndent)
+      const fold = { start: line, end: line, endBefore: false, type: 'region' as const }
+      leftAccepted = { fold, parent: leftAccepted }
+      rightAccepted = { fold: { ...fold }, parent: rightAccepted }
+    }
+    expect(exhaustStackComparison(sameIndentationStack(leftIndent, rightIndent))).toEqual({
+      steps: depth,
+      equal: true,
+    })
+    expect(exhaustStackComparison(sameAcceptedStack(leftAccepted, rightAccepted))).toEqual({
+      steps: depth,
+      equal: true,
+    })
+    expect(
+      exhaustStackComparison(sameAcceptedStack(leftAccepted, rightAccepted?.parent ?? null)),
+    ).toEqual({ steps: 0, equal: false })
+  })
+
+  it('releases suspended semantic work when cancelled', () => {
+    const text =
+      '// region\n'.repeat(256) +
+      'body\n' +
+      '// endregion\n'.repeat(256) +
+      '// region\nbody\n// endregion\n'
+    const value = new IndentationFoldIndex({
+      snapshot: guardedSnapshot(text),
+      languageId: null,
+      tabSize: 4,
+    })
+    while (value.diagnostics.stackSteps === 0 && !value.ready)
+      value.step({ maxRows: 128, maxStackSteps: 1 })
+    expect(value['semanticWork']).not.toBeNull()
+    value.cancel()
+    expect(value['semanticWork']).toBeNull()
+    expect(value.diagnostics.outcome).toBe('cancelled')
+    expect(value.all()).toEqual([])
+  })
+
   it('identifies immutable snapshots independently of revision numbers', () => {
     const firstTree = createPieceTableSnapshot('a\n b')
     const secondTree = createPieceTableSnapshot('x\n y')
@@ -455,6 +544,39 @@ describe('snapshot indentation fold index', () => {
     }
   })
 })
+
+function finishWithBoundedStackWork(value: IndentationFoldIndex) {
+  const position = value['position'].bind(value)
+  let positions = 0
+  let maximumPositions = 0
+  let stackOnlySlices = 0
+  value['position'] = (reference) => {
+    positions += 1
+    return position(reference)
+  }
+  while (!value.ready) {
+    const before = value.diagnostics
+    positions = 0
+    value.step({ maxRows: 128, maxCodeUnits: 32768, maxStackSteps: 7 })
+    const after = value.diagnostics
+    maximumPositions = Math.max(maximumPositions, positions)
+    expect(after.stackSteps - before.stackSteps).toBeLessThanOrEqual(7)
+    if (after.stackSteps > before.stackSteps && after.propagationRows === before.propagationRows)
+      stackOnlySlices += 1
+  }
+  value['position'] = position
+  return { maximumPositions, stackOnlySlices }
+}
+
+function exhaustStackComparison(comparison: Generator<void, boolean>) {
+  let steps = 0
+  let result = comparison.next()
+  while (!result.done) {
+    steps += 1
+    result = comparison.next()
+  }
+  return { steps, equal: result.value }
+}
 
 function checkMarkers(prefix: string, opener: string): void {
   for (const suffix of [

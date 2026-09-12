@@ -22,8 +22,8 @@
     "bench:input": "bun run stress:build && bun run --cwd examples/stress bench:input"
   },
   "devDependencies": {
-    "knip": "^6.16.1",
-    "turbo": "^2.9.18",
+    "knip": "^6.35.1",
+    "turbo": "^2.10.12",
     "typescript": "~6.0.3",
     "vite": "8.0.16"
   },

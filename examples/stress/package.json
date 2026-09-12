@@ -27,14 +27,14 @@
     "@singapor/find": "workspace:*",
     "@singapor/tree-sitter": "workspace:*",
     "@singapor/tree-sitter-languages": "workspace:*",
-    "evlog": "^2.19.1"
+    "evlog": "^2.29.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "^1.63.0",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "oxfmt": "0.54.0",
     "oxlint": "1.69.0",
     "vite": "8.0.16",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   }
 }

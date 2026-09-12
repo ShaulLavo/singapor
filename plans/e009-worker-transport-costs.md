@@ -11,12 +11,21 @@
 ## Outcome
 
 Produce a reproducible cost model for moving text and syntax results between the editor and workers.
-Decide whether the existing shared UTF-16 transport earns its encoding, decoding, and retention costs.
-For example, compare a warm Tree-sitter update under ordinary string transport and shared buffers,
-including time spent after the worker replies and before the visible result can paint.
-No shared-memory architecture proceeds on historical anecdotes alone.
+The contribution refactor's text-transport decision is settled: use ordinary strings and retained
+chunks with incremental edits, keep the existing separate workers, and remove SAB text transport.
+Preserve the separate atomic cancellation flag. Shared document storage and worker co-location are
+outside the refactor.
+
+E009 remains incomplete. Measure the string path through visible completion, memory, and lifecycle
+stress, and evaluate remaining result-representation and ownership-transfer costs.
 
 ## Current code
+
+An initial [2026-09-12 browser comparison](../docs/performance/sab-transport-2026-09-12.md) found no
+current Tree-sitter SAB latency advantage and measured a conditional gain for four direct shared
+readers. Those synthetic gains do not justify shared document storage's complexity for the refactor.
+The comparison includes reproducible tools and raw data. It does not complete E009: visible completion,
+memory, lifecycle stress, transferable buffers, and the full E001 workload matrix remain unmeasured.
 
 - [Tree-sitter source](../packages/tree-sitter/src/treeSitter/source.ts) sends visible piece
   descriptors and 16 Ki-code-unit chunks using strings or `shared-utf16` payloads.
@@ -37,12 +46,14 @@ client unpacking, merge, allocation, retained bytes, and visible completion sepa
 Compare actual supported channels. A remote LSP connection remains a serialization boundary.
 Keep Tree-sitter in a browser WASM worker as the current default.
 Native server parsing is a follow-up experiment only if measured cold parse warrants its host cost.
+Do not add a relay worker or combine existing workers as part of this research.
 
 ## Design
 
 Use E001 fixtures with fixed edit streams, warm-up rules, browser versions, and machine metadata.
-Compare ordinary strings, transferable typed arrays where the protocol permits ownership transfer,
-and the existing shared UTF-16 path with its shipped decode-once cache.
+Use ordinary strings and incremental updates as the text baseline. Compare transferable typed arrays
+where the protocol permits ownership transfer. Preserve the published SAB comparison as historical
+evidence; extending shared-text experiments requires an explicit decision to revisit the chosen design.
 Measure `slice`, `structuredClone`, manual UTF-16 fill, and decode separately as explanations,
 then verify the complete consumer path. Microbenchmark wins alone cannot select a transport.
 
@@ -51,15 +62,13 @@ worker restart, and multiple retained documents. Count bytes in both main and wo
 Check dedup identity across a buffer ID reused after undo and a same-length replacement.
 An ID plus length is not a general content-addressed identity.
 
-Separate three decisions in the report: retain or remove per-message shared chunks,
-change result representation to avoid eager token objects, and research shared document storage.
-Removing `shared-utf16` does not reject E010 through E013.
-If shared chunks win, retain decode-once caching and document its lifecycle.
-If they lose, propose deleting that path and every caller and test of its obsolete behavior.
+Record the settled removal of `shared-utf16` separately from remaining decisions about result
+representation and ownership transfer. Delete obsolete text-transport callers and tests in the
+contribution refactor. E010 through E013 remain deferred independent research. They are not refactor
+dependencies and require an explicit decision to revisit shared document storage.
 
-Shared memory needs compatible channel capabilities, not one deployment-wide toggle.
-Record actual isolation, base SAB, growable SAB, and asynchronous wait support independently.
-Browser isolation affects availability and embedding behavior. Use the
+Record actual channel capabilities when they affect a measured path, including the separate atomic
+cancellation flag. Browser isolation affects availability and embedding behavior. Use the
 [MDN isolation reference](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated)
 when evaluating a host experiment. This plan does not change Platform serving headers.
 
@@ -73,8 +82,9 @@ when evaluating a host experiment. This plan does not change Platform serving he
    Compare lazy packed views with the current public token representation in a bounded prototype.
 4. Inspect real channel capabilities in the running demo and Platform integration.
    Mark an unavailable capability as unavailable, not as a zero-cost benchmark result.
-5. Write a decision table with keep, remove, or defer for each candidate and a follow-up scope.
-   Link the measurements needed by E010 and E011.
+5. Record ordinary strings and incremental edits as the settled text-transport choice. Write a
+   decision table for the remaining result-representation and ownership-transfer candidates.
+   Keep deferred shared-storage research separate from contribution refactor requirements.
 
 ## Verification
 
@@ -94,4 +104,4 @@ Set a concrete target from E001 before comparing candidates. Publish a no-go dec
 Shared storage still needs worker-local strings for string-consuming parser callbacks.
 Cross-worker memory estimates may omit native WASM memory. Account for that separately.
 The wishlist's June timing numbers are historical context, not baseline results for this plan.
-Keep unsupported capability fallback as a real measured control throughout later SAB research.
+Any explicitly resumed shared-storage research must measure the ordinary string path as its control.

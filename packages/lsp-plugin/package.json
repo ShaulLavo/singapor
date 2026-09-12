@@ -107,18 +107,18 @@
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
     "unified": "^11.0.5",
-    "vscode-languageserver-protocol": "^3.18.0"
+    "vscode-languageserver-protocol": "^3.18.3"
   },
   "devDependencies": {
     "@singapor/core": "workspace:*",
     "@singapor/find": "workspace:*",
     "@singapor/scope-lines": "workspace:*",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
-    "happy-dom": "^20.10.3",
+    "happy-dom": "^20.14.5",
     "oxfmt": "0.54.0",
     "oxlint": "1.69.0",
     "typescript": "~6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   },
   "peerDependencies": {
     "@singapor/core": "workspace:*"

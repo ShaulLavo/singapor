@@ -106,22 +106,22 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@shikijs/engine-oniguruma": "4.2.0",
+    "@shikijs/engine-oniguruma": "4.4.3",
     "@tanstack/hotkeys": "0.8.0",
     "diff": "^9.0.0",
-    "evlog": "^2.19.1",
-    "shiki": "^4.2.0"
+    "evlog": "^2.29.0",
+    "shiki": "^4.4.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
-    "@shikijs/langs": "4.2.0",
-    "@shikijs/themes": "4.2.0",
+    "@playwright/test": "^1.63.0",
+    "@shikijs/langs": "4.4.3",
+    "@shikijs/themes": "4.4.3",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
-    "@vitest/browser-playwright": "^4.1.8",
-    "happy-dom": "^20.10.3",
+    "@vitest/browser-playwright": "^4.1.11",
+    "happy-dom": "^20.14.5",
     "oxfmt": "0.54.0",
     "oxlint": "1.69.0",
     "typescript": "~6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   }
 }

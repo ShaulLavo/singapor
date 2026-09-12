@@ -34,13 +34,13 @@
   },
   "devDependencies": {
     "@singapor/tree-sitter-languages": "workspace:*",
-    "@types/node": "^25.9.3",
+    "@types/node": "^25.9.6",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
-    "happy-dom": "^20.10.3",
+    "happy-dom": "^20.14.5",
     "oxfmt": "0.54.0",
     "oxlint": "1.69.0",
     "typescript": "~6.0.3",
-    "vitest": "^4.1.8",
-    "web-tree-sitter": "^0.26.9"
+    "vitest": "^4.1.11",
+    "web-tree-sitter": "^0.26.13"
   }
 }

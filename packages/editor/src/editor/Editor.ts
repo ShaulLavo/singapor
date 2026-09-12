@@ -738,7 +738,7 @@ export class Editor {
       this.recordSnapshotAdmission('invalid-paint')
       return
     }
-    this.view.measureSnapshotViewport()
+    this.view.measureInitialViewport()
     const appearance = this.paintAppearance()
     if (paint.appearance !== appearance) {
       this.recordSnapshotAdmission('appearance', { savedAppearance: paint.appearance, appearance })
@@ -956,6 +956,7 @@ export class Editor {
   }
 
   private renderContent(text: string | TextSnapshot): void {
+    this.view.measureInitialViewport()
     const textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
     this.document.setRenderedTextSnapshot(textSnapshot)
     this.recordDetachedTextChange(null)
@@ -1841,6 +1842,7 @@ export class Editor {
     textSnapshot: TextSnapshot,
     prepared: EditorPreparedDocumentPayload,
   ): void {
+    this.view.measureInitialViewport()
     this.document.setRenderedTextSnapshot(textSnapshot)
     this.recordDetachedTextChange(null)
     const tokens = this.syntax.stagePreparedReadyTokens(prepared)

@@ -1684,6 +1684,8 @@ describe('Editor', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
       editor = new Editor(container, { plugins: [createViewContributionPlugin(events)] })
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      view.measureInitialViewport()
 
       withThrowingScrollMetricReads(editorRoot(), () => {
         editor.openDocument({ documentId: 'test.ts', text: 'const a = 1;' })
@@ -1890,6 +1892,9 @@ describe('Editor', () => {
       }
       editor.dispose()
       editor = new Editor(container, { plugins: [plugin] })
+      const view = Reflect.get(editor, 'view') as VirtualizedTextView
+      view.measureInitialViewport()
+      events.length = 0
 
       editor.setContent('abc')
 

@@ -486,7 +486,7 @@ export class VirtualizedTextView {
   }
 
   public measureInitialViewport(): void {
-    if (this.view.virtualizer.getSnapshot().viewportWidth > 0) return
+    if (this.view.virtualizer.hasMeasuredViewport()) return
     const padding = scrollElementPadding(this.scrollElement)
     this.view.virtualizer.setScrollMetrics({
       scrollTop: 0,

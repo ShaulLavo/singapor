@@ -254,6 +254,10 @@ export class FixedRowVirtualizer {
     this.applyScrollMetrics(metrics)
   }
 
+  public hasMeasuredViewport(): boolean {
+    return this.viewportMeasured
+  }
+
   private applyScrollMetrics(metrics: FixedRowScrollMetrics, viewportMeasured = true): void {
     const nextViewportMeasured = this.viewportMeasured || viewportMeasured
     const measurementChanged = nextViewportMeasured !== this.viewportMeasured

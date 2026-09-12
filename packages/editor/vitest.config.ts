@@ -30,9 +30,12 @@ export default defineConfig({
         optimizeDeps: { exclude: ['web-tree-sitter'] },
         test: {
           name: 'browser',
+          // Keep browser timing probes clear of Node/DOM workers and other browser files.
+          sequence: { groupOrder: 1 },
           browser: {
             enabled: true,
             headless: true,
+            fileParallelism: false,
             provider: playwright(),
             commands: {
               proofKeyPress: async ({ page }, key: string) => {

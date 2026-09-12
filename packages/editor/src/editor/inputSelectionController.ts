@@ -163,6 +163,7 @@ export type InputSelectionControllerOptions = {
   getEditorTheme(): EditorTheme | null
   materializeFullText(): string
   canEditDocument(): boolean
+  runInOperation<T>(run: () => T): T
   applySessionChange(
     change: DocumentSessionChange,
     totalName?: string,
@@ -261,6 +262,13 @@ export class InputSelectionController {
   private hiddenInputContent: HiddenInputState = EMPTY_HIDDEN_INPUT_STATE
 
   constructor(private readonly options: InputSelectionControllerOptions) {}
+
+  private traceInput<TEvent, TResult>(
+    name: string,
+    run: (event: TEvent) => TResult,
+  ): (event: TEvent) => TResult {
+    return traceEditorInput(name, (event) => this.options.runInOperation(() => run(event)))
+  }
 
   install(): void {
     const { el } = this.options
@@ -1427,18 +1435,20 @@ export class InputSelectionController {
     timingName: string,
     selection?: EditorSelectionRange,
   ): void {
-    const session = this.session
-    if (!session) return
-    if (!this.options.canEditDocument()) return
-    if (edits.length === 0) return
+    this.options.runInOperation(() => {
+      const session = this.session
+      if (!session) return
+      if (!this.options.canEditDocument()) return
+      if (edits.length === 0) return
 
-    const start = nowMs()
-    const change = session.applyEdits(edits, { selection })
-    this.syncSessionSelectionHighlight()
-    this.markSessionSelectionForNextInput()
-    this.applyChange(change, timingName, start, {
-      revealOffset: this.primarySelectionHeadOffset(change),
-      syncDomSelection: false,
+      const start = nowMs()
+      const change = session.applyEdits(edits, { selection })
+      this.syncSessionSelectionHighlight()
+      this.markSessionSelectionForNextInput()
+      this.applyChange(change, timingName, start, {
+        revealOffset: this.primarySelectionHeadOffset(change),
+        syncDomSelection: false,
+      })
     })
   }
 
@@ -1656,7 +1666,7 @@ export class InputSelectionController {
    * resolving, a dictated phrase, a soft keyboard rewriting the word around the caret. None of them
    * carries usable data on the event, and all of them leave the answer in the element's value.
    */
-  private handleHiddenInputChange = traceEditorInput('input.deducedText', (event: Event): void => {
+  private handleHiddenInputChange = this.traceInput('input.deducedText', (event: Event): void => {
     this.transitionInputState({ type: 'native-input-observed' })
     const session = this.session
     if (!session) return
@@ -1675,14 +1685,14 @@ export class InputSelectionController {
     this.applyDeducedInput(session, deduced, eventStartMs(event))
   })
 
-  private handleCompositionStart = traceEditorInput(
+  private handleCompositionStart = this.traceInput(
     'input.compositionstart',
     (_event: CompositionEvent): void => {
       this.transitionInputState({ type: 'composition-start' })
     },
   )
 
-  private handleCompositionUpdate = traceEditorInput(
+  private handleCompositionUpdate = this.traceInput(
     'input.compositionupdate',
     (event: CompositionEvent): void => {
       this.transitionInputState({ text: event.data, type: 'composition-update' })
@@ -1692,7 +1702,7 @@ export class InputSelectionController {
     },
   )
 
-  private handleCompositionEnd = traceEditorInput(
+  private handleCompositionEnd = this.traceInput(
     'input.compositionend',
     (event: CompositionEvent): void => {
       const text = event.data || this.inputState.compositionText
@@ -2199,47 +2209,50 @@ export class InputSelectionController {
     this.showTextMoveDropCaret(drag)
   }
 
-  private finishMouseTextMoveDrag = (event: MouseEvent): void => {
-    const drag = this.mouseTextMoveDrag
-    const session = this.session
-    if (!drag || !session) {
+  private finishMouseTextMoveDrag = this.traceInput(
+    'input.finishMouseTextMoveDrag',
+    (event: MouseEvent): void => {
+      const drag = this.mouseTextMoveDrag
+      const session = this.session
+      if (!drag || !session) {
+        this.stopMouseTextMoveDrag()
+        return
+      }
+
+      event.preventDefault()
       this.stopMouseTextMoveDrag()
-      return
-    }
+      const start = eventStartMs(event)
+      if (!drag.moved) {
+        this.collapseSelectionToPosition(session, drag.press, start)
+        return
+      }
 
-    event.preventDefault()
-    this.stopMouseTextMoveDrag()
-    const start = eventStartMs(event)
-    if (!drag.moved) {
-      this.collapseSelectionToPosition(session, drag.press, start)
-      return
-    }
+      // The modifier is read here rather than at the press, because it can be taken up or let go at
+      // any point while the text is in flight and what it says at the release is the user's answer.
+      const move =
+        drag.drop === null
+          ? null
+          : mouseTextMove(
+              drag.source,
+              readPieceTableTextRange(session.getSnapshot(), drag.source.start, drag.source.end),
+              drag.drop.offset,
+              event.altKey || event.ctrlKey,
+            )
+      if (!move) {
+        this.syncSessionSelectionHighlight()
+        return
+      }
 
-    // The modifier is read here rather than at the press, because it can be taken up or let go at
-    // any point while the text is in flight and what it says at the release is the user's answer.
-    const move =
-      drag.drop === null
-        ? null
-        : mouseTextMove(
-            drag.source,
-            readPieceTableTextRange(session.getSnapshot(), drag.source.start, drag.source.end),
-            drag.drop.offset,
-            event.altKey || event.ctrlKey,
-          )
-    if (!move) {
-      this.syncSessionSelectionHighlight()
-      return
-    }
-
-    const selection = mouseTextMoveSelection(drag, move.selection)
-    const change = session.applyEdits(move.edits, { selections: [selection] })
-    this.syncCustomSelectionHighlight(selection.anchor, selection.head, selection.affinity)
-    this.markSessionSelectionForNextInput()
-    this.applyChange(change, 'input.dragText', start, {
-      revealOffset: selection.head,
-      syncDomSelection: false,
-    })
-  }
+      const selection = mouseTextMoveSelection(drag, move.selection)
+      const change = session.applyEdits(move.edits, { selections: [selection] })
+      this.syncCustomSelectionHighlight(selection.anchor, selection.head, selection.affinity)
+      this.markSessionSelectionForNextInput()
+      this.applyChange(change, 'input.dragText', start, {
+        revealOffset: selection.head,
+        syncDomSelection: false,
+      })
+    },
+  )
 
   private showTextMoveDropCaret(drag: MouseTextMoveDrag): void {
     // With nowhere to drop, the selection comes back: the run is still where it was, and a caret
@@ -2420,7 +2433,7 @@ export class InputSelectionController {
     return createNavigationLineReader(session.getSnapshot(), session.getTextSnapshot())(offset)
   }
 
-  private handleBeforeInput = traceEditorInput('input.beforeinput', (event: InputEvent): void => {
+  private handleBeforeInput = this.traceInput('input.beforeinput', (event: InputEvent): void => {
     const session = this.session
     if (!session) return
     if (!this.options.canEditDocument()) {
@@ -2448,7 +2461,7 @@ export class InputSelectionController {
     this.applyChange(mergeChangeTimings(textChange, selectionChange), 'input.beforeinput', start)
   })
 
-  private handlePaste = traceEditorInput('input.paste', (event: ClipboardEvent): void => {
+  private handlePaste = this.traceInput('input.paste', (event: ClipboardEvent): void => {
     const session = this.session
     if (!session) return
     if (!this.options.canEditDocument()) {
@@ -2594,7 +2607,7 @@ export class InputSelectionController {
     this.syncSessionSelectionHighlight()
   }
 
-  private handleDrop = (event: DragEvent): void => {
+  private handleDrop = this.traceInput('input.handleDrop', (event: DragEvent): void => {
     const session = this.session
     if (!session) return
 
@@ -2633,7 +2646,7 @@ export class InputSelectionController {
       revealBlock: pasteRevealBlock(text),
       revealOffset: this.primarySelectionHeadOffset(change),
     })
-  }
+  })
 
   private handleCopy = (event: ClipboardEvent): void => {
     const payload = this.clipboardPayload()
@@ -2690,7 +2703,7 @@ export class InputSelectionController {
    * Cut, which the browser cannot do for us: the element the keystroke lands on holds no document
    * text, so the native gesture has nothing to take away and nothing to remove.
    */
-  private handleCut = (event: ClipboardEvent): void => {
+  private handleCut = this.traceInput('input.handleCut', (event: ClipboardEvent): void => {
     const session = this.session
     if (!session) return
     if (!event.clipboardData) return
@@ -2707,7 +2720,7 @@ export class InputSelectionController {
       ? this.deleteCaretLines(session)
       : (this.mirrorSelectionDelete(session) ?? session.deleteSelection())
     this.applyChange(mergeChangeTimings(change, selectionChange), 'input.cut', start)
-  }
+  })
 
   /** Removal half of a cut that took whole lines, including the line-joining terminators. */
   private deleteCaretLines(session: DocumentSession): DocumentSessionChange {
@@ -2848,24 +2861,21 @@ export class InputSelectionController {
    * back. Both routes describe what happened; `event.key` only describes what was pressed, which is
    * why waiting on one to decide about the other was a race worth deleting rather than tuning.
    */
-  private handleKeyDown = traceEditorInput(
-    'input.keydownFallback',
-    (event: KeyboardEvent): void => {
-      const session = this.session
-      if (!session) return
-      if (!this.options.canEditDocument()) return
-      if (event.target === this.options.view.inputElement) return
+  private handleKeyDown = this.traceInput('input.keydownFallback', (event: KeyboardEvent): void => {
+    const session = this.session
+    if (!session) return
+    if (!this.options.canEditDocument()) return
+    if (event.target === this.options.view.inputElement) return
 
-      const typedText = keyboardFallbackText(event)
-      if (typedText === null) return
-      if (this.inputState.compositionActive) return
+    const typedText = keyboardFallbackText(event)
+    if (typedText === null) return
+    if (this.inputState.compositionActive) return
 
-      event.preventDefault()
-      this.applyKeyboardText(typedText, eventStartMs(event))
-      // The next keystroke belongs on the input, where the browser can describe it properly.
-      this.options.view.focusInput()
-    },
-  )
+    event.preventDefault()
+    this.applyKeyboardText(typedText, eventStartMs(event))
+    // The next keystroke belongs on the input, where the browser can describe it properly.
+    this.options.view.focusInput()
+  })
 
   private applyKeyboardText(text: string, start: number): void {
     const session = this.session

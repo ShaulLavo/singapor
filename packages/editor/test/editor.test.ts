@@ -2872,12 +2872,13 @@ describe('Editor', () => {
       expect(editorRoot().textContent).toBe('abc')
     })
 
-    it('resets to the undo snapshot after unrendered session revisions', () => {
+    it('renders direct source-session revisions and their undo', () => {
       const session = createDocumentSession('abc')
       editor.attachSession(session)
       session.applyEdits([{ from: 0, to: 3, text: 'xyz' }])
       session.applyEdits([{ from: 3, to: 3, text: '!' }])
-      expect(editor.getTextSnapshot().readRange(0, 3)).toBe('abc')
+      expect(editor.getTextSnapshot()).toBe(session.getTextSnapshot())
+      expect(editorRoot().textContent).toBe('xyz!')
       expect(session.materializeFullText()).toBe('xyz!')
 
       editor.dispatchCommand('undo')

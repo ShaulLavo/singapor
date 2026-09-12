@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P1
 - Effort: L
-- Dependencies: [E003](e003-first-paint-startup.md), [E032](e032-incremental-edit-batches.md)
+- Dependencies: [E003](e003-first-paint-startup.md), [E032](../docs/performance/e032-edit-batches.md)
 - Inspected baseline: `ff1dfeda9e52b308f57915da7372f7ac6e5f04f9`, 2026-09-08.
 
 ## Outcome
@@ -127,6 +127,7 @@ do not force it during adoption when structural folding owns the document.
 From `packages/editor`, run `bun run test test/foldRanges.test.ts test/foldOperations.test.ts`
 and `bun run test test/preparedDocument.test.ts` after the corresponding integration changes.
 Add focused snapshot-index tests through that same script; no `bun test`. Required failures:
+
 - No provider, no language, unsupported descriptor/query, parser failure/recovery, supported empty
   result, pending grammar and incomplete viewport coverage select the correct owner without blink.
 - Nested/unmatched regions, deep indent stacks, mixed tabs/spaces, trailing blanks, CRLF, EOF and

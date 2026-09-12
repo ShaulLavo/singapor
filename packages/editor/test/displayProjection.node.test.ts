@@ -186,6 +186,39 @@ describe('indexed display projection', () => {
     }
   })
 
+  test.each([
+    {
+      edits: [
+        { from: 2, to: 2, text: 'first\n' },
+        { from: 2, to: 2, text: 'second\n' },
+        { from: 6, to: 6, text: 'last\n' },
+      ],
+    },
+    {
+      edits: [
+        { from: 0, to: 2, text: 'head\n' },
+        { from: 2, to: 2, text: 'middle\n' },
+        { from: 2, to: 4, text: 'next\n' },
+      ],
+    },
+    {
+      edits: [
+        { from: 0, to: 2, text: '' },
+        { from: 2, to: 4, text: 'next\n' },
+        { from: 4, to: 4, text: 'middle\n' },
+      ],
+    },
+  ])('maps touching batch boundaries against the committed snapshot: %j', ({ edits }) => {
+    const piece = createPieceTableSnapshot('a\nb\nc\nd\nend')
+    const before = createDocumentTextSnapshot(piece)
+    const after = createDocumentTextSnapshot(applyBatchToPieceTable(piece, edits))
+    const projection = new DisplayProjection({ ...input(''), textSnapshot: before, wrapColumn: 3 })
+
+    projection.update({ before, after, edits })
+
+    compareWithOracle(projection)
+  })
+
   test('local wrap edits do not remeasure distant inline or hidden rows', () => {
     const piece = createPieceTableSnapshot('alpha\n**bold**\nhidden\nstill hidden\nomega')
     const before = createDocumentTextSnapshot(piece)

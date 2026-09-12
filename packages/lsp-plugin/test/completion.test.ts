@@ -112,6 +112,8 @@ function editContext(): EditorEditContributionContext {
   return {
     hasDocument: () => true,
     materializeFullText: () => '',
+    getTextSnapshot: () => null,
+    getSelections: () => [],
     focusEditor: vi.fn(),
     applyEdits: vi.fn(),
     registerFeature: vi.fn(() => ({ dispose: vi.fn() })),

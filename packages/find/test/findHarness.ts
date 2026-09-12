@@ -270,6 +270,7 @@ function createFindHarness(fixture: FindFixture): FindHarness {
   const host: EditorFindHost = {
     hasDocument: () => true,
     textSource: () => recordedTextSource(findTextSource(store.snapshot()), reads),
+    hasTextSnapshot: (snapshot) => snapshot === store.snapshot(),
     trackRanges: (ranges) => store.trackRanges(ranges),
     // These fixtures are small enough to be wholly on screen, so what an editor
     // would follow only within its viewport is followed here throughout.
@@ -294,6 +295,8 @@ function createFindHarness(fixture: FindFixture): FindHarness {
   const controller = new EditorFindController(fixture.options)
   const hostRegistration = controller.attachHost(host, HIGHLIGHT_PREFIX)
   const editRegistration = controller.attachEditHost({
+    textSnapshot: () => store.snapshot(),
+    getSelections: () => selections,
     applyEdits: (edits, _timingName, selection) => {
       store.applyEdits(edits)
       if (selection) selections = [resolveSelection(selection)]

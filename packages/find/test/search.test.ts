@@ -5,8 +5,7 @@ import {
   FIND_MATCHES_LIMIT,
   findMatches,
   findPreviousMatchFrom,
-  nextMatchAfter,
-  previousMatchBefore,
+  findNextMatchFrom,
   type FindMatch,
   type FindQuery,
   type FindTextSource,
@@ -199,20 +198,17 @@ describe('editor search', () => {
     const anchoredMatches = findMatches(source(text), regexQuery('^'))
 
     expect(anchoredMatches.map((match) => match.start)).toEqual([0, 4, 8])
-    expect(nextMatchAfter(anchoredMatches, 4, true, true)?.start).toBe(8)
-    expect(previousMatchBefore(anchoredMatches, 4, true, true)?.start).toBe(0)
+    expect(navigate(findNextMatchFrom, text, '^', 4)?.start).toBe(8)
+    expect(navigate(findPreviousMatchFrom, text, '^', 4)?.start).toBe(0)
 
     const lookaheadMatches = findMatches(source('ab ab'), regexQuery('(?=b)'))
 
     expect(lookaheadMatches.map((match) => match.start)).toEqual([1, 4])
-    expect(nextMatchAfter(lookaheadMatches, 1, true, true)?.start).toBe(4)
-    expect(previousMatchBefore(lookaheadMatches, 4, true, true)?.start).toBe(1)
+    expect(navigate(findNextMatchFrom, 'ab ab', '(?=b)', 1)?.start).toBe(4)
+    expect(navigate(findPreviousMatchFrom, 'ab ab', '(?=b)', 4)?.start).toBe(1)
   })
 
-  it('steps to the neighbouring match rather than probing the document', () => {
-    // '[^,]*' produces an empty match at every comma. Escaping by re-probing
-    // the text has to guess whether a '^' in the pattern is an anchor; stepping
-    // the ordered match list does not, and cannot step over a real match.
+  it('navigates past empty matches beside multiline matches', () => {
     const matches = findMatches(source('a,b\nc,d'), regexQuery('[^,]*'))
 
     expect(matches.map(({ start, end }) => [start, end])).toEqual([
@@ -223,23 +219,21 @@ describe('editor search', () => {
       [6, 7],
       [7, 7],
     ])
-    expect(nextMatchAfter(matches, 1, true, true)?.start).toBe(2)
-    expect(previousMatchBefore(matches, 1, true, true)?.start).toBe(0)
+    expect(navigate(findNextMatchFrom, 'a,b\nc,d', '[^,]*', 1)?.start).toBe(2)
+    expect(navigate(findPreviousMatchFrom, 'a,b\nc,d', '[^,]*', 1)?.start).toBe(0)
   })
 
   it('keeps loop semantics while escaping', () => {
     const text = 'one\ntwo\nthree'
-    const matches = findMatches(source(text), regexQuery('^'))
 
-    expect(nextMatchAfter(matches, 8, false, true)).toBeNull()
-    expect(previousMatchBefore(matches, 0, false, true)).toBeNull()
-    expect(nextMatchAfter(matches, 8, true, true)?.start).toBe(0)
-    expect(previousMatchBefore(matches, 0, true, true)?.start).toBe(8)
+    expect(navigate(findNextMatchFrom, text, '^', 8, false)).toBeNull()
+    expect(navigate(findPreviousMatchFrom, text, '^', 0, false)).toBeNull()
+    expect(navigate(findNextMatchFrom, text, '^', 8)?.start).toBe(0)
+    expect(navigate(findPreviousMatchFrom, text, '^', 0)?.start).toBe(8)
 
     // A non-empty match on the offset is where the user asked to be; escaping
     // is only ever for the zero-width case.
-    const wordMatches = findMatches(source(text), regexQuery('t\\w+'))
-    expect(nextMatchAfter(wordMatches, 4, true, true)?.start).toBe(4)
+    expect(navigate(findNextMatchFrom, text, 't\\w+', 4)?.start).toBe(4)
   })
 
   it('parses replacement patterns and preserve-case replacements', () => {
@@ -855,3 +849,16 @@ describe('searching text a line at a time', () => {
     ).toEqual([0, 1, 2, 3])
   })
 })
+
+function navigate(
+  find: typeof findNextMatchFrom,
+  text: string,
+  pattern: string,
+  offset: number,
+  loop = true,
+): FindMatch | null {
+  return find(source(text), regexQuery(pattern), offset, null, {
+    loop,
+    escapeEmptyMatchAtOffset: true,
+  })
+}

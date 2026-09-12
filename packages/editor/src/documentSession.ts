@@ -132,35 +132,35 @@ export type EditorTextBuffer = {
   applyText(
     selections: SelectionSet<PieceTableAnchor>,
     text: string,
-    sourceViewId?: string | null,
+    sourceView?: EditorViewSession | null,
   ): DocumentSessionChange
   indentSelection(
     selections: SelectionSet<PieceTableAnchor>,
     text: string,
-    sourceViewId?: string | null,
+    sourceView?: EditorViewSession | null,
   ): DocumentSessionChange
   outdentSelection(
     selections: SelectionSet<PieceTableAnchor>,
     tabSize: number,
-    sourceViewId?: string | null,
+    sourceView?: EditorViewSession | null,
   ): DocumentSessionChange
   applyEdits(
     selections: SelectionSet<PieceTableAnchor>,
     edits: readonly TextEdit[],
     options?: DocumentSessionApplyEditsOptions,
-    sourceViewId?: string | null,
+    sourceView?: EditorViewSession | null,
   ): DocumentSessionChange
   backspace(
     selections: SelectionSet<PieceTableAnchor>,
-    sourceViewId?: string | null,
+    sourceView?: EditorViewSession | null,
     tabSize?: number,
   ): DocumentSessionChange
   deleteSelection(
     selections: SelectionSet<PieceTableAnchor>,
-    sourceViewId?: string | null,
+    sourceView?: EditorViewSession | null,
   ): DocumentSessionChange
-  undo(sourceViewId?: string | null): DocumentSessionChange
-  redo(sourceViewId?: string | null): DocumentSessionChange
+  undo(sourceView?: EditorViewSession | null): DocumentSessionChange
+  redo(sourceView?: EditorViewSession | null): DocumentSessionChange
   materializeFullText(): string
   getTextSnapshot(): DocumentTextSnapshot
   getSnapshot(): PieceTableSnapshot
@@ -412,7 +412,7 @@ type CommitEditOptions = {
   readonly history: DocumentSessionEditHistoryMode
   readonly metadata: DocumentTransactionMetadata
   readonly selectionBefore: SelectionSet<PieceTableAnchor>
-  readonly sourceViewId: string | null
+  readonly sourceView: EditorViewSession | null
 }
 
 type DocumentHistory = EditorHistory<
@@ -486,6 +486,8 @@ export const exceedsHeapOperationBudget = (length: number): boolean =>
   length > MAX_HEAP_OPERATION_LENGTH
 
 class PieceTableEditorTextBuffer implements EditorTextBuffer {
+  private readonly pendingChanges: EditorTextBufferChange[] = []
+  private publishingChanges = false
   private readonly changes = new EditorEventSource<EditorTextBufferChange>({
     action: 'editor.buffer.change_listener_failed',
   })
@@ -533,7 +535,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   public applyText(
     selections: SelectionSet<PieceTableAnchor>,
     rawText: string,
-    sourceViewId: string | null = null,
+    sourceView: EditorViewSession | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease)
@@ -551,7 +553,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'insert-text'),
         selectionBefore: selections,
-        sourceViewId,
+        sourceView,
       }),
       'session.applyText',
       start,
@@ -561,7 +563,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   public indentSelection(
     selections: SelectionSet<PieceTableAnchor>,
     text: string,
-    sourceViewId: string | null = null,
+    sourceView: EditorViewSession | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
@@ -573,7 +575,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'indent'),
         selectionBefore: selections,
-        sourceViewId,
+        sourceView,
       }),
       'session.indentSelection',
       start,
@@ -583,7 +585,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   public outdentSelection(
     selections: SelectionSet<PieceTableAnchor>,
     tabSize: number,
-    sourceViewId: string | null = null,
+    sourceView: EditorViewSession | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
@@ -595,7 +597,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'outdent'),
         selectionBefore: selections,
-        sourceViewId,
+        sourceView,
       }),
       'session.outdentSelection',
       start,
@@ -606,7 +608,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
     selections: SelectionSet<PieceTableAnchor>,
     edits: readonly TextEdit[],
     options: DocumentSessionApplyEditsOptions = {},
-    sourceViewId: string | null = null,
+    sourceView: EditorViewSession | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
@@ -639,7 +641,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         history: options.history ?? 'record',
         metadata: ordinaryTransactionMetadata('programmatic', 'programmatic-edit'),
         selectionBefore: selections,
-        sourceViewId,
+        sourceView,
       }),
       'session.applyEdits',
       start,
@@ -648,7 +650,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public backspace(
     selections: SelectionSet<PieceTableAnchor>,
-    sourceViewId: string | null = null,
+    sourceView: EditorViewSession | null = null,
     tabSize?: number,
   ): DocumentSessionChange {
     const start = nowMs()
@@ -661,7 +663,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'backspace'),
         selectionBefore: selections,
-        sourceViewId,
+        sourceView,
       }),
       'session.backspace',
       start,
@@ -670,7 +672,7 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
 
   public deleteSelection(
     selections: SelectionSet<PieceTableAnchor>,
-    sourceViewId: string | null = null,
+    sourceView: EditorViewSession | null = null,
   ): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease) {
@@ -682,14 +684,14 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
         history: 'record',
         metadata: ordinaryTransactionMetadata('keyboard', 'delete'),
         selectionBefore: selections,
-        sourceViewId,
+        sourceView,
       }),
       'session.delete',
       start,
     )
   }
 
-  public undo(sourceViewId: string | null = null): DocumentSessionChange {
+  public undo(sourceView: EditorViewSession | null = null): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease)
       return appendTiming(this.createChange('none', []), 'session.undo', start)
@@ -717,11 +719,12 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       'session.undo',
       start,
     )
-    this.emitChange(change, sourceViewId)
+    sourceView?.acceptBufferSelections(change.selections)
+    this.emitChange(change, sourceView?.viewId)
     return change
   }
 
-  public redo(sourceViewId: string | null = null): DocumentSessionChange {
+  public redo(sourceView: EditorViewSession | null = null): DocumentSessionChange {
     const start = nowMs()
     if (this.mutationLease)
       return appendTiming(this.createChange('none', []), 'session.redo', start)
@@ -749,7 +752,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       'session.redo',
       start,
     )
-    this.emitChange(change, sourceViewId)
+    sourceView?.acceptBufferSelections(change.selections)
+    this.emitChange(change, sourceView?.viewId)
     return change
   }
 
@@ -1351,7 +1355,8 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
       textChanged: true,
     })
     const change = this.createChange('edit', edits, transaction)
-    this.emitChange(change, options.sourceViewId)
+    options.sourceView?.acceptBufferSelections(change.selections)
+    this.emitChange(change, options.sourceView?.viewId)
     return change
   }
 
@@ -1462,7 +1467,16 @@ class PieceTableEditorTextBuffer implements EditorTextBuffer {
   ): void {
     if (change.kind === 'none') return
 
-    this.changes.fire({ change, origin, sourceViewId: sourceViewId ?? null })
+    this.pendingChanges.push({ change, origin, sourceViewId: sourceViewId ?? null })
+    if (this.publishingChanges) return
+
+    this.publishingChanges = true
+    try {
+      for (const event of this.pendingChanges) this.changes.fire(event)
+    } finally {
+      this.pendingChanges.length = 0
+      this.publishingChanges = false
+    }
   }
 }
 
@@ -1613,50 +1627,38 @@ class EditorBufferDocumentSession implements EditorBufferSession {
   ) {}
 
   public applyText(text: string): DocumentSessionChange {
-    return this.acceptBufferChange(
-      this.buffer.applyText(this.view.getSelections(), text, this.view.viewId),
-    )
+    return this.buffer.applyText(this.view.getSelections(), text, this.view)
   }
 
   public indentSelection(text: string): DocumentSessionChange {
-    return this.acceptBufferChange(
-      this.buffer.indentSelection(this.view.getSelections(), text, this.view.viewId),
-    )
+    return this.buffer.indentSelection(this.view.getSelections(), text, this.view)
   }
 
   public outdentSelection(tabSize: number): DocumentSessionChange {
-    return this.acceptBufferChange(
-      this.buffer.outdentSelection(this.view.getSelections(), tabSize, this.view.viewId),
-    )
+    return this.buffer.outdentSelection(this.view.getSelections(), tabSize, this.view)
   }
 
   public applyEdits(
     edits: readonly TextEdit[],
     options: DocumentSessionApplyEditsOptions = {},
   ): DocumentSessionChange {
-    return this.acceptBufferChange(
-      this.buffer.applyEdits(this.view.getSelections(), edits, options, this.view.viewId),
-    )
+    return this.buffer.applyEdits(this.view.getSelections(), edits, options, this.view)
   }
 
   public backspace(tabSize?: number): DocumentSessionChange {
-    return this.acceptBufferChange(
-      this.buffer.backspace(this.view.getSelections(), this.view.viewId, tabSize),
-    )
+    return this.buffer.backspace(this.view.getSelections(), this.view, tabSize)
   }
 
   public deleteSelection(): DocumentSessionChange {
-    return this.acceptBufferChange(
-      this.buffer.deleteSelection(this.view.getSelections(), this.view.viewId),
-    )
+    return this.buffer.deleteSelection(this.view.getSelections(), this.view)
   }
 
   public undo(): DocumentSessionChange {
-    return this.acceptBufferChange(this.buffer.undo(this.view.viewId))
+    return this.buffer.undo(this.view)
   }
 
   public redo(): DocumentSessionChange {
-    return this.acceptBufferChange(this.buffer.redo(this.view.viewId))
+    return this.buffer.redo(this.view)
   }
 
   public setSelection(
@@ -1720,12 +1722,6 @@ class EditorBufferDocumentSession implements EditorBufferSession {
 
   public breakTypingRun(): void {
     this.buffer.breakTypingRun()
-  }
-
-  private acceptBufferChange(change: DocumentSessionChange): DocumentSessionChange {
-    if (change.kind !== 'none') this.view.acceptBufferSelections(change.selections)
-
-    return change
   }
 }
 
@@ -2559,7 +2555,10 @@ function invertTextEdits(
     delta += edit.text.length - (edit.to - edit.from)
   }
 
+  // Equal-offset insertions apply in reverse text order, including adjacent deletions' inverses.
   return inverse
+    .toReversed()
+    .toSorted((left, right) => left.from - right.from || left.to - right.to)
 }
 
 function createInitialSelectionSet(

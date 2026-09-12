@@ -4,8 +4,6 @@ import {
   FIND_MATCHES_LIMIT,
   findNextMatchFrom,
   findPreviousMatchFrom,
-  nextMatchAfter,
-  previousMatchBefore,
   findMatches,
   type FindMatch,
   type FindQuery,
@@ -416,7 +414,6 @@ describe('find match search from an offset', () => {
       [6, 10],
     ])
     expect(range(findNextMatchFrom(source, words, 2))).toEqual([6, 10])
-    expect(range(nextMatchAfter(findMatches(source, words), 2, true))).toEqual([6, 10])
   })
 
   it('answers an anchored pattern the cursor sits past the start of', () => {
@@ -466,7 +463,7 @@ describe('find match search from an offset', () => {
     expect(range(findPreviousMatchFrom(source, query, 5, split))).toEqual([0, 3])
   })
 
-  it('escapes a zero-width match on the cursor the way the ordered list does', () => {
+  it('escapes zero-width matches and wraps in both directions', () => {
     const source = stringSource('one\ntwo\nthree')
     const anchored: FindQuery = {
       searchString: '^',
@@ -474,16 +471,21 @@ describe('find match search from an offset', () => {
       matchCase: true,
       wholeWord: false,
     }
-    const listed = findMatches(source, anchored)
     const escaping = { escapeEmptyMatchAtOffset: true }
 
-    for (const offset of [0, 4, 8]) {
-      expect(range(findNextMatchFrom(source, anchored, offset, null, escaping))).toEqual(
-        range(nextMatchAfter(listed, offset, true, true)),
-      )
-      expect(range(findPreviousMatchFrom(source, anchored, offset, null, escaping))).toEqual(
-        range(previousMatchBefore(listed, offset, true, true)),
-      )
+    for (const { offset, next, previous } of [
+      { offset: 0, next: 4, previous: 8 },
+      { offset: 4, next: 8, previous: 0 },
+      { offset: 8, next: 0, previous: 4 },
+    ]) {
+      expect(range(findNextMatchFrom(source, anchored, offset, null, escaping))).toEqual([
+        next,
+        next,
+      ])
+      expect(range(findPreviousMatchFrom(source, anchored, offset, null, escaping))).toEqual([
+        previous,
+        previous,
+      ])
     }
 
     // With nowhere to wrap to, the pattern parked on the cursor is not an answer.

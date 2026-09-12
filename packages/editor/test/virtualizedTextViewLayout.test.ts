@@ -68,7 +68,11 @@ describe('virtualized text view layout', () => {
     const view = layoutView('a\nb\nc\nd')
     const after = createDocumentTextSnapshot(insertIntoPieceTable(before, 1, 'X'))
 
-    applyTextLayoutTransition(view, [{ from: 1, to: 1, text: 'X' }], after)
+    applyTextLayoutTransition(view, {
+      before: view.model.textSnapshot,
+      after,
+      edits: [{ from: 1, to: 1, text: 'X' }],
+    })
 
     expect(view.model.projection.getRow(0)).toMatchObject({ text: 'aX' })
     expect(bufferLineStartOffset(view, 1)).toBe(3)
@@ -82,16 +86,16 @@ describe('virtualized text view layout', () => {
     const after = insertIntoPieceTable(middle, 4, 'Y')
     const view = layoutView('a\nb\nc')
 
-    applyTextLayoutTransition(
-      view,
-      [{ from: 1, to: 1, text: 'X' }],
-      createDocumentTextSnapshot(middle),
-    )
-    applyTextLayoutTransition(
-      view,
-      [{ from: 4, to: 4, text: 'Y' }],
-      createDocumentTextSnapshot(after),
-    )
+    applyTextLayoutTransition(view, {
+      before: view.model.textSnapshot,
+      after: createDocumentTextSnapshot(middle),
+      edits: [{ from: 1, to: 1, text: 'X' }],
+    })
+    applyTextLayoutTransition(view, {
+      before: view.model.textSnapshot,
+      after: createDocumentTextSnapshot(after),
+      edits: [{ from: 4, to: 4, text: 'Y' }],
+    })
 
     expect(view.model.projection.getRow(1)).toMatchObject({ text: 'bY' })
     expect(bufferLineStartOffset(view, 1)).toBe(3)
@@ -106,7 +110,11 @@ describe('virtualized text view layout', () => {
     const view = layoutView('x\n'.repeat(99_999) + 'x')
     const reads = vi.spyOn(after, 'readRange')
 
-    applyTextLayoutTransition(view, [{ from: 0, to: 0, text: 'new\n' }], after)
+    applyTextLayoutTransition(view, {
+      before: view.model.textSnapshot,
+      after,
+      edits: [{ from: 0, to: 0, text: 'new\n' }],
+    })
 
     expect(view.model.lineCount).toBe(100_001)
     expect(view.model.visibleLineCount).toBe(100_001)

@@ -1,11 +1,13 @@
-import type { DocumentSessionChange } from '../documentSession'
+import { withDocumentSessionChangeTimings, type DocumentSessionChange } from '../documentSession'
 import type { EditorViewContributionUpdateKind } from '../plugins'
+import type { TextSnapshot } from '../documentTextSnapshot'
 import { viewContributionKindForChange, type SessionChangeOptions } from './editorUtils'
 
 type EditorOperationChange = {
   readonly change: DocumentSessionChange
   readonly totalName: string
   readonly totalStart: number
+  readonly options: SessionChangeOptions
 }
 
 export type EditorOperationFlush = {
@@ -28,11 +30,7 @@ export type EditorOperationFlush = {
  */
 export class EditorOperation {
   private readonly changes: EditorOperationChange[] = []
-  private contributionKind: EditorViewContributionUpdateKind = 'selection'
-  private revealOffset: number | null = null
-  private revealAffinity: SessionChangeOptions['revealAffinity']
-  private revealBlock: SessionChangeOptions['revealBlock']
-  private syncDomSelection = false
+  private readonly changeIndexes = new Map<TextSnapshot, number>()
 
   record(
     change: DocumentSessionChange,
@@ -40,36 +38,62 @@ export class EditorOperation {
     totalStart: number,
     options: SessionChangeOptions,
   ): void {
-    this.changes.push({ change, totalName, totalStart })
-    if (options.revealOffset !== undefined) {
-      this.revealOffset = options.revealOffset
-      this.revealAffinity = options.revealAffinity
-      this.revealBlock = options.revealBlock
+    if (change.kind === 'edit' || change.kind === 'undo' || change.kind === 'redo') {
+      this.changeIndexes.set(change.textSnapshot, this.changes.length)
     }
-    // Opting out is how a change protects selection state the browser is still
-    // in the middle of owning — a composition, a drag — from being written
-    // over. It waives only that change's own claim: another change in the same
-    // pass that needs the DOM caret moved still gets it.
-    if (options.syncDomSelection !== false) this.syncDomSelection = true
-    // A caret move asks contributions for less than an edit does, so the one
-    // coalesced update has to claim the widest kind in the pass — otherwise an
-    // edit followed by a selection change tells contributions the text stood
-    // still.
-    if (viewContributionKindForChange(change) === 'content') this.contributionKind = 'content'
+    this.changes.push({ change, totalName, totalStart, options })
+  }
+
+  amend(
+    change: DocumentSessionChange,
+    totalName: string,
+    totalStart: number,
+    options: SessionChangeOptions,
+  ): boolean {
+    const index = this.changeIndexes.get(change.textSnapshot)
+    if (index === undefined) return false
+    const pending = this.changes[index]
+    if (!pending) return false
+
+    const timings = [
+      ...change.timings,
+      ...pending.change.timings.filter((timing) => !change.timings.includes(timing)),
+    ]
+    this.changes[index] = {
+      change: withDocumentSessionChangeTimings(pending.change, timings),
+      totalName,
+      totalStart,
+      options,
+    }
+    return true
   }
 
   flush(): EditorOperationFlush | null {
     const latest = this.changes.at(-1)
     if (!latest) return null
 
+    let contributionKind: EditorViewContributionUpdateKind = 'selection'
+    let revealOffset: number | null = null
+    let revealAffinity: SessionChangeOptions['revealAffinity']
+    let revealBlock: SessionChangeOptions['revealBlock']
+    let syncDomSelection = false
+    for (const { change, options } of this.changes) {
+      if (options.revealOffset !== undefined) {
+        revealOffset = options.revealOffset
+        revealAffinity = options.revealAffinity
+        revealBlock = options.revealBlock
+      }
+      if (options.syncDomSelection !== false) syncDomSelection = true
+      if (viewContributionKindForChange(change) === 'content') contributionKind = 'content'
+    }
     return {
       changes: this.changes,
-      contributionKind: this.contributionKind,
       latest,
-      revealAffinity: this.revealAffinity,
-      revealBlock: this.revealBlock,
-      revealOffset: this.revealOffset,
-      syncDomSelection: this.syncDomSelection,
+      contributionKind,
+      revealOffset,
+      revealAffinity,
+      revealBlock,
+      syncDomSelection,
     }
   }
 }

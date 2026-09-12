@@ -151,6 +151,23 @@ describe('DocumentSession', () => {
     expect(session.canUndo()).toBe(true)
   })
 
+  it('publishes source selections after edits, undo and redo have adopted them', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const session = createEditorBufferSession(buffer)
+    const observed: ReturnType<typeof resolvedOffsets>[] = []
+    buffer.subscribe(() => observed.push(resolvedOffsets(session)))
+
+    session.applyText('!')
+    session.undo()
+    session.redo()
+
+    expect(observed).toEqual([
+      { start: 4, end: 4 },
+      { start: 3, end: 3 },
+      { start: 4, end: 4 },
+    ])
+  })
+
   it('tracks dirty state from the clean snapshot checkpoint', () => {
     const session = createDocumentSession('abc')
 

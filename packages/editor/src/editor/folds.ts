@@ -1,6 +1,7 @@
 import type { TextSnapshot } from '../documentTextSnapshot'
 import type { FoldRange } from '../syntax/session'
 import type { TextEdit } from '../tokens'
+import { firstBatchChangeEndingAtOrAfter, type TextEditBatch } from '../textEditBatch'
 import type { VirtualizedFoldMarker } from '../virtualization/virtualizedTextView'
 import { MANUAL_FOLD_TYPE } from './foldOperations'
 
@@ -100,6 +101,56 @@ export function projectSyntaxFoldsThroughEdit(
 
   if (foldRangesEqual(folds, projected)) return null
   return projected
+}
+
+export function projectSyntaxFoldsThroughEdits(
+  folds: readonly FoldRange[],
+  batch: TextEditBatch,
+): readonly FoldRange[] | null {
+  if (folds.length === 0 || batch.changes.length === 0) return null
+  const projected: FoldRange[] = []
+  for (const fold of folds) {
+    const next = projectFoldRangeThroughBatch(fold, batch)
+    if (next) projected.push(next)
+  }
+  return foldRangesEqual(folds, projected) ? null : projected
+}
+
+function projectFoldRangeThroughBatch(fold: FoldRange, batch: TextEditBatch): FoldRange | null {
+  const first = firstBatchChangeEndingAtOrAfter(batch, fold.startIndex)
+  const firstChange = batch.changes[first]
+  let startDelta = firstChange
+    ? firstChange.afterFrom - firstChange.from
+    : batch.after.length - batch.before.length
+  let startLineDelta = firstChange
+    ? firstChange.afterStartRow - firstChange.startRow
+    : batch.after.lineCount - batch.before.lineCount
+  let endDelta = startDelta
+  let endLineDelta = startLineDelta
+  for (let index = first; index < batch.changes.length; index += 1) {
+    const change = batch.changes[index]!
+    if (change.from >= fold.endIndex) break
+    if (change.to <= fold.startIndex) {
+      startDelta += change.offsetDelta
+      startLineDelta += change.lineDelta
+      endDelta += change.offsetDelta
+      endLineDelta += change.lineDelta
+      continue
+    }
+    if (change.from > fold.startIndex && change.to < fold.endIndex) {
+      endDelta += change.offsetDelta
+      endLineDelta += change.lineDelta
+      continue
+    }
+    if (fold.type === MANUAL_FOLD_TYPE) return null
+  }
+  return {
+    ...fold,
+    startIndex: Math.max(0, fold.startIndex + startDelta),
+    endIndex: Math.max(fold.startIndex + startDelta + 1, fold.endIndex + endDelta),
+    startLine: Math.max(0, fold.startLine + startLineDelta),
+    endLine: Math.max(fold.startLine + startLineDelta + 1, fold.endLine + endLineDelta),
+  }
 }
 
 function sortedFoldRangesForIngestion(folds: readonly FoldRange[]): readonly FoldRange[] {

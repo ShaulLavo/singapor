@@ -33,8 +33,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build example app
-        working-directory: examples/app
-        run: bun run build
+        run: bun run build --filter=@singapor/example-app
 
       - name: Setup Pages
         uses: actions/configure-pages@v6

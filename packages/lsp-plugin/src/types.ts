@@ -97,6 +97,8 @@ export type LanguageServerReferencesResult = {
 export type LanguageServerDocumentSyncOptions = {
   /** Projects a live path transition before deferred view publication catches up. */
   readonly controller?: LanguageServerDocumentSyncController
+  /** Resolves opaque editor identities to protocol URIs. Returning null disables synchronization. */
+  uriForDocument?(snapshot: EditorViewSnapshot): lsp.DocumentUri | null
   /**
    * The language id sent to the server when the editor and protocol use different names.
    * Returning undefined keeps the editor's id.

@@ -147,12 +147,12 @@ export class DocumentSync {
       this.pendingUriProjection = null
       return undefined
     }
-    if (!snapshot.documentId) {
+    const uri = documentUri(snapshot, this.options)
+    if (uri === null) {
       this.pendingUriProjection = null
       return undefined
     }
 
-    const uri = pathOrUriToDocumentUri(snapshot.documentId)
     if (uri === projection.fromUri) return projection.toUri
     this.pendingUriProjection = null
     return undefined
@@ -486,17 +486,27 @@ function activeDocumentForTransition(
   })
 }
 
+function documentUri(
+  snapshot: EditorViewSnapshot,
+  options: LanguageServerDocumentSyncOptions,
+): lsp.DocumentUri | null {
+  if (!snapshot.documentId) return null
+  if (options.uriForDocument) return options.uriForDocument(snapshot)
+  return pathOrUriToDocumentUri(snapshot.documentId)
+}
+
 function documentDescriptor(
   snapshot: EditorViewSnapshot,
   options: LanguageServerDocumentSyncOptions,
   projectedUri?: lsp.DocumentUri,
   projectedTextSnapshot?: LspTextSnapshot,
 ): DocumentDescriptor | null {
-  if (!snapshot.documentId) return null
   if (!snapshot.languageId) return null
   if (options.shouldSyncLanguageId?.(snapshot.languageId, snapshot) === false) return null
 
-  const uri = projectedUri ?? pathOrUriToDocumentUri(snapshot.documentId)
+  const resolvedUri = documentUri(snapshot, options)
+  if (resolvedUri === null) return null
+  const uri = projectedUri ?? resolvedUri
   if (options.shouldSyncUri?.(uri, snapshot) === false) return null
 
   return defineLazyFullTextProperty({

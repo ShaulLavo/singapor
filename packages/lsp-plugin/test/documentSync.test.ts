@@ -19,12 +19,68 @@ import { LspWorkspace, type LspDocumentChange, type LspWorkspaceSyncTarget } fro
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import { DocumentSync, type DocumentSyncDiagnosticsPresenter } from '../src/documentSync'
+import {
+  activeDocumentForSnapshot,
+  DocumentSync,
+  type DocumentSyncDiagnosticsPresenter,
+} from '../src/documentSync'
 import { LanguageServerDocumentSyncController } from '../src/documentSyncController'
+import type { LanguageServerDocumentSyncOptions } from '../src/types'
 
 type TestLineStartsView = NonNullable<EditorViewSnapshot['lineStartsView']>
 
 describe('DocumentSync', () => {
+  it('syncs an opaque native identity at the resolved URI and protocol language', () => {
+    const workspace = new LspWorkspace()
+    const recorder = new SyncTargetRecorder()
+    workspace.attachClient(recorder)
+    const harness = new BufferHarness('const view = <div />;')
+    const snapshot = harness.snapshot({ documentId: '["file","src/view.tsx"]' })
+    const options: LanguageServerDocumentSyncOptions = {
+      uriForDocument: () => 'file:///src/view.tsx',
+      languageIdForDocument: (languageId, uri) =>
+        uri.endsWith('.tsx') ? 'typescriptreact' : languageId,
+    }
+    const sync = createSync(workspace, createDocumentLogicalRevisionScope(), options)
+
+    sync.sync(snapshot, null)
+    expect(sync.activeDocument).toMatchObject({
+      uri: 'file:///src/view.tsx',
+      languageId: 'typescriptreact',
+    })
+    expect(activeDocumentForSnapshot(snapshot, options)).toMatchObject({
+      uri: 'file:///src/view.tsx',
+      languageId: 'typescriptreact',
+    })
+    expect(recorder.events).toEqual(['open:file:///src/view.tsx:0:const view = <div />;'])
+    expect(snapshot.documentId).toBe('["file","src/view.tsx"]')
+  })
+
+  it('suppresses URI resolution without falling back to the native identity', () => {
+    const workspace = new LspWorkspace()
+    const recorder = new SyncTargetRecorder()
+    workspace.attachClient(recorder)
+    const harness = new BufferHarness('one')
+    const snapshot = harness.snapshot({ documentId: 'opaque-document' })
+    let uri: string | null = null
+    const options: LanguageServerDocumentSyncOptions = { uriForDocument: () => uri }
+    const sync = createSync(workspace, createDocumentLogicalRevisionScope(), options)
+
+    sync.sync(snapshot, null)
+    expect(recorder.events).toEqual([])
+    expect(activeDocumentForSnapshot(snapshot, options)).toBeNull()
+    uri = 'file:///src/index.ts'
+    sync.sync(snapshot, null)
+    uri = null
+    sync.sync(snapshot, null)
+
+    expect(sync.activeDocument).toBeNull()
+    expect(recorder.events).toEqual([
+      'open:file:///src/index.ts:0:one',
+      'close:file:///src/index.ts:0:one',
+    ])
+  })
+
   it('opens updates and closes exact snapshots through an opaque workspace attachment', () => {
     const workspace = new LspWorkspace()
     const recorder = new SyncTargetRecorder()
@@ -259,53 +315,68 @@ describe('DocumentSync', () => {
     ])
   })
 
-  it('projects ordered edits across a synchronous URI transition and its rollback', () => {
-    const workspace = new LspWorkspace()
-    const recorder = new SyncTargetRecorder()
-    workspace.attachClient(recorder)
-    const scope = createDocumentLogicalRevisionScope()
-    const harness = new BufferHarness('one')
-    const controller = new LanguageServerDocumentSyncController()
-    const first = createSync(workspace, scope)
-    const second = createSync(workspace, scope)
-    const rendered = { documentId: 'src/index.ts' }
-    registerMountedObservers(controller, workspace, harness, [first, second], rendered)
+  it.each(['path', 'opaque'])(
+    'projects ordered edits across a synchronous URI transition and rollback with %s identities',
+    (identity) => {
+      const workspace = new LspWorkspace()
+      const recorder = new SyncTargetRecorder()
+      workspace.attachClient(recorder)
+      const scope = createDocumentLogicalRevisionScope()
+      const harness = new BufferHarness('one')
+      const controller = new LanguageServerDocumentSyncController()
+      const ids =
+        identity === 'opaque'
+          ? { before: '["file","src/index.ts"]', after: '["file","src/renamed.ts"]' }
+          : { before: 'src/index.ts', after: 'src/renamed.ts' }
+      const uris = new Map([
+        [ids.before, 'file:///src/index.ts'],
+        [ids.after, 'file:///src/renamed.ts'],
+      ])
+      const options: LanguageServerDocumentSyncOptions =
+        identity === 'opaque'
+          ? { uriForDocument: (snapshot) => uris.get(snapshot.documentId ?? '') ?? null }
+          : {}
+      const first = createSync(workspace, scope, options)
+      const second = createSync(workspace, scope, options)
+      const rendered = { documentId: ids.before }
+      registerMountedObservers(controller, workspace, harness, [first, second], rendered)
 
-    const editOld = harness.ordinary([{ from: 3, to: 3, text: 'A' }])
-    syncMountedObservers(first, second, harness, rendered.documentId, editOld)
-    controller.transitionDocumentUri({
-      fromUri: 'file:///src/index.ts',
-      toUri: 'file:///src/renamed.ts',
-      textSnapshot: harness.buffer.getTextSnapshot(),
-      syncPoint: harness.rotateSyncSegment(),
-    })
-    const editNew = harness.ordinary([{ from: 4, to: 4, text: 'B' }])
-    syncMountedObservers(first, second, harness, rendered.documentId, editNew)
+      const editOld = harness.ordinary([{ from: 3, to: 3, text: 'A' }])
+      syncMountedObservers(first, second, harness, rendered.documentId, editOld)
+      controller.transitionDocumentUri({
+        fromUri: 'file:///src/index.ts',
+        toUri: 'file:///src/renamed.ts',
+        textSnapshot: harness.buffer.getTextSnapshot(),
+        syncPoint: harness.rotateSyncSegment(),
+      })
+      const editNew = harness.ordinary([{ from: 4, to: 4, text: 'B' }])
+      syncMountedObservers(first, second, harness, rendered.documentId, editNew)
 
-    rendered.documentId = 'src/renamed.ts'
-    const reverseEditNew = harness.ordinary([{ from: 4, to: 5, text: '' }])
-    syncMountedObservers(first, second, harness, rendered.documentId, reverseEditNew)
-    controller.transitionDocumentUri({
-      fromUri: 'file:///src/renamed.ts',
-      toUri: 'file:///src/index.ts',
-      textSnapshot: harness.buffer.getTextSnapshot(),
-      syncPoint: harness.rotateSyncSegment(),
-    })
-    const reverseEditOld = harness.ordinary([{ from: 3, to: 4, text: '' }])
-    syncMountedObservers(first, second, harness, rendered.documentId, reverseEditOld)
+      rendered.documentId = ids.after
+      const reverseEditNew = harness.ordinary([{ from: 4, to: 5, text: '' }])
+      syncMountedObservers(first, second, harness, rendered.documentId, reverseEditNew)
+      controller.transitionDocumentUri({
+        fromUri: 'file:///src/renamed.ts',
+        toUri: 'file:///src/index.ts',
+        textSnapshot: harness.buffer.getTextSnapshot(),
+        syncPoint: harness.rotateSyncSegment(),
+      })
+      const reverseEditOld = harness.ordinary([{ from: 3, to: 4, text: '' }])
+      syncMountedObservers(first, second, harness, rendered.documentId, reverseEditOld)
 
-    expect(recorder.events).toEqual([
-      'open:file:///src/index.ts:0:one',
-      'change:file:///src/index.ts:1:3-3=A',
-      'close:file:///src/index.ts:1:oneA',
-      'open:file:///src/renamed.ts:0:oneA',
-      'change:file:///src/renamed.ts:1:4-4=B',
-      'change:file:///src/renamed.ts:2:4-5=',
-      'close:file:///src/renamed.ts:2:oneA',
-      'open:file:///src/index.ts:2:oneA',
-      'change:file:///src/index.ts:3:3-4=',
-    ])
-  })
+      expect(recorder.events).toEqual([
+        'open:file:///src/index.ts:0:one',
+        'change:file:///src/index.ts:1:3-3=A',
+        'close:file:///src/index.ts:1:oneA',
+        'open:file:///src/renamed.ts:0:oneA',
+        'change:file:///src/renamed.ts:1:4-4=B',
+        'change:file:///src/renamed.ts:2:4-5=',
+        'close:file:///src/renamed.ts:2:oneA',
+        'open:file:///src/index.ts:2:oneA',
+        'change:file:///src/index.ts:3:3-4=',
+      ])
+    },
+  )
 
   it('filters descriptors and ignores stale diagnostic versions', () => {
     const workspace = new LspWorkspace()
@@ -472,8 +543,10 @@ class SyncTargetRecorder implements LspWorkspaceSyncTarget {
 function createSync(
   workspace: LspWorkspace,
   logicalRevisionScope: DocumentLogicalRevisionScope,
+  options: LanguageServerDocumentSyncOptions = {},
 ): DocumentSync {
   return new DocumentSync(workspace, new TestPresenter(), {
+    ...options,
     logicalRevisionScope,
     onDocumentClosed: vi.fn(),
   })

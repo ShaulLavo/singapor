@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { Editor } from '../src/editor'
+import type { Editor } from '../src/editor'
 import { createDocumentSession } from '../src/public/document'
 import {
   EDITOR_PASTE_HANDLER,
@@ -11,6 +11,7 @@ import {
   type EditorSelectionRange,
 } from '../src/plugins'
 import { setHighlightRegistry } from '../src/public/testing'
+import { createVisibleEditor } from './factories/visibleEditor'
 
 /**
  * A paste reaching something other than the text/plain path: a handler registers for the types it
@@ -51,7 +52,7 @@ afterEach(() => {
 })
 
 function open(text: string, languageId: string, plugins: readonly EditorPlugin[] = []): Opened {
-  const created = new Editor(container, { plugins })
+  const created = createVisibleEditor(container, { plugins })
   editor = created
   const session = createDocumentSession(text)
   created.attachSession(session, { documentId: `doc.${languageId}`, languageId })

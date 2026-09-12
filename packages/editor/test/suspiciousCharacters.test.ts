@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { Editor } from '../src/editor/Editor'
+import type { Editor } from '../src/editor/Editor'
 import { EDITOR_OPTION_DESCRIPTORS } from '../src/editor/optionDescriptors'
 import { resetEditorInstanceCount, setHighlightRegistry } from '../src/public/testing'
 import {
@@ -10,6 +10,7 @@ import {
   suspiciousCharacterRanges,
 } from '../src/unicodeHighlight'
 import { VirtualizedTextView } from '../src/virtualization'
+import { createVisibleEditor } from './factories/visibleEditor'
 
 const CYRILLIC_A = 'а'
 const FULLWIDTH_A = 'ａ'
@@ -303,7 +304,7 @@ describe('suspicious characters as an editor option', () => {
   // Whitespace rendering is on throughout so that every expectation below names markers the rows
   // do draw: an empty result would otherwise read the same as rows that never mounted.
   function mountEditor(suspiciousCharacters?: EditorSuspiciousCharactersOptions): Editor {
-    editor = new Editor(container, {
+    editor = createVisibleEditor(container, {
       defaultText: `const p${CYRILLIC_A}ssword = 1`,
       hiddenCharacters: 'show',
       suspiciousCharacters,

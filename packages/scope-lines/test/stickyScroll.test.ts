@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Editor } from '@singapor/core/editor'
+import { VirtualizedTextView } from '@singapor/core/internal'
 import type { VirtualizedFoldMarker } from '@singapor/core/rendering'
 import type { EditorToken } from '@singapor/core/syntax'
 import type {
@@ -289,6 +290,8 @@ describe('sticky scroll in a mounted editor', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     editor = new Editor(container, { plugins: [createStickyScrollPlugin()] })
+    const view: unknown = Reflect.get(editor, 'view')
+    if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 120, 600)
     editor.openDocument({
       documentId: 'main.ts',
       languageId: 'typescript',
@@ -302,7 +305,7 @@ describe('sticky scroll in a mounted editor', () => {
     setHighlightRegistry(undefined)
   })
 
-  it('holds the enclosing headers on screen while the document scrolls under them', () => {
+  it('holds the enclosing headers on screen while the document scrolls under them', async () => {
     const rowHeight = mountedRowHeight()
     const root = () => container.querySelector<HTMLElement>('.editor-sticky-scroll')
 
@@ -310,7 +313,7 @@ describe('sticky scroll in a mounted editor', () => {
 
     editor.setScrollPosition({ top: 20 * rowHeight })
 
-    expect(mountedStickyLines()).toEqual(['function outer() {', '  if (a) {'])
+    await expect.poll(mountedStickyLines).toEqual(['function outer() {', '  if (a) {'])
     expect(root()?.style.top).toBe('0px')
     expect(root()?.style.height).toBe(`${(MOUNTED_INNER_END_ROW + 1) * rowHeight}px`)
     expect(mountedStack()?.style.height).toBe(`${2 * rowHeight}px`)
@@ -324,8 +327,9 @@ describe('sticky scroll in a mounted editor', () => {
    * The rows in the stack are already in the document, so a reader who reaches them there reaches
    * them twice, and a caret that lands in one of them is a caret in a copy of the text.
    */
-  it('keeps the stack out of the focus order, out of the reading order, and unwritable', () => {
+  it('keeps the stack out of the focus order, out of the reading order, and unwritable', async () => {
     editor.setScrollPosition({ top: 20 * mountedRowHeight() })
+    await expect.poll(mountedStack).not.toBeNull()
     const stack = mountedStack()!
     const input = stack.querySelector<HTMLTextAreaElement>('textarea')!
 

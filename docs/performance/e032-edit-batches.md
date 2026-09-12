@@ -63,14 +63,15 @@ cover commands issued during reentrant edits and deferred match painting.
 Targeted checks passed for Find (80 tests), core sync/snapshot behavior (37 tests), and
 React/Solid integration (five tests). Typechecks passed for six affected packages; the core and
 Find builds passed.
-A separate focused core command reported 227 passes and two existing documentSession failures:
+An earlier focused core command reported 227 passes and two existing documentSession failures:
 
 - `takes back an inline suggestion offered against the document it replaced`
 - `takes it back when another document is opened over the one it was offered against`
 
-Both fail their initial ghost-text assertion before replacement. Replaying these exact tests
-against frozen baseline `6492651` reproduces both failures. They remain a verification limitation;
-the complete focused command is not reported as passing.
+Both failed their initial ghost-text assertion before replacement and reproduced on frozen
+baseline `6492651`. The CI follow-up traced them to a happy-dom fixture with zero viewport height.
+That fixture now uses the existing `createVisibleEditor` helper, and both tests pass with their
+original assertions. No editor runtime or benchmark source changed for that fix.
 
 ## Reproduction
 

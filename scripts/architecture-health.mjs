@@ -123,15 +123,7 @@ function collectTimerBaseline(previous) {
 }
 
 function previousTimerLookup(previous) {
-  const byId = new Map()
-  const bySignature = new Map()
-
-  for (const entry of previous?.timers ?? []) {
-    byId.set(entry.id, entry)
-    bySignature.set(timerSignature(entry.file, entry.api, entry.snippet), entry)
-  }
-
-  return { byId, bySignature }
+  return new Map((previous?.timers ?? []).map((entry) => [entry.id, entry]))
 }
 
 function workspacePackages() {
@@ -361,9 +353,10 @@ function entrypointSource(packageInfo, target) {
       : (target?.import ?? target?.default ?? target?.types ?? null)
   if (typeof specified !== 'string') return null
 
-  const candidates = specified.endsWith('.ts') || specified.endsWith('.tsx')
-    ? [specified]
-    : [specified.replace(/^\.\/dist\//, './src/').replace(/\.(d\.ts|js)$/, '.ts')]
+  const candidates =
+    specified.endsWith('.ts') || specified.endsWith('.tsx')
+      ? [specified]
+      : [specified.replace(/^\.\/dist\//, './src/').replace(/\.(d\.ts|js)$/, '.ts')]
 
   for (const candidate of candidates) {
     const source = normalizePath(path.join(packageInfo.dir, candidate))
@@ -513,7 +506,7 @@ function addTimersFromLine(timers, previousTimers, occurrences, file, index, lin
     const snippet = line.trim()
     const occurrence = nextOccurrence(occurrences, file, api, snippet)
     const id = timerId(file, api, snippet, occurrence)
-    const previous = previousTimer(previousTimers, id, file, api, snippet)
+    const previous = previousTimers.get(id)
     timers.push({
       id,
       api,
@@ -526,17 +519,6 @@ function addTimersFromLine(timers, previousTimers, occurrences, file, index, lin
         'TODO: explain why this timer is scheduler-safe.',
     })
   }
-}
-
-function previousTimer(previousTimers, id, file, api, snippet) {
-  return (
-    previousTimers.byId.get(id) ??
-    previousTimers.bySignature.get(timerSignature(file, api, snippet))
-  )
-}
-
-function timerSignature(file, api, snippet) {
-  return `${file}\0${api}\0${snippet}`
 }
 
 function nextOccurrence(occurrences, file, api, snippet) {
@@ -759,7 +741,10 @@ function inlineJustification(lines, index) {
   const collected = []
   let reading = false
   for (const raw of block) {
-    const text = raw.replace(/^\/\*\*?|^\*\/|^\*|^\/\//, '').replace(/\*\/$/, '').trim()
+    const text = raw
+      .replace(/^\/\*\*?|^\*\/|^\*|^\/\//, '')
+      .replace(/\*\/$/, '')
+      .trim()
     const opens = /^@justification\b/.test(text)
     // Any other tag ends it, so a reason is never silently extended by the tag written after it.
     if (reading && !opens && /^@\w+/.test(text)) break

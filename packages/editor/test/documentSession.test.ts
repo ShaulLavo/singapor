@@ -45,6 +45,7 @@ import {
   type SelectionSet,
 } from '../src/selections'
 import type { Anchor as PieceTableAnchor } from '../src/pieceTable/pieceTableTypes'
+import { createVisibleEditor } from './factories/visibleEditor'
 
 // The lines a view would paint: line starts from the piece table, line ends as
 // `nextLineStart - 1` exactly like virtualizedTextViewModel derives them, so a
@@ -1655,7 +1656,7 @@ describe('replacing the document an editor owns', () => {
     resetEditorInstanceCount()
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = new Editor(container, {})
+    editor = createVisibleEditor(container, {})
   })
 
   afterEach(() => {

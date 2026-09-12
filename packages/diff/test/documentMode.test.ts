@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { Editor } from '@singapor/core/editor'
+import type { Editor } from '@singapor/core/editor'
+import { createVisibleEditor } from './support/visibleEditor'
 import type { EditorToken } from '@singapor/core/syntax'
 import type { VirtualizedTextRowDecoration } from '@singapor/core/rendering'
 import { createTextDiff } from '../src'
@@ -92,7 +93,7 @@ function mountDocumentModeDiff(): MountedDocumentModeDiff {
     newFile: { path: 'note.ts', text: 'keep\nnew\nskip\n', languageId: 'typescript' },
   })
   const rows = createStackedProjection(file).rows
-  const mounted = new Editor(host, {
+  const mounted = createVisibleEditor(host, {
     // §C6 #2 / #4, §C10, §C11 — the option bag a document-mode diff host must pass.
     cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
     documentMode: 'static',

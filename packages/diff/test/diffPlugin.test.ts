@@ -1,5 +1,6 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Editor } from '@singapor/core/editor'
+import { createVisibleEditor } from './support/visibleEditor'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxSessionOptions,
@@ -508,7 +509,7 @@ function mountDiff(options: MountOptions = {}): {
     syntaxBackend: options.syntaxBackend,
     syntaxHighlight: options.syntaxHighlight ?? false,
   })
-  const editor = new Editor(host, {
+  const editor = createVisibleEditor(host, {
     cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
     documentMode: 'static',
     editability: 'readonly',

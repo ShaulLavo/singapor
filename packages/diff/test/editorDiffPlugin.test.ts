@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { Editor } from '@singapor/core/editor'
+import type { Editor } from '@singapor/core/editor'
+import { createVisibleEditor } from './support/visibleEditor'
 import { createDiffPlugin } from '../src'
 
 describe('createDiffPlugin (overlay mode)', () => {
@@ -17,7 +18,7 @@ describe('createDiffPlugin (overlay mode)', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     const plugin = createDiffPlugin({ mode: 'overlay' })
-    editor = new Editor(container, { plugins: [plugin] })
+    editor = createVisibleEditor(container, { plugins: [plugin] })
 
     editor.openDocument({ documentId: 'note.txt', text: 'a\nb\nadd\n' })
     plugin.setBaseFile({ path: 'note.txt', text: 'a\nremove\nb\n' })

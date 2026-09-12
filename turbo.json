@@ -12,6 +12,9 @@
     "typecheck": {
       "dependsOn": ["^build", "build"]
     },
+    "@singapor/core#typecheck": {
+      "dependsOn": ["build", "@singapor/tree-sitter-languages#build"]
+    },
     "lint": {},
     "format": {
       "cache": false
@@ -19,6 +22,9 @@
     "format:check": {},
     "test": {
       "dependsOn": ["^build", "build"]
+    },
+    "@singapor/core#test": {
+      "dependsOn": ["build", "@singapor/tree-sitter-languages#build"]
     }
   }
 }

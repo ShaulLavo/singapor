@@ -73,6 +73,30 @@ baseline `6492651`. The CI follow-up traced them to a happy-dom fixture with zer
 That fixture now uses the existing `createVisibleEditor` helper, and both tests pass with their
 original assertions. No editor runtime or benchmark source changed for that fix.
 
+### CI follow-up source validation
+
+The later CI run exposed redundant BiDi work in offset-only hit queries. Runtime `1d7f7cc`
+keeps the existing native offset resolution and skips the caret-affinity geometry that those
+queries discarded. Full position queries still resolve affinity. Both offset APIs match the
+browser's native offset with zero collapsed-range reads; their regression tests fail on the
+earlier runtime with two reads. The full-position query is the positive measurement control.
+All 110 BiDi geometry tests and 185 view, geometry, and provisional-paint tests pass.
+
+[Final-source evidence](e032-ci-final-validation.json.gz) records a fresh frozen package from
+`1d7f7cc`, 300 source samples and 100 browser samples across all ten E032 groups, and twenty
+separate diagnostic samples. The browser runner rebuilt that package before capture. Active
+source, frozen source, and rebuilt output match the recorded hashes. All source diagnostics
+have zero full-text reads, projection resets, and unchanged-gap reads. All browser diagnostics
+have zero synchronous and deferred full-text reads and pass the text and projection gates.
+The earlier paired comparisons below retain their original `fe21ebd` source identity.
+
+The same artifact retains three before/after BiDi measurements and the local capture script.
+It calls the existing 6,000-character timing helpers, each using seven alternating paired
+batches. RTL batches of 100 clicks took 1.5–1.8 ms before and 1.1–1.3 ms after. These are rounded
+batch medians; individual internal samples were not saved. The local drag ratio still ranges
+from 5.07× to 5.47× after this change, above the unchanged 5× guard. This is a click-query fix;
+it does not establish a drag improvement.
+
 ## Reproduction
 
 The source proof drives the actual `Editor.edit` method, including session commit, projection,
@@ -156,7 +180,7 @@ The frozen reviewed candidate at `/work/tmp/e032-reviewed/packages/editor` passe
 source-work bound and every strengthened browser preservation check. Source capture contains
 two runs of 30 measured samples after five warmups per group, or 600 measured samples per
 revision. Its baseline captures are retained because the source harness is unchanged; candidate
-captures use the final reviewed source. Both browser revisions were recaptured with protocol 3,
+captures use the E032 runtime at `fe21ebd`. Both browser revisions were recaptured with protocol 3,
 in baseline → candidate → candidate → baseline order. Each browser run contains ten measured
 samples after two warmups per group, or 200 measured samples per revision. Each run also has
 one separate diagnostic sample per group. The machine is an Intel Core i7-14700K with Bun 1.4.0,
@@ -303,7 +327,7 @@ node packages/editor/bench/editBatchesBuildProof.mjs \
 	--output /work/tmp/e032-build-proof.json
 ```
 
-## Current small single-edit control
+## Small single-edit control
 
 The protocol-3 control repeats `ordinary:single-edit:decorated` with 100 measured samples and ten
 warmups per run, in baseline → candidate → candidate → baseline order. All four runs rebuild the

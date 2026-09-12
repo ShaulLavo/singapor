@@ -2260,6 +2260,36 @@ describe.skipIf(typeof globalThis.Highlight === 'undefined')('BiDi geometry brow
     }
   })
 
+  it.each(['textOffsetFromPoint', 'textOffsetFromViewportPoint'] as const)(
+    '%s matches native RTL hits without measuring discarded affinity',
+    (method) => {
+      const { view, rows } = fixture!
+      const point = renderedGlyphPoint(rows.pureHebrew, 4, 0.75)
+      const [expected] = nativeTextOffsets(view, [point])
+      expect(expected).toBe(rows.pureHebrew.startOffset + 4)
+
+      let offset: number | null = null
+      const offsetReads = countRangeReads(
+        () => {
+          offset = view[method](point.x, point.y)
+        },
+        { collapsedOnly: true },
+      )
+      let positionOffset: number | null = null
+      const positionReads = countRangeReads(
+        () => {
+          positionOffset = view.textPositionFromPoint(point.x, point.y)?.offset ?? null
+        },
+        { collapsedOnly: true },
+      )
+
+      expect(offset).toBe(expected)
+      expect(positionOffset).toBe(expected)
+      expect(positionReads).toBeGreaterThan(0)
+      expect(offsetReads).toBe(0)
+    },
+  )
+
   it('repairs the engine hit at both visual edges of pure RTL rows', () => {
     assertRtlEdgeClicks(fixture!, 'pureHebrew')
     assertRtlEdgeClicks(fixture!, 'pureArabic')
@@ -3163,16 +3193,19 @@ function assertPaintedSelectionRects(
   assertRectsClose(painted, expected)
 }
 
-function countRangeReads(run: () => void): number {
+function countRangeReads(
+  run: () => void,
+  options: { readonly collapsedOnly?: boolean } = {},
+): number {
   const clientRects = Range.prototype.getClientRects
   const boundingRect = Range.prototype.getBoundingClientRect
   let reads = 0
   Range.prototype.getClientRects = function countedClientRects(this: Range) {
-    reads += 1
+    if (!options.collapsedOnly || this.collapsed) reads += 1
     return clientRects.call(this)
   }
   Range.prototype.getBoundingClientRect = function countedBoundingRect(this: Range) {
-    reads += 1
+    if (!options.collapsedOnly || this.collapsed) reads += 1
     return boundingRect.call(this)
   }
   try {

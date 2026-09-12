@@ -1094,11 +1094,26 @@ export class VirtualizedTextView {
   }
 
   public textOffsetFromPoint(clientX: number, clientY: number): number | null {
-    return this.textPositionFromPoint(clientX, clientY)?.offset ?? null
+    return this.textOffsetFromViewportPoint(clientX, clientY)
   }
 
   public textOffsetFromViewportPoint(clientX: number, clientY: number): number | null {
-    return this.textPositionFromViewportPoint(clientX, clientY)?.offset ?? null
+    if (this.view.provisional) return null
+    const view = this.view
+    const metrics = viewportPointMetrics(view, clientX, clientY)
+    const row = rowForViewportY(view, metrics.y)
+    if (metrics.verticalDirection < 0) return lineStartOffset(view, row)
+    if (metrics.verticalDirection > 0) return lineEndOffset(view, row)
+    if (view.model.projection.getRowMetrics(row)?.source !== 'document') return null
+
+    const mounted = view.rowElements.get(row)
+    if (mounted?.kind === 'text' && rowMightContainRTL(view, mounted)) {
+      return bidiOffsetFromViewportPoint(view, mounted, metrics)
+    }
+    if (mounted?.kind === 'text') return xToOffset(view, mounted, metrics.x)
+
+    const column = Math.floor(metrics.x / Math.max(1, view.metrics.characterWidth))
+    return offsetForViewportColumn(view, row, column)
   }
 
   public textPositionFromPoint(

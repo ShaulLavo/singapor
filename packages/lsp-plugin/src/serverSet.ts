@@ -115,10 +115,9 @@ export class LanguageServerSet {
       const lanes = this.ready('codeActions', method)
       const lane = lanes.length === 1 ? lanes[0] : undefined
       if (lane) {
+        const provenance = codeActionProvenance(lane)
         return this.requestSingle(lane, method, params, options, [], (result) =>
-          this.mergeArrayResults('codeActions', [
-            { lane, provenance: codeActionProvenance(lane), result },
-          ]),
+          this.mergeArrayResults('codeActions', [{ lane, provenance, result }]),
         ) as Promise<TResult>
       }
 
@@ -246,9 +245,8 @@ export class LanguageServerSet {
     )
     if (!isCodeAction(result)) return null
 
-    const provenance = codeActionProvenance(current.lane)
-    this.#provenance.set(result, provenance)
-    return { action: result, ...provenance }
+    this.#provenance.set(result, current)
+    return { action: result, ...current }
   }
 
   requestSingle<TParams, TResult = unknown>(
@@ -307,8 +305,8 @@ export class LanguageServerSet {
   ): Promise<readonly LanguageServerLaneResult[]> {
     const requests = this.ready(feature, method).map(async (lane) => {
       try {
-        const result = await lane.connection.client.request(method, params, options)
         const provenance = feature === 'codeActions' ? codeActionProvenance(lane) : undefined
+        const result = await lane.connection.client.request(method, params, options)
         lane.onInteractiveReady?.()
         return { lane, provenance, result }
       } catch (error) {
@@ -509,18 +507,20 @@ function codeActionProvenance(lane: LanguageServerSetLane): LanguageServerCodeAc
 }
 
 export function captureWorkspaceEditOriginGuard(workspace: LspWorkspace): WorkspaceEditOriginGuard {
-  const documents: readonly WorkspaceTextDocumentProvenance[] = workspace.documents.map(
-    (document) => ({
-      textSnapshot: document.textSnapshot,
-      uri: document.uri,
-      version: document.version,
-    }),
+  const documents: readonly WorkspaceTextDocumentProvenance[] = Object.freeze(
+    workspace.documents.map((document) =>
+      Object.freeze({
+        textSnapshot: document.textSnapshot,
+        uri: document.uri,
+        version: document.version,
+      }),
+    ),
   )
   const documentsByUri = new Map(documents.map((document) => [document.uri, document]))
 
-  return {
+  return Object.freeze({
     documents,
-    isCurrent(uri) {
+    isCurrent(uri: string) {
       const captured = documentsByUri.get(uri)
       if (!captured) return false
 
@@ -532,7 +532,7 @@ export function captureWorkspaceEditOriginGuard(workspace: LspWorkspace): Worksp
         current.textSnapshot === captured.textSnapshot
       )
     },
-  }
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

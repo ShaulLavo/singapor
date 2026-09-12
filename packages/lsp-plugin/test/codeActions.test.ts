@@ -5,6 +5,7 @@ import {
   readonlySafeEditorCommandPacks,
 } from '@singapor/core/editor'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { LspWorkspace } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { codeActionAutoTriggerRange, preferredQuickFix } from '../src/codeActions'
@@ -15,6 +16,7 @@ import {
   singleLineRange,
   type ConnectedEditor,
 } from './connectedEditor'
+import { syncedDocument } from './syncedDocument'
 
 const CODE_ACTION_ONLY_CAPABILITY: lsp.ServerCapabilities = { codeActionProvider: true }
 const RESOLVING_CAPABILITY: lsp.ServerCapabilities = {
@@ -318,6 +320,80 @@ describe('editor.action.autoFix', () => {
 
     expect(editor.applyEdits).not.toHaveBeenCalled()
     expect(editor.workspaceEditRequests()).toHaveLength(1)
+  })
+
+  it.each(['initial-response', 'before-resolve', 'resolve-response'])(
+    'rejects secondary-document drift at %s without dispatching stale edits',
+    async (stage) => {
+      let workspace: LspWorkspace | undefined
+      const editor = await connectedEditor('improt fs', 3, {
+        capabilities: RESOLVING_CAPABILITY,
+        onConnectionCreated: (connection) => {
+          workspace = connection.workspace
+        },
+      })
+      const secondaryUri = 'file:///src/other.ts'
+      const secondary = syncedDocument(workspace, secondaryUri, 'improt path')
+      const edit = {
+        changes: { [secondaryUri]: [{ newText: 'import', range: singleLineRange(0, 6) }] },
+      }
+      const action = spellingFix('Fix both imports', {
+        data: { fixId: 9 },
+        edit: stage === 'initial-response' ? edit : undefined,
+      })
+      editor.moveCaret(3)
+      vi.advanceTimersByTime(250)
+      await flushPromises()
+      if (stage === 'initial-response') secondary.replace('const newer = 1')
+      editor.answerCodeAction([action])
+      await flushPromises()
+      if (stage === 'before-resolve') secondary.replace('const newer = 1')
+
+      expect(editor.runCommand('editor.action.autoFix')).toBe(true)
+      if (stage === 'resolve-response') secondary.replace('const newer = 1')
+      if (stage !== 'initial-response') editor.answerCodeActionResolve({ ...action, edit })
+      await flushPromises()
+
+      expect(editor.workspaceEditRequests()).toHaveLength(0)
+      expect(editor.applyEdits).not.toHaveBeenCalled()
+      expect(workspace?.getDocument(secondaryUri)?.textSnapshot.materializeFullText()).toBe(
+        'const newer = 1',
+      )
+    },
+  )
+
+  it('keeps unrelated synchronized drift out of a lazy action guard decision', async () => {
+    let workspace: LspWorkspace | undefined
+    const editor = await connectedEditor('improt fs', 3, {
+      capabilities: RESOLVING_CAPABILITY,
+      onConnectionCreated: (connection) => {
+        workspace = connection.workspace
+      },
+    })
+    const unrelated = syncedDocument(workspace, 'file:///src/unrelated.ts', 'const value = 1')
+    const lazy = spellingFix('Fix import', { data: { fixId: 1 }, edit: undefined })
+    await settledActions(editor, [lazy])
+    const unknownUri = 'file:///src/opened-later.ts'
+    syncedDocument(workspace, unknownUri, 'improt path')
+    unrelated.replace('const value = 2')
+
+    expect(editor.runCommand('editor.action.autoFix')).toBe(true)
+    editor.answerCodeActionResolve({
+      ...lazy,
+      edit: {
+        changes: {
+          [DOCUMENT_URI]: [{ newText: 'import', range: singleLineRange(0, 6) }],
+          [unknownUri]: [{ newText: 'import', range: singleLineRange(0, 6) }],
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(editor.workspaceEditRequests()).toHaveLength(1)
+    const request = editor.workspaceEditRequests()[0]
+    expect(request?.guard.documents.some((document) => document.uri === unknownUri)).toBe(false)
+    expect(request?.guard.isCurrent('file:///src/unrelated.ts')).toBe(false)
+    expect(request?.guard.isCurrent(DOCUMENT_URI)).toBe(true)
   })
 
   it('lets the chord through when the server offers no fix it can carry out', async () => {

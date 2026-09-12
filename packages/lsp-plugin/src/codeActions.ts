@@ -11,8 +11,9 @@ import {
   type LanguageServerCodeActionProvenance,
   type LanguageServerCodeActionRouter,
 } from './serverSet'
-import type { ApplyWorkspaceEditResult, WorkspaceTextDocumentProvenance } from './types'
+import type { ApplyWorkspaceEditResult } from './types'
 import { parseWorkspaceEdit } from './workspaceEdit'
+import { currentWorkspaceEditOrigin } from './workspaceEditProvenance'
 
 /**
  * Long enough that a held arrow key or a burst of typing asks once, short enough that the answer is
@@ -297,7 +298,7 @@ export class CodeActionController {
       this.options.onRequestError(new Error(parsed.error.reason))
       return
     }
-    const origin = currentProducerProvenance(provenance, active)
+    const origin = currentWorkspaceEditOrigin(provenance.guard, active, parsed.value)
     if (!origin) return
     if (signal.aborted) return
 
@@ -373,17 +374,6 @@ function diagnosticsOverlapping(
 
 function isWhitespace(character: string | undefined): boolean {
   return character !== undefined && /\s/.test(character)
-}
-
-function currentProducerProvenance(
-  provenance: LanguageServerCodeActionProvenance,
-  active: ActiveDocument,
-): WorkspaceTextDocumentProvenance | null {
-  const origin = provenance.guard.documents.find((document) => document.uri === active.uri)
-  if (!origin) return null
-  if (origin.textSnapshot !== active.textSnapshot) return null
-  if (!provenance.guard.isCurrent(active.uri)) return null
-  return origin
 }
 
 function isAbortError(error: unknown): boolean {

@@ -41,6 +41,7 @@ import {
 } from './semanticTokens'
 import { createRenameWidgetController, type RenameWidgetController } from './renameWidget'
 import { parseWorkspaceEdit } from './workspaceEdit'
+import { currentWorkspaceEditOrigin } from './workspaceEditProvenance'
 import { wordRangeAtOffset } from '@singapor/core/internal'
 import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
 import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
@@ -81,7 +82,6 @@ import type {
   LanguageServerReferencesResult,
   LanguageServerStatus,
   WorkspaceEditOriginGuard,
-  WorkspaceTextDocumentProvenance,
 } from './types'
 // Re-exported so `@singapor/lsp-plugin` keeps handing this out from where it always did; it is
 // defined in `types.ts` because the narrow factory's options need it and a shared vocabulary module
@@ -790,6 +790,7 @@ class LanguageServerContribution implements EditorViewContribution {
       if (nextName === null || nextName === currentName) return
       if (!this.renameIsCurrent(active, abort)) return
 
+      const guard = captureWorkspaceEditOriginGuard(owner.connection.workspace)
       const edit = await this.servers.requestSingle(
         owner,
         'textDocument/rename',
@@ -801,7 +802,6 @@ class LanguageServerContribution implements EditorViewContribution {
         { signal: abort.signal },
         null as unknown,
       )
-      const guard = captureWorkspaceEditOriginGuard(owner.connection.workspace)
       if (edit === null) return
       if (!this.renameIsCurrent(active, abort)) return
 
@@ -903,7 +903,7 @@ class LanguageServerContribution implements EditorViewContribution {
       )
       return
     }
-    const origin = currentRenameProducerProvenance(request.guard, request.active)
+    const origin = currentWorkspaceEditOrigin(request.guard, request.active, parsed.value)
     if (!origin) return
     if (request.signal.aborted) return
 
@@ -1025,17 +1025,6 @@ function renameTarget(
   const currentName = text.slice(range.start, range.end)
   if (currentName.length === 0) return null
   return { currentName, range }
-}
-
-function currentRenameProducerProvenance(
-  guard: WorkspaceEditOriginGuard,
-  active: ActiveDocument,
-): WorkspaceTextDocumentProvenance | null {
-  const origin = guard.documents.find((document) => document.uri === active.uri)
-  if (!origin) return null
-  if (origin.textSnapshot !== active.textSnapshot) return null
-  if (!guard.isCurrent(active.uri)) return null
-  return origin
 }
 
 function resolveAdapterOptions(

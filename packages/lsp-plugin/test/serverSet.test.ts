@@ -197,7 +197,7 @@ describe('LanguageServerSet', () => {
     expect(second.connection.client.request).toHaveBeenCalledTimes(1)
   })
 
-  it('captures each code-action guard when its owning lane responds', async () => {
+  it('captures each code-action guard before its owning lane request', async () => {
     const fastAnswer = deferred<lsp.CodeAction[]>()
     const slowAnswer = deferred<lsp.CodeAction[]>()
     const fastCaptured = deferred<void>()
@@ -242,8 +242,48 @@ describe('LanguageServerSet', () => {
     const slowGuard = servers.provenanceOf(slowAction)?.guard
     expect(fastGuard?.documents[0]).toMatchObject({ uri: 'file:///src/index.ts', version: 0 })
     expect(fastGuard?.isCurrent('file:///src/index.ts')).toBe(false)
-    expect(slowGuard?.documents[0]).toMatchObject({ uri: 'file:///src/index.ts', version: 1 })
-    expect(slowGuard?.isCurrent('file:///src/index.ts')).toBe(true)
+    expect(slowGuard?.documents[0]).toMatchObject({ uri: 'file:///src/index.ts', version: 0 })
+    expect(slowGuard?.documents[0]?.textSnapshot).toBe(initialSnapshot)
+    expect(slowGuard?.isCurrent('file:///src/index.ts')).toBe(false)
+  })
+
+  it('preserves the single-lane request catalog through delayed response and lazy resolve', async () => {
+    const answer = deferred<lsp.CodeAction[]>()
+    const resolved = deferred<lsp.CodeAction>()
+    const action = { data: { fixId: 1 }, title: 'lazy' }
+    const lane = fakeLane(
+      'single',
+      { codeActions: 0 },
+      { codeActionProvider: { resolveProvider: true } },
+      {
+        'textDocument/codeAction': () => answer.promise,
+        'codeAction/resolve': () => resolved.promise,
+      },
+    )
+    const sourceSegment = {}
+    const initialSnapshot = createStringTextSnapshot('const value = 1')
+    openWorkspaceDocument(lane.connection.workspace, initialSnapshot, sourceSegment)
+    const servers = new LanguageServerSet([lane])
+
+    const pending = servers.request<lsp.CodeAction[]>('textDocument/codeAction', {})
+    updateWorkspaceDocument(
+      lane.connection.workspace,
+      createStringTextSnapshot('const value = 2'),
+      sourceSegment,
+    )
+    answer.resolve([action])
+    await pending
+    const originalGuard = servers.provenanceOf(action)?.guard
+    expect(originalGuard?.documents[0]?.textSnapshot).toBe(initialSnapshot)
+    expect(originalGuard?.isCurrent('file:///src/index.ts')).toBe(false)
+
+    const resolving = servers.resolveOwnedCodeAction(action, {})
+    const resolvedAction = { ...action, edit: { changes: {} } }
+    resolved.resolve(resolvedAction)
+    const owned = await resolving
+    expect(owned?.guard).toBe(originalGuard)
+    expect(servers.provenanceOf(resolvedAction)?.guard).toBe(originalGuard)
+    expect(owned?.guard.isCurrent('file:///src/index.ts')).toBe(false)
   })
 
   it('registers one view, command, and edit contribution for several lanes', () => {

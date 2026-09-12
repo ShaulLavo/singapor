@@ -1,5 +1,6 @@
 import type { TextSnapshot } from '../documentTextSnapshot'
 import type { EditorToken, TextEdit } from '../tokens'
+import { firstBatchChangeEndingAtOrAfter, type TextEditBatch } from '../textEditBatch'
 import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
 import {
   appendEditorTokenIndexEntry,
@@ -50,6 +51,58 @@ export function projectTokensThroughEdit(
 
   recordTokenProjectionPath('scan', tokens, 0, tokens.length)
   return scanProjectTokensThroughEdit(tokens, edit, previousText, delta, lineStructureChanged)
+}
+
+export function projectTokensThroughEdits(
+  tokens: readonly EditorToken[],
+  batch: TextEditBatch,
+): readonly EditorToken[] {
+  if (tokens.length === 0 || batch.changes.length === 0) return tokens
+  const edits = batch.changes.map((change) => ({
+    from: change.from,
+    to: change.to,
+    text: batch.after.readRange(change.afterFrom, change.afterTo),
+  }))
+  const builder = createTokenProjectionBuilder()
+  for (const token of tokens) {
+    const projected = projectTokenThroughBatch(token, batch, edits)
+    if (isRenderableToken(projected)) appendBuiltToken(builder, projected)
+  }
+  recordTokenProjectionPath('scan', tokens, 0, tokens.length, undefined, {
+    editCount: batch.edits.length,
+    batch: true,
+  })
+  return finishTokenProjection(tokens, builder, false)
+}
+
+function projectTokenThroughBatch(
+  token: EditorToken,
+  batch: TextEditBatch,
+  edits: readonly TextEdit[],
+): EditorToken | null {
+  const first = firstBatchChangeEndingAtOrAfter(batch, token.start)
+  const change = batch.changes[first]
+  let startDelta = change
+    ? change.afterFrom - change.from
+    : batch.after.length - batch.before.length
+  let endDelta = startDelta
+  for (let index = first; index < batch.changes.length; index += 1) {
+    const next = batch.changes[index]!
+    if (next.from > token.end) break
+    const lineChanged = next.startRow !== next.endRow || next.afterStartRow !== next.afterEndRow
+    const projected = projectTokenThroughEdit(
+      token,
+      edits[index]!,
+      batch.before,
+      next.offsetDelta,
+      lineChanged,
+    )
+    if (!projected) return null
+    startDelta += projected.start - token.start
+    endDelta += projected.end - token.end
+  }
+  if (startDelta === 0 && endDelta === 0) return token
+  return { ...token, start: token.start + startDelta, end: token.end + endDelta }
 }
 
 export function tokenProjectionLiveRangeStatus(

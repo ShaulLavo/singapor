@@ -403,6 +403,8 @@ function activateProvider(
       value.createContribution({
         hasDocument: () => true,
         materializeFullText: () => '',
+        getTextSnapshot: () => null,
+        getSelections: () => [],
         focusEditor: vi.fn(),
         applyEdits,
         startSnippetSession: (ranges) => snippetSessions.push(ranges),

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Editor } from '@singapor/core/editor'
+import { EditorSecondaryTextView } from '@singapor/core/secondary-views'
 import { setEditorSyntaxSessionFactory, setHighlightRegistry } from '@singapor/core/testing'
 import {
   createEmptySyntaxResult,
@@ -80,6 +81,9 @@ describe('markdown preview plugin', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     editor = new Editor(container, { plugins: [createMarkdownPreviewPlugin()] })
+    const view: unknown = Reflect.get(editor, 'view')
+    // happy-dom has no layout, so deliver the first visible viewport measurement explicitly.
+    if (view instanceof EditorSecondaryTextView) view.setScrollMetrics(0, 240, 640)
   })
 
   afterEach(() => {

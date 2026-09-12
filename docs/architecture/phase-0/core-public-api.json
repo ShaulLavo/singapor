@@ -928,6 +928,12 @@
         },
         {
           "kind": "type",
+          "name": "EditorSyntaxFoldingSupport",
+          "source": "packages/editor/src/public/syntax.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorSyntaxInjection",
           "source": "packages/editor/src/public/syntax.ts",
           "via": "packages/editor/src/index.ts"
@@ -1180,7 +1186,25 @@
         },
         {
           "kind": "type",
+          "name": "EditorVisiblePaintCapture",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorVisiblePaintChunkJSON",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorVisiblePaintLayer",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorVisiblePaintRectangle",
           "source": "packages/editor/src/public/extensions.ts",
           "via": "packages/editor/src/index.ts"
         },
@@ -1236,6 +1260,12 @@
           "kind": "type",
           "name": "HighlightRegistry",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "MaterializedInlineRow",
+          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1326,6 +1356,12 @@
           "kind": "type",
           "name": "PreparedDocumentTransactionSequence",
           "source": "packages/editor/src/public/document.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "RangeText",
+          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -1428,6 +1464,12 @@
           "kind": "type",
           "name": "SuspiciousCharacterRange",
           "source": "packages/editor/src/editor.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "type",
+          "name": "TextContent",
+          "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
         },
         {
@@ -2182,14 +2224,98 @@
         },
         {
           "kind": "type",
+          "name": "PieceInspectionNode",
+          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PieceInspectionOptions",
+          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PieceNodeChange",
+          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "type",
           "name": "PieceTableSnapshot",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PieceTreeComparison",
+          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PieceTreeInspection",
+          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PieceTreeIssue",
+          "source": "packages/editor/src/pieceTable/inspection.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PieceTreeIssueKind",
+          "source": "packages/editor/src/pieceTable/inspection.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PieceTreeValidation",
+          "source": "packages/editor/src/pieceTable/inspection.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createPieceTreeInspectionSession",
+          "source": "packages/editor/src/pieceTable/inspectionSession.ts",
           "via": "packages/editor/src/debug.ts"
         },
         {
           "kind": "unknown",
           "name": "debugPieceTable",
           "source": "packages/editor/src/pieceTable/index.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "formatPieceInspectionNode",
+          "source": "packages/editor/src/pieceTable/inspectionFormat.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "formatPieceTree",
+          "source": "packages/editor/src/pieceTable/inspectionFormat.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "formatPieceTreeInspection",
+          "source": "packages/editor/src/pieceTable/inspectionFormat.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "getPieceTreeSnapshot",
+          "source": "packages/editor/src/documentTextSnapshot.ts",
+          "via": "packages/editor/src/debug.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "validatePieceTreeInvariants",
+          "source": "packages/editor/src/pieceTable/inspection.ts",
           "via": "packages/editor/src/debug.ts"
         }
       ],
@@ -3616,7 +3742,25 @@
         },
         {
           "kind": "type",
+          "name": "EditorVisiblePaintCapture",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorVisiblePaintChunkJSON",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorVisiblePaintLayer",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/editor.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorVisiblePaintRectangle",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/editor.ts"
         },
@@ -4462,7 +4606,25 @@
         },
         {
           "kind": "type",
+          "name": "EditorVisiblePaintCapture",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorVisiblePaintChunkJSON",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorVisiblePaintLayer",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorVisiblePaintRectangle",
           "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
@@ -4882,6 +5044,228 @@
       "exports": [
         {
           "kind": "type",
+          "name": "ChordOutcome",
+          "source": "packages/editor/src/keymap/types.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorCommandPack",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorKeyBinding",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorKeyCondition",
+          "source": "packages/editor/src/keymap/conditions.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorKeymapContext",
+          "source": "packages/editor/src/keymap/conditions.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorKeymapLayer",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorKeymapLayerSource",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorKeymapOptions",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "KeyChord",
+          "source": "packages/editor/src/keymap/types.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "KeymapBinding",
+          "source": "packages/editor/src/keymap/types.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "KeymapEdge",
+          "source": "packages/editor/src/keymap/trie.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "KeymapNode",
+          "source": "packages/editor/src/keymap/trie.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "KeymapPlatform",
+          "source": "packages/editor/src/keymap/types.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "KeymapRuntime",
+          "source": "packages/editor/src/keymap/types.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "KeymapRuntimeOptions",
+          "source": "packages/editor/src/keymap/types.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "KeymapSequenceEvent",
+          "source": "packages/editor/src/keymap/types.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "type",
+          "name": "PendingChordLabel",
+          "source": "packages/editor/src/keymap/types.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "buildKeymapTrie",
+          "source": "packages/editor/src/keymap/trie.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "createKeymapRuntime",
+          "source": "packages/editor/src/keymap/runtime.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "defaultEditorCommandPacks",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "defaultEditorKeyBindings",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "defaultEditorKeymapLayers",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorCommandMutates",
+          "source": "packages/editor/src/keymap/conditions.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorCommandPackForCommand",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorKeyBindings",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorKeyBindingsFromLayers",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorKeyConditionMatches",
+          "source": "packages/editor/src/keymap/conditions.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorKeymapLayerForCommandPack",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorKeymapLayers",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorKeymapLayersForBindings",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "editorKeymapLayersForCommandPacks",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "filterEditorKeymapLayersByCommandPacks",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "presetEditorKeymapLayers",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "readonlySafeEditorCommandPacks",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "trieStep",
+          "source": "packages/editor/src/keymap/trie.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "vscodeEditorKeyBindings",
+          "source": "packages/editor/src/keymap/presets.ts",
+          "via": "packages/editor/src/public/keymap.ts"
+        }
+      ],
+      "source": "packages/editor/src/public/keymap.ts",
+      "specifier": "./keymap"
+    },
+    {
+      "exports": [
+        {
+          "kind": "type",
           "name": "EditorConsoleLoggingPluginOptions",
           "source": "packages/editor/src/logging/index.ts",
           "via": "packages/editor/src/logging/index.ts"
@@ -5142,6 +5526,24 @@
           "kind": "type",
           "name": "InlineRowSegment",
           "source": "packages/editor/src/displayTransforms.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "MaterializedInlineRow",
+          "source": "packages/editor/src/displayTransforms.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "RangeText",
+          "source": "packages/editor/src/textContent.ts",
+          "via": "packages/editor/src/public/rendering.ts"
+        },
+        {
+          "kind": "type",
+          "name": "TextContent",
+          "source": "packages/editor/src/textContent.ts",
           "via": "packages/editor/src/public/rendering.ts"
         },
         {
@@ -5716,6 +6118,12 @@
         {
           "kind": "type",
           "name": "EditorSyntaxError",
+          "source": "packages/editor/src/syntax/index.ts",
+          "via": "packages/editor/src/public/syntax.ts"
+        },
+        {
+          "kind": "type",
+          "name": "EditorSyntaxFoldingSupport",
           "source": "packages/editor/src/syntax/index.ts",
           "via": "packages/editor/src/public/syntax.ts"
         },

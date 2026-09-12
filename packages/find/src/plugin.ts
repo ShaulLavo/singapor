@@ -286,6 +286,8 @@ class EditorFindEditContribution implements EditorEditContribution {
 
   public constructor(context: EditorEditContributionContext, controller: EditorFindController) {
     this.registration = controller.attachEditHost({
+      textSnapshot: () => context.getTextSnapshot(),
+      getSelections: () => findSelections(context.getSelections()),
       applyEdits: (edits, timingName, selection) =>
         context.applyEdits(edits, timingName, selection),
     })
@@ -320,6 +322,7 @@ function createFindHost(
   return {
     hasDocument: () => context.hasDocument(),
     textSource: () => textSource(getSnapshot()),
+    hasTextSnapshot: (snapshot) => getSnapshot().textSnapshot === snapshot,
     trackRanges: (ranges) => context.trackRanges?.(ranges) ?? fixedFindRanges(ranges),
     trackPaintedRanges,
     getSelections: () => findSelections(getSnapshot().selections),

@@ -27,19 +27,19 @@ consumers that need a dense source index; painting and geometry do not call it.
 
 ### Lookup and materialization
 
-| Method | Result |
-| --- | --- |
-| `rowCount` | Exact vertical row count; uniform row height remains the geometry rule. |
-| `getRowMetrics(index)` | Source range, columns, and row metadata without reading row text. |
-| `rowForOffset(offset, bias)` | Display row containing a source offset, with wrap-boundary bias. |
-| `rowForBufferRow(row)` / `bufferRowForRow(row)` | Source/display row mapping through folds and injections. |
-| `nextDocumentRow(index, step)` | Adjacent document row, skipping injected runs. |
-| `getRow(index)` | Row content handle, cached for painting or an explicit geometry query. |
-| `getRowTextWindow(index, start, end)` | A requested display-text slice. |
-| `materializeWindow(start, end)` | Rows for the requested viewport window, with the end excluded. |
-| `retainWindow(start, end)` | Eviction outside the current viewport and overscan, without reading text. |
-| `update({ before, after, edits })` | One final revision from normalized edits in the common pre-edit space. |
-| `reconfigure(input)` | Local transform changes, or an explicit reset for a replacement snapshot. |
+| Method                                          | Result                                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
+| `rowCount`                                      | Exact vertical row count; uniform row height remains the geometry rule.   |
+| `getRowMetrics(index)`                          | Source range, columns, and row metadata without reading row text.         |
+| `rowForOffset(offset, bias)`                    | Display row containing a source offset, with wrap-boundary bias.          |
+| `rowForBufferRow(row)` / `bufferRowForRow(row)` | Source/display row mapping through folds and injections.                  |
+| `nextDocumentRow(index, step)`                  | Adjacent document row, skipping injected runs.                            |
+| `getRow(index)`                                 | Row content handle, cached for painting or an explicit geometry query.    |
+| `getRowTextWindow(index, start, end)`           | A requested display-text slice.                                           |
+| `materializeWindow(start, end)`                 | Rows for the requested viewport window, with the end excluded.            |
+| `retainWindow(start, end)`                      | Eviction outside the current viewport and overscan, without reading text. |
+| `update({ before, after, edits })`              | One final revision from normalized edits in the common pre-edit space.    |
+| `reconfigure(input)`                            | Local transform changes, or an explicit reset for a replacement snapshot. |
 
 The row cache retains at most 256 rows and 1 MiB of row strings. Scrolling evicts the previous
 window. A zero-height viewport clears the cache and does not materialize rows. Disposal releases
@@ -61,7 +61,8 @@ without assembling the whole line. The old eager row algorithm lives only in
 ### Invalidation and remaining global work
 
 Ordinary rendering forwards document snapshots into the view. Single edits use the same projection
-transition contract as batches. E032 owns session delivery of every edit in a batch. An already
+transition contract as batches. [E032 batch rendering](../performance/e032-edit-batches.md)
+delivers every applied edit in one original-to-final snapshot transition. An already
 adopted session target is a no-op; a view that missed the transaction's source revision resets from
 the immutable target rather than applying an edit in the wrong coordinate space.
 

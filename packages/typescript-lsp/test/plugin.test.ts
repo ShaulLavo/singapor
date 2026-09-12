@@ -1534,6 +1534,7 @@ function editContributionContext(
     hasDocument: () => true,
     materializeFullText: () => '',
     getTextSnapshot: () => null,
+    getSelections: () => [],
     focusEditor: vi.fn(),
     applyEdits: options.applyEdits ?? vi.fn(),
     registerFeature: (id, feature) => {

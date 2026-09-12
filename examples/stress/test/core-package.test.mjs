@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resolveConfig } from 'vite'
@@ -20,7 +21,7 @@ async function put(path, content) {
 }
 
 beforeEach(async () => {
-  directory = await mkdtemp('/work/tmp/editor-stress-core-test-')
+  directory = await mkdtemp(resolve(tmpdir(), 'editor-stress-core-test-'))
   coreDirectory = resolve(directory, 'packages/editor')
   await put(
     resolve(coreDirectory, 'package.json'),
@@ -32,7 +33,9 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  if (!directory) return
   await rm(directory, { recursive: true, force: true })
+  directory = undefined
 })
 
 describe('benchmark core package selection', () => {

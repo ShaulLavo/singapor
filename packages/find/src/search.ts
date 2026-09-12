@@ -3,6 +3,7 @@ import {
   compareTextOffsetRanges,
   isWholeWordRange,
   type TextOffsetRange,
+  type TextSnapshot,
 } from '@singapor/core/document'
 
 // Bounds the match set the widget counts and paints, so a pathological query
@@ -41,6 +42,19 @@ export type FindTextSource = {
   readonly length: number
   readRange(start: number, end: number): string
   readonly lineStartsView: FindLineStartsView
+}
+
+export function findTextSourceFromSnapshot(snapshot: TextSnapshot): FindTextSource {
+  return {
+    length: snapshot.length,
+    readRange: (start, end) => snapshot.readRange(start, end),
+    lineStartsView: {
+      length: snapshot.lineCount,
+      at: (index) =>
+        index < 0 || index >= snapshot.lineCount ? undefined : snapshot.lineStart(index),
+      indexForOffset: (offset) => snapshot.lineAt(offset),
+    },
+  }
 }
 
 export type FindQuery = {
@@ -119,40 +133,6 @@ export function arrayFindLineStartsView(lineStarts: readonly number[]): FindLine
 export function findLineRange(source: FindTextSource, offset: number): FindRange {
   const index = source.lineStartsView.indexForOffset(offset)
   return { start: source.lineStartsView.at(index) ?? 0, end: lineEndAt(source, index) }
-}
-
-export function nextMatchAfter(
-  matches: readonly FindMatch[],
-  offset: number,
-  loop: boolean,
-  escapeEmptyMatchAtOffset = false,
-): FindMatch | null {
-  if (matches.length === 0) return null
-
-  const found = indexAtOrAfter(matches, offset)
-  if (found === -1) return loop ? (matches[0] ?? null) : null
-
-  const index = escapesEmptyMatch(matches[found]!, offset, escapeEmptyMatchAtOffset)
-    ? found + 1
-    : found
-  return matches[index] ?? (loop ? (matches[0] ?? null) : null)
-}
-
-export function previousMatchBefore(
-  matches: readonly FindMatch[],
-  offset: number,
-  loop: boolean,
-  escapeEmptyMatchAtOffset = false,
-): FindMatch | null {
-  if (matches.length === 0) return null
-
-  const found = indexAtOrBefore(matches, offset)
-  if (found === -1) return loop ? (matches.at(-1) ?? null) : null
-
-  const index = escapesEmptyMatch(matches[found]!, offset, escapeEmptyMatchAtOffset)
-    ? found - 1
-    : found
-  return matches[index] ?? (loop ? (matches.at(-1) ?? null) : null)
 }
 
 /**
@@ -239,22 +219,6 @@ function lineEndAt(source: FindTextSource, index: number): number {
   return nextLineStart === undefined ? source.length : nextLineStart - 1
 }
 
-function indexAtOrAfter(matches: readonly FindMatch[], offset: number): number {
-  return matches.findIndex((match) => match.start >= offset)
-}
-
-function indexAtOrBefore(matches: readonly FindMatch[], offset: number): number {
-  for (let index = matches.length - 1; index >= 0; index -= 1) {
-    if (matches[index]!.end <= offset) return index
-  }
-
-  return -1
-}
-
-// A zero-width match sitting exactly on the cursor answers the search again on
-// every press, so `^`, `$`, `\b` and lookaheads would pin navigation there
-// forever. Stepping to the neighbouring entry escapes it without re-probing the
-// document, and without having to guess whether the pattern is anchored.
 function escapesEmptyMatch(match: FindMatch, offset: number, escape: boolean): boolean {
   return escape && match.start === match.end && match.start === offset
 }

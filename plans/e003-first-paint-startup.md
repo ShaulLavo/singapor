@@ -23,7 +23,7 @@ existing guarantee that stale prepared data cannot become current document truth
 - [SyntaxController](../packages/editor/src/editor/syntaxController.ts) owns structural and
   highlighter sessions independently.
 - [Prepared-document tests](../packages/editor/test/preparedDocument.test.ts) and
-  [Platform's visible-paint test](../../platform/apps/web/src/features/workbench/tests/editor-visible-snapshot.browser.tsx)
+  [Platform's prepared-open tests](../../platform/apps/web/src/features/editor/tests/prepared-open.browser.tsx)
   protect existing adoption and visual handoff behavior.
 
 The old wishlist predates these contracts. Profile what still blocks the current constructor and

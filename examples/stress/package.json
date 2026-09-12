@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "vite build",
     "bench": "node run.mjs",
     "bench:hidden": "node hidden.mjs",
     "bench:first-paint": "node first-paint.mjs",

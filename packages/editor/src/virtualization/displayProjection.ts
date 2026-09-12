@@ -9,6 +9,7 @@ import { updateFoldMapForEdit } from '../foldMap'
 import { updateInlineMapForEdit } from '../inlineMap'
 import { measureString, TextMeasurements } from '../textMeasurements'
 import { RangeText, type TextContent } from '../textContent'
+import { createTextEditBatch, mapTextEditBatchOffset, type TextEditBatch } from '../textEditBatch'
 import {
   buildContext,
   buildSpan,
@@ -54,6 +55,7 @@ const MAX_CACHED_ROWS = 256
 const MAX_CACHED_TEXT_BYTES = 1024 * 1024
 
 type CachedRow = { readonly row: DisplayRow; readonly bytes: number }
+type ProjectionTransition = DisplayProjectionTransition | TextEditBatch
 
 export class DisplayProjection {
   private context: BuildContext
@@ -284,11 +286,9 @@ export class DisplayProjection {
     this.replaceRanges(context, ranges)
   }
 
-  update(
-    transition: DisplayProjectionTransition,
-    input: Partial<DisplayProjectionConfig> = {},
-  ): void {
-    transition = { ...transition, edits: transition.edits.toSorted((a, b) => a.from - b.from) }
+  update(transition: ProjectionTransition, input: Partial<DisplayProjectionConfig> = {}): void {
+    if (!('changes' in transition) && transition.edits.length > 1)
+      transition = createTextEditBatch(transition.before, transition.after, transition.edits)
     const config = validConfig(
       { ...updatedMaps(this.config, transition), ...input },
       transition.after,
@@ -481,7 +481,7 @@ function globalMetricsChanged(
 function changedSparseRanges(
   before: BuildContext,
   after: BuildContext,
-  transition?: DisplayProjectionTransition,
+  transition?: ProjectionTransition,
 ): SourceLineRange[] {
   if (
     !transition &&
@@ -537,10 +537,7 @@ function sameObjects<T extends object>(before: readonly T[], after: readonly T[]
   })
 }
 
-function mapLineRange(
-  range: SourceLineRange,
-  transition?: DisplayProjectionTransition,
-): SourceLineRange {
+function mapLineRange(range: SourceLineRange, transition?: ProjectionTransition): SourceLineRange {
   if (!transition) return range
   const { before, after } = transition
   return {
@@ -554,7 +551,7 @@ function mapLineRange(
 
 function updatedMaps(
   config: DisplayProjectionConfig,
-  transition: DisplayProjectionTransition,
+  transition: ProjectionTransition,
 ): DisplayProjectionConfig {
   const snapshot = getPieceTreeSnapshot(transition.after)
   const edit = transition.edits[0]
@@ -573,7 +570,7 @@ type EditLineRange = {
   readonly newEnd: number
 }
 
-function editRanges(transition: DisplayProjectionTransition): EditLineRange[] {
+function editRanges(transition: ProjectionTransition): EditLineRange[] {
   const { before, after, edits } = transition
   const ranges = mergeLineRanges(
     edits.map((edit) => ({ start: before.lineAt(edit.from), end: before.lineAt(edit.to) + 1 })),
@@ -590,9 +587,11 @@ function editRanges(transition: DisplayProjectionTransition): EditLineRange[] {
 
 function mapOffset(
   offset: number,
-  transition: DisplayProjectionTransition,
+  transition: ProjectionTransition,
   bias: 'before' | 'after',
 ): number {
+  if ('changes' in transition) return mapTextEditBatchOffset(transition, offset, bias)
+
   let delta = 0
   for (const edit of transition.edits) {
     if (offset < edit.from || (offset === edit.from && bias === 'before')) break

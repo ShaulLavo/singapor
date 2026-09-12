@@ -720,6 +720,8 @@ export type EditorCapabilityContributionContext = {
 
 export type EditorEditContributionContext = EditorDocumentContributionContext &
   EditorCapabilityContributionContext & {
+    getTextSnapshot(): TextSnapshot | null
+    getSelections(): readonly EditorResolvedSelection[]
     focusEditor(): void
     applyEdits(
       edits: readonly TextEdit[],

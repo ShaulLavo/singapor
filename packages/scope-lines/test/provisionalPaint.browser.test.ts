@@ -1,27 +1,15 @@
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, expect, test } from 'vitest'
 import { Editor } from '@singapor/core/editor'
-import { VirtualizedTextView } from '@singapor/core/internal'
 import type { EditorHighlightResult, EditorPlugin } from '@singapor/core/extensions'
 import { createScopeLinesPlugin } from '../src/index'
-import scopeLinesStyles from '../src/style.css?raw'
+import '@singapor/core/style.css'
 
 const editors: Editor[] = []
 const elements: HTMLElement[] = []
 
-beforeEach(() => {
-  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
-  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(120)
-  const style = document.createElement('style')
-  style.textContent =
-    scopeLinesStyles + '.editor-scope-line { width: 1px; background-color: rgb(20, 30, 40); }'
-  document.head.append(style)
-  elements.push(style)
-})
-
 afterEach(() => {
   for (const editor of editors.splice(0)) editor.dispose()
   for (const element of elements.splice(0)) element.remove()
-  vi.restoreAllMocks()
 })
 
 test('native capture retains committed guide paint and replaces it synchronously with real guides', async () => {
@@ -87,7 +75,7 @@ test('late admission hides already mounted guides until authoritative takeover',
     .poll(() => restored.host.querySelectorAll('.editor-scope-line').length)
     .toBeGreaterThan(0)
   const root = restored.host.querySelector<HTMLElement>('.editor-scope-lines')!
-  expect(getComputedStyle(root).visibility).not.toBe('hidden')
+  expect(getComputedStyle(root).visibility).toBe('visible')
   restored.editor.setSnapshot(capture.paint, 'file-a')
   expect(restored.editor.getPresentationState()).toBe('provisional')
   expect(getComputedStyle(root).visibility).toBe('hidden')
@@ -97,13 +85,14 @@ test('late admission hides already mounted guides until authoritative takeover',
 
   resolve({ tokens: [] })
   await expect.poll(() => restored.editor.getPresentationState()).toBe('live')
-  expect(getComputedStyle(root).visibility).not.toBe('hidden')
+  expect(getComputedStyle(root).visibility).toBe('visible')
   expect(restored.host.querySelectorAll('[data-editor-saved-paint-layer]')).toHaveLength(0)
   expect(root.childElementCount).toBeGreaterThan(0)
 })
 
 function mount(plugins: readonly EditorPlugin[], snapshot: string | null = null) {
   const host = document.createElement('div')
+  host.style.cssText = 'display:flex;width:600px;height:120px'
   document.body.append(host)
   elements.push(host)
   const editor = new Editor(host, {
@@ -114,7 +103,5 @@ function mount(plugins: readonly EditorPlugin[], snapshot: string | null = null)
     snapshot,
   })
   editors.push(editor)
-  const view: unknown = Reflect.get(editor, 'view')
-  if (view instanceof VirtualizedTextView) view.setScrollMetrics(0, 120, 600)
   return { editor, host }
 }

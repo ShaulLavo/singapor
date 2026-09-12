@@ -12,6 +12,7 @@ import {
 import {
   foldRangesEqual,
   projectSyntaxFoldsThroughEdit,
+  projectSyntaxFoldsThroughEdits,
   rejectCrossingFoldRanges,
   type FoldRangeRejection,
 } from './folds'
@@ -32,7 +33,13 @@ import {
 import { LineStartsView } from '../virtualization/lineStartIndex'
 import { EditorSecondaryWorkScheduler } from './secondaryWorkScheduler'
 import { appendTiming, nowMs } from './timing'
-import { copyTokenProjectionMetadata, projectTokensThroughEdit } from './tokenProjection'
+import {
+  copyTokenProjectionMetadata,
+  projectTokensThroughEdit,
+  projectTokensThroughEdits,
+} from './tokenProjection'
+import { createTextEditBatch, type TextEditBatch } from '../textEditBatch'
+import { projectRowDecorationMapThroughEdits } from '../virtualization/rowDecorationProjection'
 import {
   beginEditorPerformanceBatch,
   beginEditorPerformanceCommand,
@@ -368,6 +375,17 @@ export class Editor {
   private tabMovesFocus: boolean
   private readonly announcer: EditorAnnouncer
   private operation: EditorOperation | null = null
+  private operationFlushDepth = 0
+  private readonly publishedBufferSnapshots = new WeakSet<TextSnapshot>()
+  private readonly pendingBufferChangeOptions = new WeakMap<
+    TextSnapshot,
+    {
+      readonly change: DocumentSessionChange
+      readonly totalName: string
+      readonly totalStart: number
+      readonly options: SessionChangeOptions
+    }
+  >()
   private readonly cursorHistory = new CursorHistory()
   private cursorHistorySession: DocumentSession | null = null
   private cursorHistoryBefore: {
@@ -555,6 +573,7 @@ export class Editor {
       getEditorTheme: () => this.resolvedTheme(),
       materializeFullText: () => this.materializeFullText(),
       canEditDocument: () => this.canEditDocument(),
+      runInOperation: (run) => this.runInOperation(run),
       applySessionChange: (change, totalName, totalStart, options) =>
         this.applySessionChange(change, totalName, totalStart, options),
       notifyChangeWithTiming: (change) => this.notifyChangeWithTiming(change),
@@ -625,7 +644,11 @@ export class Editor {
       this.createInitialViewContributions(this.pluginHost.getViewContributionProviders()),
       () => this.createViewSnapshot(),
       (_contribution, phase, error) => this.logContributionFailure('view', phase, error),
-      () => !this.view.isProvisional,
+      () => {
+        if (this.view.isProvisional || this.view.isRenderingAtomically) return false
+        const session = editorBufferSession(this.session)
+        return !session || this.textSnapshot === session.getTextSnapshot()
+      },
     )
     this.pluginHost.setEvents({
       onPluginInstalled: (name, durationMs) =>
@@ -1190,25 +1213,31 @@ export class Editor {
   }
 
   syncText(text: string, options: EditorSetTextOptions = {}): void {
-    const documentMode = normalizeEditorDocumentMode(options.documentMode ?? this.documentMode)
-    const languageId = options.languageId ?? null
-    if (!this.session || documentMode !== this.documentMode || languageId !== this.languageId) {
-      this.setText(text, options)
-      return
-    }
-    if (this.materializeFullText() === text) return
+    this.runInOperation(() => {
+      const documentMode = normalizeEditorDocumentMode(options.documentMode ?? this.documentMode)
+      const languageId = options.languageId ?? null
+      if (!this.session || documentMode !== this.documentMode || languageId !== this.languageId) {
+        this.setText(text, options)
+        return
+      }
+      const currentText = this.session.materializeFullText()
+      if (currentText === text) return
 
-    const scrollPosition = preservedScrollPosition(this.getScrollPosition(), options.scrollPosition)
-    const change = this.session.applyEdits([syncTextEdit(this.text, text)], {
-      history: 'skip',
-    })
-    if (change.kind === 'none') return
+      const scrollPosition = preservedScrollPosition(
+        this.getScrollPosition(),
+        options.scrollPosition,
+      )
+      const change = this.session.applyEdits([syncTextEdit(currentText, text)], {
+        history: 'skip',
+      })
+      if (change.kind === 'none') return
 
-    this.applySessionChange(change, 'editor.syncText', nowMs(), {
-      syncDomSelection: false,
+      this.applySessionChange(change, 'editor.syncText', nowMs(), {
+        syncDomSelection: false,
+      })
+      this.applyDocumentScrollPosition(scrollPosition)
+      this.lifecycleSummary.document.syncedTextCount += 1
     })
-    this.applyDocumentScrollPosition(scrollPosition)
-    this.lifecycleSummary.document.syncedTextCount += 1
   }
 
   /**
@@ -1242,20 +1271,22 @@ export class Editor {
   }
 
   openDocument(document: EditorOpenDocumentOptions): void {
-    // Content loads can resolve after teardown (e.g. a StrictMode-unmounted
-    // editor whose file fetch lands later). Opening then would start a syntax
-    // session nothing ever disposes, leaking a parse tree in the worker.
-    if (this.disposed) return
+    this.runDocumentReplacement(() => {
+      // Content loads can resolve after teardown (e.g. a StrictMode-unmounted
+      // editor whose file fetch lands later). Opening then would start a syntax
+      // session nothing ever disposes, leaking a parse tree in the worker.
+      if (this.disposed) return
 
-    this.detachedEditChain.rotate()
-    const documentVersion = this.resetOwnedDocument(document, {
-      documentId: document.documentId ?? null,
-      persistentIdentity: true,
-      scrollPosition: document.scrollPosition,
+      this.detachedEditChain.rotate()
+      const documentVersion = this.resetOwnedDocument(document, {
+        documentId: document.documentId ?? null,
+        persistentIdentity: true,
+        scrollPosition: document.scrollPosition,
+      })
+      this.notifyChange(null)
+      this.refreshSyntax(documentVersion, null)
+      this.lifecycleSummary.document.openedCount += 1
     })
-    this.notifyChange(null)
-    this.refreshSyntax(documentVersion, null)
-    this.lifecycleSummary.document.openedCount += 1
   }
 
   private ensureAnonymousSession(): void {
@@ -1306,7 +1337,7 @@ export class Editor {
   }
 
   getTextSnapshot(): TextSnapshot {
-    return this.textSnapshot
+    return this.session?.getTextSnapshot() ?? this.textSnapshot
   }
 
   getMergeConflicts(): readonly MergeConflictRegion[] {
@@ -1606,65 +1637,67 @@ export class Editor {
   }
 
   attachSession(session: DocumentSession, options: EditorSessionOptions = {}): void {
-    this.preparingDocument = true
-    const savedScroll = this.pendingDocumentScroll ?? this.view.provisionalScrollPosition
-    if (!options.scrollPosition && savedScroll)
-      options = { ...options, scrollPosition: savedScroll }
-    const replacingDocument = this.session !== null
-    this.disposeBufferSubscriptions()
-    const attachment = this.document.attachSession(session, options)
-    if (this.view.isProvisional) this.snapshotGeneration = attachment.documentVersion
-    this.subscribeToBufferSession(session)
-    const syntaxDocument = {
-      documentId: attachment.internalDocumentId,
-      languageId: attachment.languageId,
-      textSnapshot: attachment.textSnapshot,
-      snapshot: attachment.session.getSnapshot(),
-    }
-    const prepared = options.preparedDocument
-      ? this.syntax.claimPreparedDocument(syntaxDocument, options.preparedDocument, {
-          configuredTabSize: this.configuredTabSize,
-          tabSizePolicy: this.options.tabSize === undefined ? 'detect-indentation' : 'fixed',
-          documentConfigurationTag: options.documentConfigurationTag ?? [],
-          highlighterConfigurationTag: options.highlighterConfigurationTag ?? [],
-          structuralConfigurationTag: options.structuralConfigurationTag ?? [],
-        })
-      : null
-    recordEditorPerformanceDiagnostic('editor.document.attach', {
-      prepared: prepared !== null,
-      structural: preparedTransferStage(prepared?.structural),
-      highlighter: preparedTransferStage(prepared?.highlighter),
-    })
-    this.syntax.startDocument(syntaxDocument, prepared)
-    this.lifecycleSummary.document.startedCount += 1
-    this.syncViewEditability()
-    if (prepared) this.adoptPreparedDocumentTabSize(prepared.tabSize)
-    else this.adoptDocumentTabSize(attachment.fullText)
-    // Asked for before the text lands so the replacement renders the restored viewport directly.
-    // Setting it afterwards drew the outgoing offset first and every row twice.
-    this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
-    if (prepared) {
-      this.view.runAtomicRender(() => {
-        this.renderPreparedDocument(attachment.fullText, attachment.textSnapshot, prepared)
-        this.syntax.adoptPreparedReadyResults(prepared)
+    this.runDocumentReplacement(() => {
+      this.preparingDocument = true
+      const savedScroll = this.pendingDocumentScroll ?? this.view.provisionalScrollPosition
+      if (!options.scrollPosition && savedScroll)
+        options = { ...options, scrollPosition: savedScroll }
+      const replacingDocument = this.session !== null
+      this.disposeBufferSubscriptions()
+      const attachment = this.document.attachSession(session, options)
+      if (this.view.isProvisional) this.snapshotGeneration = attachment.documentVersion
+      this.subscribeToBufferSession(session)
+      const syntaxDocument = {
+        documentId: attachment.internalDocumentId,
+        languageId: attachment.languageId,
+        textSnapshot: attachment.textSnapshot,
+        snapshot: attachment.session.getSnapshot(),
+      }
+      const prepared = options.preparedDocument
+        ? this.syntax.claimPreparedDocument(syntaxDocument, options.preparedDocument, {
+            configuredTabSize: this.configuredTabSize,
+            tabSizePolicy: this.options.tabSize === undefined ? 'detect-indentation' : 'fixed',
+            documentConfigurationTag: options.documentConfigurationTag ?? [],
+            highlighterConfigurationTag: options.highlighterConfigurationTag ?? [],
+            structuralConfigurationTag: options.structuralConfigurationTag ?? [],
+          })
+        : null
+      recordEditorPerformanceDiagnostic('editor.document.attach', {
+        prepared: prepared !== null,
+        structural: preparedTransferStage(prepared?.structural),
+        highlighter: preparedTransferStage(prepared?.highlighter),
       })
-    } else {
-      this.renderContent(attachment.textSnapshot)
-    }
-    // A host handing over its own session is replacing the document just as much as opening one is.
-    if (replacingDocument) this.forgetOutgoingDocumentProjections()
-    // Still applied: it settles the horizontal offset, and clamps the vertical one against the
-    // rows that actually rendered. A match with the request above makes it a no-op.
-    this.applyDocumentScrollPosition(options.scrollPosition)
-    this.inputSelection.syncDomSelection()
-    if (prepared) this.notifyViewContributions('content', null)
-    this.notifyViewContributions('document', null)
-    this.preparingDocument = false
-    if (!this.commitSnapshotIfReady() && !this.view.isProvisional)
-      this.syntax.notifyBaseTextPainted()
-    this.notifyChange(null)
-    this.refreshSyntax(attachment.documentVersion, null)
-    this.lifecycleSummary.document.attachedCount += 1
+      this.syntax.startDocument(syntaxDocument, prepared)
+      this.lifecycleSummary.document.startedCount += 1
+      this.syncViewEditability()
+      if (prepared) this.adoptPreparedDocumentTabSize(prepared.tabSize)
+      else this.adoptDocumentTabSize(attachment.fullText)
+      // Asked for before the text lands so the replacement renders the restored viewport directly.
+      // Setting it afterwards drew the outgoing offset first and every row twice.
+      this.view.requestScrollTop(options.scrollPosition?.top ?? DOCUMENT_START_SCROLL_POSITION.top)
+      if (prepared) {
+        this.view.runAtomicRender(() => {
+          this.renderPreparedDocument(attachment.fullText, attachment.textSnapshot, prepared)
+          this.syntax.adoptPreparedReadyResults(prepared)
+        })
+      } else {
+        this.renderContent(attachment.textSnapshot)
+      }
+      // A host handing over its own session is replacing the document just as much as opening one is.
+      if (replacingDocument) this.forgetOutgoingDocumentProjections()
+      // Still applied: it settles the horizontal offset, and clamps the vertical one against the
+      // rows that actually rendered. A match with the request above makes it a no-op.
+      this.applyDocumentScrollPosition(options.scrollPosition)
+      this.inputSelection.syncDomSelection()
+      if (prepared) this.notifyViewContributions('content', null)
+      this.notifyViewContributions('document', null)
+      this.preparingDocument = false
+      if (!this.commitSnapshotIfReady() && !this.view.isProvisional)
+        this.syntax.notifyBaseTextPainted()
+      this.notifyChange(null)
+      this.refreshSyntax(attachment.documentVersion, null)
+      this.lifecycleSummary.document.attachedCount += 1
+    })
   }
 
   detachSession(): void {
@@ -1738,6 +1771,7 @@ export class Editor {
     const replacingDocument = this.session !== null
     this.disposeBufferSubscriptions()
     const attachment = this.document.resetOwnedDocument(document, options)
+    this.subscribeToBufferSession(attachment.session)
     if (this.view.isProvisional) this.snapshotGeneration = attachment.documentVersion
     this.syntax.startDocument({
       documentId: attachment.internalDocumentId,
@@ -2730,6 +2764,22 @@ export class Editor {
     return true
   }
 
+  private projectRowDecorationsThroughBatch(batch: TextEditBatch): boolean {
+    if (!batch.changes.some((change) => change.lineDelta !== 0)) return false
+
+    const projections = this.displayProjections.values('rowDecorations')
+    const source = this.currentDisplayProjectionSource()
+    for (const projection of projections) {
+      this.displayProjections.replaceValue(
+        'rowDecorations',
+        projection.owner,
+        projectRowDecorationMapThroughEdits(projection.value, batch),
+        { source, invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION },
+      )
+    }
+    return projections.length > 0
+  }
+
   private createViewContributionContext(container: HTMLElement): EditorViewContributionContext {
     return {
       container,
@@ -2841,6 +2891,7 @@ export class Editor {
       log: (event) => this.log(event),
       materializeFullText: () => this.materializeFullText(),
       getTextSnapshot: () => this.session?.getTextSnapshot() ?? null,
+      getSelections: () => this.inputSelection.resolveViewSelections(),
       registerFeature: (key, feature) => this.registerFeature(key, feature),
       focusEditor: () => this.focus(),
       applyEdits: (edits, timingName, selection) =>
@@ -2940,13 +2991,23 @@ export class Editor {
 
   private handleBufferChange(session: EditorBufferSession, event: EditorTextBufferChange): void {
     if (this.session !== session) return
-    if (event.origin === 'view' && event.sourceViewId === session.view.viewId) return
-
+    const pending = this.pendingBufferChangeOptions.get(event.change.textSnapshot)
     if (event.change.kind !== 'synchronize' && event.sourceViewId !== session.view.viewId) {
       session.view.acceptBufferSelections(markSelectionSetDirty(session.view.getSelections()))
     }
-    const change = { ...event.change, selections: session.view.getSelections() }
-    this.applySessionChange(change, 'editor.bufferChange', nowMs())
+    this.pendingBufferChangeOptions.delete(event.change.textSnapshot)
+    const change = {
+      ...event.change,
+      timings: pending?.change.timings ?? event.change.timings,
+      selections: session.view.getSelections(),
+    }
+    if (isTextSessionChange(change)) this.publishedBufferSnapshots.add(change.textSnapshot)
+    this.applyPublishedSessionChange(
+      change,
+      pending?.totalName ?? 'editor.bufferChange',
+      pending?.totalStart ?? nowMs(),
+      pending?.options ?? {},
+    )
   }
 
   private disposeBufferSubscriptions(): void {
@@ -3344,6 +3405,26 @@ export class Editor {
     totalStart = nowMs(),
     options: SessionChangeOptions = {},
   ): void {
+    if (editorBufferSession(this.session) && isTextSessionChange(change)) {
+      if (this.operation?.amend(change, totalName, totalStart, options)) return
+      if (this.publishedBufferSnapshots.has(change.textSnapshot)) return
+      this.pendingBufferChangeOptions.set(change.textSnapshot, {
+        change,
+        totalName,
+        totalStart,
+        options,
+      })
+      return
+    }
+    this.applyPublishedSessionChange(change, totalName, totalStart, options)
+  }
+
+  private applyPublishedSessionChange(
+    change: DocumentSessionChange,
+    totalName: string,
+    totalStart: number,
+    options: SessionChangeOptions,
+  ): void {
     const scope = this.beginPerformanceView()
     try {
       this.updateSessionView(change, totalName, totalStart, options)
@@ -3369,8 +3450,6 @@ export class Editor {
       this.syntax.projectCacheForChange(change)
       const renderStart = nowMs()
       measureEditorPerformance('editor.renderSessionChange', () => this.renderSessionChange(change))
-      // Rebuild suggestions against the new text before the flush synchronizes the DOM selection.
-      if (this.inputSelection.syncInlineSuggestion(change.snapshot)) this.refreshInlineMap()
       invalidateRowRectMeasurements()
       operation.record(
         appendTiming(change, 'editor.render', renderStart),
@@ -3411,11 +3490,18 @@ export class Editor {
     }
   }
 
+  private runDocumentReplacement<T>(run: () => T): T {
+    if (this.operationFlushDepth > 0) return this.runInOperation(run)
+    return run()
+  }
+
   private flushOperation(operation: EditorOperation): void {
     const scope = this.beginPerformanceView()
+    this.operationFlushDepth += 1
     try {
       this.flushViewOperation(operation)
     } finally {
+      this.operationFlushDepth -= 1
       endEditorPerformanceScope(scope)
     }
   }
@@ -3447,6 +3533,7 @@ export class Editor {
     for (const pending of flush.changes) this.decorations.applyEdits(pending.change.edits)
 
     let timedChange = flush.latest.change
+    if (this.inputSelection.syncInlineSuggestion(timedChange.snapshot)) this.refreshInlineMap()
     if (flush.revealOffset !== null) {
       const revealStart = nowMs()
       if (flush.revealAffinity) {
@@ -3464,19 +3551,7 @@ export class Editor {
       timedChange = appendTiming(timedChange, 'editor.syncDomSelection', selectionStart)
     }
     const finalChange = appendTiming(timedChange, flush.latest.totalName, flush.latest.totalStart)
-    // The notifications describe the pass; the hand-off below describes each
-    // change in it. Only the first can be coalesced.
-    const passChange = coalescedPassChange(flush, finalChange)
-    this.sessionOptions.onChange?.(passChange)
-    measureEditorPerformance('editor.notifyViewContributions', () =>
-      this.notifyViewContributions(flush.contributionKind, passChange),
-    )
-    measureEditorPerformance('editor.notifyChangeWithTiming', () =>
-      this.notifyChangeWithTiming(passChange),
-    )
-    // Syntax is reparsed from one change onto the previous one, so every change
-    // the pass made still has to be handed over, in the order it was made — only
-    // the notifications above describe a state, and only a state can be skipped.
+    // Queue syntax before listeners can commit the next document generation.
     for (const pending of flush.changes) {
       if (!this.isCurrentSecondaryDocument(documentVersion)) return
       const recorded = pending === flush.latest ? finalChange : pending.change
@@ -3489,6 +3564,14 @@ export class Editor {
         documentVersion,
       )
     }
+    const passChange = coalescedPassChange(flush, finalChange)
+    this.sessionOptions.onChange?.(passChange)
+    measureEditorPerformance('editor.notifyViewContributions', () =>
+      this.notifyViewContributions(flush.contributionKind, passChange),
+    )
+    measureEditorPerformance('editor.notifyChangeWithTiming', () =>
+      this.notifyChangeWithTiming(passChange),
+    )
     if (editorPerformanceDiagnosticsEnabled()) {
       recordEditorPerformanceDiagnostic('editor.view.updated', () => ({
         kind: passChange.kind,
@@ -3642,9 +3725,35 @@ export class Editor {
       return
     }
 
-    this.dropManualFolds()
-    this.clearSyntaxFolds()
+    if (edit) {
+      this.renderSessionBatch(
+        createTextEditBatch(this.textSnapshot, change.textSnapshot, change.edits),
+      )
+      return
+    }
+
     this.renderContent(change.textSnapshot)
+  }
+
+  private renderSessionBatch(batch: TextEditBatch): void {
+    const folds = projectSyntaxFoldsThroughEdits(this.syntaxFoldProjection(), batch)
+    const manualFolds = projectSyntaxFoldsThroughEdits(this.manualFolds, batch)
+    const tokens = measureEditorPerformance('editor.projectTokens', () =>
+      projectTokensThroughEdits(this.tokens, batch),
+    )
+    this.view.runAtomicRender(() => {
+      this.document.setRenderedTextSnapshot(batch.after)
+      this.recordDetachedTextChange(batch.edits)
+      this.retagDisplayProjectionSources()
+      measureEditorPerformance('editor.view.applyEditBatch', () => this.view.applyEditBatch(batch))
+      this.syncInjectedTextRows()
+      if (manualFolds) this.manualFolds = manualFolds
+      this.applySyntaxFoldProjection(folds)
+      if (this.projectRowDecorationsThroughBatch(batch)) {
+        this.view.setRowDecorations(this.composedRowDecorations())
+      }
+      this.adoptTokens(tokens)
+    })
   }
 
   /**
@@ -4317,4 +4426,8 @@ function disposableOnce(dispose: () => void): EditorDisposable {
       dispose()
     },
   }
+}
+
+function isTextSessionChange(change: DocumentSessionChange): boolean {
+  return change.kind === 'edit' || change.kind === 'undo' || change.kind === 'redo'
 }

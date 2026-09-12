@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -1039,8 +1040,7 @@ describe('input latency calibration', () => {
 })
 
 it('CLI writes a reproducible calibration and returns nonzero for the delayed candidate', async () => {
-  await mkdir('/work/tmp', { recursive: true })
-  const directory = await mkdtemp('/work/tmp/editor-input-gate-test-')
+  const directory = await mkdtemp(join(tmpdir(), 'editor-input-gate-test-'))
   try {
     await checkCli(directory)
   } finally {

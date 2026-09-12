@@ -2,6 +2,7 @@ import {
   wordRangeAtOffset,
   type DocumentSessionChange,
   type TextEdit,
+  type TextSnapshot,
 } from '@singapor/core/document'
 import type { EditorSetSelectionOptions } from '@singapor/core/editor'
 import type {
@@ -21,8 +22,7 @@ import {
   findMatches,
   findNextMatchFrom,
   findPreviousMatchFrom,
-  nextMatchAfter,
-  previousMatchBefore,
+  findTextSourceFromSnapshot,
   type FindMatch,
   type FindMatchFromOptions,
   type FindMatchFromSearcher,
@@ -102,6 +102,7 @@ export type EditorFindHost = {
   // Ranges rather than a string, so nothing find does can cost a copy of the
   // document — the reason there is no full-text accessor here to reach for.
   textSource(): FindTextSource
+  hasTextSnapshot(snapshot: TextSnapshot): boolean
   // Followed wherever they end up, however far off screen: a scope decides where
   // Replace All rewrites, and one that stopped being followed would rewrite text
   // the user never marked.
@@ -132,6 +133,8 @@ export type EditorFindHost = {
 }
 
 export type EditorFindEditHost = {
+  textSnapshot(): TextSnapshot | null
+  getSelections(): readonly EditorFindResolvedSelection[]
   applyEdits(
     edits: readonly TextEdit[],
     timingName: string,
@@ -204,6 +207,7 @@ export class EditorFindController {
   private trackedMatches: FindTrackedRanges | null = null
   private currentMatch: FindMatch | null = null
   private replacing = false
+  private pendingResearch = false
 
   public constructor(options: EditorFindOptions = {}) {
     this.options = resolveFindOptions(options)
@@ -230,6 +234,7 @@ export class EditorFindController {
   }
 
   public dispose(): void {
+    this.pendingResearch = false
     this.scheduler.dispose()
     this.clearHighlights()
     this.listeners.clear()
@@ -258,6 +263,7 @@ export class EditorFindController {
     const host = this.host
     if (!this.state.revealed || !host) return false
 
+    this.pendingResearch = false
     this.state = { ...this.state, revealed: false, inSelection: false }
     this.scope = null
     this.trackedMatches = null
@@ -285,12 +291,9 @@ export class EditorFindController {
     if (!this.ensureFindReady('none')) return false
 
     const startOffset = this.primarySelection()?.startOffset ?? 0
-    if (this.matchesTruncated)
-      return this.selectMatch(
-        this.searchFrom(findPreviousMatchFrom, startOffset, { escapeEmptyMatchAtOffset: true }),
-      )
-
-    const match = previousMatchBefore(this.matches, startOffset, this.options.loop, true)
+    const match = this.searchFrom(findPreviousMatchFrom, startOffset, {
+      escapeEmptyMatchAtOffset: true,
+    })
     if (match && match.start > startOffset) this.host?.announce?.('Wrapped to the last match')
 
     return this.selectMatch(match)
@@ -298,17 +301,24 @@ export class EditorFindController {
 
   public replaceOne(): boolean {
     if (!this.ensureFindReady('replace')) return false
-    if (!this.editHost) return false
+    const editHost = this.editHost
+    if (!editHost) return false
 
     const selection = this.primarySelection()
     if (!selection) return false
+    const search = this.commandSearchTarget()
+    if (!search) return false
 
     // One scan, from the cursor, with the capture groups of the one match that
     // may be about to be rewritten: enumerating the document for them allocates
     // a capture array per match in it to use exactly one.
-    const match = this.searchFrom(findNextMatchFrom, selection.startOffset, {
-      captureMatches: true,
-    })
+    const match = findNextMatchFrom(
+      search.source,
+      this.state,
+      selection.startOffset,
+      search.scopes,
+      { captureMatches: true, loop: this.options.loop },
+    )
     if (!match) return false
     // Not on it yet, so this press is the one that selects it and the next one
     // replaces it.
@@ -324,19 +334,26 @@ export class EditorFindController {
       'input.findReplaceOne',
       { anchor: match.start + replaceText.length, head: match.start + replaceText.length },
     )
-    this.research(true)
+    this.selectNextReplacementMatch()
+    this.research(false)
     return true
   }
 
   public replaceAll(): boolean {
     if (!this.ensureFindReady('replace')) return false
-    if (!this.editHost) return false
+    const editHost = this.editHost
+    if (!editHost) return false
+    const search = this.commandSearchTarget()
+    if (!search) return false
 
     const pattern = this.replacePattern()
     // Deliberately not FIND_MATCHES_LIMIT: that cap exists to bound painting,
     // and applying it here would rewrite the first 19,999 matches and leave the
     // rest, silently.
-    const matches = this.findAll(
+    const matches = findMatches(
+      search.source,
+      this.state,
+      search.scopes,
       pattern.hasReplacementPatterns || this.state.preserveCase,
       FIND_REPLACE_ALL_LIMIT,
     )
@@ -362,7 +379,15 @@ export class EditorFindController {
     // Re-queried uncapped for the same reason Replace All is: FIND_MATCHES_LIMIT
     // bounds painting, and a cursor set that silently stopped at the paint cap
     // would let the next keystroke edit only part of what the user selected.
-    const matches = this.findAll(false, FIND_REPLACE_ALL_LIMIT)
+    const search = this.commandSearchTarget()
+    if (!search) return false
+    const matches = findMatches(
+      search.source,
+      this.state,
+      search.scopes,
+      false,
+      FIND_REPLACE_ALL_LIMIT,
+    )
     if (matches.length === 0) return false
 
     const selections = orderedMatchSelections(matches, this.primarySelection())
@@ -411,7 +436,7 @@ export class EditorFindController {
     const host = this.host
     if (!host) return false
 
-    const scopes = nonEmptySelectionRanges(host.getSelections())
+    const scopes = nonEmptySelectionRanges(this.commandSelections())
     if (scopes.length === 0) return false
 
     this.state = { ...this.state, inSelection: true }
@@ -453,18 +478,24 @@ export class EditorFindController {
     // answers with offsets of text the user never marked, and a search confined
     // to those is a Replace All rewriting inside a region nobody drew.
     if (kind === 'document') {
+      this.pendingResearch = false
       this.scope = null
       this.state = { ...this.state, inSelection: false }
       this.research(false)
       return
     }
 
+    if (this.pendingResearch) {
+      this.research(false)
+      return
+    }
     this.scheduleResearch()
   }
 
   private detachHost(host: EditorFindHost): void {
     if (this.host !== host) return
 
+    this.pendingResearch = false
     this.clearHighlights()
     this.host = null
     this.matchHighlightName = ''
@@ -482,6 +513,7 @@ export class EditorFindController {
   private detachEditHost(host: EditorFindEditHost): void {
     if (this.editHost !== host) return
 
+    this.pendingResearch = false
     this.editHost = null
   }
 
@@ -489,7 +521,7 @@ export class EditorFindController {
     const host = this.host
     if (!host || !host.hasDocument()) return false
 
-    const searchString = this.seedSearchString(host)
+    const searchString = this.seedSearchString()
     this.state = {
       ...this.state,
       searchString: searchString || this.state.searchString,
@@ -511,6 +543,12 @@ export class EditorFindController {
 
   private research(moveCursor: boolean): void {
     if (!this.host) return
+    if (!this.canPaintCurrentDocument()) {
+      this.pendingResearch = true
+      if (moveCursor) this.selectFirstMatchFromSelection()
+      return
+    }
+    this.pendingResearch = false
 
     // Whatever a deferred run was going to answer, this run answers now.
     this.scheduler.cancel(FIND_RESEARCH_KEY)
@@ -566,6 +604,7 @@ export class EditorFindController {
   }
 
   private followPendingMatches(): void {
+    if (!this.canPaintCurrentDocument()) return
     const tracked = this.trackedMatches
     if (!tracked || this.matches.length === 0) return
 
@@ -593,6 +632,36 @@ export class EditorFindController {
     }
   }
 
+  private selectNextReplacementMatch(): void {
+    const offset = this.primarySelection()?.endOffset ?? 0
+    const match = this.searchFrom(findNextMatchFrom, offset, {})
+    if (!match) return
+    this.host?.setSelection(match.start, match.end, 'input.findNavigate', {
+      revealOffset: match.end,
+    })
+  }
+
+  private canPaintCurrentDocument(): boolean {
+    if (!this.editHost) return true
+    const snapshot = this.editHost.textSnapshot()
+    return snapshot !== null && this.host?.hasTextSnapshot(snapshot) === true
+  }
+
+  private commandTextSource(): FindTextSource | undefined {
+    if (!this.editHost) return this.host?.textSource()
+    const snapshot = this.editHost.textSnapshot()
+    return snapshot ? findTextSourceFromSnapshot(snapshot) : undefined
+  }
+
+  private commandSelections(): readonly EditorFindResolvedSelection[] {
+    return this.editHost?.getSelections() ?? this.host?.getSelections() ?? []
+  }
+
+  private commandSearchTarget(): FindSearchTarget | null {
+    const source = this.commandTextSource()
+    return source ? this.searchTarget(source) : null
+  }
+
   private findAll(captureMatches: boolean, limit = FIND_MATCHES_LIMIT): readonly FindMatch[] {
     const search = this.searchTarget()
     if (!search) return []
@@ -605,7 +674,7 @@ export class EditorFindController {
     offset: number,
     options: FindMatchFromOptions,
   ): FindMatch | null {
-    const search = this.searchTarget()
+    const search = this.commandSearchTarget()
     if (!search) return null
 
     return find(search.source, this.state, offset, search.scopes, {
@@ -614,9 +683,8 @@ export class EditorFindController {
     })
   }
 
-  private searchTarget(): FindSearchTarget | null {
-    const host = this.host
-    if (!host) return null
+  private searchTarget(source = this.host?.textSource()): FindSearchTarget | null {
+    if (!source) return null
 
     const scopes = this.scopeRanges()
     // A scope that has run out of ranges is not the absence of a scope: every
@@ -624,7 +692,7 @@ export class EditorFindController {
     // document would let the next Replace All rewrite text they never marked.
     if (scopes && scopes.length === 0) return null
 
-    return { source: host.textSource(), scopes }
+    return { source, scopes }
   }
 
   private scopeRanges(): readonly FindRange[] | null {
@@ -639,27 +707,24 @@ export class EditorFindController {
     this.selectMatch(this.nextMatchAt(offset, false))
   }
 
-  // Past the cap the painted list holds nothing at or after the cursor, so
-  // consulting it answers every press with the first match in the document.
   private nextMatchAt(offset: number, escapeEmptyMatchAtOffset: boolean): FindMatch | null {
-    if (this.matchesTruncated)
-      return this.searchFrom(findNextMatchFrom, offset, { escapeEmptyMatchAtOffset })
-
-    return nextMatchAfter(this.matches, offset, this.options.loop, escapeEmptyMatchAtOffset)
+    return this.searchFrom(findNextMatchFrom, offset, { escapeEmptyMatchAtOffset })
   }
 
   private selectMatch(match: FindMatch | null): boolean {
     const host = this.host
     if (!match || !host) return false
 
-    this.currentMatch = match
+    if (this.canPaintCurrentDocument()) this.currentMatch = match
     host.setSelection(match.start, match.end, 'input.findNavigate', { revealOffset: match.end })
+    if (!this.canPaintCurrentDocument()) return true
     this.updateHighlights()
     this.updateWidget()
     return true
   }
 
   private updateHighlights(): void {
+    if (!this.canPaintCurrentDocument()) return
     const host = this.host
     if (!host) return
 
@@ -713,13 +778,14 @@ export class EditorFindController {
     if (focus === 'replace') this.emit({ type: 'focus', target: 'replace' })
   }
 
-  private seedSearchString(host: EditorFindHost): string {
+  private seedSearchString(): string {
     if (this.options.seedSearchStringFromSelection === 'never') return ''
 
     const selection = this.primarySelection()
     if (!selection) return ''
 
-    const source = host.textSource()
+    const source = this.commandTextSource()
+    if (!source) return ''
     if (!selection.collapsed)
       return this.seedFromLiteralText(selectedSingleLineText(source, selection))
     if (this.options.seedSearchStringFromSelection === 'selection') return ''
@@ -735,7 +801,7 @@ export class EditorFindController {
   }
 
   private applyAutoFindInSelection(host: EditorFindHost): void {
-    const scopes = nonEmptySelectionRanges(host.getSelections())
+    const scopes = nonEmptySelectionRanges(this.commandSelections())
     if (scopes.length === 0) return
     if (this.options.autoFindInSelection === 'never') return
     if (this.options.autoFindInSelection === 'always') {
@@ -744,7 +810,8 @@ export class EditorFindController {
       return
     }
 
-    if (!hasMultilineScope(host.textSource(), scopes)) return
+    const source = this.commandTextSource()
+    if (!source || !hasMultilineScope(source, scopes)) return
 
     this.state = { ...this.state, inSelection: true }
     this.scope = host.trackRanges(scopes)
@@ -756,7 +823,7 @@ export class EditorFindController {
   }
 
   private primarySelection(): EditorFindResolvedSelection | null {
-    return this.host?.getSelections()[0] ?? null
+    return this.commandSelections()[0] ?? null
   }
 
   private emit(event: EditorFindUiEvent): void {

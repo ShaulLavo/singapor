@@ -7,6 +7,7 @@ import type { ResolvedSuspiciousCharactersOptions } from '../unicodeHighlight'
 import { type InlineMap, revealInlineMap } from '../inlineMap'
 import { normalizeTabSize, type InjectedTextRow } from '../displayTransforms'
 import { createStringTextSnapshot, type TextSnapshot } from '../documentTextSnapshot'
+import { firstBatchChangeEndingAtOrAfter, type TextEditBatch } from '../textEditBatch'
 import type { EditorTheme } from '../theme'
 import type {
   EditorGutterContribution,
@@ -90,6 +91,7 @@ import {
   visualColumnForOffset,
 } from './virtualizedTextViewLayout'
 import { LineStartsView } from './lineStartIndex'
+import { projectRowDecorationMapThroughEdits } from './rowDecorationProjection'
 import {
   boundaryAffinityForX,
   boundaryPositionXs,
@@ -600,6 +602,10 @@ export class VirtualizedTextView {
     }
   }
 
+  get isRenderingAtomically(): boolean {
+    return this.atomicRenderDepth > 0
+  }
+
   public setText(
     text: string | TextSnapshot,
     textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text,
@@ -746,6 +752,24 @@ export class VirtualizedTextView {
     }
 
     this.applyProjectionEdit(edit, textSnapshot)
+  }
+
+  public applyEditBatch(batch: TextEditBatch): void {
+    const view = this.view
+    const previousLineCount = view.model.lineCount
+    applyTextLayoutTransition(view, batch)
+    projectFoldMarkersThroughBatch(view, batch)
+    view.rowDecorations = projectRowDecorationMapThroughEdits(view.rowDecorations, batch)
+    view.sameLineTokenEdit = null
+    view.tokenProjectionDirtyStartRow = null
+    view.tokenRenderIndexDirty = true
+    if (previousLineCount !== view.model.lineCount) view.gutterWidthDirty = true
+    clampStoredSelection(view)
+    clearRowTokenState(view)
+    clearRowGeometryCaches(view)
+    view.lastRenderedRowsKey = ''
+    resetContentWidthScan(view)
+    updateVirtualizerRows(view)
   }
 
   public setTokens(tokens: readonly EditorToken[]): void {
@@ -1070,11 +1094,26 @@ export class VirtualizedTextView {
   }
 
   public textOffsetFromPoint(clientX: number, clientY: number): number | null {
-    return this.textPositionFromPoint(clientX, clientY)?.offset ?? null
+    return this.textOffsetFromViewportPoint(clientX, clientY)
   }
 
   public textOffsetFromViewportPoint(clientX: number, clientY: number): number | null {
-    return this.textPositionFromViewportPoint(clientX, clientY)?.offset ?? null
+    if (this.view.provisional) return null
+    const view = this.view
+    const metrics = viewportPointMetrics(view, clientX, clientY)
+    const row = rowForViewportY(view, metrics.y)
+    if (metrics.verticalDirection < 0) return lineStartOffset(view, row)
+    if (metrics.verticalDirection > 0) return lineEndOffset(view, row)
+    if (view.model.projection.getRowMetrics(row)?.source !== 'document') return null
+
+    const mounted = view.rowElements.get(row)
+    if (mounted?.kind === 'text' && rowMightContainRTL(view, mounted)) {
+      return bidiOffsetFromViewportPoint(view, mounted, metrics)
+    }
+    if (mounted?.kind === 'text') return xToOffset(view, mounted, metrics.x)
+
+    const column = Math.floor(metrics.x / Math.max(1, view.metrics.characterWidth))
+    return offsetForViewportColumn(view, row, column)
   }
 
   public textPositionFromPoint(
@@ -1346,7 +1385,11 @@ export class VirtualizedTextView {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
     view.tokenRenderIndexDirty = true
-    applyTextLayoutTransition(view, [edit], nextText)
+    applyTextLayoutTransition(view, {
+      before: view.model.textSnapshot,
+      after: nextText,
+      edits: [edit],
+    })
     clampStoredSelection(view)
     resetContentWidthScan(view)
     clearRowGeometryCaches(view)
@@ -1372,7 +1415,11 @@ export class VirtualizedTextView {
   ): void {
     const view = this.view
     view.tokenRenderIndexDirty = true
-    applyTextLayoutTransition(view, [edit], nextText)
+    applyTextLayoutTransition(view, {
+      before: view.model.textSnapshot,
+      after: nextText,
+      edits: [edit],
+    })
     clampStoredSelection(view)
     resetContentWidthScan(view)
     clearRowGeometryCaches(view)
@@ -1398,7 +1445,11 @@ export class VirtualizedTextView {
     const view = this.view
     const previousLineCount = view.model.lineCount
     const patch = sourceEditPatch(view, edit)
-    applyTextLayoutTransition(view, [edit], textSnapshot)
+    applyTextLayoutTransition(view, {
+      before: view.model.textSnapshot,
+      after: textSnapshot,
+      edits: [edit],
+    })
     if (patch) {
       projectFoldMarkersThroughMultiLineEdit(view, patch, edit)
       projectRowDecorationsThroughMultiLineEdit(view, patch)
@@ -2654,6 +2705,50 @@ function projectFoldMarkersThroughMultiLineEdit(
   view.foldMarkers = markers
   view.foldMarkerByStartRow = indexFoldMarkersByStartRow(markers)
   view.foldMarkerByKey = indexFoldMarkersByKey(markers)
+}
+
+function projectFoldMarkersThroughBatch(
+  view: VirtualizedTextViewInternal,
+  batch: TextEditBatch,
+): void {
+  if (view.foldMarkers.length === 0) return
+
+  const markers = view.foldMarkers.map((marker) => projectFoldMarkerThroughBatch(marker, batch))
+  view.foldMarkers = markers
+  view.foldMarkerByStartRow = indexFoldMarkersByStartRow(markers)
+  view.foldMarkerByKey = indexFoldMarkersByKey(markers)
+}
+
+function projectFoldMarkerThroughBatch(
+  marker: VirtualizedFoldMarker,
+  batch: TextEditBatch,
+): VirtualizedFoldMarker {
+  const first = firstBatchChangeEndingAtOrAfter(batch, marker.startOffset)
+  const firstChange = batch.changes[first]
+  let offsetDelta = firstChange
+    ? firstChange.afterFrom - firstChange.from
+    : batch.after.length - batch.before.length
+  let rowDelta = firstChange
+    ? firstChange.afterStartRow - firstChange.startRow
+    : batch.after.lineCount - batch.before.lineCount
+  let endOffsetDelta = 0
+  let endRowDelta = 0
+  for (let index = first; index < batch.changes.length; index += 1) {
+    const change = batch.changes[index]!
+    if (change.from >= marker.endOffset) break
+    if (change.to <= marker.startOffset) {
+      offsetDelta += change.offsetDelta
+      rowDelta += change.lineDelta
+      continue
+    }
+    if (change.from <= marker.startOffset || change.to >= marker.endOffset) continue
+    endOffsetDelta += change.offsetDelta
+    endRowDelta += change.lineDelta
+  }
+
+  const shifted = shiftFoldMarker(marker, offsetDelta, rowDelta, batch.after.length)
+  if (endOffsetDelta === 0 && endRowDelta === 0) return shifted
+  return resizeFoldMarkerEnd(shifted, endOffsetDelta, endRowDelta, batch.after.length)
 }
 
 function projectFoldMarkerThroughEdit(

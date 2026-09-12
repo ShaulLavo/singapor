@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, it } from 'vitest'
 
 it('weights active samples, deduplicates recursive stacks, and resolves source locations', async () => {
-  await mkdir('/work/tmp', { recursive: true })
-  const directory = await mkdtemp('/work/tmp/editor-profile-test-')
+  const directory = await mkdtemp(resolve(tmpdir(), 'editor-profile-test-'))
   try {
     await writeProfile(directory)
     const script = fileURLToPath(new URL('../profile-summary.mjs', import.meta.url))

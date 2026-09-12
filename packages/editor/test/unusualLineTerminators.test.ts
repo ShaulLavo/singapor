@@ -4,6 +4,7 @@ import { createDocumentTextSnapshot } from '../src/documentTextSnapshot'
 import { Editor } from '../src/editor'
 import { setHighlightRegistry } from '../src/public/testing'
 import { VirtualizedTextView } from '../src/virtualization'
+import { createVisibleEditor } from './factories/visibleEditor'
 
 // Every assertion here is one claim seen from a different layer: the row count
 // the model believes in has to be the row count the browser will paint. See
@@ -137,7 +138,7 @@ describe('unusual line terminators', () => {
     let editor: Editor
 
     beforeEach(() => {
-      editor = new Editor(container, { defaultText: 'abcd', lineHeight: ROW_HEIGHT })
+      editor = createVisibleEditor(container, { defaultText: 'abcd', lineHeight: ROW_HEIGHT })
     })
 
     afterEach(() => {

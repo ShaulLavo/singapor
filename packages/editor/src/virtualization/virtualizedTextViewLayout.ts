@@ -11,6 +11,8 @@ import { getPieceTreeSnapshot, type TextSnapshot } from '../documentTextSnapshot
 import { updateInlineMapForEdit } from '../inlineMap'
 import type { SelectionAffinity } from '../selections'
 import type { TextEdit } from '../tokens'
+import type { TextEditBatch } from '../textEditBatch'
+import type { DisplayProjectionTransition } from './displayProjectionTypes'
 import { clamp } from '../style-utils'
 import {
   foldMapMatchesText,
@@ -94,13 +96,12 @@ export function setTextSnapshotLayoutState(
 
 export function applyTextLayoutTransition(
   view: VirtualizedTextViewInternal,
-  edits: readonly TextEdit[],
-  textSnapshot: TextSnapshot,
+  transition: DisplayProjectionTransition | TextEditBatch,
 ): void {
-  const before = view.model.textSnapshot
+  const { after: textSnapshot, edits } = transition
   const base = view.inlineMapBase
   const renderedInlineMap = view.model.inlineMap
-  view.model.projection.update({ before, after: textSnapshot, edits })
+  view.model.projection.update(transition)
   view.model.textSnapshot = textSnapshot
   view.model.textLength = textSnapshot.length
   view.model.lineCount = textSnapshot.lineCount

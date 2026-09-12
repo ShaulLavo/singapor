@@ -30,13 +30,21 @@ it('keeps 6,000-character BiDi operations within 5x an equal-length Latin contro
 
 it('bounds cold visual-arrow probes on 6,000-character RTL rows', () => {
   const middle = 3_000
-  const homogeneousMove = coldVisualMoveForText('א'.repeat(6_000), middle)
+  // Fresh rows keep the cache cold; a median resists a single runner scheduling pause.
+  const homogeneousMoves = Array.from({ length: 7 }, () =>
+    coldVisualMoveForText('א'.repeat(6_000), middle),
+  )
   const mixedMove = coldVisualMoveForText('aא'.repeat(3_000), 0)
 
-  expect(homogeneousMove.target).toEqual({ offset: middle - 1, affinity: 'after' })
-  expect(homogeneousMove.rangeReads).toBe(0)
-  expect(homogeneousMove.hitReads).toBe(0)
-  expect(homogeneousMove.elapsed, JSON.stringify(homogeneousMove)).toBeLessThan(12)
+  for (const move of homogeneousMoves) {
+    expect(move.target).toEqual({ offset: middle - 1, affinity: 'after' })
+    expect(move.rangeReads).toBe(0)
+    expect(move.hitReads).toBe(0)
+  }
+  expect(
+    median(homogeneousMoves.map((move) => move.elapsed)),
+    JSON.stringify(homogeneousMoves),
+  ).toBeLessThan(12)
   expect(mixedMove.target).toEqual({ offset: 1, affinity: 'before' })
   expect(mixedMove.rangeReads).toBeLessThanOrEqual(8)
   // A cold browser may still have to shape the line before its first Range/native hit. That wall

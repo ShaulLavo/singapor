@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { Editor } from '@singapor/core/editor'
+import type { Editor } from '@singapor/core/editor'
+import { createVisibleEditor } from './support/visibleEditor'
 import { createDiffPlugin, createDiffRegionStore, createTextDiff, joinRenderLines } from '../src'
 import type { DiffFile, DiffGutterSide, DiffPlugin, DiffRegionStore } from '../src'
 import { installHighlightPolyfill } from './support/highlightPolyfill'
@@ -131,7 +132,7 @@ describe('split mode alignment (§C7)', () => {
     host.className = 'editor-diff-view'
     document.body.appendChild(host)
 
-    const editor = new Editor(host, {
+    const editor = createVisibleEditor(host, {
       cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
       documentMode: 'static',
       editability: 'readonly',
@@ -158,7 +159,7 @@ describe('split mode alignment (§C7)', () => {
     document.body.appendChild(host)
 
     const plugin = createDiffPlugin({ mode: 'document', side, regions, syntaxHighlight: false })
-    const editor = new Editor(host, {
+    const editor = createVisibleEditor(host, {
       cursorLineHighlight: { gutterNumber: false, gutterBackground: false, rowBackground: false },
       documentMode: 'static',
       editability: 'readonly',

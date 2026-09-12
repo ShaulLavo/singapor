@@ -49,8 +49,7 @@ jobs:
       - name: Lint
         run: bun run lint
 
-      # Six packages carry a `browser (chromium)` vitest project alongside their happy-dom one —
-      # geometry and cascade assertions happy-dom cannot answer. They need a real browser.
+      # Browser projects check geometry and CSS behavior that happy-dom cannot reproduce.
       # Run the workspace's own Playwright, not `bunx playwright` — bare `bunx` fetches the latest
       # from the registry, which downloads browsers into a revision directory the pinned 1.60.0
       # does not look in, so the install "succeeds" and the launch still fails.
@@ -64,8 +63,6 @@ jobs:
       - name: Test tree-sitter browser worker
         run: bun run --cwd packages/tree-sitter test:browser
 
-      # Serialised on purpose. Each browser project starts its own vitest server, and running six
-      # of them at once on a two-core runner fights over ports and gets killed (exit 130) rather
-      # than reporting a real failure. Turbo still caches, so this is only slow on a cold branch.
+      # Serial package execution keeps browser processes within the runner's capacity.
       - name: Test
         run: bun run test -- --concurrency=1

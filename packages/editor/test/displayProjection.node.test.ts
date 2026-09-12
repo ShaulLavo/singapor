@@ -186,6 +186,39 @@ describe('indexed display projection', () => {
     }
   })
 
+  test.each([
+    {
+      edits: [
+        { from: 2, to: 2, text: 'first\n' },
+        { from: 2, to: 2, text: 'second\n' },
+        { from: 6, to: 6, text: 'last\n' },
+      ],
+    },
+    {
+      edits: [
+        { from: 0, to: 2, text: 'head\n' },
+        { from: 2, to: 2, text: 'middle\n' },
+        { from: 2, to: 4, text: 'next\n' },
+      ],
+    },
+    {
+      edits: [
+        { from: 0, to: 2, text: '' },
+        { from: 2, to: 4, text: 'next\n' },
+        { from: 4, to: 4, text: 'middle\n' },
+      ],
+    },
+  ])('maps touching batch boundaries against the committed snapshot: %j', ({ edits }) => {
+    const piece = createPieceTableSnapshot('a\nb\nc\nd\nend')
+    const before = createDocumentTextSnapshot(piece)
+    const after = createDocumentTextSnapshot(applyBatchToPieceTable(piece, edits))
+    const projection = new DisplayProjection({ ...input(''), textSnapshot: before, wrapColumn: 3 })
+
+    projection.update({ before, after, edits })
+
+    compareWithOracle(projection)
+  })
+
   test('local wrap edits do not remeasure distant inline or hidden rows', () => {
     const piece = createPieceTableSnapshot('alpha\n**bold**\nhidden\nstill hidden\nomega')
     const before = createDocumentTextSnapshot(piece)
@@ -223,41 +256,46 @@ describe('indexed display projection', () => {
     expect(projection.getRow(projection.rowCount - 1)?.text).toBe('\tEND')
     expect(reads.mock.calls.every(([start, end]) => end - start <= 16384)).toBe(true)
   })
-  test('keeps AVL ranks and splices correct across deterministic edits and fold toggles', () => {
-    let piece = createPieceTableSnapshot('alpha\tbeta\nplain text\n'.repeat(140))
-    let snapshot = createDocumentTextSnapshot(piece)
-    const projection = new DisplayProjection({
-      ...input(''),
-      textSnapshot: snapshot,
-      wrapColumn: 5,
-    })
-    let seed = 31
-    for (let step = 0; step < 90; step += 1) {
-      seed = (seed * 1664525 + 1013904223) >>> 0
-      const from = seed % (snapshot.length + 1)
-      const to = Math.min(snapshot.length, from + (step % 7))
-      const edits = [{ from, to, text: ['x', '\nnew\n', '', '\t'][step % 4]! }]
-      const next = applyBatchToPieceTable(piece, edits)
-      const after = createDocumentTextSnapshot(next)
-      projection.update({ before: snapshot, after, edits })
-      if (step % 9 === 0)
-        projection.reconfigure({
-          foldMap: createFoldMap(next, [
-            {
-              startIndex: after.lineStart(10),
-              endIndex: after.lineStart(20),
-              startLine: 10,
-              endLine: 20,
-              type: 'test',
-            },
-          ]),
-        })
-      if (step % 9 === 4) projection.reconfigure({ foldMap: null })
-      compareWithOracle(projection)
-      piece = next
-      snapshot = after
-    }
-  })
+  // Each of the 90 mutations compares every wrapped row with the eager oracle.
+  test(
+    'keeps AVL ranks and splices correct across deterministic edits and fold toggles',
+    { timeout: 20_000 },
+    () => {
+      let piece = createPieceTableSnapshot('alpha\tbeta\nplain text\n'.repeat(140))
+      let snapshot = createDocumentTextSnapshot(piece)
+      const projection = new DisplayProjection({
+        ...input(''),
+        textSnapshot: snapshot,
+        wrapColumn: 5,
+      })
+      let seed = 31
+      for (let step = 0; step < 90; step += 1) {
+        seed = (seed * 1664525 + 1013904223) >>> 0
+        const from = seed % (snapshot.length + 1)
+        const to = Math.min(snapshot.length, from + (step % 7))
+        const edits = [{ from, to, text: ['x', '\nnew\n', '', '\t'][step % 4]! }]
+        const next = applyBatchToPieceTable(piece, edits)
+        const after = createDocumentTextSnapshot(next)
+        projection.update({ before: snapshot, after, edits })
+        if (step % 9 === 0)
+          projection.reconfigure({
+            foldMap: createFoldMap(next, [
+              {
+                startIndex: after.lineStart(10),
+                endIndex: after.lineStart(20),
+                startLine: 10,
+                endLine: 20,
+                type: 'test',
+              },
+            ]),
+          })
+        if (step % 9 === 4) projection.reconfigure({ foldMap: null })
+        compareWithOracle(projection)
+        piece = next
+        snapshot = after
+      }
+    },
+  )
 
   test('edits inside an unchanged fold do not remeasure visible wrapping', () => {
     const piece = createPieceTableSnapshot('header\ninside one\ninside two\ntail')

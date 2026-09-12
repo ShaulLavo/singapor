@@ -374,9 +374,7 @@
       "priority": "P1",
       "effort": "L",
       "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
-      "dependsOn": [
-        "E001"
-      ],
+      "dependsOn": ["E001"],
       "topics": [
         "Reduce editor memory footprint",
         "Input latency as an enforced budget",
@@ -385,19 +383,16 @@
     },
     {
       "id": "E032",
-      "file": "e032-incremental-edit-batches.md",
+      "reference": "../docs/performance/e032-edit-batches.md",
       "title": "Render edit batches without flattening the document",
-      "status": "Proposed",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
       "effort": "L",
-      "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
+      "baseline": "64926519bfdd39f4afcfae225019a932d3e27785",
       "dependsOn": [],
-      "topics": [
-        "Reduce editor memory footprint",
-        "Input latency as an enforced budget"
-      ]
+      "topics": ["Reduce editor memory footprint", "Input latency as an enforced budget"]
     },
     {
       "id": "E033",
@@ -409,12 +404,7 @@
       "priority": "P1",
       "effort": "L",
       "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
-      "dependsOn": [
-        "E007",
-        "E031",
-        "E032",
-        "E034"
-      ],
+      "dependsOn": ["E007", "E031", "E032", "E034"],
       "topics": [
         "Reduce editor memory footprint",
         "Editor hook taxonomy: inventory and completeness check"
@@ -430,10 +420,7 @@
       "priority": "P1",
       "effort": "L",
       "baseline": "ff1dfeda9e52b308f57915da7372f7ac6e5f04f9",
-      "dependsOn": [
-        "E003",
-        "E032"
-      ],
+      "dependsOn": ["E003", "E032"],
       "topics": [
         "Reduce editor memory footprint",
         "Input latency as an enforced budget",

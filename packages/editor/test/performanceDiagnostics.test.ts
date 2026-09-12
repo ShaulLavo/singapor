@@ -281,7 +281,7 @@ test('composition preedit stays native and only its final text commits', () => {
   expect(input.selectionStart).toBe(3)
   expect(records.find((event) => event.name === 'editor.document.committed')).toMatchObject({
     operation: { input: 'input.compositionend' },
-    detail: { timingName: 'input.composition' },
+    detail: { timingName: 'editor.bufferChange' },
   })
 })
 

@@ -45,6 +45,7 @@ import {
   type SelectionSet,
 } from '../src/selections'
 import type { Anchor as PieceTableAnchor } from '../src/pieceTable/pieceTableTypes'
+import { createVisibleEditor } from './factories/visibleEditor'
 
 // The lines a view would paint: line starts from the piece table, line ends as
 // `nextLineStart - 1` exactly like virtualizedTextViewModel derives them, so a
@@ -149,6 +150,23 @@ describe('DocumentSession', () => {
     expect(session.materializeFullText()).toBe('abc!')
     expect(resolvedOffsets(session)).toEqual({ start: 4, end: 4 })
     expect(session.canUndo()).toBe(true)
+  })
+
+  it('publishes source selections after edits, undo and redo have adopted them', () => {
+    const buffer = createEditorTextBuffer('abc')
+    const session = createEditorBufferSession(buffer)
+    const observed: ReturnType<typeof resolvedOffsets>[] = []
+    buffer.subscribe(() => observed.push(resolvedOffsets(session)))
+
+    session.applyText('!')
+    session.undo()
+    session.redo()
+
+    expect(observed).toEqual([
+      { start: 4, end: 4 },
+      { start: 3, end: 3 },
+      { start: 4, end: 4 },
+    ])
   })
 
   it('tracks dirty state from the clean snapshot checkpoint', () => {
@@ -1638,7 +1656,7 @@ describe('replacing the document an editor owns', () => {
     resetEditorInstanceCount()
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = new Editor(container, {})
+    editor = createVisibleEditor(container, {})
   })
 
   afterEach(() => {

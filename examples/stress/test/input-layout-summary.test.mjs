@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { expect, it } from 'vitest'
 import { createTraceLocation, summarizeLayoutTrace } from '../input-layout-summary.mjs'
@@ -61,8 +62,7 @@ it.each([
 })
 
 it('resolves one-based timeline stack positions through the saved build map', async () => {
-  await mkdir('/work/tmp', { recursive: true })
-  const directory = await mkdtemp('/work/tmp/editor-layout-summary-test-')
+  const directory = await mkdtemp(resolve(tmpdir(), 'editor-layout-summary-test-'))
   try {
     await mkdir(resolve(directory, 'assets'))
     await writeFile(

@@ -107,8 +107,10 @@ export type EditorFoldingRules = {
    * follows; false where a closing token ends the block, because that token has not been reached yet.
    */
   readonly offSide: boolean
-  readonly regionStart: RegExp
-  readonly regionEnd: RegExp
+  readonly regionMarkers: {
+    readonly openers: readonly string[]
+    readonly optionalHash: boolean
+  }
 }
 
 export type EditorLanguageConfiguration = {
@@ -275,20 +277,17 @@ const BRACKET_INDENTATION_RULES: EditorIndentationRules = {
 
 const SLASH_MARKED_FOLDING: EditorFoldingRules = {
   offSide: false,
-  regionEnd: /^\s*\/\/\s*#?endregion\b/,
-  regionStart: /^\s*\/\/\s*#?region\b/,
+  regionMarkers: { openers: ['//'], optionalHash: true },
 }
 
 const BLOCK_MARKED_FOLDING: EditorFoldingRules = {
   offSide: false,
-  regionEnd: /^\s*\/\*\s*#?endregion\b/,
-  regionStart: /^\s*\/\*\s*#?region\b/,
+  regionMarkers: { openers: ['/*'], optionalHash: true },
 }
 
 const TAG_MARKED_FOLDING: EditorFoldingRules = {
   offSide: false,
-  regionEnd: /^\s*<!--\s*#?endregion\b/,
-  regionStart: /^\s*<!--\s*#?region\b/,
+  regionMarkers: { openers: ['<!--'], optionalHash: true },
 }
 
 /** Prose that is also markup: regions are marked in the markup, but a section ends where it thins out. */
@@ -296,8 +295,7 @@ const PROSE_FOLDING: EditorFoldingRules = { ...TAG_MARKED_FOLDING, offSide: true
 
 const HASH_MARKED_FOLDING: EditorFoldingRules = {
   offSide: true,
-  regionEnd: /^\s*#\s*endregion\b/,
-  regionStart: /^\s*#\s*region\b/,
+  regionMarkers: { openers: ['#'], optionalHash: false },
 }
 
 const CODE: EditorLanguageConfiguration = {
@@ -523,4 +521,86 @@ function normalizeLanguageId(languageId: string | null | undefined): string | nu
 
   const normalized = languageId.trim().toLowerCase()
   return normalized.length === 0 ? null : normalized
+}
+
+const FALLBACK_FOLDING_RULES: EditorFoldingRules = {
+  offSide: true,
+  regionMarkers: { openers: ['//', '/*', '#', '--', ';', '%', '<!--'], optionalHash: true },
+}
+
+export function indentationFoldingRules(languageId: string | null): EditorFoldingRules {
+  return editorLanguageConfiguration(languageId)?.folding ?? FALLBACK_FOLDING_RULES
+}
+
+export type EditorRegionMarker = 'start' | 'end' | null
+
+type MarkerAlternative = { readonly text: string; readonly marker: 'start' | 'end' }
+
+/** The shipped anchored marker grammar, consumed without retaining a line or its whitespace. */
+export class EditorRegionMarkerClassifier {
+  private stage: 'leading' | 'opener' | 'space' | 'word' | 'boundary' | 'done' = 'leading'
+  private candidates: readonly string[]
+  private index = 0
+  private wordCandidates: readonly MarkerAlternative[] = []
+  private result: EditorRegionMarker = null
+  private hashAllowed: boolean
+
+  constructor(rules: EditorFoldingRules['regionMarkers']) {
+    this.candidates = rules.openers
+    this.hashAllowed = rules.optionalHash
+  }
+
+  push(code: number): void {
+    if (this.stage === 'done') return
+    const character = String.fromCharCode(code)
+    if (this.stage === 'leading' && /\s/.test(character)) return
+    if (this.stage === 'leading') this.stage = 'opener'
+    if (this.stage === 'opener') return this.opener(character)
+    if (this.stage === 'space') return this.space(character)
+    if (this.stage === 'word') return this.word(character)
+    this.result = /[A-Za-z0-9_]/.test(character) ? null : this.result
+    this.stage = 'done'
+  }
+
+  finish(): EditorRegionMarker {
+    return this.stage === 'boundary' || this.stage === 'done' ? this.result : null
+  }
+
+  private opener(character: string): void {
+    this.candidates = this.candidates.filter((opener) => opener[this.index] === character)
+    this.index += 1
+    if (this.candidates.length === 0) this.stage = 'done'
+    if (!this.candidates.some((opener) => opener.length === this.index)) return
+    this.stage = 'space'
+    this.index = 0
+  }
+
+  private space(character: string): void {
+    if (/\s/.test(character)) return
+    if (character === '#' && this.hashAllowed) {
+      this.hashAllowed = false
+      this.stage = 'word'
+      this.wordCandidates = [
+        { text: 'region', marker: 'start' },
+        { text: 'endregion', marker: 'end' },
+      ]
+      return
+    }
+    this.stage = 'word'
+    this.wordCandidates = [
+      { text: 'region', marker: 'start' },
+      { text: 'endregion', marker: 'end' },
+    ]
+    this.word(character)
+  }
+
+  private word(character: string): void {
+    this.wordCandidates = this.wordCandidates.filter((word) => word.text[this.index] === character)
+    this.index += 1
+    if (this.wordCandidates.length === 0) this.stage = 'done'
+    const complete = this.wordCandidates.find((word) => word.text.length === this.index)
+    if (!complete) return
+    this.result = complete.marker
+    this.stage = 'boundary'
+  }
 }

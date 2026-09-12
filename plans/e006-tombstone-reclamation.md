@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P1
 - Effort: L
-- Dependencies: [E001](e001-stress-fixtures.md), [E005](e005-piece-tree-inspector.md)
+- Dependencies: [E001](e001-stress-fixtures.md), [E005](../docs/storage/piece-tree-inspection.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`, 2026-09-05.
 
 ## Outcome

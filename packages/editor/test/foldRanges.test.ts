@@ -6,6 +6,7 @@ import {
 import { detectPlatform } from '@tanstack/hotkeys'
 import type { Editor, EditorOptions } from '../src/editor'
 import type { EditorPerformanceDiagnostic } from '../src/editor/performanceDiagnostics'
+import { IndentationFoldIndex } from '../src/editor/indentationFoldIndex'
 import { createVisibleEditor } from './factories/visibleEditor'
 import type { EditorPlugin, EditorViewSnapshot } from '../src/plugins'
 import {
@@ -564,5 +565,60 @@ describe('fold ranges without a grammar', () => {
     expect(editor.unfold()).toBe(false)
     expect(foldStates()).toEqual(['expanded'])
     expect(layouts).toEqual([1])
+  })
+
+  it('reuses topology on a body edit and queries markers without enumerating all folds', async () => {
+    vi.useFakeTimers()
+    const text = Array.from({ length: 2_000 }, (_, row) => `head ${row}\n  body`).join('\n')
+    editor.openDocument({ documentId: 'large.txt', text })
+    await vi.runAllTimersAsync()
+    const traversal = vi.spyOn(IndentationFoldIndex.prototype, 'all')
+    const work = recordFallbackScans()
+    try {
+      const offset = text.indexOf('body') + 2
+      editor.setSelection(offset)
+      editor.edit({ from: offset, to: offset, text: 'X' })
+      await vi.runAllTimersAsync()
+      expect(work).toHaveLength(1)
+      expect(work[0]?.detail).toMatchObject({
+        rowsRead: 1,
+        propagationRows: 0,
+        materializations: 0,
+      })
+      expect(work[0]?.detail?.factBlocksReused).toBeGreaterThan(25)
+      expect(traversal).not.toHaveBeenCalled()
+      expect(editor.fold(0)).toBe(true)
+      expect(traversal).not.toHaveBeenCalled()
+      expect(foldStates()[0]).toBe('collapsed')
+    } finally {
+      traversal.mockRestore()
+    }
+  })
+
+  it('keeps lazily read marker coordinates attached to the snapshot that published them', async () => {
+    vi.useFakeTimers()
+    const snapshots: EditorViewSnapshot[] = []
+    editor.addPlugin({
+      activate: (context) =>
+        context.registerViewContribution({
+          createContribution: () => ({
+            update: (snapshot) => {
+              snapshots.push(snapshot)
+            },
+            dispose() {},
+          }),
+        }),
+    })
+    editor.openDocument({ documentId: 'main.py', languageId: 'python', text: INDENTED_TEXT })
+    await vi.runAllTimersAsync()
+    const before = snapshots.at(-1)!
+    const offset = INDENTED_TEXT.indexOf('first') + 2
+    editor.edit({ from: offset, to: offset, text: 'more' })
+    await vi.runAllTimersAsync()
+    expect(before.foldMarkers[0]).toMatchObject({ startOffset: HEADER_END, endOffset: BODY_END })
+    expect(snapshots.at(-1)?.foldMarkers[0]).toMatchObject({
+      startOffset: HEADER_END,
+      endOffset: BODY_END + 4,
+    })
   })
 })

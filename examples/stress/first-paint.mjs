@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { arch, cpus, platform, release, totalmem } from 'node:os'
 import { dirname, extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,6 +11,8 @@ import { loadCorePackage, hashBenchmarkSource } from './core-package.mjs'
 import { createManifest } from './fixtures.mjs'
 import { fail } from './errors.mjs'
 import { paintEvidence } from './scenarios.mjs'
+import { generateFallbackFixture } from './src/fallbackFixture.ts'
+import { fixtureFacts } from './src/fixtures.ts'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const repository = resolve(root, '../..')
@@ -23,6 +25,8 @@ const { values } = parseArgs({
     plugins: { type: 'string', default: 'none,tree-sitter' },
     modes: { type: 'string', default: 'direct,prepared' },
     diagnostics: { type: 'boolean', default: false },
+    'fallback-cases': { type: 'boolean', default: false },
+    'fold-gutter': { type: 'boolean', default: false },
   },
 })
 const repetitions = Number(values.repetitions)
@@ -36,9 +40,18 @@ const select = (text, allowed) => {
 const fixtures = select(values.fixtures, ['ordinary', 'short-lines'])
 const plugins = select(values.plugins, ['none', 'tree-sitter'])
 const modes = select(values.modes, ['direct', 'prepared'])
+if (values['fallback-cases'] && plugins.some((plugin) => plugin !== 'none'))
+  fail('Fallback cases require --plugins none')
 const core = await loadCorePackage(values['core-directory'])
 const manifest = createManifest(60061)
 manifest.fixtures = manifest.fixtures.filter((fixture) => fixtures.includes(fixture.id))
+if (values['fallback-cases']) {
+  manifest.fallbackGeneratorVersion = 1
+  manifest.fixtures = manifest.fixtures.map(({ id }) => {
+    const text = generateFallbackFixture(id, manifest.seed)
+    return { id, ...fixtureFacts(text), sha256: createHash('sha256').update(text).digest('hex') }
+  })
+}
 const git = (...args) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim()
 const files = git(
   'ls-files',
@@ -88,11 +101,15 @@ try {
       plugins,
       states: ['cold', 'warm'],
       diagnostics: values.diagnostics,
+      fallbackCases: values['fallback-cases'],
+      foldGutter: values['fold-gutter'],
+      fallbackInput: 'beforeinput-to-onChange-and-requestAnimationFrame',
       viewport: { width: 1000, height: 1000 },
       delivery: 'vite-production-playwright-route',
       textMeasurement: 'screenshot-completion-upper-bound',
       callbackMeasurement: 'public-onInitialPaint-observable-not-pixels',
       preparation: 'exact-buffer-revision-and-provider-initial-4096-characters',
+      fallbackPreparation: 'await-ready-prepared-metadata',
       cleanup: 'worker-idle-fence-then-main-renderer-forced-gc',
       tabSize: 4,
       cold: 'fresh-browser-context',
@@ -101,9 +118,12 @@ try {
     environment: {
       commit: git('rev-parse', 'HEAD'),
       sourceHash,
+      bundleHash: await hashDirectory(directory),
+      coreBuildHash: await hashDirectory(resolve(core.directory, 'dist')),
       coreDirectory: core.directory,
       browser: browser.version(),
       runtime: process.version,
+      cpuAffinity: await cpuAffinity(),
       hardware: {
         cpu: cpus()[0]?.model,
         logicalCpus: cpus().length,
@@ -158,6 +178,23 @@ async function routeAsset(route) {
   } catch {
     await route.fulfill({ status: 404, body: url.pathname })
   }
+}
+
+async function cpuAffinity() {
+  if (platform() !== 'linux') return null
+  const status = await readFile('/proc/self/status', 'utf8')
+  return status.match(/^Cpus_allowed_list:\s*(.+)$/m)?.[1] ?? null
+}
+
+async function hashDirectory(directory) {
+  const hash = createHash('sha256')
+  const entries = await readdir(directory, { recursive: true, withFileTypes: true })
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => resolve(entry.parentPath, entry.name).slice(directory.length + 1))
+    .sort()
+  for (const file of files) hash.update(file).update(await readFile(resolve(directory, file)))
+  return hash.digest('hex')
 }
 
 async function runFixture(fixture, result) {
@@ -252,6 +289,8 @@ async function sample(session, identity, result) {
       prepared: identity.mode === 'prepared',
       plugin: identity.plugin === 'tree-sitter',
       diagnostics: result.config.diagnostics,
+      fallbackCases: result.config.fallbackCases,
+      foldGutter: result.config.foldGutter,
     })
     if (facts.sha256 !== identity.fixture.sha256) fail('Fixture hash mismatch')
     const timing = await page.evaluate(() => __firstPaint.open())
@@ -265,11 +304,19 @@ async function sample(session, identity, result) {
         true,
       )
     }
-    if (result.config.diagnostics && identity.mode === 'direct' && identity.plugin === 'none')
+    if (
+      result.config.diagnostics &&
+      !result.config.fallbackCases &&
+      identity.mode === 'direct' &&
+      identity.plugin === 'none'
+    )
       await page.waitForFunction(
         (at) => __firstPaint.fallbackObservedAfter(at),
         timing.constructedAt,
       )
+    const fallback = result.config.fallbackCases
+      ? await fallbackCases(session, identity, result)
+      : null
     const observation = await page.evaluate(() => __firstPaint.observe())
     validateObservation(observation, identity)
     if (session.errors.length) fail(`Browser errors: ${session.errors.join('; ')}`)
@@ -322,6 +369,7 @@ async function sample(session, identity, result) {
       timing,
       latencyMs,
       observation,
+      fallback,
       pixels: { text: text.pixels, highlighted: highlighted?.pixels ?? null },
       assets: session.assets,
       logs: session.messages,
@@ -356,7 +404,8 @@ async function captureText(page) {
 }
 
 function validateObservation(observation, identity) {
-  if (!observation.correctText || observation.revision !== 0)
+  const expectedRevision = values['fallback-cases'] ? 36 : 0
+  if (!observation.correctText || observation.revision !== expectedRevision)
     fail('Opened document differs from its fixture')
   if (
     !observation.paints.some(
@@ -377,4 +426,46 @@ function validateObservation(observation, identity) {
   if (observation.droppedDiagnostics) fail('Diagnostic observations were truncated')
   if (!values.diagnostics && observation.diagnostics.length)
     fail('Diagnostics active in production run')
+}
+
+async function fallbackCases({ page, cdp }, identity, result) {
+  const commands = [await page.evaluate(() => __firstPaint.foldCommand('fold'))]
+  if (!commands[0].changed) fail('Explicit cold fold did not find the first offscreen scope')
+  await verifyOuterFold(page, identity.fixture.id)
+  const folded = await paintEvidence(page, page.locator('#view-0 [data-editor-virtual-row="0"]'))
+  commands.push(await page.evaluate(() => __firstPaint.foldCommand('unfoldAll')))
+  await cdp.send('HeapProfiler.collectGarbage')
+  const initialHeap = await cdp.send('Runtime.getHeapUsage')
+  const bursts = []
+  for (let index = 0; index < 3; index++) {
+    await page.evaluate(() => __firstPaint.beginEditBurst())
+    await page.keyboard.type('xxxxxxxxxxxx', { delay: 16 })
+    await page.evaluate(() => new Promise(requestAnimationFrame))
+    bursts.push(await page.evaluate(() => __firstPaint.finishEditBurst()))
+    await page.waitForTimeout(600)
+  }
+  commands.push(await page.evaluate(() => __firstPaint.foldCommand('foldAll')))
+  await verifyOuterFold(page, identity.fixture.id)
+  commands.push(await page.evaluate(() => __firstPaint.foldCommand('unfoldAll')))
+  await cdp.send('HeapProfiler.collectGarbage')
+  const editedHeap = await cdp.send('Runtime.getHeapUsage')
+  const screenshot = await fallbackScreenshot(page, identity, result)
+  return { commands, bursts, folded, initialHeap, editedHeap, screenshot }
+}
+
+async function verifyOuterFold(page, fixture) {
+  const nextDisplayRow = page.locator('#view-0 [data-editor-virtual-row="1"]')
+  if (fixture !== 'short-lines') return expect(nextDisplayRow).toHaveCount(0)
+  await expect(nextDisplayRow).toContainText('const value5000 = ')
+}
+
+async function fallbackScreenshot(page, identity, result) {
+  if (identity.repetition !== 0 || identity.state !== 'cold') return null
+  await expect(page.locator('#view-0 [data-editor-virtual-row="0"]')).toContainText('const needle0')
+  const marker = page.locator('#view-0 .editor-virtualized-fold-toggle[aria-label]').first()
+  const markerPixels = result.config.foldGutter ? await paintEvidence(page, marker, false, 8) : null
+  const path = `${resolve(values.output)}.${identity.fixture.id}.${identity.mode}.png`
+  await mkdir(dirname(path), { recursive: true })
+  await page.locator('#view-0').screenshot({ path, animations: 'disabled' })
+  return { path, markerPixels }
 }

@@ -20,7 +20,7 @@ async function visibleRow(page, row) {
   return locator
 }
 
-export async function paintEvidence(page, locator, highlighted = false) {
+export async function paintEvidence(page, locator, highlighted = false, minimumInk = 20) {
   await expect(locator).toBeInViewport()
   const box = await locator.boundingBox()
   if (!box || box.width < 1 || box.height < 1) fail('No visible text geometry')
@@ -59,7 +59,7 @@ export async function paintEvidence(page, locator, highlighted = false) {
     }
     return { ink, chromatic }
   }, screenshot.toString('base64'))
-  if (pixels.ink < 20 || (highlighted && pixels.chromatic < 20))
+  if (pixels.ink < minimumInk || (highlighted && pixels.chromatic < 20))
     fail(`No ${highlighted ? 'highlighted ' : ''}text pixels: ${JSON.stringify(pixels)}`)
   return { completedAt, pixels }
 }

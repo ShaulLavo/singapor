@@ -1,10 +1,6 @@
-import type { EditorSyntaxLanguageId, FoldRange } from '../syntax/session'
-import { rejectCrossingFoldRanges } from './folds'
-import {
-  editorLanguageConfiguration,
-  matches,
-  type EditorFoldingRules,
-} from './languageConfiguration'
+import type { EditorSyntaxLanguageId, FoldRange } from '../../src/syntax/session'
+type EditorFoldingRules = { offSide: boolean; regionStart: RegExp; regionEnd: RegExp }
+const matches = (pattern: RegExp, text: string): boolean => pattern.test(text)
 
 type FoldLine = {
   /** Offset the line's text ends at, which is where a region starting or ending here is pinned. */
@@ -125,7 +121,41 @@ function indentationFoldRanges(context: EditorFoldRangeContext): readonly FoldRa
 }
 
 function foldingRulesForLanguage(languageId: EditorSyntaxLanguageId | null): EditorFoldingRules {
-  return editorLanguageConfiguration(languageId)?.folding ?? FALLBACK_FOLDING_RULES
+  const language = languageId?.trim().toLowerCase()
+  if (['python', 'yaml', 'yml'].includes(language ?? ''))
+    return { offSide: true, regionStart: /^\s*#\s*region\b/, regionEnd: /^\s*#\s*endregion\b/ }
+  if (['css'].includes(language ?? ''))
+    return {
+      offSide: false,
+      regionStart: /^\s*\/\*\s*#?region\b/,
+      regionEnd: /^\s*\/\*\s*#?endregion\b/,
+    }
+  if (['html', 'markdown', 'md'].includes(language ?? ''))
+    return {
+      offSide: ['markdown', 'md'].includes(language ?? ''),
+      regionStart: /^\s*<!--\s*#?region\b/,
+      regionEnd: /^\s*<!--\s*#?endregion\b/,
+    }
+  if (
+    [
+      'javascript',
+      'typescript',
+      'ts',
+      'jsx',
+      'tsx',
+      'javascriptreact',
+      'typescriptreact',
+      'json',
+      'jsonc',
+      'scss',
+    ].includes(language ?? '')
+  )
+    return {
+      offSide: false,
+      regionStart: /^\s*\/\/\s*#?region\b/,
+      regionEnd: /^\s*\/\/\s*#?endregion\b/,
+    }
+  return FALLBACK_FOLDING_RULES
 }
 
 function innermostMarkerIndex(open: readonly OpenRegion[]): number {
@@ -206,4 +236,95 @@ function visibleIndent(text: string, start: number, end: number, tabSize: number
   }
 
   return BLANK_INDENT
+}
+
+type FoldRangeRejection = {
+  readonly kind: 'invalid-range' | 'overlap'
+  readonly fold: FoldRange
+  readonly message: string
+  readonly previous?: FoldRange
+}
+
+type FoldRangeIngestionResult = {
+  readonly folds: readonly FoldRange[]
+  readonly rejected: readonly FoldRangeRejection[]
+}
+
+function rejectCrossingFoldRanges(folds: readonly FoldRange[]): FoldRangeIngestionResult {
+  const accepted: FoldRange[] = []
+  const rejected: FoldRangeRejection[] = []
+  const openAncestors: FoldRange[] = []
+
+  for (const fold of sortedFoldRangesForIngestion(folds)) {
+    const invalidMessage = invalidFoldRangeMessage(fold)
+    if (invalidMessage) {
+      rejected.push({ kind: 'invalid-range', fold, message: invalidMessage })
+      continue
+    }
+
+    const parent = innermostOpenAncestor(openAncestors, fold)
+    if (parent && fold.endIndex > parent.endIndex) {
+      rejected.push({
+        kind: 'overlap',
+        fold,
+        previous: parent,
+        message: 'Fold ranges must not cross',
+      })
+      continue
+    }
+
+    accepted.push(fold)
+    openAncestors.push(fold)
+  }
+
+  return { folds: accepted, rejected }
+}
+
+function sortedFoldRangesForIngestion(folds: readonly FoldRange[]): readonly FoldRange[] {
+  return [...folds].toSorted(compareFoldRangesForIngestion)
+}
+
+function compareFoldRangesForIngestion(left: FoldRange, right: FoldRange): number {
+  return (
+    left.startIndex - right.startIndex ||
+    right.endIndex - left.endIndex ||
+    left.startLine - right.startLine ||
+    right.endLine - left.endLine ||
+    left.type.localeCompare(right.type) ||
+    foldLanguageId(left).localeCompare(foldLanguageId(right))
+  )
+}
+
+function foldLanguageId(fold: FoldRange): string {
+  return fold.languageId ?? ''
+}
+
+function invalidFoldRangeMessage(fold: FoldRange): string | null {
+  const integerMessage =
+    invalidNonNegativeIntegerMessage(fold.startIndex, 'Fold range startIndex') ??
+    invalidNonNegativeIntegerMessage(fold.endIndex, 'Fold range endIndex') ??
+    invalidNonNegativeIntegerMessage(fold.startLine, 'Fold range startLine') ??
+    invalidNonNegativeIntegerMessage(fold.endLine, 'Fold range endLine')
+  if (integerMessage) return integerMessage
+  if (fold.endIndex <= fold.startIndex) {
+    return 'Fold range endIndex must be greater than startIndex'
+  }
+  if (fold.endLine <= fold.startLine) return 'Fold range endLine must be greater than startLine'
+  return null
+}
+
+function invalidNonNegativeIntegerMessage(value: number, name: string): string | null {
+  if (!Number.isInteger(value)) return `${name} must be an integer`
+  if (value < 0) return `${name} must be non-negative`
+  return null
+}
+
+function innermostOpenAncestor(openAncestors: FoldRange[], fold: FoldRange): FoldRange | null {
+  while (openAncestors.length > 0) {
+    const ancestor = openAncestors.at(-1)!
+    if (ancestor.endIndex > fold.startIndex) return ancestor
+    openAncestors.pop()
+  }
+
+  return null
 }

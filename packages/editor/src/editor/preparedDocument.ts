@@ -13,10 +13,12 @@ import {
   type EditorSyntaxRange,
   type EditorSyntaxResult,
   type EditorSyntaxSession,
-  type FoldRange,
 } from '../syntax/session'
-import { fallbackFoldRanges } from './foldRanges'
+import { IndentationFoldIndex } from './indentationFoldIndex'
 import { guessedTabSize } from './indentationGuess'
+import { recordEditorPerformanceDiagnostic } from './performanceDiagnostics'
+import { fallbackFoldReason } from './syntaxController'
+import { EditorWorkScheduler } from './workScheduler'
 
 export type EditorPreparedTagValue = string | number | boolean | null
 
@@ -87,7 +89,7 @@ export type EditorPreparedHighlighterTransfer = {
 export type EditorPreparedDocumentPayload = {
   readonly lineStarts: readonly number[]
   readonly tabSize: number
-  readonly fallbackFolds: readonly FoldRange[]
+  readonly fallbackFoldIndex: IndentationFoldIndex | null
   readonly structural: EditorPreparedStructuralTransfer | null
   readonly highlighter: EditorPreparedHighlighterTransfer | null
 }
@@ -98,6 +100,8 @@ export type EditorPreparedDocument = {
   take(expected: EditorPreparedDocumentMatch): EditorPreparedDocumentPayload | null
   dispose(): void
   readonly estimatedBytes: number
+  /** True if fallback preparation finishes before takeover, incomplete transfer, or disposal. */
+  readonly fallbackReady: Promise<boolean>
 }
 
 export type EditorPreparedRuntimeSessionIds = {
@@ -132,48 +136,52 @@ export function createEditorPreparedDocument(
 ): EditorPreparedDocument {
   const snapshot = options.buffer.getSnapshot()
   const textSnapshot = options.buffer.getTextSnapshot()
-  const fullText = textSnapshot.materializeFullText()
+  let fullTextCache: string | undefined
+  const fullText = () => (fullTextCache ??= textSnapshot.materializeFullText())
   const lineStarts = computeLineStarts(textSnapshot)
   const tabSize =
     options.tabSizePolicy === 'detect-indentation'
-      ? guessedTabSize(fullText, options.configuredTabSize)
+      ? guessedTabSize(fullText(), options.configuredTabSize)
       : options.configuredTabSize
-  const fallbackFolds = fallbackFoldRanges({
-    text: fullText,
-    languageId: options.languageId,
-    tabSize,
-  })
   const documentConfigurationTag = checkedTag(options.documentConfigurationTag)
   let structural: PreparedStructuralStage | null = null
   let highlighter: PreparedHighlighterStage | null = null
   let consumed = false
   let disposed = false
+  const fallback = new PreparedFallbackIndex(
+    new IndentationFoldIndex({ snapshot: textSnapshot, languageId: options.languageId, tabSize }),
+    options.documentId,
+    () => preparedFallbackSelection(options.languageId, structural),
+  )
 
   const dispose = (): void => {
     if (disposed) return
 
     disposed = true
+    fallback.dispose()
     structural?.disposeIfOwned()
     highlighter?.disposeIfOwned()
   }
 
   return {
+    fallbackReady: fallback.ready,
     get estimatedBytes() {
       const documentBytes =
         snapshot.length * 2 +
         lineStarts.length * LINE_START_ESTIMATED_BYTES +
-        fallbackFolds.length * FOLD_RANGE_ESTIMATED_BYTES
+        fallback.estimatedBytes
       return documentBytes + readyStageEstimatedBytes(structural, highlighter)
     },
     startStage(request) {
       if (consumed || disposed) return null
       if (request.family === 'structural') {
         if (structural) return null
-        structural = createStructuralStage(options, snapshot, textSnapshot, fullText, request)
+        structural = createStructuralStage(options, snapshot, textSnapshot, fullText(), request)
+        observePreparedStructuralOwnership(structural, fallback, options.languageId)
         return structural.outcome
       }
       if (highlighter) return null
-      highlighter = createHighlighterStage(options, snapshot, textSnapshot, fullText, request)
+      highlighter = createHighlighterStage(options, snapshot, textSnapshot, fullText(), request)
       return highlighter.outcome
     },
     runtimeSessionIds() {
@@ -195,12 +203,137 @@ export function createEditorPreparedDocument(
       return {
         lineStarts,
         tabSize,
-        fallbackFolds,
+        fallbackFoldIndex: fallback.take(
+          structuralTransfer !== null && structuralOwnsFolds(structural, options.languageId),
+        ),
         structural: structuralTransfer,
         highlighter: highlighterTransfer,
       }
     },
     dispose,
+  }
+}
+
+function observePreparedStructuralOwnership(
+  stage: PreparedStructuralStage,
+  fallback: PreparedFallbackIndex,
+  languageId: EditorSyntaxLanguageId | null,
+): void {
+  if (structuralOwnsFolds(stage, languageId)) fallback.pause()
+  void stage.outcome.then(() => {
+    if (structuralOwnsFolds(stage, languageId)) return
+    fallback.resume()
+  })
+}
+
+function structuralOwnsFolds(
+  stage: PreparedStructuralStage | null,
+  languageId: EditorSyntaxLanguageId | null,
+): boolean {
+  return preparedFallbackSelection(languageId, stage).reason === null
+}
+
+function preparedFallbackSelection(
+  languageId: EditorSyntaxLanguageId | null,
+  stage: PreparedStructuralStage | null,
+) {
+  const session = stage?.disposed() ? null : (stage?.session ?? null)
+  const structuralStatus = stage?.failed() ? 'error' : 'loading'
+  return {
+    reason: fallbackFoldReason({ languageId, session, status: structuralStatus }),
+    provider: stage?.provider ? 'plugin' : null,
+    foldingSupport: session?.foldingSupport ?? null,
+    structuralStatus,
+  }
+}
+
+class PreparedFallbackIndex {
+  private readonly work = new EditorWorkScheduler()
+  private disposed = false
+  private resolveReady: (ready: boolean) => void = () => undefined
+  readonly ready = new Promise<boolean>((resolve) => {
+    this.resolveReady = resolve
+  })
+
+  constructor(
+    private index: IndentationFoldIndex | null,
+    private readonly documentId: string,
+    private readonly selection: () => ReturnType<typeof preparedFallbackSelection>,
+  ) {
+    this.advance()
+  }
+
+  get estimatedBytes(): number {
+    return this.index?.diagnostics.retainedBytes ?? 0
+  }
+
+  pause(): void {
+    this.resolveReady(false)
+    this.work.cancel('editor.prepared.fallbackFolds')
+    if (!this.index?.ready) this.report('pending')
+  }
+
+  resume(): void {
+    if (this.disposed || !this.index || this.index.ready) return
+    this.work.schedule({
+      key: 'editor.prepared.fallbackFolds',
+      taskClass: 'background-derived',
+      defer: true,
+      run: () => this.step(),
+      apply: (ready) => this.afterStep(ready),
+    })
+  }
+
+  take(structuralOwner: boolean): IndentationFoldIndex | null {
+    const index = this.index
+    if (!structuralOwner && index && !index.ready) this.report('pending')
+    if (!structuralOwner) this.index = null
+    this.dispose()
+    if (structuralOwner) return null
+    return index
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.resolveReady(false)
+    if (this.index && !this.index.ready) this.report('cancelled')
+    this.disposed = true
+    this.work.dispose()
+    this.index = null
+  }
+
+  private advance(): void {
+    if (this.disposed || !this.index) return
+    this.afterStep(this.step())
+  }
+
+  private step(): boolean {
+    return this.index?.step({ maxCodeUnits: 64_000, maxRows: 512 }) ?? false
+  }
+
+  private afterStep(ready: boolean): void {
+    if (!ready) {
+      this.resume()
+      return
+    }
+    this.resolveReady(true)
+    this.report('completed')
+  }
+
+  private report(outcome: 'completed' | 'cancelled' | 'pending'): void {
+    const index = this.index
+    if (!index) return
+    recordEditorPerformanceDiagnostic('editor.folds.prepared', () => ({
+      ...index.diagnostics,
+      ...this.selection(),
+      counterScope: 'index-generation',
+      durationScope: 'index-generation',
+      documentId: this.documentId,
+      languageId: index.languageId,
+      tabSize: index.tabSize,
+      trigger: 'prepared',
+      outcome,
+    }))
   }
 }
 
@@ -317,6 +450,7 @@ function createHighlighterStage(
 
 function createStageOwner<TResult>(session: { dispose(): void }, abortSignal: AbortSignal) {
   let disposed = false
+  let failed = false
   let transferred = false
   let readyResult: TResult | null = null
   const abort = () => {
@@ -340,6 +474,7 @@ function createStageOwner<TResult>(session: { dispose(): void }, abortSignal: Ab
       dispose()
     },
     disposed: () => disposed,
+    failed: () => failed,
     readyResult: () => readyResult,
     takeOwnership: () => {
       if (disposed) return false
@@ -348,11 +483,17 @@ function createStageOwner<TResult>(session: { dispose(): void }, abortSignal: Ab
       return true
     },
     track: (result: Promise<TResult>): Promise<TResult> =>
-      result.then((value) => {
-        if (disposed) throw new DOMException('Prepared stage disposed', 'AbortError')
-        readyResult = value
-        return value
-      }),
+      result.then(
+        (value) => {
+          if (disposed) throw new DOMException('Prepared stage disposed', 'AbortError')
+          readyResult = value
+          return value
+        },
+        (error: unknown) => {
+          failed = true
+          throw error
+        },
+      ),
   }
 }
 
@@ -377,6 +518,7 @@ function createMissingStructuralStage(
     dispose: () => undefined,
     disposeIfOwned: () => undefined,
     disposed: () => true,
+    failed: () => true,
     outcome: Promise.resolve(outcome),
     provider: null,
     range: null,
@@ -399,6 +541,7 @@ function createMissingHighlighterStage(
     dispose: () => undefined,
     disposeIfOwned: () => undefined,
     disposed: () => true,
+    failed: () => true,
     outcome: Promise.resolve(outcome),
     provider: null,
     range: null,

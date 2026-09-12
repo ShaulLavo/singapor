@@ -19,6 +19,9 @@ import {
 } from '@singapor/tree-sitter'
 import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '@singapor/tree-sitter-languages'
 import '@singapor/core/style.css'
+import { createFoldGutterPlugin } from '../../../packages/gutters/dist/index.js'
+import '../../../packages/gutters/dist/style.css'
+import { generateFallbackFixture } from './fallbackFixture.ts'
 import { fixtureFacts, generateFixture, type FixtureId } from './fixtures.ts'
 
 type Configuration = {
@@ -27,6 +30,8 @@ type Configuration = {
   readonly prepared: boolean
   readonly plugin: boolean
   readonly diagnostics: boolean
+  readonly fallbackCases: boolean
+  readonly foldGutter: boolean
 }
 type Diagnostic = {
   readonly name: string
@@ -34,6 +39,7 @@ type Diagnostic = {
   readonly detail?: Readonly<Record<string, unknown>>
 }
 type Paint = EditorInitialPaintEvent & { readonly at: number }
+type InputMeasurement = { at: number; appliedAt: number | null; frameAt: number | null }
 
 let configuration: Configuration
 let source = ''
@@ -48,6 +54,8 @@ let droppedDiagnostics = 0
 let preparationMs = 0
 let bufferMs = 0
 let start = 0
+let inputMeasurements: InputMeasurement[] = []
+let inputOffset: number | null = null
 let retained: { readonly label: string; readonly reference: WeakRef<object> }[] = []
 
 function check(value: unknown, message: string): asserts value {
@@ -108,7 +116,9 @@ function createBuffer(): EditorTextBuffer {
 async function configure(options: Configuration) {
   dispose()
   configuration = options
-  source = generateFixture(options.fixture, options.seed)
+  source = options.fallbackCases
+    ? generateFallbackFixture(options.fixture, options.seed)
+    : generateFixture(options.fixture, options.seed)
   paints = []
   diagnostics = []
   droppedDiagnostics = 0
@@ -132,6 +142,7 @@ async function configure(options: Configuration) {
     documentConfigurationTag: [],
   })
   if (options.plugin) await prepareSyntax(prepared, buffer)
+  await prepared.fallbackReady
   preparationMs = performance.now() - at
   return facts
 }
@@ -170,13 +181,16 @@ function open() {
   })
   document.querySelector('#views')!.append(host)
   const plugins = configuration.plugin ? [createTreeSitterSyntaxPlugin(syntaxProvider())] : []
+  if (configuration.foldGutter) plugins.push(createFoldGutterPlugin())
   const constructorAt = performance.now()
   editor = new Editor(host, {
     lineHeight: 20,
     tabSize: 4,
     plugins,
     onInitialPaint: (event) => paints.push({ ...event, at: performance.now() }),
+    onChange: inputApplied,
   })
+  editor.getInputElement().addEventListener('beforeinput', beforeInput, { capture: true })
   const constructedAt = performance.now()
   editor.attachSession(createEditorBufferSession(buffer), {
     documentId: configuration.fixture,
@@ -206,6 +220,49 @@ function observe() {
   }
 }
 
+function foldCommand(command: 'fold' | 'foldAll' | 'unfoldAll') {
+  check(editor && buffer, 'No document is open')
+  const at = performance.now()
+  const changed = command === 'fold' ? editor.fold(0) : editor[command]()
+  return { command, at, durationMs: performance.now() - at, changed }
+}
+
+function beginEditBurst() {
+  check(editor && buffer, 'No document is open')
+  const offset = source.indexOf('\n', source.indexOf('\n') + 1) + 8
+  editor.setSelection(offset, offset, { reveal: true })
+  editor.focus()
+  inputMeasurements = []
+  inputOffset = offset
+}
+
+function beforeInput(event: InputEvent) {
+  if (inputOffset === null || event.inputType !== 'insertText') return
+  inputMeasurements.push({ at: performance.now(), appliedAt: null, frameAt: null })
+}
+
+function inputApplied() {
+  const input = inputMeasurements.at(-1)
+  if (inputOffset === null || !input || input.appliedAt !== null) return
+  input.appliedAt = performance.now()
+  requestAnimationFrame(() => {
+    input.frameAt = performance.now()
+  })
+}
+
+function finishEditBurst() {
+  check(buffer && inputOffset !== null, 'No input burst is active')
+  check(inputMeasurements.length === 12, 'Expected twelve real beforeinput events')
+  const offset = inputOffset
+  inputOffset = null
+  const events = inputMeasurements.map((input) => {
+    check(input.appliedAt !== null && input.frameAt !== null, 'Input did not apply and paint')
+    return { at: input.at, appliedAt: input.appliedAt, frameAt: input.frameAt }
+  })
+  source = source.slice(0, offset) + 'x'.repeat(12) + source.slice(offset)
+  return { events, offset, revision: buffer.getRevision() }
+}
+
 function dispose() {
   retained = [
     { label: 'editor', value: editor },
@@ -220,6 +277,8 @@ function dispose() {
   document.querySelector('#views')!.replaceChildren()
   globalThis.__EDITOR_PERFORMANCE_DIAGNOSTICS__ = null
   source = ''
+  inputOffset = null
+  inputMeasurements = []
 }
 
 function retention() {
@@ -238,6 +297,9 @@ const firstPaint = {
   configure,
   open,
   observe,
+  foldCommand,
+  beginEditBurst,
+  finishEditBurst,
   dispose,
   retention,
   status: () => editor?.getState(),

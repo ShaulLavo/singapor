@@ -31,6 +31,55 @@ function flushSchedulerTicks(count = 4): void {
 describe('EditorWorkScheduler', () => {
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('yields through browser tasks and preserves queued priority without nested timers', () => {
+    vi.useFakeTimers()
+    const pending: Array<() => void> = []
+    const calls: string[] = []
+    vi.stubGlobal('scheduler', {
+      postTask: (callback: () => void) => {
+        pending.push(callback)
+        return Promise.resolve()
+      },
+    })
+    const scheduler = new EditorWorkScheduler()
+    scheduler.schedule({
+      key: 'folds',
+      taskClass: 'background-derived',
+      defer: true,
+      run: () => calls.push('folds'),
+    })
+    scheduler.schedule({
+      key: 'text',
+      taskClass: 'visible-render',
+      defer: true,
+      run: () => calls.push('text'),
+    })
+    expect(calls).toEqual([])
+    expect(vi.getTimerCount()).toBe(0)
+    pending.shift()!()
+    expect(calls).toEqual(['text'])
+    pending.shift()!()
+    expect(calls).toEqual(['text', 'folds'])
+    scheduler.dispose()
+  })
+
+  it('aborts the posted browser task when disposed before its slice starts', () => {
+    let signal: AbortSignal | undefined
+    const run = vi.fn()
+    vi.stubGlobal('scheduler', {
+      postTask: (_callback: () => void, options: SchedulerPostTaskOptions) => {
+        signal = options.signal
+        return Promise.resolve()
+      },
+    })
+    const scheduler = new EditorWorkScheduler()
+    scheduler.schedule({ key: 'folds', taskClass: 'background-derived', defer: true, run })
+    scheduler.dispose()
+    expect(signal?.aborted).toBe(true)
+    expect(run).not.toHaveBeenCalled()
   })
 
   it('runs only the latest delayed work for a key', () => {

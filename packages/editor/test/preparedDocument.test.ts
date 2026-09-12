@@ -20,6 +20,155 @@ import {
 } from '../src/syntax/session'
 
 describe('prepared editor documents', () => {
+  it('prepares fixed-tab fallback folds without materializing or reading the full snapshot', () => {
+    const buffer = createEditorTextBuffer('root\n  child\nnext\n')
+    const snapshot = buffer.getTextSnapshot()
+    const materialize = vi.spyOn(snapshot, 'materializeFullText').mockImplementation(() => {
+      throw new TypeError('Fallback preparation must read snapshot chunks')
+    })
+    const readRange = vi.spyOn(snapshot, 'readRange')
+    const prepared = createEditorPreparedDocument({
+      buffer,
+      configuredTabSize: 4,
+      tabSizePolicy: 'fixed',
+      documentConfigurationTag: [],
+      documentId: 'file.ts',
+      languageId: 'typescript',
+    })
+
+    const claimed = prepared.take({ ...match(buffer, null, null), tabSizePolicy: 'fixed' })
+
+    expect(materialize).not.toHaveBeenCalled()
+    expect(readRange).not.toHaveBeenCalledWith(0, snapshot.length)
+    expect(claimed?.fallbackFoldIndex?.snapshot).toBe(snapshot)
+    expect(claimed?.fallbackFoldIndex?.ready).toBe(true)
+    expect(claimed?.fallbackFoldIndex?.all()).toMatchObject([{ startLine: 0, endLine: 1 }])
+    prepared.dispose()
+  })
+
+  it('transfers incomplete fallback work without finishing it during attachment', async () => {
+    const buffer = createEditorTextBuffer('root\n  child\n'.repeat(2_000))
+    const prepared = fixedPreparedDocument(buffer)
+
+    const claimed = prepared.take({ ...match(buffer, null, null), tabSizePolicy: 'fixed' })
+
+    expect(claimed?.fallbackFoldIndex?.ready).toBe(false)
+    expect(claimed?.fallbackFoldIndex?.diagnostics.rowsRead).toBeLessThan(4_001)
+    await expect(prepared.fallbackReady).resolves.toBe(false)
+    expect(claimed?.fallbackFoldIndex?.complete().count).toBe(2_000)
+    prepared.dispose()
+  })
+
+  it('reports ready fallback preparation before attachment without forcing it synchronously', async () => {
+    vi.useFakeTimers()
+    const buffer = createEditorTextBuffer('root\n  child\n'.repeat(2_000))
+    const prepared = fixedPreparedDocument(buffer)
+    const settled: boolean[] = []
+    void prepared.fallbackReady.then((ready) => settled.push(ready))
+    try {
+      await Promise.resolve()
+      expect(settled).toEqual([])
+      await vi.runAllTimersAsync()
+      await expect(prepared.fallbackReady).resolves.toBe(true)
+      const claimed = prepared.take({ ...match(buffer, null, null), tabSizePolicy: 'fixed' })
+      expect(claimed?.fallbackFoldIndex?.ready).toBe(true)
+      expect(claimed?.fallbackFoldIndex?.count).toBe(2_000)
+    } finally {
+      prepared.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels optional incomplete fallback work when a pending structural stage owns folds', async () => {
+    vi.useFakeTimers()
+    const buffer = createEditorTextBuffer('root\n  child\n'.repeat(2_000))
+    const result = deferred<ReturnType<typeof createEmptySyntaxResult>>()
+    const pendingSession = { ...syntaxSession(), foldingSupport: 'pending' as const }
+    pendingSession.refresh = vi.fn(() => result.promise)
+    const provider: EditorSyntaxProvider = { createSession: () => pendingSession }
+    const prepared = fixedPreparedDocument(buffer)
+    try {
+      prepared.startStage({
+        family: 'structural',
+        provider,
+        configuration: structuralConfiguration,
+        configurationTag: ['tree-sitter', 1],
+        range: { startIndex: 0, endIndex: buffer.getSnapshot().length },
+        abortSignal: new AbortController().signal,
+      })
+      await vi.runAllTimersAsync()
+      await expect(prepared.fallbackReady).resolves.toBe(false)
+      const claimed = prepared.take({ ...match(buffer, provider, null), tabSizePolicy: 'fixed' })
+
+      expect(claimed?.fallbackFoldIndex).toBeNull()
+      expect(claimed?.structural?.readyResult).toBeNull()
+      claimed?.structural?.dispose()
+    } finally {
+      prepared.dispose()
+      await expect(prepared.fallbackReady).resolves.toBe(false)
+      result.resolve(createEmptySyntaxResult())
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases unfinished fallback facts and queued work on disposal', async () => {
+    vi.useFakeTimers()
+    const buffer = createEditorTextBuffer('root\n  child\n'.repeat(2_000))
+    const prepared = fixedPreparedDocument(buffer)
+    const retained = prepared.estimatedBytes
+    try {
+      prepared.dispose()
+      await vi.runAllTimersAsync()
+      expect(prepared.estimatedBytes).toBeLessThan(retained)
+      expect(prepared.take({ ...match(buffer, null, null), tabSizePolicy: 'fixed' })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['unsupported', 'failed'] as const)(
+    'resumes optional preparation when structural folding becomes %s',
+    async (terminal) => {
+      vi.useFakeTimers()
+      const buffer = createEditorTextBuffer('root\n  child\n'.repeat(2_000))
+      let foldingSupport: 'pending' | 'unsupported' = 'pending'
+      const session = {
+        ...syntaxSession(),
+        get foldingSupport() {
+          return foldingSupport
+        },
+        refresh: async () => {
+          await Promise.resolve()
+          if (terminal === 'failed') throw new TypeError('Parser failed')
+          foldingSupport = 'unsupported'
+          return createEmptySyntaxResult()
+        },
+      }
+      const provider: EditorSyntaxProvider = { createSession: () => session }
+      const prepared = fixedPreparedDocument(buffer)
+      try {
+        await prepared.startStage({
+          family: 'structural',
+          provider,
+          configuration: structuralConfiguration,
+          configurationTag: ['tree-sitter', 1],
+          range: { startIndex: 0, endIndex: buffer.getSnapshot().length },
+          abortSignal: new AbortController().signal,
+        })
+        await vi.runAllTimersAsync()
+        await expect(prepared.fallbackReady).resolves.toBe(false)
+        const claimed = prepared.take({ ...match(buffer, provider, null), tabSizePolicy: 'fixed' })
+
+        expect(claimed?.fallbackFoldIndex?.ready).toBe(true)
+        expect(claimed?.fallbackFoldIndex?.count).toBe(2_000)
+        claimed?.structural?.dispose()
+      } finally {
+        prepared.dispose()
+        vi.useRealTimers()
+      }
+    },
+  )
+
   it('adds every retained ready-result array to its byte estimate', async () => {
     const buffer = createEditorTextBuffer('a\nb\nc\n')
     const structuralSession = syntaxSession()
@@ -865,6 +1014,17 @@ function match(
     structuralConfigurationTag: ['tree-sitter', 1] as const,
     structuralProvider,
   }
+}
+
+function fixedPreparedDocument(buffer: ReturnType<typeof createEditorTextBuffer>) {
+  return createEditorPreparedDocument({
+    buffer,
+    configuredTabSize: 4,
+    tabSizePolicy: 'fixed',
+    documentConfigurationTag: [],
+    documentId: 'file.ts',
+    languageId: 'typescript',
+  })
 }
 
 function syntaxSession(): EditorSyntaxSession {

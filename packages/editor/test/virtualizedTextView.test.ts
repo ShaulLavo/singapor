@@ -4,7 +4,11 @@ import {
   createLineGutterContribution,
 } from '../../gutters/src/index.ts'
 import { projectTokensThroughEdit } from '../src/editor/tokenProjection'
+import { EditorFoldState } from '../src/editor/foldState'
+import { IndentationFoldIndex } from '../src/editor/indentationFoldIndex'
 import {
+  applyBatchToPieceTable,
+  createDocumentTextSnapshot,
   createPieceTableSnapshot,
   createStringTextSnapshot,
   type TextSnapshot,
@@ -448,6 +452,52 @@ describe('VirtualizedTextView', () => {
     view.setScrollMetrics(21, 100)
 
     expect(events).toEqual([21])
+  })
+
+  it('publishes fold controls when an atomic scroll leaves the rendered row window unchanged', () => {
+    view.dispose()
+    const toggled: VirtualizedFoldMarker[] = []
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 2,
+      highlightRegistry: mockRegistry,
+      gutterContributions: [createFoldGutterContribution()],
+      onFoldToggle: (marker) => toggled.push(marker),
+    })
+    const header = 'heading '.repeat(30)
+    const text = `${header}\n  child\n${createLines(20)}`
+    view.setText(text)
+    view.setScrollMetrics(1, 100, 80, 0)
+    const rows = view.getState().mountedRows.map((row) => row.index)
+    const marker: VirtualizedFoldMarker = {
+      key: `plain:indent:${header.length}:${header.length + 8}`,
+      startOffset: header.length,
+      endOffset: header.length + 8,
+      startRow: 0,
+      endRow: 1,
+      collapsed: false,
+    }
+
+    view.runAtomicRender(() => {
+      view.setScrollMetrics(1, 100, 80, 1)
+      view.setIndexedFoldState(
+        {
+          size: 1,
+          get: (row) => (row === 0 ? marker : undefined),
+          all: () => [marker],
+        },
+        null,
+      )
+    })
+
+    expect(view.getState().mountedRows.map((row) => row.index)).toEqual(rows)
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-editor-virtual-gutter-row="0"] .editor-virtualized-fold-toggle',
+    )
+    expect(button?.hidden).toBe(false)
+    expect(button?.dataset.editorFoldKey).toBe(marker.key)
+    button?.click()
+    expect(toggled).toEqual([marker])
   })
 
   it('spaces rows with rowGap without adding a trailing gap', () => {
@@ -1407,6 +1457,150 @@ describe('VirtualizedTextView', () => {
     expect(rowOneAfter.startOffset).toBe(5)
     expect(view.textOffsetFromDomBoundary(rowOneAfter.textNode, 1)).toBe(6)
     expect(replaceData).toHaveBeenCalledWith(1, 0, 'X')
+  })
+
+  it('patches same-line text and current snapshot folds in one mounted-row pass', () => {
+    view.dispose()
+    const firstRowFolds: (VirtualizedFoldMarker | null)[] = []
+    view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 2,
+      highlightRegistry: mockRegistry,
+      gutterContributions: [
+        createFoldGutterContribution(),
+        {
+          id: 'fold-pass-counter',
+          width: () => 10,
+          createCell: (document) => document.createElement('div'),
+          updateCell: (_element, row) => {
+            if (row.index === 0) firstRowFolds.push(row.foldMarker)
+          },
+        },
+      ],
+    })
+    const text = 'root\n  child\ntail'
+    const tokens = [{ start: 0, end: 4, style: { color: '#ff0000' } }]
+    let piece = createPieceTableSnapshot(text)
+    const folds = new EditorFoldState(
+      view,
+      () => piece,
+      () => [],
+    )
+    view.setText(createDocumentTextSnapshot(piece))
+    view.setScrollMetrics(0, 60)
+    folds.setFoldProjections(
+      [],
+      new IndentationFoldIndex({
+        snapshot: createDocumentTextSnapshot(piece),
+        languageId: null,
+        tabSize: 2,
+      }).complete(),
+    )
+    view.adoptTokens(tokens)
+    const first = view.getState().mountedRows[0]!
+    const child = view.getState().mountedRows[1]!
+    const replaceData = vi.spyOn(first.textNode, 'replaceData')
+    const edit = { from: 1, to: 1, text: 'X' }
+    piece = applyBatchToPieceTable(piece, [edit])
+    const next = createDocumentTextSnapshot(piece)
+    const fullText = vi.spyOn(next, 'materializeFullText')
+    const nextIndex = new IndentationFoldIndex({
+      snapshot: next,
+      languageId: null,
+      tabSize: 2,
+    }).complete()
+    firstRowFolds.length = 0
+
+    view.runAtomicRender(() => {
+      view.applyEdit(edit, next, () => {
+        expect(view['view'].model.textSnapshot).toBe(next)
+        expect(first.textNode.data).toBe('root')
+        folds.setFoldProjections([], nextIndex)
+      })
+      view.adoptTokens(projectTokensThroughEdit(tokens, edit, text))
+    })
+
+    expect(firstRowFolds).toHaveLength(1)
+    expect(firstRowFolds[0]).toMatchObject({ startOffset: 5, endOffset: 13 })
+    expect(replaceData).toHaveBeenCalledExactlyOnceWith(1, 0, 'X')
+    expect(view.getState().mountedRows[0]!.textNode).toBe(first.textNode)
+    expect(first.textNode.data).toBe('rXoot')
+    expect(view.getState().mountedRows[1]!.textNode).toBe(child.textNode)
+    expect(view.getState().mountedRows[1]!.startOffset).toBe(6)
+    expect(tokenHighlightRangeForNode(first.textNode)?.range.endOffset).toBe(5)
+    expect(fullText).not.toHaveBeenCalled()
+  })
+
+  it('renders the final projection when the edit callback collapses a fold', () => {
+    const text = 'root\n  child\ntail'
+    let piece = createPieceTableSnapshot(text)
+    const folds = new EditorFoldState(
+      view,
+      () => piece,
+      () => [],
+    )
+    view.setText(createDocumentTextSnapshot(piece))
+    view.setScrollMetrics(0, 60)
+    const edit = { from: 1, to: 1, text: 'X' }
+    piece = applyBatchToPieceTable(piece, [edit])
+    const next = createDocumentTextSnapshot(piece)
+    const index = new IndentationFoldIndex({
+      snapshot: next,
+      languageId: null,
+      tabSize: 2,
+    }).complete()
+    const replaceData = vi.spyOn(view.getState().mountedRows[0]!.textNode, 'replaceData')
+
+    view.runAtomicRender(() => {
+      view.applyEdit(edit, next, () => {
+        folds.setFoldProjections([], index)
+        folds.foldAll()
+      })
+    })
+
+    expect(replaceData).not.toHaveBeenCalled()
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual(['rXoot', 'tail'])
+    expect(view.getState().mountedRows[0]!.foldCollapsed).toBe(true)
+    expect(view.getState().mountedRows[1]!.startOffset).toBe(14)
+  })
+
+  it('keeps multiple same-line edits correct across a scroll inside an atomic render', () => {
+    const text = 'abc\ndef\nghi\njkl\nmno'
+    view.setText(text)
+    view.setScrollMetrics(0, 40, 80)
+
+    view.runAtomicRender(() => {
+      view.applyEdit(
+        { from: 1, to: 1, text: 'X' },
+        throwingFullTextSnapshot('aXbc\ndef\nghi\njkl\nmno'),
+      )
+      view.setScrollMetrics(40, 40, 80)
+      view.applyEdit(
+        { from: 10, to: 10, text: 'Y' },
+        throwingFullTextSnapshot('aXbc\ndef\ngYhi\njkl\nmno'),
+      )
+      view.applyEdit(
+        { from: 2, to: 3, text: '' },
+        throwingFullTextSnapshot('aXc\ndef\ngYhi\njkl\nmno'),
+      )
+    })
+
+    expect(view.getState().mountedRows.map((row) => row.text)).toEqual([
+      'aXc',
+      'def',
+      'gYhi',
+      'jkl',
+      'mno',
+    ])
+    expect(view.getState().mountedRows.map((row) => row.textNode.data)).toEqual([
+      'aXc',
+      'def',
+      'gYhi',
+      'jkl',
+      'mno',
+    ])
+    const third = view.getState().mountedRows[2]!
+    expect(view.textOffsetFromDomBoundary(third.textNode, 2)).toBe(10)
   })
 
   it('keeps the same-line text-node patch for non-RTL Unicode rows', () => {

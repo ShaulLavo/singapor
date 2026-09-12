@@ -633,6 +633,26 @@ export function updateMountedRowsAfterSameLineEdit(
   return editedRowPatchedInPlace
 }
 
+export function updateMountedFoldMarkers(view: VirtualizedTextViewInternal): void {
+  const pass = createRowUpdatePass(view)
+  for (const row of view.rowElements.values()) {
+    const state = mountedRowUpdateState(view, row, pass)
+    const marker = state.foldMarker
+    if (
+      row.foldMarkerKey === (marker?.key ?? '') &&
+      row.foldCollapsed === (marker?.collapsed ?? false)
+    )
+      continue
+    updateRowFoldPresentation(row, marker)
+    updateGutterContributionCells(view, row, state)
+    updateMountedRowPaintFacts(row, state)
+    Object.assign(row, {
+      foldMarkerKey: marker?.key ?? '',
+      foldCollapsed: marker?.collapsed ?? false,
+    })
+  }
+}
+
 function updateRowAfterSameLineEdit(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,

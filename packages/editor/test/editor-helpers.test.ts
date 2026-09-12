@@ -200,18 +200,21 @@ describe('editor fold helpers', () => {
 describe('EditorFoldState', () => {
   it('syncs markers and re-keys a collapsed region onto a reparsed fold', () => {
     const setFoldState = vi.fn()
+    const getCaretRows = vi.fn(() => [])
     const snapshot = createPieceTableSnapshot('function f() {\n  return 1;\n}\n')
     const state = new EditorFoldState(
-      { setFoldState },
+      { setFoldState, setIndexedFoldState: vi.fn() },
       () => snapshot,
-      () => [],
+      getCaretRows,
     )
     const fold = foldRange({ startIndex: 0, endIndex: 28, startLine: 0, endLine: 2 })
 
     state.setFoldProjections([foldProjection([fold])])
+    expect(getCaretRows).not.toHaveBeenCalled()
     state.toggle(foldMarkerFromRange(fold, false))
     const reparsedFold = { ...fold, startIndex: 13, type: 'statement_block' }
     state.setFoldProjections([foldProjection([reparsedFold])])
+    expect(getCaretRows).toHaveBeenCalledTimes(1)
 
     const [markers, foldMap] = setFoldState.mock.lastCall ?? []
     expect(markers?.[0]).toMatchObject({ key: foldRangeKey(reparsedFold), collapsed: true })
@@ -222,7 +225,7 @@ describe('EditorFoldState', () => {
     const setFoldState = vi.fn()
     const snapshot = createPieceTableSnapshot('function f() {\n  if (x) {\n    y();\n  }\n}\n')
     const state = new EditorFoldState(
-      { setFoldState },
+      { setFoldState, setIndexedFoldState: vi.fn() },
       () => snapshot,
       () => [],
     )

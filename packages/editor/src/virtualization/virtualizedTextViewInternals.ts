@@ -1,4 +1,5 @@
 import type { ScrollViewport } from './scrollViewport'
+import type { FoldMarkerSource } from './foldMarkerSource'
 import type { InlineMap } from '../inlineMap'
 import type { EditorGutterContribution, EditorGutterWidthContext } from '../plugins'
 import type { SelectionAffinity } from '../selections'
@@ -123,8 +124,9 @@ export interface VirtualizedTextViewInternal {
   tokenRenderStyles: ReadonlyMap<string, EditorTokenStyle>
   tokenRenderIndexDirty: boolean
   foldMarkers: readonly VirtualizedFoldMarker[]
+  foldMarkerSource: FoldMarkerSource | null
   rowDecorations: ReadonlyMap<number, VirtualizedTextRowDecoration>
-  foldMarkerByStartRow: ReadonlyMap<number, VirtualizedFoldMarker>
+  foldMarkerByStartRow: Pick<ReadonlyMap<number, VirtualizedFoldMarker>, 'size' | 'get'>
   foldMarkerByKey: ReadonlyMap<string, VirtualizedFoldMarker>
   wrapEnabled: boolean
   tabSize: number

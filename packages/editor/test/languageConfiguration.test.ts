@@ -136,12 +136,9 @@ const DESCRIBED_LANGUAGES = [
   },
 ]
 
-/** The comment syntax a record marks fold regions in, read back off the patterns it carries. */
 function regionComments(configuration: EditorLanguageConfiguration | null): readonly string[] {
-  return REGION_COMMENTS.filter(
-    (comment) =>
-      configuration?.folding?.regionStart.test(`${comment} region alpha`) === true &&
-      configuration.folding.regionEnd.test(`${comment} endregion`),
+  return REGION_COMMENTS.filter((comment) =>
+    configuration?.folding?.regionMarkers.openers.includes(comment),
   )
 }
 

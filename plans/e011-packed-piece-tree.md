@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P3
 - Effort: L
-- Dependencies: [E005](e005-piece-tree-inspector.md), [E009](e009-worker-transport-costs.md)
+- Dependencies: [E005](../docs/storage/piece-tree-inspection.md), [E009](e009-worker-transport-costs.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`, 2026-09-05.
 
 ## Outcome

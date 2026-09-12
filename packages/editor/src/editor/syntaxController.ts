@@ -93,6 +93,23 @@ export type EditorSyntaxRefreshOptions = {
   readonly range?: EditorSyntaxRange | null
 }
 
+export type EditorFallbackFoldReason =
+  | 'no-language'
+  | 'no-session'
+  | 'unsupported'
+  | 'structural-error'
+
+export function fallbackFoldReason(options: {
+  readonly languageId: EditorSyntaxLanguageId | null
+  readonly session: Pick<EditorSyntaxSession, 'foldingSupport'> | null
+  readonly status: EditorSyntaxStatus
+}): EditorFallbackFoldReason | null {
+  if (!options.session) return options.languageId ? 'no-session' : 'no-language'
+  if (options.status === 'error') return 'structural-error'
+  if (options.session.foldingSupport === 'unsupported') return 'unsupported'
+  return null
+}
+
 type EditorSyntaxLoadResult = {
   readonly contentVersion: number
   readonly range: EditorSyntaxRange | null
@@ -235,8 +252,33 @@ export class EditorSyntaxController {
   }
 
   get usesFallbackFolds(): boolean {
-    if (!this.syntaxSession || this.syntaxStatus === 'error') return true
-    return this.syntaxSession.foldingSupport === 'unsupported'
+    return this.fallbackFoldReason !== null
+  }
+
+  get fallbackFoldReason(): EditorFallbackFoldReason | null {
+    return fallbackFoldReason({
+      languageId: this.options.getLanguageId(),
+      session: this.syntaxSession,
+      status: this.syntaxStatus,
+    })
+  }
+
+  get fallbackFoldSelection() {
+    return {
+      reason: this.fallbackFoldReason,
+      provider: this.structuralProviderKind(),
+      foldingSupport: this.syntaxSession?.foldingSupport ?? null,
+      structuralStatus: this.syntaxStatus,
+      structuralSession: this.syntaxSession !== null,
+      structuralSuppression: this.fallbackFoldReason === null,
+      configurationGeneration: this.initialHighlightConfigurationGeneration,
+    }
+  }
+
+  private structuralProviderKind(): 'plugin' | 'factory' | null {
+    if (this.options.pluginHost.hasSyntaxProviders()) return 'plugin'
+    if (getEditorSyntaxSessionFactory()) return 'factory'
+    return null
   }
 
   private foldsCoverViewport(): boolean {
@@ -561,6 +603,7 @@ export class EditorSyntaxController {
       action: 'editor.syntax.refresh_scheduled',
       level: 'debug',
       syntax: {
+        ...this.fallbackFoldSelection,
         changeKind: change?.kind ?? null,
         documentVersion,
         range: options.range ?? null,
@@ -1202,6 +1245,7 @@ export class EditorSyntaxController {
       action: 'editor.syntax.structural_applied',
       level: 'debug',
       syntax: {
+        ...this.fallbackFoldSelection,
         documentVersion,
         contentVersion: loadResult.contentVersion,
         source: loadResult.source,
@@ -1554,6 +1598,7 @@ export class EditorSyntaxController {
       hasSyntaxSession: Boolean(this.syntaxSession),
       languageId: this.options.getLanguageId(),
       syntaxStatus: this.syntaxStatus,
+      ...this.fallbackFoldSelection,
     }
   }
 
@@ -1732,6 +1777,9 @@ export class EditorSyntaxController {
     action: string,
     level: 'debug' | 'info' | 'warn' | 'error' = 'info',
   ): void {
+    recordEditorPerformanceDiagnostic(action, () =>
+      this.debugContext(this.options.getDocumentVersion()),
+    )
     this.options.log?.({
       action,
       level,

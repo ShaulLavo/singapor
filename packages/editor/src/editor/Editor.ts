@@ -16,7 +16,8 @@ import {
   rejectCrossingFoldRanges,
   type FoldRangeRejection,
 } from './folds'
-import { fallbackFoldRanges } from './foldRanges'
+import { EditorFallbackFoldController } from './fallbackFoldController'
+import type { IndentationFoldIndex } from './indentationFoldIndex'
 import { EditorFoldState } from './foldState'
 import { guessedTabSize } from './indentationGuess'
 import { EditorKeymapController } from './keymap'
@@ -232,7 +233,6 @@ const VISIBLE_SYNTAX_MAX_LEAD_CHARS = 750_000
 const VISIBLE_SYNTAX_SCROLL_DELAY_MS = 16
 const BACKGROUND_SYNTAX_WARM_DELAY_MS = 80
 const SYNTAX_FOLD_PROJECTION_OWNER = 'editor.folds.syntax'
-const FALLBACK_FOLD_PROJECTION_OWNER = 'editor.folds.fallback'
 const MANUAL_FOLD_PROJECTION_OWNER = 'editor.folds.manual'
 const DIRECT_RANGE_DECORATION_OWNER = 'editor.rangeDecorations.direct'
 const DIRECT_ROW_DECORATION_OWNER = 'editor.rowDecorations.direct'
@@ -288,6 +288,7 @@ export class Editor {
   private readonly container: HTMLElement
   private readonly view: VirtualizedTextView
   private readonly foldState: EditorFoldState
+  private readonly fallbackFolds: EditorFallbackFoldController
   private readonly el: HTMLDivElement
   private lastSyntaxScrollTop: number | null = null
   private syntaxScrollDeltaPx = 0
@@ -544,6 +545,23 @@ export class Editor {
       },
       notifyThemeChanged: () => this.applyResolvedTheme(),
       log: (event) => this.logSyntaxLifecycleEvent(event),
+    })
+    this.fallbackFolds = new EditorFallbackFoldController({
+      scheduler: this.secondaryWork,
+      context: () => ({
+        snapshot: this.textSnapshot,
+        languageId: this.languageId,
+        tabSize: this.tabSize,
+        documentId: this.documentId,
+        documentVersion: this.documentVersion,
+        selection: this.syntax.fallbackFoldSelection,
+        grammarProjectionSuppression:
+          this.grammarDescribedFolds || this.syntaxFoldProjection().length > 0,
+        active: this.session !== null && !this.disposed,
+      }),
+      publish: (index) => this.foldState.setFoldProjections(this.foldProjections(index), index),
+      changed: () => this.notifyViewContributions('layout', null),
+      log: (fold) => this.log({ action: 'editor.folds.fallback', level: 'debug', fold }),
     })
     // Read per press rather than copied: outdent, backspace-through-indentation and the indentation
     // a line break copies all have to measure in the width the open document actually uses, and that
@@ -956,6 +974,7 @@ export class Editor {
   }
 
   private renderContent(text: string | TextSnapshot): void {
+    this.fallbackFolds.reset()
     this.view.measureInitialViewport()
     const textSnapshot = typeof text === 'string' ? createStringTextSnapshot(text) : text
     this.document.setRenderedTextSnapshot(textSnapshot)
@@ -986,21 +1005,24 @@ export class Editor {
     tokens: readonly EditorToken[],
     textSnapshot?: TextSnapshot,
   ): void {
-    const nextTextSnapshot = textSnapshot ?? this.legacyEditTextSnapshot(edit)
-    this.document.setRenderedTextSnapshot(nextTextSnapshot)
-    this.recordDetachedTextChange([edit])
-    this.retagDisplayProjectionSources()
-    measureEditorPerformance('editor.view.applyEdit', () =>
-      this.view.applyEdit(edit, nextTextSnapshot),
-    )
-    this.syncInjectedTextRows()
-    measureEditorPerformance(
-      'editor.tokens.adoptProjected',
-      () => this.adoptTokens(tokens),
-      () => ({
-        tokenCount: tokens.length,
-      }),
-    )
+    this.view.runAtomicRender(() => {
+      const nextTextSnapshot = textSnapshot ?? this.legacyEditTextSnapshot(edit)
+      const batch = createTextEditBatch(this.textSnapshot, nextTextSnapshot, [edit])
+      this.document.setRenderedTextSnapshot(nextTextSnapshot)
+      this.recordDetachedTextChange([edit])
+      this.retagDisplayProjectionSources()
+      measureEditorPerformance('editor.view.applyEdit', () =>
+        this.view.applyEdit(edit, nextTextSnapshot, () => this.fallbackFolds.update(batch)),
+      )
+      this.syncInjectedTextRows()
+      measureEditorPerformance(
+        'editor.tokens.adoptProjected',
+        () => this.adoptTokens(tokens),
+        () => ({
+          tokenCount: tokens.length,
+        }),
+      )
+    })
   }
 
   private adoptTokens(tokens: readonly EditorToken[]): void {
@@ -1143,7 +1165,7 @@ export class Editor {
   setSyntaxFolds(folds: readonly FoldRange[]): void {
     this.runInOperation(() => {
       this.adoptSyntaxFoldProjection(folds)
-      this.foldState.setFoldProjections(this.foldProjections())
+      this.foldState.setFoldProjections(this.foldProjections(), this.fallbackFolds.index)
     })
   }
 
@@ -1702,7 +1724,8 @@ export class Editor {
   }
 
   detachSession(): void {
-    this.secondaryWork.cancel('editor.fallbackFolds')
+    this.fallbackFolds.reset()
+    this.foldState.clear()
     this.disposeBufferSubscriptions()
     this.document.detachSession()
     this.inputSelection.clearSelectionHighlight()
@@ -1735,6 +1758,8 @@ export class Editor {
     this.lifecycleSummary.disposingAt = new Date().toISOString()
     this.environmentRegistrations.dispose()
     this.secondaryWork.dispose()
+    this.fallbackFolds.reset()
+    this.foldState.clear()
     this.displayProjections.clear()
     this.inputSelection.dispose()
     this.viewContributions.dispose()
@@ -1850,30 +1875,17 @@ export class Editor {
     this.retagDisplayProjectionSources()
     this.syncInjectedTextRows()
     this.dropManualFolds()
-    this.installPreparedFallbackFolds(prepared.fallbackFolds)
+    this.installPreparedFallbackFolds(prepared.fallbackFoldIndex)
     this.applyRangeDecorations()
     this.recordContentSet()
   }
 
-  private installPreparedFallbackFolds(folds: readonly FoldRange[]): void {
-    this.secondaryWork.cancel('editor.fallbackFolds')
+  private installPreparedFallbackFolds(index: IndentationFoldIndex | null): void {
     this.grammarDescribedFolds = false
     this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
-    this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
     this.foldState.clear()
-    if (folds.length > 0 && this.syntax.usesFallbackFolds) {
-      this.displayProjections.set({
-        kind: 'folds',
-        owner: FALLBACK_FOLD_PROJECTION_OWNER,
-        source: this.currentDisplayProjectionSource(),
-        invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
-        layer: 0,
-        priority: 1,
-        disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
-        value: [...folds],
-      })
-    }
-    this.foldState.setFoldProjections(this.foldProjections())
+    this.fallbackFolds.adopt(index)
+    this.foldState.setFoldProjections(this.foldProjections(), this.fallbackFolds.index)
   }
 
   private initializeDefaultText(): void {
@@ -2454,7 +2466,7 @@ export class Editor {
     if (folds.length > 0) this.grammarDescribedFolds = true
     // The fallback leaves before the grammar enters: the registry validates the whole fold set,
     // and the two descriptions of the same blocks may cross.
-    this.syncFallbackFoldProjection()
+    this.fallbackFolds.flush()
     this.setSyntaxFoldProjection(folds)
   }
 
@@ -2486,12 +2498,18 @@ export class Editor {
    * when it does, the drawn region sits out rather than leaving the set with a range that has no
    * level. Its collapse outlives the eclipse, so the region comes back folded when the parse moves on.
    */
-  private foldProjections(): readonly EditorDisplayProjection<'folds'>[] {
+  private foldProjections(
+    index = this.fallbackFolds.index,
+  ): readonly EditorDisplayProjection<'folds'>[] {
     const contributed = this.displayProjections.values('folds')
     if (this.manualFolds.length === 0) return contributed
 
     const contributedFolds = contributed.flatMap((projection) => [...projection.value])
-    const manualFolds = nestableFoldRanges(this.manualFolds, contributedFolds)
+    const compatibleManualFolds = this.manualFolds.filter(
+      (fold) =>
+        !index || nestableFoldRanges([fold], index.ranges(fold.startLine, fold.endLine)).length > 0,
+    )
+    const manualFolds = nestableFoldRanges(compatibleManualFolds, contributedFolds)
     if (manualFolds.length === 0) return contributed
 
     return [
@@ -2510,69 +2528,16 @@ export class Editor {
   }
 
   private syncFoldStateFromProjections(): void {
-    this.secondaryWork.cancel('editor.fallbackFolds')
-    this.syncFallbackFoldProjection()
-    this.foldState.setFoldProjections(this.foldProjections())
+    this.fallbackFolds.flush()
+    this.foldState.setFoldProjections(this.foldProjections(), this.fallbackFolds.index)
   }
 
   private flushFallbackFoldProjection(): void {
-    if (!this.secondaryWork.has('editor.fallbackFolds')) return
-
-    this.refreshFallbackFolds()
+    this.fallbackFolds.flush()
   }
 
-  // Whole-document indentation scanning can wait after text adoption. Explicit fold commands flush it.
   private scheduleFallbackFoldProjection(): void {
-    const documentVersion = this.documentVersion
-    this.foldState.setFoldProjections(this.foldProjections())
-    this.secondaryWork.schedule({
-      key: 'editor.fallbackFolds',
-      delayMs: RAPID_INPUT_SECONDARY_WORK_DELAY_MS,
-      maxDelayMs: RAPID_INPUT_SECONDARY_WORK_MAX_DELAY_MS,
-      version: documentVersion,
-      isCurrent: (version) => this.isCurrentSecondaryDocument(version),
-      run: traceEditorPerformanceTask('editor.secondary.folds', () => this.refreshFallbackFolds()),
-    })
-  }
-
-  private refreshFallbackFolds(): void {
-    this.runInOperation(() => this.syncFoldStateFromProjections())
-    this.notifyViewContributions('layout', null)
-  }
-
-  /** Indentation owns folds only when structural folding is unavailable, never while it loads. */
-  private syncFallbackFoldProjection(): void {
-    if (
-      !this.syntax.usesFallbackFolds ||
-      this.grammarDescribedFolds ||
-      this.syntaxFoldProjection().length > 0
-    ) {
-      this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
-      return
-    }
-
-    const folds = measureEditorPerformance('editor.fallbackFoldRanges', () =>
-      fallbackFoldRanges({
-        text: this.materializeFullText(),
-        languageId: this.languageId,
-        tabSize: this.tabSize,
-      }),
-    )
-    if (folds.length === 0) {
-      this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
-      return
-    }
-
-    this.displayProjections.set({
-      kind: 'folds',
-      owner: FALLBACK_FOLD_PROJECTION_OWNER,
-      source: this.currentDisplayProjectionSource(),
-      invalidationRange: FULL_DISPLAY_PROJECTION_INVALIDATION,
-      layer: 0,
-      priority: 1,
-      disposal: NO_DISPLAY_PROJECTION_DISPOSAL,
-      value: folds,
-    })
+    this.fallbackFolds.schedule()
   }
 
   private handleInjectedTextRowProvidersChanged(): void {
@@ -3143,7 +3108,9 @@ export class Editor {
         // an indent column by this to get a nesting level, so a guide has to be drawn one per level
         // the document actually writes.
         tabSize: this.tabSize,
-        foldMarkers: viewState.foldMarkers,
+        get foldMarkers() {
+          return viewState.foldMarkers
+        },
         visibleRows: viewState.mountedRows.map((row) => ({
           index: row.index,
           bufferRow: row.bufferRow,
@@ -3718,10 +3685,8 @@ export class Editor {
         edit,
         previousTextSnapshot,
       )
-      this.renderEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
-      // No reparse ever restates a hand-drawn region, so this is the only thing keeping one on the
-      // rows it was drawn over.
       if (manualFolds) this.manualFolds = manualFolds
+      this.renderEdit(edit, projectedTokens, documentSessionChangeTextSnapshot(change))
       this.applySyntaxFoldProjection(foldProjection)
       if (rowDecorationsProjected) this.view.setRowDecorations(this.composedRowDecorations())
       return
@@ -3750,6 +3715,7 @@ export class Editor {
       measureEditorPerformance('editor.view.applyEditBatch', () => this.view.applyEditBatch(batch))
       this.syncInjectedTextRows()
       if (manualFolds) this.manualFolds = manualFolds
+      this.fallbackFolds.update(batch)
       this.applySyntaxFoldProjection(folds)
       if (this.projectRowDecorationsThroughBatch(batch)) {
         this.view.setRowDecorations(this.composedRowDecorations())
@@ -3758,10 +3724,7 @@ export class Editor {
     })
   }
 
-  /**
-   * Null means the edit moved no parsed boundary, which still leaves the indentation fallback to
-   * recompute: the rows it describes come from the text itself, not from the parse.
-   */
+  /** Structural projections and snapshot indentation facts advance independently. */
   private applySyntaxFoldProjection(folds: readonly FoldRange[] | null): void {
     if (folds && folds.length > 0) this.adoptSyntaxFoldProjection(folds)
     if (folds?.length === 0) this.setSyntaxFoldProjection(folds)
@@ -4121,7 +4084,7 @@ export class Editor {
     if (!location) return false
 
     const fold = foldCandidateAtLocation(
-      this.foldState.folds,
+      this.foldState.ranges(location.row, location.row),
       location.row,
       location.offset,
       (candidate) => this.foldState.isCollapsed(candidate),
@@ -4173,7 +4136,6 @@ export class Editor {
   private clearSyntaxFolds(): void {
     this.grammarDescribedFolds = false
     this.displayProjections.delete('folds', SYNTAX_FOLD_PROJECTION_OWNER)
-    this.displayProjections.delete('folds', FALLBACK_FOLD_PROJECTION_OWNER)
     this.foldState.clear()
     if (!this.session || !this.syntax.usesFallbackFolds) {
       this.syncFoldStateFromProjections()

@@ -119,6 +119,7 @@ export class EditorWorkScheduler {
   private readonly scheduled = new Map<string, ScheduledEditorWork>()
   private queued: ScheduledEditorWork[] = []
   private queueTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+  private queueTask: AbortController | null = null
   private nextToken = 0
   private disposed = false
 
@@ -224,13 +225,30 @@ export class EditorWorkScheduler {
   }
 
   private scheduleQueueFlush(): void {
-    if (this.queueTimer !== null) return
+    if (this.queueTimer !== null || this.queueTask !== null) return
+
+    const scheduler = globalThis.scheduler
+    if (scheduler?.postTask) {
+      // Timer nesting adds 4 ms to every slice of a large derived job.
+      const task = new AbortController()
+      this.queueTask = task
+      void scheduler
+        .postTask(() => this.flushQueuedWork(), {
+          priority: 'user-visible',
+          signal: task.signal,
+        })
+        .catch((error: unknown) => {
+          if (!task.signal.aborted) globalThis.reportError(error)
+        })
+      return
+    }
 
     this.queueTimer = globalThis.setTimeout(() => this.flushQueuedWork(), 0)
   }
 
   private flushQueuedWork(): void {
     this.queueTimer = null
+    this.queueTask = null
     const work = this.takeNextQueuedWork()
     if (!work) return
 
@@ -381,6 +399,8 @@ export class EditorWorkScheduler {
   }
 
   private clearQueueTimer(): void {
+    this.queueTask?.abort()
+    this.queueTask = null
     if (this.queueTimer === null) return
 
     globalThis.clearTimeout(this.queueTimer)

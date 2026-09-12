@@ -10,8 +10,10 @@ import type {
 import type { EditorDisplayProjection } from './displayProjectionRegistry'
 import { EMPTY_FOLD_MARKERS, foldMarkerFromRange, foldRangeKey, foldRangesEqual } from './folds'
 import { collapsedFoldsHidingRow, foldSpanHidesRow } from './foldOperations'
+import type { IndentationFoldIndex } from './indentationFoldIndex'
+import type { FoldMarkerSource } from '../virtualization/foldMarkerSource'
 
-type FoldView = Pick<VirtualizedTextView, 'setFoldState'>
+type FoldView = Pick<VirtualizedTextView, 'setFoldState' | 'setIndexedFoldState'>
 type FoldDisplayProjection = EditorDisplayProjection<'folds'>
 
 /**
@@ -63,6 +65,8 @@ export class EditorFoldState {
   private readonly getSnapshot: () => PieceTableSnapshot | null
   private readonly getCaretRows: () => readonly number[]
   private projectedFolds: readonly FoldRange[] = EMPTY_FOLDS
+  private indexedFolds: IndentationFoldIndex | null = null
+  private inheritedFolds: readonly FoldRange[] = EMPTY_FOLDS
   private collapsedRegions: CollapsedRegion[] = []
   private collapsedRegionsByFoldKey = new Map<string, CollapsedRegion>()
 
@@ -77,22 +81,37 @@ export class EditorFoldState {
   }
 
   public get folds(): readonly FoldRange[] {
-    return this.projectedFolds
+    if (!this.indexedFolds) return this.projectedFolds
+    return [...this.indexedFolds.all(), ...this.projectedFolds]
+  }
+
+  public ranges(startRow: number, endRow: number): readonly FoldRange[] {
+    const contributed = this.projectedFolds.filter(
+      (fold) => fold.startLine <= endRow && fold.endLine >= startRow,
+    )
+    if (!this.indexedFolds) return contributed
+    return [...this.indexedFolds.ranges(startRow, endRow), ...contributed]
   }
 
   public get collapsedFoldCount(): number {
     return this.collapsedRegionsByFoldKey.size
   }
 
-  public setFoldProjections(projections: readonly FoldDisplayProjection[]): void {
+  public setFoldProjections(
+    projections: readonly FoldDisplayProjection[],
+    index: IndentationFoldIndex | null = null,
+  ): void {
     const folds = foldRangesFromProjections(projections)
-    if (foldRangesEqual(this.projectedFolds, folds)) return
+    if (this.indexedFolds === index && foldRangesEqual(this.projectedFolds, folds)) return
 
+    this.indexedFolds = index
     this.adoptFolds(folds)
   }
 
   public clear(): void {
     this.projectedFolds = EMPTY_FOLDS
+    this.indexedFolds = null
+    this.inheritedFolds = EMPTY_FOLDS
     this.collapsedRegions = []
     this.collapsedRegionsByFoldKey = new Map()
     this.view.setFoldState(EMPTY_FOLD_MARKERS, null)
@@ -122,7 +141,7 @@ export class EditorFoldState {
 
   public foldAll(): boolean {
     let collapsed = false
-    for (const fold of this.projectedFolds) {
+    for (const fold of this.folds) {
       if (this.collapseTarget(collapseTargetFromFold(fold))) collapsed = true
     }
     if (collapsed) this.syncFoldView()
@@ -140,7 +159,7 @@ export class EditorFoldState {
   public revealRow(row: number): number {
     let expanded = 0
     for (const fold of collapsedFoldsHidingRow(
-      this.projectedFolds,
+      this.inheritedFolds,
       (candidate) => this.isCollapsed(candidate),
       row,
     )) {
@@ -173,14 +192,27 @@ export class EditorFoldState {
   private adoptFolds(folds: readonly FoldRange[]): void {
     const snapshot = this.getSnapshot()
     const resolved = snapshot ? liveCollapsedRegions(snapshot, this.collapsedRegions) : []
-    const inheritance = inheritCollapsedRegions(folds, resolved, this.getCaretRows())
-
     this.projectedFolds = folds
+    const candidates = this.collapseCandidates(resolved)
+    const inheritance = inheritCollapsedRegions(candidates, resolved, this.getCaretRows)
     this.collapsedRegions = resolved
       .map((entry) => entry.region)
       .filter((region) => !inheritance.withheld.has(region))
     this.collapsedRegionsByFoldKey = inheritance.byFoldKey
+    this.inheritedFolds = candidates.filter((fold) => this.isCollapsed(fold))
     this.syncFoldView()
+  }
+
+  private collapseCandidates(resolved: readonly ResolvedCollapsedRegion[]): readonly FoldRange[] {
+    if (resolved.length === 0) return EMPTY_FOLDS
+    if (!this.indexedFolds) return this.projectedFolds
+    const rows = new Set(resolved.map((entry) => entry.startRow))
+    const candidates: FoldRange[] = []
+    for (const row of rows) {
+      candidates.push(...this.indexedFolds.headers(row, row))
+      candidates.push(...this.projectedFolds.filter((fold) => fold.startLine === row))
+    }
+    return candidates
   }
 
   private toggleTarget(target: CollapseTarget): boolean {
@@ -213,19 +245,64 @@ export class EditorFoldState {
 
   private syncFoldView(): void {
     const snapshot = this.getSnapshot()
-    if (!snapshot || this.projectedFolds.length === 0) {
+    if (!snapshot || (this.projectedFolds.length === 0 && !this.indexedFolds?.count)) {
       this.view.setFoldState(EMPTY_FOLD_MARKERS, null)
       return
     }
 
-    const markers = this.projectedFolds.map((fold) =>
-      foldMarkerFromRange(fold, this.isCollapsed(fold)),
+    const resolved = liveCollapsedRegions(snapshot, this.collapsedRegions)
+    const collapsedFolds = this.collapseCandidates(resolved).filter((fold) =>
+      this.isCollapsed(fold),
     )
-    const collapsedFolds = this.projectedFolds.filter((fold) => this.isCollapsed(fold))
-
+    this.inheritedFolds = collapsedFolds
     const foldMap = collapsedFolds.length > 0 ? createFoldMap(snapshot, collapsedFolds) : null
-    this.view.setFoldState(markers, foldMap)
+    if (this.indexedFolds) {
+      this.view.setIndexedFoldState(this.markerSource(), foldMap)
+      return
+    }
+    this.view.setFoldState(this.markers(), foldMap)
   }
+
+  private markers(): readonly VirtualizedFoldMarker[] {
+    return this.folds
+      .map((fold) => foldMarkerFromRange(fold, this.isCollapsed(fold)))
+      .sort((left, right) => left.startRow - right.startRow || left.endRow - right.endRow)
+  }
+
+  private markerSource(): FoldMarkerSource {
+    const index = this.indexedFolds
+    const contributed = this.projectedFolds
+    const collapsedKeys = new Set(this.collapsedRegionsByFoldKey.keys())
+    let markers: readonly VirtualizedFoldMarker[] | undefined
+    return {
+      size: (index?.count ?? 0) + contributed.length,
+      get: (row) => indexedMarkerAtRow(index, contributed, collapsedKeys, row),
+      all: () => {
+        markers ??= [...(index?.all() ?? EMPTY_FOLDS), ...contributed]
+          .map((fold) => foldMarkerFromRange(fold, collapsedKeys.has(foldRangeKey(fold))))
+          .sort((left, right) => left.startRow - right.startRow || left.endRow - right.endRow)
+        return markers
+      },
+    }
+  }
+}
+
+function indexedMarkerAtRow(
+  index: IndentationFoldIndex | null,
+  contributed: readonly FoldRange[],
+  collapsedKeys: ReadonlySet<string>,
+  row: number,
+): VirtualizedFoldMarker | undefined {
+  let nearest: FoldRange | undefined
+  const candidates = [...(index?.headers(row, row) ?? EMPTY_FOLDS), ...contributed]
+  for (const fold of candidates) {
+    if (fold.startLine !== row) continue
+    if (nearest && nearest.endLine <= fold.endLine) continue
+    nearest = fold
+  }
+  return nearest
+    ? foldMarkerFromRange(nearest, collapsedKeys.has(foldRangeKey(nearest)))
+    : undefined
 }
 
 function foldRangesFromProjections(
@@ -304,12 +381,13 @@ function liveCollapsedRegions(
 function inheritCollapsedRegions(
   folds: readonly FoldRange[],
   resolved: readonly ResolvedCollapsedRegion[],
-  caretRows: readonly number[],
+  getCaretRows: () => readonly number[],
 ): CollapseInheritanceResult {
   const inherited = new Map<string, CollapsedRegion>()
   const withheld = new Set<CollapsedRegion>()
   if (resolved.length === 0) return { byFoldKey: inherited, withheld }
 
+  const caretRows = getCaretRows()
   const regionsByStartRow = groupByStartRow(resolved, (entry) => entry.startRow)
   const foldsByStartRow = groupByStartRow(
     folds.filter((fold) => regionsByStartRow.has(fold.startLine)),

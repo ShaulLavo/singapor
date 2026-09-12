@@ -126,17 +126,19 @@ export function setFoldStateLayout(
 ): FoldStateUpdate {
   const nextFoldMap = foldMapMatchesText(foldMap, view.model.textLength) ? foldMap : null
   const foldMapChanged = view.model.foldMap !== nextFoldMap
-  if (!foldMapChanged && markers.length === 0 && view.foldMarkers.length === 0) {
+  if (!foldMapChanged && markers.length === 0 && view.foldMarkerByStartRow.size === 0) {
     return { foldMapChanged: false, foldMarkersChanged: false, changed: false }
   }
 
   const nextFoldMarkers = normalizeFoldMarkers(markers, view.model.textLength)
-  const foldMarkersChanged = !foldMarkersEqual(view.foldMarkers, nextFoldMarkers)
+  const foldMarkersChanged =
+    view.foldMarkerSource !== null || !foldMarkersEqual(view.foldMarkers, nextFoldMarkers)
   if (!foldMapChanged && !foldMarkersChanged) {
     return { foldMapChanged: false, foldMarkersChanged: false, changed: false }
   }
 
   if (foldMarkersChanged) {
+    view.foldMarkerSource = null
     view.foldMarkers = nextFoldMarkers
     view.foldMarkerByStartRow = indexFoldMarkersByStartRow(nextFoldMarkers)
     view.foldMarkerByKey = indexFoldMarkersByKey(nextFoldMarkers)

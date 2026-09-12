@@ -1,4 +1,5 @@
 import { ScrollViewport } from './scrollViewport'
+import type { FoldMarkerSource } from './foldMarkerSource'
 import type { SavedPaint } from '../editor/paintSnapshot'
 import type { TextContent } from '../textContent'
 import type { FoldMap } from '../foldMap'
@@ -28,6 +29,7 @@ import {
   createInputElement,
   createScrollElement,
   createVirtualizerOptions,
+  foldMapMatchesText,
   getDefaultHighlightRegistry,
   hitTestBoundaryFromPoint,
   indexFoldMarkersByKey,
@@ -142,6 +144,7 @@ import {
   updateGutterContributions,
   updateGutterWidthIfNeeded,
   updateMountedRowsAfterSameLineEdit,
+  updateMountedFoldMarkers,
   updateSpacerHeight,
   updateSpacerWidth,
   viewportPointMetrics,
@@ -270,6 +273,7 @@ export class VirtualizedTextView {
   private viewportVisible = false
   private atomicRenderDepth = 0
   private atomicRenderPending = false
+  private applyingEdit = false
   private pendingReveal: {
     readonly offset: number
     readonly block: RevealBlock
@@ -362,6 +366,7 @@ export class VirtualizedTextView {
       tokenRenderStyles: new Map(),
       tokenRenderIndexDirty: true,
       foldMarkers: [],
+      foldMarkerSource: null,
       rowDecorations: new Map(),
       foldMarkerByStartRow: new Map(),
       foldMarkerByKey: new Map(),
@@ -443,6 +448,7 @@ export class VirtualizedTextView {
     view.model.injectedTextRows = []
     view.inlineMapBase = null
     view.foldMarkers = []
+    view.foldMarkerSource = null
     view.foldMarkerByStartRow = new Map()
     view.foldMarkerByKey = new Map()
     disposeInlineWidgets(view)
@@ -632,6 +638,10 @@ export class VirtualizedTextView {
   }
 
   public setFoldMap(foldMap: FoldMap | null): void {
+    if (this.view.foldMarkerSource) {
+      this.setIndexedFoldState(this.view.foldMarkerSource, foldMap)
+      return
+    }
     this.setFoldState(this.view.foldMarkers, foldMap)
   }
 
@@ -674,6 +684,30 @@ export class VirtualizedTextView {
     }
 
     this.renderSnapshot(view.virtualizer.getSnapshot())
+  }
+
+  public setIndexedFoldState(source: FoldMarkerSource, foldMap: FoldMap | null): void {
+    const view = this.view
+    const nextMap = foldMapMatchesText(foldMap, view.model.textLength) ? foldMap : null
+    const mapChanged = view.model.foldMap !== nextMap
+    view.foldMarkerSource = source
+    view.foldMarkers = []
+    view.foldMarkerByStartRow = source
+    view.foldMarkerByKey = new Map()
+    view.model.foldMap = nextMap
+    if (mapChanged) {
+      view.lastRenderedRowsKey = ''
+      clearRowTokenState(view)
+      refreshDisplayProjection(view, horizontalViewportColumns(view))
+      updateVirtualizerRows(view)
+      return
+    }
+    if (this.applyingEdit) return
+    if (this.atomicRenderPending) {
+      view.lastRenderedRowsKey = ''
+      return
+    }
+    updateMountedFoldMarkers(view)
   }
 
   public refreshMetrics(): BrowserTextMetrics {
@@ -735,23 +769,33 @@ export class VirtualizedTextView {
     updateVirtualizerRows(view)
   }
 
-  public applyEdit(edit: TextEdit, nextText: TextSnapshot | string): void {
+  public applyEdit(
+    edit: TextEdit,
+    nextText: TextSnapshot | string,
+    updateFoldState?: () => void,
+  ): void {
     const view = this.view
     const textSnapshot =
       typeof nextText === 'string' ? createStringTextSnapshot(nextText) : nextText
-    const sameLinePatch = sameLineEditPatch(view, edit)
-    if (sameLinePatch) {
-      this.applySameLineEdit(sameLinePatch, edit, textSnapshot)
-      return
-    }
+    this.applyingEdit = true
+    try {
+      const sameLinePatch = sameLineEditPatch(view, edit)
+      if (sameLinePatch) {
+        this.applySameLineEdit(sameLinePatch, edit, textSnapshot, updateFoldState)
+        return
+      }
 
-    const multiLinePatch = multiLineEditPatch(view, edit)
-    if (multiLinePatch) {
-      this.applyMultiLineEdit(multiLinePatch, edit, textSnapshot)
-      return
-    }
+      const multiLinePatch = multiLineEditPatch(view, edit)
+      if (multiLinePatch) {
+        this.applyMultiLineEdit(multiLinePatch, edit, textSnapshot, updateFoldState)
+        return
+      }
 
-    this.applyProjectionEdit(edit, textSnapshot)
+      this.applyProjectionEdit(edit, textSnapshot, updateFoldState)
+    } finally {
+      this.applyingEdit = false
+      this.flushAtomicRender()
+    }
   }
 
   public applyEditBatch(batch: TextEditBatch): void {
@@ -1040,6 +1084,8 @@ export class VirtualizedTextView {
   public getState(): VirtualizedTextViewState {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
+    const markerSource = view.foldMarkerSource
+    const foldMarkers = view.foldMarkers
     return {
       lineCount: view.model.lineCount,
       contentWidth: view.contentWidth,
@@ -1070,7 +1116,9 @@ export class VirtualizedTextView {
       viewportWidth: snapshot.viewportWidth,
       visibleRange: snapshot.visibleRange,
       mountedRows: view.provisional ? [] : getMountedRows(view),
-      foldMarkers: view.foldMarkers,
+      get foldMarkers() {
+        return markerSource?.all() ?? foldMarkers
+      },
       wrapActive: view.wrapEnabled,
       tabSize: view.tabSize,
     }
@@ -1247,7 +1295,7 @@ export class VirtualizedTextView {
       this.view.onViewportChange?.()
       return
     }
-    if (this.atomicRenderDepth > 0) {
+    if (this.atomicRenderDepth > 0 || this.applyingEdit) {
       this.atomicRenderPending = true
       return
     }
@@ -1301,7 +1349,7 @@ export class VirtualizedTextView {
   }
 
   private flushAtomicRender(): void {
-    if (this.atomicRenderDepth > 0 || !this.atomicRenderPending) return
+    if (this.atomicRenderDepth > 0 || this.applyingEdit || !this.atomicRenderPending) return
 
     this.atomicRenderPending = false
     this.renderSnapshot(this.view.virtualizer.getSnapshot())
@@ -1381,6 +1429,7 @@ export class VirtualizedTextView {
     patch: SameLineEditPatch,
     edit: TextEdit,
     nextText: TextSnapshot,
+    updateFoldState?: () => void,
   ): void {
     const view = this.view
     const snapshot = view.virtualizer.getSnapshot()
@@ -1393,6 +1442,12 @@ export class VirtualizedTextView {
     clampStoredSelection(view)
     resetContentWidthScan(view)
     clearRowGeometryCaches(view)
+    updateFoldState?.()
+    if (this.atomicRenderPending) {
+      view.sameLineTokenEdit = null
+      view.lastRenderedRowsKey = ''
+      return
+    }
     updateContentWidth(view, snapshot.virtualItems)
     const editedRowPatchedInPlace = updateMountedRowsAfterSameLineEdit(
       view,
@@ -1412,6 +1467,7 @@ export class VirtualizedTextView {
     patch: MultiLineEditPatch,
     edit: TextEdit,
     nextText: TextSnapshot,
+    updateFoldState?: () => void,
   ): void {
     const view = this.view
     view.tokenRenderIndexDirty = true
@@ -1436,12 +1492,17 @@ export class VirtualizedTextView {
     )
     projectFoldMarkersThroughMultiLineEdit(view, patch, edit)
     projectRowDecorationsThroughMultiLineEdit(view, patch)
+    updateFoldState?.()
     clearTokenHighlightsFromRow(view, patch.startRow)
     updateVirtualizerRows(view)
     renderHiddenCharacters(view)
   }
 
-  private applyProjectionEdit(edit: TextEdit, textSnapshot: TextSnapshot): void {
+  private applyProjectionEdit(
+    edit: TextEdit,
+    textSnapshot: TextSnapshot,
+    updateFoldState?: () => void,
+  ): void {
     const view = this.view
     const previousLineCount = view.model.lineCount
     const patch = sourceEditPatch(view, edit)
@@ -1463,6 +1524,7 @@ export class VirtualizedTextView {
     clearRowGeometryCaches(view)
     view.lastRenderedRowsKey = ''
     resetContentWidthScan(view)
+    updateFoldState?.()
     updateVirtualizerRows(view)
   }
 

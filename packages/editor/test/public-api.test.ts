@@ -265,8 +265,7 @@ describe('public API facade', () => {
     }
     const folding: EditorFoldingRules = {
       offSide: true,
-      regionEnd: /^\s*#\s*endregion\b/,
-      regionStart: /^\s*#\s*region\b/,
+      regionMarkers: { openers: ['#'], optionalHash: false },
     }
     const configuration: EditorLanguageConfiguration = {
       autoClosingPairs: [pair],

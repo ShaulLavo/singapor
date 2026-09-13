@@ -1,6 +1,6 @@
 # singapore
 
-a code editor for the browser, built from the ground up. the same kind of thing as monaco or codemirror, in packages you add one at a time
+a code editor for the browser, written from scratch. same shelf as monaco and codemirror
 
 named after monaco. another editor, another city-state
 

@@ -7,7 +7,7 @@ import {
   type ThemeRegistrationAny,
 } from 'shiki/core'
 import { createIncrementalTokenizer, type IncrementalTokenizer } from './tokenizer'
-import { snapshotToPackedEditorTokens } from './editor-tokens'
+import { packTokenLines, snapshotToPackedEditorTokens } from './editor-tokens'
 import type { EditorTheme } from '../theme'
 import { packedEditorTokenTransfers } from '../syntax/packedTokens'
 import { editorThemeFromShikiTheme, type ShikiThemeLike } from './theme-extract'
@@ -160,13 +160,26 @@ const editDocument = async (
     throw new Error('Unable to reopen Shiki document without text')
   }
 
-  if (payload.edits) {
-    existing.tokenizer.applyEdits(payload.edits)
-  } else {
+  if (!payload.edits) {
     existing.tokenizer.update(payload.text ?? existing.tokenizer.getCode())
+    return resultFromState(existing)
   }
 
-  return resultFromState(existing)
+  const patches = existing.tokenizer.applyEdits(payload.edits)
+  return {
+    documentId: existing.documentId,
+    patchesPacked: patches.map((patch) => ({
+      fromOffset: patch.fromOffset,
+      oldEndOffset: patch.oldEndOffset,
+      newEndOffset: patch.newEndOffset,
+      tokensPacked: packTokenLines(patch.lines, patch.fromOffset),
+    })),
+    theme: editorThemeFromHighlighter(
+      existing.highlighter,
+      existing.theme,
+      existing.themeRegistration,
+    ),
+  }
 }
 
 const openRequestFromEdit = (payload: ShikiWorkerEditRequest, text: string) => ({
@@ -322,9 +335,13 @@ const postResponse = (response: ShikiWorkerResponse): void => {
 }
 
 function responseTransfers(response: ShikiWorkerResponse): Transferable[] {
-  if (!response.ok) return []
-  if (!response.result?.tokensPacked) return []
-  return packedEditorTokenTransfers(response.result.tokensPacked)
+  if (!response.ok || !response.result) return []
+  const result = response.result
+  const transfers = result.tokensPacked ? packedEditorTokenTransfers(result.tokensPacked) : []
+  for (const patch of result.patchesPacked ?? []) {
+    transfers.push(...packedEditorTokenTransfers(patch.tokensPacked))
+  }
+  return transfers
 }
 
 /**

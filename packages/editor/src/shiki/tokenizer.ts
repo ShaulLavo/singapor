@@ -10,6 +10,10 @@ export interface TokenPatch {
   fromLine: number
   toLine: number
   lines: readonly TokenLineSnapshot[]
+  /** The text `[fromOffset, oldEndOffset)` became `[fromOffset, newEndOffset)`: whole lines. */
+  fromOffset: number
+  oldEndOffset: number
+  newEndOffset: number
 }
 
 export interface IncrementalTokenizerSnapshot {
@@ -155,6 +159,8 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       stableAt = i + 1
     }
 
+    const fromOffset = from - start.col
+    const oldEndOffset = lineOffset(this.lines, stableAt)
     this.code = newCode
     this.lines = this.lines.slice(0, start.line).concat(retokenized, this.lines.slice(stableAt))
 
@@ -162,6 +168,9 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       fromLine: start.line,
       toLine: stableAt,
       lines: cloneSnapshot(retokenized),
+      fromOffset,
+      oldEndOffset,
+      newEndOffset: lineOffset(this.lines, start.line + retokenized.length),
     }
   }
 
@@ -189,8 +198,17 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
   }
 
   private append(chunk: string): TokenPatch {
-    if (chunk.length === 0)
-      return { fromLine: this.lines.length, toLine: this.lines.length, lines: [] }
+    if (chunk.length === 0) {
+      const length = this.code.length
+      return {
+        fromLine: this.lines.length,
+        toLine: this.lines.length,
+        lines: [],
+        fromOffset: length,
+        oldEndOffset: length,
+        newEndOffset: length,
+      }
+    }
 
     const previousLength = this.lines.length
     const startLine = previousLength === 0 ? 0 : previousLength - 1
@@ -202,6 +220,8 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       startLine === 0 ? undefined : prefix[startLine - 1]?.endState,
     )
 
+    const fromOffset = lineOffset(this.lines, startLine)
+    const oldEndOffset = this.code.length
     this.code += chunk
     this.lines = prefix.concat(nextTail)
 
@@ -209,11 +229,14 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       fromLine: startLine,
       toLine: previousLength,
       lines: cloneSnapshot(nextTail),
+      fromOffset,
+      oldEndOffset,
+      newEndOffset: this.code.length,
     }
   }
 
   public update(code: string): TokenPatch {
-    if (code === this.code) return { fromLine: 0, toLine: 0, lines: [] }
+    if (code === this.code) return emptyPatch()
 
     if (code.startsWith(this.code)) return this.append(code.slice(this.code.length))
 
@@ -276,6 +299,9 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
             fromLine: prefixLength,
             toLine: previousIndex,
             lines: cloneSnapshot(rebuiltMiddle),
+            fromOffset: lineOffset(previousLines, prefixLength),
+            oldEndOffset: lineOffset(previousLines, previousIndex),
+            newEndOffset: lineOffset(nextDocument, prefixLength + rebuiltMiddle.length),
           }
         }
       }
@@ -283,6 +309,7 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       rebuiltMiddle.push(tokenizedLine)
     }
 
+    const oldEndOffset = this.code.length
     this.code = code
     this.lines = nextPrefix.concat(rebuiltMiddle)
 
@@ -290,11 +317,15 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       fromLine: prefixLength,
       toLine: previousLength,
       lines: cloneSnapshot(rebuiltMiddle),
+      fromOffset: lineOffset(previousLines, prefixLength),
+      oldEndOffset,
+      newEndOffset: code.length,
     }
   }
 
   public reset(code = ''): TokenPatch {
     const previousLength = this.lines.length
+    const oldEndOffset = this.code.length
     this.code = code
     this.lines = this.tokenizeLines(splitLines(code))
 
@@ -302,6 +333,9 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       fromLine: 0,
       toLine: previousLength,
       lines: cloneSnapshot(this.lines),
+      fromOffset: 0,
+      oldEndOffset,
+      newEndOffset: code.length,
     }
   }
 
@@ -333,6 +367,20 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
 
     return tokenized
   }
+}
+
+function emptyPatch(): TokenPatch {
+  return { fromLine: 0, toLine: 0, lines: [], fromOffset: 0, oldEndOffset: 0, newEndOffset: 0 }
+}
+
+/** Offset of the start of `line`; the document length when `line` is the line count. */
+function lineOffset(lines: readonly { readonly text: string }[], line: number): number {
+  let offset = 0
+  const separators = Math.min(line, Math.max(0, lines.length - 1))
+  for (let index = 0; index < line && index < lines.length; index += 1) {
+    offset += lines[index]!.text.length
+  }
+  return offset + separators
 }
 
 function compareEditsDescending(left: TextEdit, right: TextEdit): number {

@@ -4,7 +4,11 @@ import { applyBatchToPieceTable } from '../pieceTable/edits'
 import type { TextEdit } from '../tokens'
 import { pieceTableSnapshotsHaveSameText } from '../pieceTable/reads'
 import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
-import { unpackEditorTokens } from '../syntax/packedTokens'
+import {
+  splicePackedEditorTokens,
+  unpackEditorTokens,
+  type PackedEditorTokens,
+} from '../syntax/packedTokens'
 import type {
   EditorHighlightResult,
   EditorHighlighterSession,
@@ -18,7 +22,6 @@ import type {
   ShikiWorkerRequest,
   ShikiWorkerRequestPayload,
   ShikiWorkerResponse,
-  ShikiWorkerResult,
   ShikiWorkerThemeRegistration,
   ShikiWorkerTransportResult,
 } from './workerTypes'
@@ -57,7 +60,7 @@ export type ShikiThemeOptions = {
 }
 
 type PendingRequest = {
-  readonly resolve: (result: ShikiWorkerResult | undefined) => void
+  readonly resolve: (result: ShikiWorkerTransportResult | undefined) => void
   readonly reject: (error: Error) => void
 }
 
@@ -151,7 +154,9 @@ export class ShikiWorkerOwner {
     return theme
   }
 
-  public request(payload: ShikiWorkerRequestPayload): Promise<ShikiWorkerResult | undefined> {
+  public request(
+    payload: ShikiWorkerRequestPayload,
+  ): Promise<ShikiWorkerTransportResult | undefined> {
     const request = this.postRequest(payload, true)
     if ('runtimeSessionId' in payload) {
       return this.trackRuntimeTask(payload.runtimeSessionId, request)
@@ -248,7 +253,7 @@ export class ShikiWorkerOwner {
   private postRequest(
     payload: ShikiWorkerRequestPayload,
     createIfMissing: boolean,
-  ): Promise<ShikiWorkerResult | undefined> {
+  ): Promise<ShikiWorkerTransportResult | undefined> {
     const handle = this.getWorker(createIfMissing)
     if (!handle) return Promise.resolve(undefined)
 
@@ -275,7 +280,7 @@ export class ShikiWorkerOwner {
 
     this.pendingRequests.delete(response.id)
     if (response.ok) {
-      pending.resolve(unpackShikiWorkerResult(response.result))
+      pending.resolve(response.result)
       return
     }
 
@@ -341,18 +346,6 @@ export class ShikiWorkerOwner {
   }
 }
 
-function unpackShikiWorkerResult(
-  result: ShikiWorkerTransportResult | undefined,
-): ShikiWorkerResult | undefined {
-  if (!result?.tokensPacked) return result
-
-  return {
-    documentId: result.documentId,
-    tokens: unpackEditorTokens(result.tokensPacked),
-    theme: result.theme,
-  }
-}
-
 class ShikiHighlighterSession implements EditorHighlighterSession {
   private readonly documentId: string
   private readonly runtimeSessionId: string
@@ -362,6 +355,8 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
   private readonly preloadRegistrations: ShikiPreloadRegistrationSource | null
   private snapshot: PieceTableSnapshot
   private textSnapshot: DocumentTextSnapshot
+  // The whole document's tokens, kept packed so an edit answer only has to splice its lines in.
+  private packed: PackedEditorTokens | null = null
   private preloadScheduled = false
   private opened = false
   private disposed = false
@@ -409,7 +404,8 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       this.textSnapshot = textSnapshot
       this.opened = true
       this.disposed = false
-      return { tokens: result?.tokens ?? [], theme: result?.theme }
+      this.packed = result?.tokensPacked ?? null
+      return { tokens: this.currentTokens(), theme: result?.theme }
     })
   }
 
@@ -431,7 +427,8 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
       this.textSnapshot = nextTextSnapshot
       this.opened = true
       this.disposed = false
-      return { tokens: result?.tokens ?? [], theme: result?.theme }
+      this.adoptEditResult(result)
+      return { tokens: this.currentTokens(), theme: result?.theme }
     })
   }
 
@@ -461,6 +458,23 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     )
     this.trackTask(this.runtimeSessionId, this.task)
     return result
+  }
+
+  private adoptEditResult(result: ShikiWorkerTransportResult | undefined): void {
+    if (result?.tokensPacked) {
+      this.packed = result.tokensPacked
+      return
+    }
+    if (!result?.patchesPacked) return
+    if (!this.packed) throw new Error('Shiki token patches arrived before any full tokens')
+
+    for (const patch of result.patchesPacked) {
+      this.packed = splicePackedEditorTokens(this.packed, patch)
+    }
+  }
+
+  private currentTokens(): EditorHighlightResult['tokens'] {
+    return this.packed ? unpackEditorTokens(this.packed) : []
   }
 
   private async editPayloadForChange(

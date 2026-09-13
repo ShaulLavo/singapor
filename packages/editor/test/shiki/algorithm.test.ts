@@ -76,7 +76,14 @@ describe('incremental algorithm (mock tokenizer)', () => {
     resetCount()
     const patch = t.update('a\nb')
 
-    expect(patch).toEqual({ fromLine: 0, toLine: 0, lines: [] })
+    expect(patch).toEqual({
+      fromLine: 0,
+      toLine: 0,
+      lines: [],
+      fromOffset: 0,
+      oldEndOffset: 0,
+      newEndOffset: 0,
+    })
   })
 
   it('update retokenizes only the changed line when state is stable', () => {
@@ -180,7 +187,7 @@ describe('incremental algorithm (mock tokenizer)', () => {
     resetCount()
     const patch = t.reset('new X\nnew Y\nnew Z')
 
-    expect(patch).toEqual({
+    expect(patch).toMatchObject({
       fromLine: 0,
       toLine: 2,
       lines: expect.any(Array),

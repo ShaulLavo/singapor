@@ -124,6 +124,9 @@ describe('IncrementalShikiTokenizer', () => {
     const patch = tokenizer.applyEdit({ from: 12, to: 20, text: 'replaced' })
 
     expect(patch.fromLine).toBe(1)
+    // Lines 1-2 ("line 1\nline 2", offsets 7-20 plus the separator before line 3) became the
+    // one line "line replaced", the same length in this case.
+    expect(patch).toMatchObject({ fromOffset: 7, oldEndOffset: 21, newEndOffset: 21 })
     expect(tokenizer.getSnapshot().lines.map((l) => l.text)).toEqual([
       'line 0',
       'line replaced',
@@ -203,7 +206,14 @@ describe('IncrementalShikiTokenizer', () => {
 
     const patch = tokenizer.update('const answer = 42')
 
-    expect(patch).toEqual({ fromLine: 0, toLine: 0, lines: [] })
+    expect(patch).toEqual({
+      fromLine: 0,
+      toLine: 0,
+      lines: [],
+      fromOffset: 0,
+      oldEndOffset: 0,
+      newEndOffset: 0,
+    })
   })
 })
 
@@ -234,6 +244,9 @@ describe('IncrementalShikiTokenizer batches', () => {
 
     expect(tokenizedLines).toBeLessThan(10)
     expect(patches.map((patch) => patch.fromLine)).toEqual([197, 2])
+    expect(patches.map((patch) => patch.fromOffset)).toEqual([lineStart(197), lineStart(2)])
+    // "value197" (8 chars) became "second" (6): the line is two shorter.
+    expect(patches[0]!.newEndOffset - patches[0]!.oldEndOffset).toBe(-2)
     const texts = tokenizer.getSnapshot().lines.map((line) => line.text)
     expect(texts[2]).toBe('const first = 2')
     expect(texts[197]).toBe('const second = 197')

@@ -144,17 +144,24 @@ export function snapshotToEditorTokens(
 export function snapshotToPackedEditorTokens(
   snapshot: Pick<IncrementalTokenizerSnapshot, 'lines'>,
 ): PackedEditorTokens {
-  const tokenCount = countEditorTokens(snapshot.lines)
-  const writer = createPackedEditorTokenWriter(tokenCount)
-  const palette = createEditorTokenStylePalette()
-  let lineStart = 0
+  return packTokenLines(snapshot.lines, 0)
+}
 
-  for (let lineIndex = 0; lineIndex < snapshot.lines.length; lineIndex += 1) {
-    const line = snapshot.lines[lineIndex]
+/** The tokens of `lines` at document offsets, the first line starting at `fromOffset`. */
+export function packTokenLines(
+  lines: readonly TokenLineSnapshot[],
+  fromOffset: number,
+): PackedEditorTokens {
+  const writer = createPackedEditorTokenWriter(countEditorTokens(lines))
+  const palette = createEditorTokenStylePalette()
+  let lineStart = fromOffset
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]
     if (!line) continue
 
     writePackedTokenLine(writer, palette, line, lineStart)
-    lineStart = nextLineStart(lineStart, line.text.length, lineIndex, snapshot.lines.length)
+    lineStart = nextLineStart(lineStart, line.text.length, lineIndex, lines.length)
   }
 
   return finishPackedEditorTokenWriter(writer, palette.styles)

@@ -226,6 +226,70 @@ describe('shiki worker', () => {
     ])
   })
 
+  it('answers an edit batch with the re-tokenized lines instead of the whole document', async () => {
+    const postMessage = vi.fn()
+    ;(globalThis as { self?: unknown }).self = { postMessage }
+    createHighlighterCore.mockResolvedValue({
+      getTheme: () => ({ bg: '#ffffff', fg: '#24292e', colors: {} }),
+      ...languageApi(),
+    })
+    const applyEdits = vi.fn(() => [
+      {
+        fromLine: 1,
+        toLine: 2,
+        fromOffset: 6,
+        oldEndOffset: 11,
+        newEndOffset: 13,
+        lines: [
+          {
+            text: 'changed',
+            tokens: [{ color: '#0f0', content: 'changed', fontStyle: 0, offset: 0 }],
+          },
+        ],
+      },
+    ])
+    createIncrementalTokenizer.mockResolvedValue({
+      tokenizer: {
+        applyEdits,
+        getSnapshot: () => ({
+          lines: [
+            { text: 'const', tokens: [] },
+            { text: 'value', tokens: [] },
+          ],
+        }),
+      },
+    })
+    await import('../../src/shiki/shiki.worker')
+    const onmessage = (globalThis as { self: { onmessage: (event: MessageEvent) => void } }).self
+      .onmessage
+    const document = { documentId: 'doc', lang: 'typescript', theme: 'github-light' }
+
+    onmessage(
+      new MessageEvent('message', { data: request('open', { ...document, text: 'const\nvalue' }) }),
+    )
+    await waitFor(() => postMessage.mock.calls.length > 0)
+    const edits = [{ from: 6, to: 11, text: 'changed' }]
+    onmessage(new MessageEvent('message', { data: request('edit', { ...document, edits }) }))
+    await waitFor(() => postMessage.mock.calls.length > 1)
+
+    expect(applyEdits).toHaveBeenCalledWith(edits)
+    const response = postMessage.mock.calls[1]?.[0] as ShikiWorkerResponse | undefined
+    if (!response?.ok || !response.result?.patchesPacked) {
+      throw new Error('Expected a packed patch response')
+    }
+    expect(response.result.tokensPacked).toBeUndefined()
+    const [patch] = response.result.patchesPacked
+    expect(patch).toMatchObject({ fromOffset: 6, oldEndOffset: 11, newEndOffset: 13 })
+    expect(unpackEditorTokens(patch!.tokensPacked)).toEqual([
+      { start: 6, end: 13, style: { color: '#0f0' } },
+    ])
+    expect(postMessage.mock.calls[1]?.[1]).toEqual([
+      patch!.tokensPacked.starts.buffer,
+      patch!.tokensPacked.ends.buffer,
+      patch!.tokensPacked.styleIds.buffer,
+    ])
+  })
+
   it('returns editor theme colors without opening a document', async () => {
     const postMessage = vi.fn()
     const getTheme = vi.fn(() => ({

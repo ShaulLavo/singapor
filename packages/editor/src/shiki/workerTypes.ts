@@ -1,6 +1,6 @@
 import type { EditorTheme } from '../theme'
-import type { EditorToken, TextEdit } from '../tokens'
-import type { PackedEditorTokens } from '../syntax/packedTokens'
+import type { TextEdit } from '../tokens'
+import type { PackedEditorTokenPatch, PackedEditorTokens } from '../syntax/packedTokens'
 import type { EditorShikiThemeSettingLike } from './theme'
 
 export type ShikiWorkerThemeRegistration = {
@@ -82,15 +82,12 @@ export type ShikiWorkerRequestPayload =
   | ShikiWorkerPreloadRequest
   | ShikiWorkerThemeRequest
 
-export type ShikiWorkerResult = {
-  readonly documentId?: string
-  readonly tokens?: readonly EditorToken[]
-  readonly theme?: EditorTheme
-}
-
+// An edit answers with the re-tokenized lines only; the client splices them into the full
+// packed tokens it kept from the last open, so a keystroke never ships the whole document back.
 export type ShikiWorkerTransportResult = {
   readonly documentId?: string
   readonly tokensPacked?: PackedEditorTokens
+  readonly patchesPacked?: readonly PackedEditorTokenPatch[]
   readonly theme?: EditorTheme
 }
 

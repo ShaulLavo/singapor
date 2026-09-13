@@ -33,6 +33,26 @@ const createChange = (
 describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () => {
   let workerOwner: ShikiWorkerOwner
 
+  /** What a session opened directly on `text` reports, to compare a spliced answer against. */
+  async function fullTokens(text: string) {
+    const fresh = workerOwner.createSession({
+      documentId: 'fresh.ts',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: resolveRegistrations(),
+      fullText: text,
+      snapshot: createPieceTableSnapshot(text),
+    })
+    const result = await fresh!.refresh(createPieceTableSnapshot(text), text)
+    fresh!.dispose()
+    return result.tokens.map((token) => ({
+      start: token.start,
+      end: token.end,
+      style: token.style,
+    }))
+  }
+
   beforeEach(() => {
     workerOwner = createShikiWorkerOwner()
   })
@@ -94,6 +114,10 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
 
     expect(result.tokens.length).toBeGreaterThan(0)
     expect(result.tokens.some((token) => token.end > initialText.length)).toBe(true)
+    // The edit answered with its own lines only; spliced in, they equal a full tokenization.
+    expect(
+      result.tokens.map((token) => ({ start: token.start, end: token.end, style: token.style })),
+    ).toEqual(await fullTokens(nextText))
     session!.dispose()
   })
 
@@ -147,6 +171,9 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
 
     expect(result.tokens.some((token) => token.start === 6 && token.end === 12)).toBe(true)
     expect(result.tokens.some((token) => token.start === 24 && token.end === 29)).toBe(true)
+    expect(
+      result.tokens.map((token) => ({ start: token.start, end: token.end, style: token.style })),
+    ).toEqual(await fullTokens(nextText))
     session!.dispose()
   })
 

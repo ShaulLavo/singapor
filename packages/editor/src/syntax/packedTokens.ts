@@ -127,3 +127,98 @@ export function unpackEditorTokens(packed: PackedEditorTokens): EditorToken[] {
   })
   return tokens
 }
+
+/** Re-tokenized lines for text that replaced `[fromOffset, oldEndOffset)` with `[fromOffset, newEndOffset)`. */
+export type PackedEditorTokenPatch = {
+  readonly fromOffset: number
+  readonly oldEndOffset: number
+  readonly newEndOffset: number
+  readonly tokensPacked: PackedEditorTokens
+}
+
+/**
+ * `base` with the tokens inside the patch's old range replaced by the patch's tokens and every
+ * token after it shifted by the length change. Patch styles merge into the base palette by value.
+ */
+export function splicePackedEditorTokens(
+  base: PackedEditorTokens,
+  patch: PackedEditorTokenPatch,
+): PackedEditorTokens {
+  const first = firstTokenAtOrAfter(base, patch.fromOffset)
+  const last = Math.max(first, firstTokenAtOrAfter(base, patch.oldEndOffset))
+  const inserted = patch.tokensPacked
+  const delta = patch.newEndOffset - patch.oldEndOffset
+  const suffixAt = first + inserted.starts.length
+  const count = suffixAt + (base.starts.length - last)
+  const starts = new Uint32Array(count)
+  const ends = new Uint32Array(count)
+  const styleIds = new Uint32Array(count)
+
+  starts.set(base.starts.subarray(0, first))
+  ends.set(base.ends.subarray(0, first))
+  styleIds.set(base.styleIds.subarray(0, first))
+
+  const styles = [...base.styles]
+  const remapped = mergeStyles(styles, inserted.styles)
+  for (let index = 0; index < inserted.starts.length; index += 1) {
+    starts[first + index] = inserted.starts[index]!
+    ends[first + index] = inserted.ends[index]!
+    styleIds[first + index] = remapped[inserted.styleIds[index]!]!
+  }
+  for (let index = last; index < base.starts.length; index += 1) {
+    const target = suffixAt + index - last
+    starts[target] = base.starts[index]! + delta
+    ends[target] = base.ends[index]! + delta
+    styleIds[target] = base.styleIds[index]!
+  }
+
+  return {
+    starts,
+    ends,
+    styleIds,
+    styles,
+    monotonicEnd: base.monotonicEnd && inserted.monotonicEnd,
+    nonOverlapping: base.nonOverlapping && inserted.nonOverlapping,
+    sortedByStart: base.sortedByStart && inserted.sortedByStart,
+  }
+}
+
+/** Ids in `styles` for each of `added`, appending the ones it does not hold by value. */
+function mergeStyles(styles: EditorTokenStyle[], added: readonly EditorTokenStyle[]): number[] {
+  const idByKey = new Map<string, number>()
+  for (let index = 0; index < styles.length; index += 1)
+    idByKey.set(styleKey(styles[index]!), index)
+
+  return added.map((style) => {
+    const key = styleKey(style)
+    const existing = idByKey.get(key)
+    if (existing !== undefined) return existing
+
+    const id = styles.length
+    styles.push(style)
+    idByKey.set(key, id)
+    return id
+  })
+}
+
+function styleKey(style: EditorTokenStyle): string {
+  return JSON.stringify(style)
+}
+
+function firstTokenAtOrAfter(packed: PackedEditorTokens, offset: number): number {
+  const starts = packed.starts
+  if (!packed.sortedByStart) {
+    let index = 0
+    while (index < starts.length && starts[index]! < offset) index += 1
+    return index
+  }
+
+  let low = 0
+  let high = starts.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (starts[middle]! < offset) low = middle + 1
+    else high = middle
+  }
+  return low
+}

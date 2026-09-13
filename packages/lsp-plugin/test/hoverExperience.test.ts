@@ -1,5 +1,5 @@
 import type { EditorViewContributionContext, EditorViewSnapshot } from '@singapor/core/extensions'
-import { arrayLspLineStarts, type LspClient } from '@singapor/lsp'
+import type { LspClient } from '@singapor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
@@ -17,6 +17,7 @@ import {
   TOOLTIP_HIDE_DELAY_MS,
 } from '../src/tooltip'
 import { connectedEditor, flushPromises, singleLineRange } from './connectedEditor'
+import { snapshotDocument } from './snapshotDocument'
 
 describe('hover timing and keyboard access', () => {
   afterEach(() => {
@@ -422,8 +423,7 @@ function activeDocument(text = 'const value = 1'): ActiveDocument {
   return {
     uri: 'file:///index.ts',
     languageId: 'typescript',
-    textSnapshot: {} as ActiveDocument['textSnapshot'],
-    lineStarts: arrayLspLineStarts([0]),
+    ...snapshotDocument(text),
     fullText: text,
     textVersion: 1,
     lspVersion: 1,

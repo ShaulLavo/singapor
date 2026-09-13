@@ -4,6 +4,7 @@ import type * as lsp from 'vscode-languageserver-protocol'
 
 import { DiagnosticsPresenter } from '../src/diagnosticsPresenter'
 import { DIAGNOSTIC_MARKER_COLORS } from '../src/plugin.styles'
+import { snapshotDocument } from './snapshotDocument'
 
 describe('DiagnosticsPresenter', () => {
   it('uses configured highlight names, minimap source, and marker timing names', () => {
@@ -16,7 +17,7 @@ describe('DiagnosticsPresenter', () => {
     })
     const diagnosticItem = diagnostic(1, 1, 2)
 
-    presenter.render('abc', [diagnosticItem])
+    presenter.render(snapshotDocument('abc'), [diagnosticItem])
     presenter.moveMarker(activeDocument('abc'), [diagnosticItem], 'next')
     presenter.clear()
 
@@ -164,8 +165,8 @@ function presenterOptions(
   }
 }
 
-function activeDocument(fullText: string) {
-  return { fullText, textVersion: 7, uri: 'file:///src/index.ts' }
+function activeDocument(text: string) {
+  return { ...snapshotDocument(text), textVersion: 7, uri: 'file:///src/index.ts' }
 }
 
 function diagnostic(

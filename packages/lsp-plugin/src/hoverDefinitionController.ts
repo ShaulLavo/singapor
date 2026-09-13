@@ -4,7 +4,12 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
-import { lspPositionToOffset, offsetToLspPosition, type LspRequestOptions } from '@singapor/lsp'
+import {
+  lspPositionToOffsetInSnapshot,
+  offsetToLspPositionInSnapshot,
+  type LspRequestOptions,
+  type LspTextDocumentSnapshot,
+} from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
@@ -286,7 +291,7 @@ export class HoverDefinitionController {
       active,
       offset,
       targetRange,
-      diagnostics: diagnosticsAtOffset(active.fullText, offset, this.options.getDiagnostics()),
+      diagnostics: diagnosticsAtOffset(active, offset, this.options.getDiagnostics()),
       focusOnShow,
       hovers: [],
       pending: true,
@@ -327,7 +332,7 @@ export class HoverDefinitionController {
       const hover = await this.options.requestHover(
         {
           textDocument: { uri: operation.active.uri },
-          position: offsetToLspPosition(operation.active.fullText, operation.offset),
+          position: offsetToLspPositionInSnapshot(operation.active, operation.offset),
         },
         { signal: abort.signal },
         (update) => this.updateHover(operation.id, update),
@@ -661,20 +666,20 @@ function markedStringText(value: lsp.MarkedString): string {
 }
 
 function hoverRangeOffsets(
-  text: string,
+  document: LspTextDocumentSnapshot,
   hover: lsp.Hover | null,
 ): { readonly start: number; readonly end: number } | null {
   if (!hover?.range) return null
 
-  const start = lspPositionToOffset(text, hover.range.start)
-  const end = lspPositionToOffset(text, hover.range.end)
+  const start = lspPositionToOffsetInSnapshot(document, hover.range.start)
+  const end = lspPositionToOffsetInSnapshot(document, hover.range.end)
   if (end > start) return { start, end }
   return null
 }
 
 function hoverRangeForOperation(operation: HoverOperation): OffsetRange {
   for (const hover of operation.hovers) {
-    const range = hoverRangeOffsets(operation.active.fullText, hover)
+    const range = hoverRangeOffsets(operation.active, hover)
     if (range) return range
   }
   return operation.targetRange

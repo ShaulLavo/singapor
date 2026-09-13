@@ -1,3 +1,5 @@
+import { createStringTextSnapshot } from '@singapor/core/document'
+import { arrayLspLineStarts, type LspTextDocumentSnapshot } from '@singapor/lsp'
 import { describe, expect, it } from 'vitest'
 import { diagnosticHighlightGroups, summarizeDiagnostics } from '../src'
 import type * as lsp from 'vscode-languageserver-protocol'
@@ -21,7 +23,7 @@ describe('TypeScript LSP diagnostics', () => {
   })
 
   it('groups highlight ranges and expands empty ranges to a visible character', () => {
-    const groups = diagnosticHighlightGroups('abc', [
+    const groups = diagnosticHighlightGroups(singleLineDocument('abc'), [
       diagnostic(1, 0, 0, 1),
       diagnostic(2, 0, 3, 3),
     ])
@@ -31,11 +33,15 @@ describe('TypeScript LSP diagnostics', () => {
   })
 
   it('does not create highlights for empty diagnostics in empty files', () => {
-    const groups = diagnosticHighlightGroups('', [diagnostic(1, 0, 0, 0)])
+    const groups = diagnosticHighlightGroups(singleLineDocument(''), [diagnostic(1, 0, 0, 0)])
 
     expect(groups.error).toEqual([])
   })
 })
+
+function singleLineDocument(text: string): LspTextDocumentSnapshot {
+  return { textSnapshot: createStringTextSnapshot(text), lineStarts: arrayLspLineStarts([0]) }
+}
 
 function diagnostic(
   severity: lsp.DiagnosticSeverity,

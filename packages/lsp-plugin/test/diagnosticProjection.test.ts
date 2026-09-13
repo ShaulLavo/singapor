@@ -1,12 +1,22 @@
-import { arrayLspLineStarts } from '@singapor/lsp'
 import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
-import type { LspTextDocumentSnapshot, LspTextSnapshot } from '@singapor/lsp'
 import { describe, expect, it } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import { projectDiagnosticsInSnapshot } from '../src/diagnosticProjection'
+import { diagnosticsAtOffset, projectDiagnosticsInSnapshot } from '../src/diagnosticProjection'
+import { snapshotDocument } from './snapshotDocument'
 
 describe('diagnostic projection', () => {
+  it('filters diagnostics at an offset through the line index without materializing text', () => {
+    const document = snapshotDocument('ab\ncd\nef')
+    const onSecondLine = diagnostic(1, 0, 2)
+    const zeroWidth = diagnostic(2, 1, 1)
+    const diagnostics = [diagnostic(0, 0, 1), onSecondLine, zeroWidth]
+
+    expect(diagnosticsAtOffset(document, 4, diagnostics)).toEqual([onSecondLine])
+    expect(diagnosticsAtOffset(document, 7, diagnostics)).toEqual([zeroWidth])
+    expect(diagnosticsAtOffset(document, 8, diagnostics)).toEqual([])
+  })
+
   it('projects diagnostics through snapshot-backed edits without materializing text', () => {
     const diagnostics = [diagnostic(0, 1, 3)]
     const projected = projectDiagnosticsInSnapshot(diagnostics, {
@@ -115,34 +125,4 @@ function documentChange(edits: readonly TextEdit[]): DocumentSessionChange {
     canUndo: false,
     canRedo: false,
   } as unknown as DocumentSessionChange
-}
-
-function snapshotDocument(text: string): LspTextDocumentSnapshot {
-  return {
-    textSnapshot: throwingFullTextSnapshot(text),
-    lineStarts: arrayLspLineStarts(lineStarts(text)),
-  }
-}
-
-function throwingFullTextSnapshot(text: string): LspTextSnapshot {
-  return {
-    length: text.length,
-    materializeFullText: () => {
-      throw new Error('unexpected full text materialization')
-    },
-    readRange: (start, end) => text.slice(start, end),
-    forEachTextChunk: (visit) => visit(text, 0, text.length),
-  }
-}
-
-function lineStarts(text: string): number[] {
-  const starts = [0]
-  let index = text.indexOf('\n')
-
-  while (index !== -1) {
-    starts.push(index + 1)
-    index = text.indexOf('\n', index + 1)
-  }
-
-  return starts
 }

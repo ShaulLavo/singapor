@@ -4,7 +4,7 @@ import {
   type EditorMinimapFeature,
   type EditorViewContributionContext,
 } from '@singapor/core/extensions'
-import { lspPositionToOffset } from '@singapor/lsp'
+import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
@@ -19,6 +19,8 @@ import type {
   LanguageServerDiagnosticMarkerEvent,
   LanguageServerDiagnosticSummary,
 } from './types'
+
+export { viewDocumentSnapshot } from './viewDocumentSnapshot'
 
 const LSP_DIAGNOSTIC_ERROR = 1
 const LSP_DIAGNOSTIC_WARNING = 2
@@ -39,8 +41,7 @@ const DIAGNOSTIC_MINIMAP_Z_INDEX: Record<LanguageServerDiagnosticSeverity, numbe
   hint: 10,
 }
 
-export type DiagnosticsPresenterActiveDocument = {
-  readonly fullText: string
+export type DiagnosticsPresenterActiveDocument = LspTextDocumentSnapshot & {
   readonly textVersion: number
   readonly uri: lsp.DocumentUri
 }
@@ -71,8 +72,8 @@ export class DiagnosticsPresenter {
     this.highlightNames = createHighlightNames(prefix, options.highlightNameNamespace)
   }
 
-  public render(text: string, diagnostics: readonly lsp.Diagnostic[]): void {
-    this.renderHighlights(text, diagnostics)
+  public render(document: LspTextDocumentSnapshot, diagnostics: readonly lsp.Diagnostic[]): void {
+    this.renderHighlights(document, diagnostics)
     this.renderMinimapMarkers(diagnostics)
   }
 
@@ -102,12 +103,7 @@ export class DiagnosticsPresenter {
     const selection = this.context.getSnapshot().selections[0]
     if (!selection) return false
 
-    const target = diagnosticMarkerTarget(
-      active.fullText,
-      diagnostics,
-      selection.headOffset,
-      direction,
-    )
+    const target = diagnosticMarkerTarget(active, diagnostics, selection.headOffset, direction)
     if (!target) return false
 
     const timingName = `${this.options.markerTimingNamePrefix}.${direction}`
@@ -147,10 +143,13 @@ export class DiagnosticsPresenter {
     claim?.dispose()
   }
 
-  private renderHighlights(text: string, diagnostics: readonly lsp.Diagnostic[]): void {
+  private renderHighlights(
+    document: LspTextDocumentSnapshot,
+    diagnostics: readonly lsp.Diagnostic[],
+  ): void {
     if (!this.context.setRangeHighlight) return
 
-    const groups = diagnosticHighlightGroups(text, diagnostics)
+    const groups = diagnosticHighlightGroups(document, diagnostics)
     for (const severity of DIAGNOSTIC_SEVERITIES) {
       this.context.setRangeHighlight(
         this.highlightNames[severity],
@@ -181,14 +180,14 @@ export class DiagnosticsPresenter {
 
 type DiagnosticBatch = {
   readonly diagnostics: readonly lsp.Diagnostic[]
-  readonly text: string
+  readonly document: LspTextDocumentSnapshot | null
   readonly uri: lsp.DocumentUri | null
   readonly version: number | null
 }
 
 export type CompositeDiagnosticsLanePresenter = {
   clear(): void
-  render(text: string, diagnostics: readonly lsp.Diagnostic[]): void
+  render(document: LspTextDocumentSnapshot, diagnostics: readonly lsp.Diagnostic[]): void
   publishSummary(
     uri: lsp.DocumentUri,
     version: number | null,
@@ -223,11 +222,11 @@ export class CompositeDiagnosticsPresenter {
         this.refreshDiagnostics()
         this.renderCombined()
       },
-      render: (text, diagnostics) => {
+      render: (document, diagnostics) => {
         const current = this.#batches.get(laneId)
         this.#batches.set(laneId, {
           diagnostics,
-          text,
+          document,
           uri: current?.uri ?? null,
           version: current?.version ?? null,
         })
@@ -244,7 +243,7 @@ export class CompositeDiagnosticsPresenter {
 
         this.#batches.set(laneId, {
           diagnostics,
-          text: current?.text ?? '',
+          document: current?.document ?? null,
           uri,
           version,
         })
@@ -269,13 +268,13 @@ export class CompositeDiagnosticsPresenter {
   }
 
   private renderCombined(): void {
-    const text = this.currentText()
-    if (text === null) {
+    const document = this.currentDocument()
+    if (document === null) {
       this.presenter.clear()
       return
     }
 
-    this.presenter.render(text, this.diagnostics)
+    this.presenter.render(document, this.diagnostics)
   }
 
   private refreshDiagnostics(): void {
@@ -289,15 +288,15 @@ export class CompositeDiagnosticsPresenter {
     )
   }
 
-  private currentText(): string | null {
+  private currentDocument(): LspTextDocumentSnapshot | null {
     for (const id of this.laneIds) {
       const batch = this.#batches.get(id)
-      if (batch && batch.diagnostics.length > 0) return batch.text
+      if (batch?.document && batch.diagnostics.length > 0) return batch.document
     }
 
     for (const id of this.laneIds) {
       const batch = this.#batches.get(id)
-      if (batch) return batch.text
+      if (batch?.document) return batch.document
     }
 
     return null
@@ -389,13 +388,13 @@ type DiagnosticMarkerTarget = {
 }
 
 function diagnosticMarkerTarget(
-  text: string,
+  document: LspTextDocumentSnapshot,
   diagnostics: readonly lsp.Diagnostic[],
   offset: number,
   direction: DiagnosticsPresenterMarkerDirection,
 ): DiagnosticMarkerTarget | null {
   const targets = diagnostics
-    .flatMap((diagnostic) => diagnosticTarget(text, diagnostic))
+    .flatMap((diagnostic) => diagnosticTarget(document, diagnostic))
     .sort((left, right) => compareOffsetRanges(left.range, right.range))
   if (targets.length === 0) return null
   if (direction === 'next') {
@@ -408,11 +407,11 @@ function diagnosticMarkerTarget(
 }
 
 function diagnosticTarget(
-  text: string,
+  document: LspTextDocumentSnapshot,
   diagnostic: lsp.Diagnostic,
 ): readonly DiagnosticMarkerTarget[] {
-  const start = lspPositionToOffset(text, diagnostic.range.start)
-  const end = lspPositionToOffset(text, diagnostic.range.end)
+  const start = lspPositionToOffsetInSnapshot(document, diagnostic.range.start)
+  const end = lspPositionToOffsetInSnapshot(document, diagnostic.range.end)
   if (end < start) return []
   return [{ diagnostic, range: { start, end } }]
 }

@@ -2,7 +2,11 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
 } from '@singapor/core/extensions'
-import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
+import {
+  lspPositionToOffsetInSnapshot,
+  offsetToLspPosition,
+  type LspTextDocumentSnapshot,
+} from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { OffsetRange } from './definitionNavigation'
@@ -219,11 +223,7 @@ export class CodeActionController {
         'textDocument/codeAction',
         {
           context: {
-            diagnostics: diagnosticsOverlapping(
-              active.fullText,
-              this.options.getDiagnostics(),
-              range,
-            ),
+            diagnostics: diagnosticsOverlapping(active, this.options.getDiagnostics(), range),
             // The auto fix can apply nothing else, so asking for the wider hierarchy would make
             // every settled keystroke pay for refactors that are thrown away on arrival.
             only: [CODE_ACTION_QUICK_FIX_KIND],
@@ -361,13 +361,13 @@ function isQuickFixKind(kind: string | undefined): boolean {
 }
 
 function diagnosticsOverlapping(
-  text: string,
+  document: LspTextDocumentSnapshot,
   diagnostics: readonly lsp.Diagnostic[],
   range: OffsetRange,
 ): lsp.Diagnostic[] {
   return diagnostics.filter((diagnostic) => {
-    const start = lspPositionToOffset(text, diagnostic.range.start)
-    const end = lspPositionToOffset(text, diagnostic.range.end)
+    const start = lspPositionToOffsetInSnapshot(document, diagnostic.range.start)
+    const end = lspPositionToOffsetInSnapshot(document, diagnostic.range.end)
     return start <= range.end && end >= range.start
   })
 }

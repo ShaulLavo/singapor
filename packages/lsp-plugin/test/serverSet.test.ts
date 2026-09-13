@@ -13,6 +13,7 @@ import {
 import type { AcquiredLanguageServerLane } from '../src/lane'
 import { createLanguageServerSetPlugin } from '../src/plugin'
 import { LanguageServerSet, type LanguageServerSetLane } from '../src/serverSet'
+import { snapshotDocument } from './snapshotDocument'
 
 describe('LanguageServerSet', () => {
   it('merges hover but takes the first ranked highlight answer while isolating failures', async () => {
@@ -459,7 +460,7 @@ function diagnostic(message: string): lsp.Diagnostic {
 }
 
 function publish(presenter: CompositeDiagnosticsLanePresenter, item: lsp.Diagnostic): void {
-  presenter.render('text', [item])
+  presenter.render(snapshotDocument('text'), [item])
   presenter.publishSummary('file:///test.ts', 1, [item])
 }
 

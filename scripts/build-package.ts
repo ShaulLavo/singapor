@@ -157,7 +157,7 @@ function packageNameFromSpecifier(specifier: string): string {
 
 function externalizeCssImports(): Plugin {
   return {
-    name: 'singapor-externalize-css-imports',
+    name: 'singapore-externalize-css-imports',
     enforce: 'pre',
     async resolveId(id, importer) {
       if (!id.endsWith('.css')) return null
@@ -173,7 +173,7 @@ function externalizeCssImports(): Plugin {
 
 function inlineModuleWorkers(inlineWorkerEntries: Set<string>): Plugin {
   return {
-    name: 'singapor-inline-module-workers',
+    name: 'singapore-inline-module-workers',
     enforce: 'pre',
     transform(code, id) {
       if (!isTypeScriptModule(id)) return null
@@ -261,7 +261,7 @@ function workerImportBlock(imports: ReadonlyMap<string, string>): string {
 }
 
 async function emitDeclarations(): Promise<void> {
-  const tempDir = await mkdtemp(path.join(tmpdir(), 'singapor-dts-'))
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'singapore-dts-'))
   const tsconfigPath = path.join(tempDir, 'tsconfig.json')
 
   try {

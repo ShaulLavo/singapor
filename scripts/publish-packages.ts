@@ -69,7 +69,7 @@ async function publishPackage(packageDir: string, manifest: PackageManifest): Pr
     return
   }
 
-  const tempDir = await mkdtemp(path.join(tmpdir(), 'singapor-package-'))
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'singapore-package-'))
 
   try {
     const tarballPath = await packPackage(packageDir, tempDir)

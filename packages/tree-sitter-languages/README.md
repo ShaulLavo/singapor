@@ -1,6 +1,6 @@
 # @singapor/tree-sitter-languages
 
-Bundled Tree-sitter language contributions for Singapor.
+Bundled Tree-sitter language contributions for Singapore.
 
 The package includes JavaScript, TypeScript, TSX, JSX, HTML, CSS, JSON, Markdown, and Markdown-inline
 language contributions and queries.

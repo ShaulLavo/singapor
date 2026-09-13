@@ -1,6 +1,6 @@
 # @singapor/diff
 
-Diff rendering and editor-diff helpers for Singapor.
+Diff rendering and editor-diff helpers for Singapore.
 
 ## Install
 

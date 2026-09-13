@@ -1,6 +1,6 @@
 # @singapor/lsp-plugin
 
-Editor integration layer for LSP-backed Singapor language features.
+Editor integration layer for LSP-backed Singapore language features.
 
 This package adapts `@singapor/lsp` transports to `@singapor/core` plugins for diagnostics,
 completion, hover, definition navigation, references, and document synchronization.

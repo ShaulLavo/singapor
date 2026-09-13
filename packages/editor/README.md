@@ -1,6 +1,6 @@
 # @singapor/core
 
-Core runtime for the Singapor code editor.
+Core runtime for the Singapore code editor.
 
 This package contains the editor class, document model, selection and anchor primitives, syntax
 session contracts, rendering types, plugin APIs, themes, keymaps, and the core stylesheet.
@@ -11,7 +11,7 @@ session contracts, rendering types, plugin APIs, themes, keymaps, and the core s
 npm install @singapor/core
 ```
 
-Singapor packages publish TypeScript source and CSS assets. Use them with a bundler or runtime that
+Singapore packages publish TypeScript source and CSS assets. Use them with a bundler or runtime that
 can transpile TypeScript from dependencies.
 
 ## Basic Usage

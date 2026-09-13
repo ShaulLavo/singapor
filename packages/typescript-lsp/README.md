@@ -1,6 +1,6 @@
 # @singapor/typescript-lsp
 
-TypeScript language-service plugin for Singapor.
+TypeScript language-service plugin for Singapore.
 
 This package wires the generic LSP adapter to a browser worker backed by TypeScript and
 `@typescript/vfs`.

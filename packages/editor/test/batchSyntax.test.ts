@@ -136,8 +136,17 @@ test('nested operations hand both committed batches to syntax once in order', as
   ])
   expect(changes.map((change) => change.edits.length)).toEqual([2, 2])
   await vi.advanceTimersByTimeAsync(200)
-  expect(structural.map((entry) => entry.change)).toEqual([changes[1]])
-  expect(highlights.map((entry) => entry.change)).toEqual([changes[1]])
+  // Neither session received the first batch, so each request carries both batches composed
+  // against the text that session last saw rather than the second batch alone.
+  const composed = {
+    ...changes[1],
+    edits: [
+      { from: 0, to: 0, text: 'BA' },
+      { from: 14, to: 14, text: 'AB' },
+    ],
+  }
+  expect(structural.map((entry) => entry.change)).toEqual([composed])
+  expect(highlights.map((entry) => entry.change)).toEqual([composed])
 })
 
 test.each(['replace', 'dispose'])('pending batch results are cancelled on %s', async (action) => {

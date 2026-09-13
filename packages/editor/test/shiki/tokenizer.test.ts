@@ -207,6 +207,63 @@ describe('IncrementalShikiTokenizer', () => {
   })
 })
 
+describe('IncrementalShikiTokenizer batches', () => {
+  const lines = Array.from({ length: 200 }, (_, index) => `const value${index} = ${index}`)
+  const code = lines.join('\n')
+  const lineStart = (row: number) =>
+    lines.slice(0, row).reduce((offset, line) => offset + line.length + 1, 0)
+
+  it('applies far-apart edits highest-first without tokenizing the lines between', async () => {
+    const { tokenizer, highlighter } = await createIncrementalTokenizer({
+      lang: 'typescript',
+      theme: 'github-dark',
+      code,
+    })
+    highlighters.push(highlighter)
+    let tokenizedLines = 0
+    const codeToTokensBase = highlighter.codeToTokensBase.bind(highlighter)
+    highlighter.codeToTokensBase = (...args) => {
+      tokenizedLines += 1
+      return codeToTokensBase(...args)
+    }
+
+    const patches = tokenizer.applyEdits([
+      { from: lineStart(2) + 6, to: lineStart(2) + 12, text: 'first' },
+      { from: lineStart(197) + 6, to: lineStart(197) + 14, text: 'second' },
+    ])
+
+    expect(tokenizedLines).toBeLessThan(10)
+    expect(patches.map((patch) => patch.fromLine)).toEqual([197, 2])
+    const texts = tokenizer.getSnapshot().lines.map((line) => line.text)
+    expect(texts[2]).toBe('const first = 2')
+    expect(texts[197]).toBe('const second = 197')
+    expect(texts).toHaveLength(200)
+  })
+
+  it('matches a full retokenization after a batch on one line', async () => {
+    const { tokenizer, highlighter } = await createIncrementalTokenizer({
+      lang: 'typescript',
+      theme: 'github-dark',
+      code,
+    })
+    highlighters.push(highlighter)
+
+    tokenizer.applyEdits([
+      { from: lineStart(5), to: lineStart(5) + 5, text: 'let' },
+      { from: lineStart(5) + 15, to: lineStart(5) + 16, text: '"five"' },
+    ])
+
+    const expected = await createIncrementalTokenizer({
+      lang: 'typescript',
+      theme: 'github-dark',
+      code: tokenizer.getCode(),
+      highlighter,
+    })
+    expect(tokenizer.getSnapshot().lines[5]?.text).toBe('let value5 = "five"')
+    expect(tokenizer.getTokens()).toEqual(expected.tokenizer.getTokens())
+  })
+})
+
 describe('grammar state stabilization', () => {
   // ── JSX ──────────────────────────────────────────────────────
 

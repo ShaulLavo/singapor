@@ -160,8 +160,8 @@ const editDocument = async (
     throw new Error('Unable to reopen Shiki document without text')
   }
 
-  if (payload.edit) {
-    existing.tokenizer.applyEdit(payload.edit)
+  if (payload.edits) {
+    existing.tokenizer.applyEdits(payload.edits)
   } else {
     existing.tokenizer.update(payload.text ?? existing.tokenizer.getCode())
   }

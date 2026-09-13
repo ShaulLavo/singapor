@@ -1,6 +1,7 @@
 import { documentSessionChangeTextSnapshot, type DocumentSessionChange } from '../documentSession'
 import { createDocumentTextSnapshot, type DocumentTextSnapshot } from '../documentTextSnapshot'
 import { applyBatchToPieceTable } from '../pieceTable/edits'
+import type { TextEdit } from '../tokens'
 import { pieceTableSnapshotsHaveSameText } from '../pieceTable/reads'
 import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import { unpackEditorTokens } from '../syntax/packedTokens'
@@ -466,22 +467,21 @@ class ShikiHighlighterSession implements EditorHighlighterSession {
     change: DocumentSessionChange,
     nextTextSnapshot: DocumentTextSnapshot,
   ): Promise<ShikiWorkerRequestPayload> {
-    const edit = incrementalEditForChange(this.snapshot, change)
-    if (edit && this.opened && !this.disposed) {
+    const edits = incrementalEditsForChange(this.snapshot, change)
+    if (edits && this.opened && !this.disposed) {
       return {
         type: 'edit',
         ...(await this.documentOptions()),
-        edit,
+        edits,
       }
     }
 
     const text = nextTextSnapshot.materializeFullText()
-    const fallbackEdit =
-      createTextDiffEdit(this.textSnapshot.materializeFullText(), text) ?? undefined
+    const fallbackEdit = createTextDiffEdit(this.textSnapshot.materializeFullText(), text)
     return {
       type: 'edit',
       ...(await this.documentOptions(text)),
-      edit: fallbackEdit,
+      edits: fallbackEdit ? [fallbackEdit] : undefined,
     }
   }
 
@@ -538,8 +538,11 @@ export const createTextDiffEdit = (previousText: string, nextText: string) => {
   }
 }
 
-const incrementalEditForChange = (snapshot: PieceTableSnapshot, change: DocumentSessionChange) => {
-  if (change.edits.length !== 1) return null
+const incrementalEditsForChange = (
+  snapshot: PieceTableSnapshot,
+  change: DocumentSessionChange,
+): readonly TextEdit[] | null => {
+  if (change.edits.length === 0) return null
 
   try {
     if (
@@ -554,7 +557,7 @@ const incrementalEditForChange = (snapshot: PieceTableSnapshot, change: Document
     return null
   }
 
-  return change.edits[0] ?? null
+  return change.edits
 }
 
 async function requestShikiTheme(

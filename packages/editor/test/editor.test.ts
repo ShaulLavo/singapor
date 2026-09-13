@@ -1025,6 +1025,41 @@ describe('Editor', () => {
       expect(editorRoot().style.getPropertyValue('--editor-foreground')).toBe('')
     })
 
+    it('hands the highlighter every edit the debounce skipped as one batch', async () => {
+      const applied: DocumentSessionChange[] = []
+      const highlighter = createMockHighlighterSession({
+        applyChange: async (change) => {
+          applied.push(change)
+          return createHighlightResult()
+        },
+      })
+      editor.dispose()
+      editor = createVisibleEditor(container, {
+        plugins: withTestLanguagePlugins(createHighlighterPlugin(highlighter)),
+      })
+      setEditorSyntaxSessionFactory(() => createMockSyntaxSession())
+
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text: 'const a = 1;\nconst b = 2;',
+      })
+      await flushMicrotasks()
+      await flushSyntaxDebounce()
+
+      editor.syncText('const a = 1;!\nconst b = 2;', { languageId: 'typescript' })
+      editor.syncText('const a = 1;!\nconst b = 2;?', { languageId: 'typescript' })
+      await flushSyntaxDebounce()
+
+      // One request for the burst, carrying both edits in the coordinates of the last text the
+      // highlighter saw, rather than only the second edit against a document it never received.
+      expect(applied).toHaveLength(1)
+      expect([...applied[0]!.edits].sort((left, right) => left.from - right.from)).toEqual([
+        { from: 12, to: 12, text: '!' },
+        { from: 25, to: 25, text: '?' },
+      ])
+    })
+
     it('does not reload highlighter sessions when the configured theme is unchanged', async () => {
       const theme = { backgroundColor: '#ffffff', foregroundColor: '#24292e' }
       const refresh = vi.fn(async () => createHighlightResult())
@@ -7095,9 +7130,11 @@ describe('Editor', () => {
       await flushSyntaxDebounce()
       expect(refreshCount).toBe(1)
       expect(changes).toHaveLength(1)
+      // The insert and its undo share one debounce window, so the session, which last saw the
+      // original text, receives the burst composed against that text: a no-op at the caret.
       expect(changes[0]).toMatchObject({
         kind: 'undo',
-        edits: [{ from: text.length, to: text.length + 1, text: '' }],
+        edits: [{ from: text.length, to: text.length, text: '' }],
       })
     })
 
@@ -7332,9 +7369,11 @@ describe('Editor', () => {
 
       await flushSyntaxDebounce()
       expect(changes).toHaveLength(1)
+      // The insert and its undo land in one debounce window, so the highlighter, which last saw
+      // the original text, receives the burst composed against that text: a no-op at the caret.
       expect(changes[0]).toMatchObject({
         kind: 'undo',
-        edits: [{ from: 12, to: 13, text: '' }],
+        edits: [{ from: 12, to: 12, text: '' }],
       })
     })
 

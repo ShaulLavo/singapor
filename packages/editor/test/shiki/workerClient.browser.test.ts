@@ -11,10 +11,13 @@ import {
   type ShikiWorkerOwner,
 } from '../../src/shiki'
 
-const createChange = (text: string, edit: { from: number; to: number; text: string }) =>
+const createChange = (
+  text: string,
+  ...edits: readonly { from: number; to: number; text: string }[]
+) =>
   ((snapshot = createPieceTableSnapshot(text)) => ({
     kind: 'edit',
-    edits: [edit],
+    edits,
     transaction: null,
     textSnapshot: createDocumentTextSnapshot(snapshot, text),
     snapshot,
@@ -115,6 +118,35 @@ describe.skipIf(typeof Worker === 'undefined')('Shiki worker highlighter', () =>
     )
 
     expect(result.tokens.some((token) => token.start === 6 && token.end === 12)).toBe(true)
+    session!.dispose()
+  })
+
+  it('applies a multi-edit change as one batch of incremental edits', async () => {
+    const initialText = 'const a = 1;\nconst b = 2;'
+    const nextText = 'const answer = 1;\nconst basis = 2;'
+    const session = workerOwner.createSession({
+      documentId: 'file.ts',
+      languageId: 'typescript',
+      lang: 'typescript',
+      theme: 'github-dark',
+      registrations: resolveRegistrations(),
+      fullText: initialText,
+      snapshot: createPieceTableSnapshot(initialText),
+    })
+
+    expect(session).not.toBeNull()
+
+    await session!.refresh(createPieceTableSnapshot(initialText), initialText)
+    const result = await session!.applyChange(
+      createChange(
+        nextText,
+        { from: 6, to: 7, text: 'answer' },
+        { from: 19, to: 20, text: 'basis' },
+      ),
+    )
+
+    expect(result.tokens.some((token) => token.start === 6 && token.end === 12)).toBe(true)
+    expect(result.tokens.some((token) => token.start === 24 && token.end === 29)).toBe(true)
     session!.dispose()
   })
 

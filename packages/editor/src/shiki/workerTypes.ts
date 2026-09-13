@@ -38,7 +38,7 @@ export type ShikiWorkerOpenRequest = ShikiWorkerDocumentOptions & {
 
 export type ShikiWorkerEditRequest = ShikiWorkerDocumentOptions & {
   readonly type: 'edit'
-  readonly edit?: TextEdit
+  readonly edits?: readonly TextEdit[]
 }
 
 type ShikiWorkerDisposeDocumentRequest = {

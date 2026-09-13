@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DocumentEditChain } from '../src/editor/editChain'
 import { createDocumentSession } from '../src/documentSession'
 import { EditorSyntaxController, fallbackFoldReason } from '../src/editor/syntaxController'
 import { EditorPluginHost, type EditorLogInput, type EditorPlugin } from '../src/plugins'
@@ -156,6 +157,7 @@ function controller(options: {
     getCurrentSessionDocumentId: () => 'fold-policy',
     getLanguageId: () => languageId,
     getSession: () => session,
+    getDocumentEditChain: () => new DocumentEditChain(0, 0),
     getVisibleSyntaxRange: () => visibleRange,
     adoptTokens: () => undefined,
     clearSyntaxFolds: () => undefined,

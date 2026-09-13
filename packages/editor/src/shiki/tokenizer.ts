@@ -39,6 +39,7 @@ export interface CreateIncrementalTokenizerResult {
 
 export interface IncrementalTokenizer {
   applyEdit(edit: TextEdit): TokenPatch
+  applyEdits(edits: readonly TextEdit[]): readonly TokenPatch[]
   update(code: string): TokenPatch
   reset(code?: string): TokenPatch
   getCode(): string
@@ -162,6 +163,16 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
       toLine: stableAt,
       lines: cloneSnapshot(retokenized),
     }
+  }
+
+  /**
+   * A batch shares the coordinates of the current text and applies highest-first, in the piece
+   * table's own order, so each edit pays for its own lines only. One span over the batch would
+   * retokenize everything between two distant edits. Each patch is in the coordinates of the
+   * text as it stood when that edit applied.
+   */
+  public applyEdits(edits: readonly TextEdit[]): readonly TokenPatch[] {
+    return edits.toSorted(compareEditsDescending).map((edit) => this.applyEdit(edit))
   }
 
   private offsetToLine(offset: number): { line: number; col: number } {
@@ -322,6 +333,10 @@ export class IncrementalShikiTokenizer implements IncrementalTokenizer {
 
     return tokenized
   }
+}
+
+function compareEditsDescending(left: TextEdit, right: TextEdit): number {
+  return right.from - left.from || right.to - left.to
 }
 
 function isGrammarState(value: unknown): value is GrammarState {

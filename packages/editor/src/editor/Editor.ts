@@ -521,6 +521,7 @@ export class Editor {
       getCurrentSessionDocumentId: () => this.currentSessionDocumentId(),
       getLanguageId: () => this.languageId,
       getSession: () => this.session,
+      getDocumentEditChain: () => this.currentDocumentEditChain(),
       getVisibleSyntaxRange: () => this.visibleSyntaxRange(),
       adoptTokens: (tokens) => {
         this.view.adoptTokens(tokens)

@@ -1,4 +1,5 @@
 import type { DocumentSession, DocumentSessionChange } from '../documentSession'
+import type { DocumentEditChain, DocumentSyncPoint } from './editChain'
 import { defineLazyFullTextProperty, type DocumentTextSnapshot } from '../documentTextSnapshot'
 import type { PieceTableSnapshot } from '../pieceTable/pieceTableTypes'
 import type {
@@ -71,6 +72,7 @@ export type EditorSyntaxControllerOptions = {
   getCurrentSessionDocumentId(): string
   getLanguageId(): EditorSyntaxLanguageId | null
   getSession(): DocumentSession | null
+  getDocumentEditChain(): Pick<DocumentEditChain, 'changesSince' | 'point'>
   getVisibleSyntaxRange(): EditorSyntaxRange | null
   adoptTokens(tokens: readonly EditorToken[]): void
   clearSyntaxFolds(): void
@@ -194,6 +196,8 @@ export class EditorSyntaxController {
   private preparedInitialTokensInstalled = false
   private skipNextStructuralRefresh = false
   private skipNextHighlighterRefresh = false
+  private highlightDispatchPoint: DocumentSyncPoint | null = null
+  private structuralDispatchPoint: DocumentSyncPoint | null = null
   private providerHighlighterTheme: EditorTheme | null = null
   private highlighterTheme: EditorTheme | null = null
   private foldCoverage:
@@ -942,6 +946,7 @@ export class EditorSyntaxController {
     this.preparedSyntaxDisposer = null
     this.skipNextStructuralRefresh = false
     this.syntaxSession = null
+    this.structuralDispatchPoint = null
     this.syntaxSessionIncludesCaptures = false
   }
 
@@ -995,6 +1000,7 @@ export class EditorSyntaxController {
 
   private disposeHighlighterSession(): void {
     this.highlightRequests.cancel()
+    this.highlightDispatchPoint = null
     if (this.preparedHighlighterDisposer) this.preparedHighlighterDisposer()
     else this.highlighterSession?.dispose()
     this.preparedHighlighterDisposer = null
@@ -1081,11 +1087,15 @@ export class EditorSyntaxController {
 
   private loadSyntaxBaseResult(change: DocumentSessionChange | null): Promise<EditorSyntaxResult> {
     if (!this.syntaxSession) return Promise.reject(new Error('No syntax session'))
-    if (change) return this.syntaxSession.applyChange(change)
+    const session = this.options.getSession()
+    if (!session) return Promise.reject(new Error('No document snapshot'))
 
-    const snapshot = this.options.getSession()?.getSnapshot()
-    if (!snapshot) return Promise.reject(new Error('No document snapshot'))
-    return this.syntaxSession.refresh(snapshot)
+    const chain = this.options.getDocumentEditChain()
+    const point = this.structuralDispatchPoint
+    this.structuralDispatchPoint = chain.point
+    if (!change) return this.syntaxSession.refresh(session.getSnapshot())
+
+    return this.syntaxSession.applyChange(composeSkippedChanges(session, chain, point, change))
   }
 
   private loadCurrentSyntaxRangeResult(options: {
@@ -1144,13 +1154,17 @@ export class EditorSyntaxController {
     change: DocumentSessionChange | null,
   ): Promise<EditorHighlightResult> {
     if (!this.highlighterSession) return Promise.reject(new Error('No highlighter session'))
-    if (!change) {
-      const snapshot = this.options.getSession()?.getSnapshot()
-      if (!snapshot) return Promise.reject(new Error('No document snapshot'))
-      return this.highlighterSession.refresh(snapshot)
-    }
+    const session = this.options.getSession()
+    if (!session) return Promise.reject(new Error('No document snapshot'))
 
-    return this.highlighterSession.applyChange(change)
+    const chain = this.options.getDocumentEditChain()
+    const point = this.highlightDispatchPoint
+    this.highlightDispatchPoint = chain.point
+    if (!change) return this.highlighterSession.refresh(session.getSnapshot())
+
+    return this.highlighterSession.applyChange(
+      composeSkippedChanges(session, chain, point, change),
+    )
   }
 
   private applySyntaxResult(
@@ -2167,3 +2181,21 @@ const isUncachedSyntaxWarmRange = (
 
 const boundedIndex = (index: number, documentLength: number): number =>
   Math.max(0, Math.min(index, Math.max(0, documentLength - 1)))
+/**
+ * Syntax and highlight requests are latest-wins, so the changes between two dispatches never reach
+ * a session. Without their edits it can only diff whole texts, and that span covers everything
+ * between two distant edits. The edit chain returns the skipped edits in the session's coordinates.
+ */
+function composeSkippedChanges(
+  session: DocumentSession,
+  chain: Pick<DocumentEditChain, 'changesSince'>,
+  point: DocumentSyncPoint | null,
+  change: DocumentSessionChange,
+): DocumentSessionChange {
+  if (!point) return change
+  if (session.getSnapshot() !== change.snapshot) return change
+
+  const composed = chain.changesSince(point, null)
+  if (!composed?.edits) return change
+  return { ...change, edits: composed.edits }
+}

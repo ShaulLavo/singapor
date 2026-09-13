@@ -1,86 +1,24 @@
-# Singapore Editor
+# singapore
 
-Singapore Editor is a browser-based code editor toolkit focused on very low-latency editing,
-syntax-aware interactions, browser-native rendering, and plugin-driven extension points.
+a code editor for the browser, in packages you add one at a time
 
-The name is a nod to Monaco Editor: another editor named after a city-state.
+named after monaco. another editor, another city-state
 
-The editor core owns the in-memory document model and editing runtime. It does not own persistence:
-host applications provide text, decide where files live, and choose how documents are loaded, saved,
-cached, or synchronized.
+a piece table holds the text, the css highlight api paints it, and tree-sitter and lsp are plugins you opt into. the core owns the document and the editing runtime, nothing else. it never touches persistence. you hand it text and decide where files live
 
-The package surface is meant to be installed, embedded, and extended. The core editor exposes
-plugins for gutters, view contributions, syntax/language registration, highlighters, themes,
-commands, and editor features. The app in `examples/app` is a demo integration of those packages,
-not the product boundary.
+still moving. package boundaries change between commits
 
-## Status
+![singapore editing its own source](docs/images/editor.webp)
 
-This repository is an active implementation workspace. The API and package boundaries are still
-moving, but the current packages include:
+## try it
 
-- A core editor package with an in-memory piece-table document model, immutable snapshots,
-  offset/point conversion, durable anchors, selections, and undo/redo helpers.
-- Rendering through the CSS Highlight API, mounted-row painting, fixed-row virtualization, and
-  horizontal chunking for very long lines.
-- Browser-grounded BiDi geometry for caret placement, hit testing, selection paint, caret
-  affinity, and visual character-step motion.
-- Editing behavior for multi-selection edits, keyboard navigation, folds, display transforms, and
-  syntax-aware structural selection.
-- Optional worker-backed Tree-sitter runtime package for syntax highlights, folds, structural
-  selection, and language-specific behavior.
-- Plugin APIs for gutters, view contributions, editor features, highlighters, themes, commands, and
-  language registration.
-- First-party plugins/packages for line gutters, fold gutters, find/replace, scope lines, minimap,
-  TypeScript LSP support, and Tree-sitter language registration.
-- An optional Shiki highlighter plugin for hosts that prefer Shiki tokenization.
-- A Vite example app that wires the packages into a file-browser-style demo.
+[the demo](https://shaullavo.github.io/singapore/) pulls this repo from the github api and opens files in the editor. the piece tree inspector in the top right shows the document model under whatever you type
 
-For current implementation status, see [PROGRESS.md](PROGRESS.md). Cross-project
-execution order lives in [Platform's canonical roadmap](../platform/PLAN.md).
-For system design and open architecture questions, see
-[ARCHITECTURE.md](ARCHITECTURE.md).
+## embedding it
 
-## Packages
+not on npm under this name yet. the last published releases sit on the old `@singapor` scope, the typo this rename exists to fix. for now, clone and `bun link`
 
-| Package                           | Purpose                                                                                                                                                                  |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@singapore-editor/core`                  | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, Shiki highlighter, and plugin contracts. |
-| `@singapore-editor/gutters`               | Line-number and fold-gutter plugins for the core editor.                                                                                                                 |
-| `@singapore-editor/find`                  | Find and replace plugin for the core editor.                                                                                                                             |
-| `@singapore-editor/markdown`              | Markdown live preview: renders markdown as formatted text while the buffer keeps holding markdown source.                                                                |
-| `@singapore-editor/minimap`               | Minimap plugin with worker-backed document rendering.                                                                                                                    |
-| `@singapore-editor/scope-lines`           | Scope-line view contribution plugin.                                                                                                                                     |
-| `@singapore-editor/tree-sitter`           | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers.                                                 |
-| `@singapore-editor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON.                                                                          |
-| `@singapore-editor/typescript-lsp`        | TypeScript language-service plugin built on the generic LSP layer.                                                                                                       |
-| `@singapore-editor/lsp`                   | Generic LSP transport and plugin primitives.                                                                                                                             |
-| `@singapore-editor/example-app`           | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing.                                             |
-
-## Requirements
-
-- [Bun](https://bun.sh/) `1.3.10` or compatible.
-- A modern browser with CSS Highlight API support for the full rendering path.
-- Playwright browser dependencies for browser and e2e tests.
-
-## Getting Started
-
-Install dependencies:
-
-```sh
-bun install
-```
-
-Run the example app:
-
-```sh
-bun run dev
-```
-
-The root `dev` script runs Turborepo. The demo app itself lives in `examples/app` and is served by
-Vite.
-
-Minimal editor embedding looks like this:
+the core is one class and one stylesheet
 
 ```ts
 import { Editor } from '@singapore-editor/core/editor'
@@ -94,9 +32,60 @@ editor.openDocument({
 })
 ```
 
-## Common Commands
+that is the whole thing. line numbers, find, minimap, folds, syntax and language servers are separate packages, and none of them load until you register them
 
-Run the main workspace checks:
+## concepts
+
+### documents
+
+a document is text plus an id and a language. the text lives in a treap-backed piece table, so an edit allocates a few nodes instead of copying the buffer, and every read is a snapshot that will not change under you. `openDocument` is how one starts existing
+
+### anchors
+
+an offset into a document goes stale the moment someone types above it. an anchor does not. it survives edits, carries a bias for which side of an insertion it belongs to, and is what selections, folds and decorations are built from
+
+### selections
+
+a selection knows more than start and end. it carries affinity, which side of a wrapped line the caret sits on, and a goal, the column a vertical run is trying to get back to. that second one is why holding down through a short line and out the other side lands where you expect
+
+### plugins
+
+gutters, view contributions, highlighters, themes, commands and language registration are plugin contracts on the core. the first-party packages use the same ones you would. there is no privileged internal path
+
+### syntax
+
+tree-sitter runs in a worker and streams highlights, folds and structural selection back. shiki is available instead for hosts that already tokenize that way. both are optional, and the editor renders text without either
+
+## packages
+
+| package | what it does |
+| --- | --- |
+| `@singapore-editor/core` | document model, anchors, selections, folds, transforms, virtualization, renderer, themes, plugin contracts |
+| `@singapore-editor/gutters` | line numbers and fold arrows |
+| `@singapore-editor/find` | find and replace |
+| `@singapore-editor/markdown` | renders markdown as formatted text while the buffer keeps holding the source |
+| `@singapore-editor/minimap` | minimap, rendered in a worker |
+| `@singapore-editor/scope-lines` | indent scope lines |
+| `@singapore-editor/tree-sitter` | tree-sitter runtime, worker client, language registry, structural selection |
+| `@singapore-editor/tree-sitter-languages` | grammars and queries for javascript, typescript, html, css, json |
+| `@singapore-editor/lsp` | language server transport and plugin primitives |
+| `@singapore-editor/typescript-lsp` | the typescript language service on top of that layer |
+| `@singapore-editor/diff` | diff rendering and diff gutters |
+| `@singapore-editor/lsp-plugin` | the editor-side half of an lsp integration |
+| `@singapore-editor/decode` | opens a file by writing it in, one character at a time |
+| `@singapore-editor/panes` | split panes |
+| `@singapore-editor/react`, `@singapore-editor/solid` | framework wrappers |
+
+## running the repo
+
+needs bun `1.3.10` or newer, and a browser with the css highlight api for the full rendering path. the browser tests need playwright's dependencies
+
+```sh
+bun install
+bun run dev
+```
+
+`dev` runs turborepo. the demo lives in `examples/app` and vite serves it
 
 ```sh
 bun run typecheck
@@ -105,75 +94,38 @@ bun run lint
 bun run build
 ```
 
-Format the workspace:
+some suites need a real browser, so they run per package
 
 ```sh
-bun run format
-```
-
-Check formatting without writing changes:
-
-```sh
-bun run format:check
-```
-
-Run package-specific browser tests:
-
-```sh
-bun --cwd packages/editor run test:browser
-bun --cwd packages/minimap run test:browser
-```
-
-Run the example app e2e tests:
-
-```sh
+bun --cwd packages/minimap run test        # vitest, then the worker and renderer in chromium
+bun --cwd packages/tree-sitter run test:browser
 bun --cwd examples/app run test:e2e
 ```
 
-## Benchmarks
+## benchmarks
 
-Editor benchmarks live in `packages/editor/bench`:
+the parts that decide whether typing feels instant, measured on their own
 
 ```sh
 bun --cwd packages/editor run bench:piece-table
 bun --cwd packages/editor run bench:anchors
-bun --cwd packages/tree-sitter run bench:syntax
 bun --cwd packages/editor run bench:fold-map
 bun --cwd packages/editor run bench:transforms
 bun --cwd packages/editor run bench:virtualization
+bun --cwd packages/tree-sitter run bench:syntax
 ```
 
-## Documentation
+## docs
 
-- [Architecture](ARCHITECTURE.md) - main-thread/worker split, core systems, data flow, and open questions.
-- [Progress](PROGRESS.md) - reconciled implementation status and verification boundaries.
-- [TODO backlog](TODO.md) - unordered ideas and technical debt; not an execution index.
-- [Platform roadmap](../platform/PLAN.md) - authoritative cross-project execution order.
-- [Storage: Piece Table](docs/storage/piece-table.md) - treap-backed storage model.
-- [Positions: Types & Conversions](docs/positions/types-and-conversions.md) - offsets, points, and conversions.
-- [Positions: Anchors](docs/positions/anchors.md) - durable position references.
-- [Editing: Selections & Undo](docs/editing/selections-and-undo.md) - affinity-aware selections,
-  normalization, batch edit, and history model.
-- [Display: Transforms](docs/display/transforms.md) - transform layers and invalidation.
-- [Display: Browser Virtualization](docs/display/browser-virtualization.md) - browser layout,
-  viewport strategy, and BiDi geometry.
-- [Syntax: Tree-sitter](docs/syntax/tree-sitter.md) - syntax engine design.
+- [architecture](ARCHITECTURE.md), the main-thread and worker split, and the questions still open
+- [progress](PROGRESS.md), what is implemented against what is only designed
+- [piece table](docs/storage/piece-table.md), the treap storage model
+- [positions](docs/positions/types-and-conversions.md) and [anchors](docs/positions/anchors.md)
+- [selections and undo](docs/editing/selections-and-undo.md), affinity, normalization, history
+- [transforms](docs/display/transforms.md) and [browser virtualization](docs/display/browser-virtualization.md), including bidi geometry
+- [tree-sitter](docs/syntax/tree-sitter.md), the syntax engine
+- [fregat's roadmap](https://github.com/ShaulLavo/fregat/blob/main/PLAN.md) sets execution order across both repos
 
-## Source Layout
+## fair warning
 
-```text
-packages/editor/                  Core editor package
-packages/gutters/                 Line and fold gutter plugins
-packages/minimap/                 Minimap plugin and worker renderer
-packages/tree-sitter/             Optional Tree-sitter runtime and worker client
-packages/tree-sitter-languages/   Tree-sitter grammar/query plugin package
-examples/app/                     Demo app
-docs/                             Design documents
-opensrc/                          Local source references for selected dependencies
-```
-
-## Notes
-
-Singapore Editor is optimized for design validation and performance work, not for publishing a
-stable editor API yet. Prefer the design docs, tests, and package-local behavior as the source of
-truth when changing core systems.
+this is tuned for design validation and performance work, not for a stable api. when they disagree, trust the tests over the docs. treat any version bump as breaking until that stops being true

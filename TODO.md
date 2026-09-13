@@ -538,3 +538,38 @@ LSP wire messages, structured-clone worker payloads; hot: piece-tree snapshots a
 index, buffer line indexes, anchors, tree-sitter trees, worker-side chunk mirrors. Note the
 translation points (open/save, edit-chain worker sync, future history replay) and use the
 vocabulary in future TODOs and docs.
+
+## Packed tokens end to end (drop the per-edit unpack)
+
+Context, 2026-09-13. Two fixes removed most of the per-keystroke token cost on large files:
+the Shiki worker answers an edit with the re-tokenized lines only (`patchesPacked`, each carrying
+the character range it replaced), and the highlighter session splices them into the packed
+`Uint32Array` tokens it kept from the open (`splicePackedEditorTokens`). Measured on 100k lines /
+500k tokens: the worker's whole-document pack went from 53 ms to nothing and the transfer from
+6 MB to 60 bytes per edit; the splice is 1 ms.
+
+What is left is `unpackEditorTokens`: every result is still turned into a flat `EditorToken[]` of
+500k objects (about 4 ms under JavaScriptCore, more under V8, plus garbage) because
+`EditorHighlightResult.tokens` and everything downstream (`setTokens`, `adoptTokens`, the
+`tokens` field of the view snapshot, `mergeSyntaxRangeTokens`, the minimap's token source, the
+semantic token layer) are written against the object array. That is the last per-edit cost that
+scales with document size rather than with the edit.
+
+Suggested change:
+
+- Make the packed form the token store. Keep `starts`/`ends`/`styleIds` typed arrays plus the
+  palette as the canonical document tokens and give consumers a small read API: token at index,
+  first token at or after an offset (the binary search the splice already uses), and a row slice.
+  `unpackEditorTokens` becomes a compatibility path for callers that genuinely need objects.
+- Move the highlighter contract to it: `EditorHighlightResult.tokens` becomes the packed store
+  (or a patch plus the store), and `setTokens` / `adoptTokens` accept it directly, so a keystroke
+  costs one splice and no allocation proportional to the document.
+- Route the tree-sitter and semantic-token paths through the same store; `mergeSyntaxRangeTokens`
+  and `projectSyntaxRangeCache` currently rebuild object arrays for the same reason.
+- Keep the row painter on slices: it already reads by offset range, so it should never need the
+  whole array materialised.
+
+Acceptance: an edit in a 500,000-line document allocates no token objects outside the edited rows,
+and the input-latency gate's paste and undo groups do not regress. The Shiki worker, splice, and
+browser tests from the same-day change stay as they are; they already assert a spliced answer
+equals a fresh full tokenization.

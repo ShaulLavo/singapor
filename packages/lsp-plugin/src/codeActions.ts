@@ -2,7 +2,11 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
 } from '@singapor/core/extensions'
-import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
+import {
+  lspPositionToOffsetInSnapshot,
+  offsetToLspPosition,
+  type LspTextDocumentSnapshot,
+} from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { OffsetRange } from './definitionNavigation'
@@ -11,8 +15,9 @@ import {
   type LanguageServerCodeActionProvenance,
   type LanguageServerCodeActionRouter,
 } from './serverSet'
-import type { ApplyWorkspaceEditResult, WorkspaceTextDocumentProvenance } from './types'
+import type { ApplyWorkspaceEditResult } from './types'
 import { parseWorkspaceEdit } from './workspaceEdit'
+import { currentWorkspaceEditOrigin } from './workspaceEditProvenance'
 
 /**
  * Long enough that a held arrow key or a burst of typing asks once, short enough that the answer is
@@ -218,11 +223,7 @@ export class CodeActionController {
         'textDocument/codeAction',
         {
           context: {
-            diagnostics: diagnosticsOverlapping(
-              active.fullText,
-              this.options.getDiagnostics(),
-              range,
-            ),
+            diagnostics: diagnosticsOverlapping(active, this.options.getDiagnostics(), range),
             // The auto fix can apply nothing else, so asking for the wider hierarchy would make
             // every settled keystroke pay for refactors that are thrown away on arrival.
             only: [CODE_ACTION_QUICK_FIX_KIND],
@@ -297,7 +298,7 @@ export class CodeActionController {
       this.options.onRequestError(new Error(parsed.error.reason))
       return
     }
-    const origin = currentProducerProvenance(provenance, active)
+    const origin = currentWorkspaceEditOrigin(provenance.guard, active, parsed.value)
     if (!origin) return
     if (signal.aborted) return
 
@@ -360,30 +361,19 @@ function isQuickFixKind(kind: string | undefined): boolean {
 }
 
 function diagnosticsOverlapping(
-  text: string,
+  document: LspTextDocumentSnapshot,
   diagnostics: readonly lsp.Diagnostic[],
   range: OffsetRange,
 ): lsp.Diagnostic[] {
   return diagnostics.filter((diagnostic) => {
-    const start = lspPositionToOffset(text, diagnostic.range.start)
-    const end = lspPositionToOffset(text, diagnostic.range.end)
+    const start = lspPositionToOffsetInSnapshot(document, diagnostic.range.start)
+    const end = lspPositionToOffsetInSnapshot(document, diagnostic.range.end)
     return start <= range.end && end >= range.start
   })
 }
 
 function isWhitespace(character: string | undefined): boolean {
   return character !== undefined && /\s/.test(character)
-}
-
-function currentProducerProvenance(
-  provenance: LanguageServerCodeActionProvenance,
-  active: ActiveDocument,
-): WorkspaceTextDocumentProvenance | null {
-  const origin = provenance.guard.documents.find((document) => document.uri === active.uri)
-  if (!origin) return null
-  if (origin.textSnapshot !== active.textSnapshot) return null
-  if (!provenance.guard.isCurrent(active.uri)) return null
-  return origin
 }
 
 function isAbortError(error: unknown): boolean {

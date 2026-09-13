@@ -45,10 +45,14 @@ headers, string deduplication, and immutable source storage. `summaryBytes` esti
 metadata and typed array storage; it is not a measured heap size. The E001 browser artifacts
 record actual renderer heap measurements separately.
 
-A cold plain view still builds the source buffer's newline index. The 500,000-line fixture scans
+In these E031 measurements, a cold plain view built the source buffer's newline index. The 500,000-line fixture scans
 25,668,128 UTF-16 bytes once and retains a 2,097,152-byte newline array capacity. New layouts and
 distant windows reuse that source index. Inserting `x\n` needs four bytes of new-buffer indexing.
 The row text read is 2,152 bytes for the first viewport and 2,112 bytes after the top edit.
+
+[E034](e034-snapshot-indentation-folds.md) now builds the original index during buffer creation,
+using its count instead of scanning newlines separately. Initial painting reuses that index;
+headless buffers retain its offset storage earlier. The E031 measurements above remain historical.
 
 The eager control's full-read counter stays at zero while it reads and retains every line.
 That control demonstrates why full-read counts alone cannot establish bounded work. The capture

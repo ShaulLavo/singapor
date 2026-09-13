@@ -9,12 +9,11 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapor/core/extensions'
-import { createStringTextSnapshot } from '@singapor/core/document'
 import { defineLazyFullTextProperty } from '@singapor/core/internal'
 import {
-  arrayLspLineStarts,
   recordLspPerformanceDiagnostic,
   type LspDocumentTransitionNotification,
+  type LspTextDocumentSnapshot,
   type LspTextSnapshot,
   type LspWorkspaceDocumentAttachment,
   type LspWorkspace,
@@ -26,10 +25,11 @@ import type { LanguageServerDocumentUriTransition } from './documentSyncControll
 import { pathOrUriToDocumentUri } from './paths'
 import type { ActiveDocument, DocumentDescriptor } from './pluginTypes'
 import type { LanguageServerDocumentSyncOptions } from './types'
+import { viewDocumentSnapshot } from './viewDocumentSnapshot'
 
 export type DocumentSyncDiagnosticsPresenter = {
   clear(): void
-  render(text: string, diagnostics: readonly lsp.Diagnostic[]): void
+  render(document: LspTextDocumentSnapshot, diagnostics: readonly lsp.Diagnostic[]): void
   publishSummary(
     uri: lsp.DocumentUri,
     version: number | null,
@@ -219,7 +219,7 @@ export class DocumentSync {
     diagnostics: readonly lsp.Diagnostic[],
   ): void {
     this.diagnosticItems = diagnostics
-    this.presenter.render(active.fullText, diagnostics)
+    this.presenter.render(active, diagnostics)
     this.presenter.publishSummary(active.uri, version, diagnostics)
   }
 
@@ -299,7 +299,7 @@ export class DocumentSync {
     if (diagnostics === this.diagnosticItems) return
 
     this.diagnosticItems = diagnostics
-    this.presenter.render(descriptor.fullText, diagnostics)
+    this.presenter.render(descriptor, diagnostics)
   }
 
   private synchronizeWorkspaceDocument(
@@ -509,15 +509,13 @@ function documentDescriptor(
   const uri = projectedUri ?? resolvedUri
   if (options.shouldSyncUri?.(uri, snapshot) === false) return null
 
+  const document = viewDocumentSnapshot(snapshot)
   return defineLazyFullTextProperty({
     uri,
     // `shouldSyncLanguageId` above still filters on the view's id, not this one.
     languageId: options.languageIdForDocument?.(snapshot.languageId, uri) ?? snapshot.languageId,
-    textSnapshot:
-      projectedTextSnapshot ?? snapshot.textSnapshot ?? createStringTextSnapshot(snapshot.fullText),
-    // The view avoids materializing the full line-start array per sync on
-    // large documents; plain-array snapshots (tests) adapt lazily.
-    lineStarts: snapshot.lineStartsView ?? arrayLspLineStarts(snapshot.lineStarts),
+    textSnapshot: projectedTextSnapshot ?? document.textSnapshot,
+    lineStarts: document.lineStarts,
     textVersion: snapshot.textVersion,
   })
 }

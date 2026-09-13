@@ -30,6 +30,9 @@
   "missingSamplesRejected": true,
   "fixtureHashesRejected": true,
   "differentOptionsRejected": true,
+  "missingPostChurnMemoryRejected": true,
+  "partialMemoryCoverageRejected": true,
+  "missingRetainedObjectsRejected": true,
   "initialControlCheck": {
     "candidate": "dd99e03e-0768-4c72-b74e-bdb0a62c2f5b",
     "passed": false,

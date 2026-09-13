@@ -124,19 +124,21 @@ describe('DocumentTextSnapshot', () => {
   })
 
   it.each([100_000, 500_000])(
-    'shares one cold source index across views and top edits on %i lines',
+    'builds one source index during creation and shares it across views and top edits on %i lines',
     (lineCount) => {
       const text = 'row\n'.repeat(lineCount - 1) + 'row'
+      const diagnostics = collectDiagnostics()
       const tree = createPieceTableSnapshot(text)
+      const initialIndex = tree.buffers.lineIndexes?.get(tree.buffers.original)
+      expect(initialIndex).toMatchObject({ count: lineCount - 1, scannedLength: text.length })
       const first = createDocumentTextSnapshot(tree)
       const peer = createDocumentTextSnapshot(tree)
       const earlyEdit = createDocumentTextSnapshot(insertIntoPieceTable(tree, 0, 'header\n'))
-      const diagnostics = collectDiagnostics()
       expect(first.lineCount).toBe(lineCount)
-      expect(diagnostics).toEqual([])
       expect(first.lineStart(lineCount - 1)).toBe((lineCount - 1) * 4)
       expect(peer.lineAt(text.length)).toBe(lineCount - 1)
       expect(earlyEdit.lineStart(lineCount)).toBe((lineCount - 1) * 4 + 7)
+      expect(tree.buffers.lineIndexes?.get(tree.buffers.original)).toBe(initialIndex)
       const cold = diagnostics.filter((event) => event.name === 'textSnapshot.sourceIndex')
       expect(cold).toHaveLength(1)
       expect(cold[0]?.detail).toMatchObject({ scannedCodeUnits: text.length })

@@ -112,7 +112,7 @@ type RowUpdatePass = {
   readonly cursorBufferRow: number | null
   readonly cursorVirtualRow: number | null
   readonly cursorLineHighlight: VirtualizedTextViewInternal['cursorLineHighlight']
-  readonly foldMarkersAvailable: boolean
+  readonly foldMarkers: ReadonlyMap<number, VirtualizedFoldMarker>
   readonly lineCount: number
   readonly toggleFold: EditorGutterRowContext['toggleFold']
 }
@@ -173,7 +173,7 @@ export function renderRows(
   snapshot: FixedRowVirtualizerSnapshot,
   onRemoveSlot: (rowSlotId: number) => void,
 ): void {
-  const updatePass = createRowUpdatePass(view)
+  const updatePass = createRowUpdatePass(view, snapshot.virtualItems)
   applyTotalHeight(view, snapshot)
   updateContentWidth(view, snapshot.virtualItems)
   retireInlineWidgets(view)
@@ -444,15 +444,37 @@ function syncGutterRowElement(
 
 const noopToggleFold: EditorGutterRowContext['toggleFold'] = () => {}
 
-function createRowUpdatePass(view: VirtualizedTextViewInternal): RowUpdatePass {
+function createRowUpdatePass(
+  view: VirtualizedTextViewInternal,
+  rows: Iterable<{ readonly index: number }>,
+): RowUpdatePass {
   return {
     cursorBufferRow: cursorLineBufferRow(view),
     cursorVirtualRow: cursorLineVirtualRow(view),
     cursorLineHighlight: view.cursorLineHighlight,
-    foldMarkersAvailable: view.foldMarkerByStartRow.size > 0,
+    foldMarkers: foldMarkersForPass(view, rows),
     lineCount: view.model.lineCount,
     toggleFold: view.onFoldToggle ?? noopToggleFold,
   }
+}
+
+function foldMarkersForPass(
+  view: VirtualizedTextViewInternal,
+  rows: Iterable<{ readonly index: number }>,
+): ReadonlyMap<number, VirtualizedFoldMarker> {
+  const source = view.foldMarkerSource
+  if (!source || source.size === 0) return view.foldMarkerByStartRow
+  if (view.gutterContributions.length === 0 && !view.model.foldMap?.ranges.length)
+    return view.foldMarkerByStartRow
+
+  const bufferRows: number[] = []
+  for (const { index } of rows) {
+    const row = view.model.projection.getRow(index)
+    if (!isDocumentTextDisplayRow(row) || row.sourceStartColumn !== 0) continue
+    bufferRows.push(row.bufferRow)
+  }
+  if (bufferRows.length === 0) return view.foldMarkerByStartRow
+  return source.readRows(bufferRows)
 }
 
 function rowUpdateState(
@@ -480,10 +502,7 @@ function rowUpdateState(
     cursorLine: primaryText && bufferRow === updatePass.cursorBufferRow,
     cursorLineHighlight: updatePass.cursorLineHighlight,
     cursorVirtualLine: index === updatePass.cursorVirtualRow,
-    foldMarker:
-      primaryText && updatePass.foldMarkersAvailable
-        ? (view.foldMarkerByStartRow.get(bufferRow) ?? null)
-        : null,
+    foldMarker: primaryText ? (updatePass.foldMarkers.get(bufferRow) ?? null) : null,
     lineCount: updatePass.lineCount,
     toggleFold: updatePass.toggleFold,
   }
@@ -511,10 +530,7 @@ function mountedRowUpdateState(
     cursorLine: primaryText && row.bufferRow === updatePass.cursorBufferRow,
     cursorLineHighlight: updatePass.cursorLineHighlight,
     cursorVirtualLine: row.index === updatePass.cursorVirtualRow,
-    foldMarker:
-      primaryText && updatePass.foldMarkersAvailable
-        ? (view.foldMarkerByStartRow.get(row.bufferRow) ?? null)
-        : null,
+    foldMarker: primaryText ? (updatePass.foldMarkers.get(row.bufferRow) ?? null) : null,
     lineCount: updatePass.lineCount,
     toggleFold: updatePass.toggleFold,
   }
@@ -565,7 +581,7 @@ function updateRow(
   snapshot: FixedRowVirtualizerSnapshot,
   updatePass: RowUpdatePass,
 ): void {
-  if (isRowCurrent(view, row, item, snapshot)) {
+  if (isRowCurrent(view, row, item, snapshot, updatePass)) {
     const state = mountedRowUpdateState(view, row, updatePass)
     updateCursorLineContentClass(view, row, state.cursorVirtualLine)
     updateGutterRowElement(view, row, item, state)
@@ -620,7 +636,7 @@ export function updateMountedRowsAfterSameLineEdit(
   patch: SameLineEditPatch,
   snapshot: FixedRowVirtualizerSnapshot,
 ): boolean {
-  const updatePass = createRowUpdatePass(view)
+  const updatePass = createRowUpdatePass(view, items)
   let editedRowPatchedInPlace = false
   for (const item of items) {
     const row = view.rowElements.get(item.index)
@@ -634,7 +650,7 @@ export function updateMountedRowsAfterSameLineEdit(
 }
 
 export function updateMountedFoldMarkers(view: VirtualizedTextViewInternal): void {
-  const pass = createRowUpdatePass(view)
+  const pass = createRowUpdatePass(view, view.rowElements.values())
   for (const row of view.rowElements.values()) {
     const state = mountedRowUpdateState(view, row, pass)
     const marker = state.foldMarker
@@ -2106,20 +2122,17 @@ export function refreshCursorLineRows(
   const nextVirtualRow = cursorLineVirtualRow(view)
   if (previousBufferRow === nextBufferRow && previousVirtualRow === nextVirtualRow) return
 
-  const updatePass = createRowUpdatePass(view)
-  for (const row of view.rowElements.values()) {
-    if (
-      !shouldRefreshCursorLineRow(
-        row,
-        previousBufferRow,
-        nextBufferRow,
-        previousVirtualRow,
-        nextVirtualRow,
-      )
-    ) {
-      continue
-    }
-
+  const rows = [...view.rowElements.values()].filter((row) =>
+    shouldRefreshCursorLineRow(
+      row,
+      previousBufferRow,
+      nextBufferRow,
+      previousVirtualRow,
+      nextVirtualRow,
+    ),
+  )
+  const updatePass = createRowUpdatePass(view, rows)
+  for (const row of rows) {
     updateCursorLineContentClass(view, row, row.index === nextVirtualRow)
     refreshCursorLineGutterCells(view, row, updatePass)
   }
@@ -2140,7 +2153,7 @@ function shouldRefreshCursorLineRow(
 function refreshCursorLineGutterCells(
   view: VirtualizedTextViewInternal,
   row: MountedVirtualizedTextRow,
-  updatePass = createRowUpdatePass(view),
+  updatePass: RowUpdatePass,
 ): void {
   const state = mountedRowUpdateState(view, row, updatePass)
   updateMountedGutterFacts(view, row, state)
@@ -2184,16 +2197,6 @@ function cursorLineGutterBackgroundEnabled(
   return setting.includes(contributionId)
 }
 
-function foldMarkerForVirtualRow(
-  view: VirtualizedTextViewInternal,
-  row: number,
-): VirtualizedFoldMarker | null {
-  if (!isPrimaryTextRow(view, row)) return null
-
-  const bufferRow = bufferRowForVirtualRow(view, row)
-  return view.foldMarkerByStartRow.get(bufferRow) ?? null
-}
-
 function isPrimaryTextRow(view: VirtualizedTextViewInternal, row: number): boolean {
   const displayRow = view.model.projection.getRow(row)
   if (!isDocumentTextDisplayRow(displayRow)) return false
@@ -2205,6 +2208,7 @@ function isRowCurrent(
   row: MountedVirtualizedTextRow,
   item: FixedRowVirtualItem,
   snapshot: FixedRowVirtualizerSnapshot,
+  updatePass: RowUpdatePass,
 ): boolean {
   if (row.index !== item.index) return false
   if (row.top !== item.start) return false
@@ -2231,7 +2235,8 @@ function isRowCurrent(
     return false
   if (row.rowDecorationKey !== rowDecorationKey(view, item.index)) return false
 
-  const foldMarker = foldMarkerForVirtualRow(view, item.index)
+  const primaryText = isDocumentTextDisplayRow(displayRow) && displayRow.sourceStartColumn === 0
+  const foldMarker = primaryText ? updatePass.foldMarkers.get(bufferRow) : undefined
   if (row.foldMarkerKey !== (foldMarker?.key ?? '')) return false
   return row.foldCollapsed === (foldMarker?.collapsed ?? false)
 }

@@ -126,7 +126,7 @@ export interface VirtualizedTextViewInternal {
   foldMarkers: readonly VirtualizedFoldMarker[]
   foldMarkerSource: FoldMarkerSource | null
   rowDecorations: ReadonlyMap<number, VirtualizedTextRowDecoration>
-  foldMarkerByStartRow: Pick<ReadonlyMap<number, VirtualizedFoldMarker>, 'size' | 'get'>
+  foldMarkerByStartRow: ReadonlyMap<number, VirtualizedFoldMarker>
   foldMarkerByKey: ReadonlyMap<string, VirtualizedFoldMarker>
   wrapEnabled: boolean
   tabSize: number

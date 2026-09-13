@@ -276,7 +276,7 @@ export class EditorFoldState {
     let markers: readonly VirtualizedFoldMarker[] | undefined
     return {
       size: (index?.count ?? 0) + contributed.length,
-      get: (row) => indexedMarkerAtRow(index, contributed, collapsedKeys, row),
+      readRows: (rows) => indexedMarkersForRows(index, contributed, collapsedKeys, rows),
       all: () => {
         markers ??= [...(index?.all() ?? EMPTY_FOLDS), ...contributed]
           .map((fold) => foldMarkerFromRange(fold, collapsedKeys.has(foldRangeKey(fold))))
@@ -287,22 +287,47 @@ export class EditorFoldState {
   }
 }
 
-function indexedMarkerAtRow(
+function indexedMarkersForRows(
   index: IndentationFoldIndex | null,
   contributed: readonly FoldRange[],
   collapsedKeys: ReadonlySet<string>,
-  row: number,
-): VirtualizedFoldMarker | undefined {
-  let nearest: FoldRange | undefined
-  const candidates = [...(index?.headers(row, row) ?? EMPTY_FOLDS), ...contributed]
-  for (const fold of candidates) {
-    if (fold.startLine !== row) continue
-    if (nearest && nearest.endLine <= fold.endLine) continue
-    nearest = fold
+  rows: readonly number[],
+): ReadonlyMap<number, VirtualizedFoldMarker> {
+  const requested = new Set(rows)
+  const nearest = new Map<number, FoldRange>()
+  for (const run of foldHeaderRuns(requested)) {
+    for (const fold of index?.headers(run.start, run.end) ?? EMPTY_FOLDS) {
+      retainNearestFold(nearest, fold)
+    }
   }
-  return nearest
-    ? foldMarkerFromRange(nearest, collapsedKeys.has(foldRangeKey(nearest)))
-    : undefined
+  for (const fold of contributed) {
+    if (!requested.has(fold.startLine)) continue
+    retainNearestFold(nearest, fold)
+  }
+  const markers = new Map<number, VirtualizedFoldMarker>()
+  for (const [row, fold] of nearest) {
+    markers.set(row, foldMarkerFromRange(fold, collapsedKeys.has(foldRangeKey(fold))))
+  }
+  return markers
+}
+
+function foldHeaderRuns(rows: ReadonlySet<number>): Array<{ start: number; end: number }> {
+  const runs: Array<{ start: number; end: number }> = []
+  for (const row of [...rows].sort((left, right) => left - right)) {
+    const previous = runs.at(-1)
+    if (previous && previous.end + 1 === row) {
+      previous.end = row
+      continue
+    }
+    runs.push({ start: row, end: row })
+  }
+  return runs
+}
+
+function retainNearestFold(nearest: Map<number, FoldRange>, fold: FoldRange): void {
+  const previous = nearest.get(fold.startLine)
+  if (previous && previous.endLine <= fold.endLine) return
+  nearest.set(fold.startLine, fold)
 }
 
 function foldRangesFromProjections(

@@ -10,9 +10,15 @@ import {
   type EditorViewContributionProvider,
   type EditorViewSnapshot,
 } from '@singapor/core/extensions'
-import type { LspManagedTransport, LspTransportHandler, LspWebSocketLike } from '@singapor/lsp'
+import type {
+  LspManagedTransport,
+  LspTransportHandler,
+  LspWebSocketLike,
+  LspWorkspace,
+} from '@singapor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
+import { syncedDocument } from './syncedDocument'
 
 import { type LanguageServerCompletionEditFeature } from '../src/completion'
 import {
@@ -357,6 +363,55 @@ describe('rename WorkspaceEdit routing', () => {
 
     expect(editor.workspaceEditRequests()[0]?.plan.operations).toHaveLength(2)
     expect(editor.applyEdits).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])(
+    'checks request-time secondary sources only when affected by rename: %s',
+    async (affected) => {
+      let workspace: LspWorkspace | undefined
+      const editor = await connectedEditor('const value = 1', 8, {
+        onConnectionCreated: (connection) => {
+          workspace = connection.workspace
+        },
+        onRequestRenameName: async () => 'renamed',
+      })
+      const secondaryUri = 'file:///src/other.ts'
+      const secondary = syncedDocument(workspace, secondaryUri, 'const other = value')
+
+      expect(editor.runCommand('editor.action.rename')).toBe(true)
+      await flushPromises()
+      expect(editor.renameRequests()).toHaveLength(1)
+      secondary.replace('const other = newer')
+      editor.answerRename({
+        changes: { [affected ? secondaryUri : DOCUMENT_URI]: [] },
+      })
+      await flushPromises()
+
+      expect(editor.workspaceEditRequests()).toHaveLength(affected ? 0 : 1)
+      expect(editor.applyEdits).not.toHaveBeenCalled()
+      if (affected) return
+      const request = editor.workspaceEditRequests()[0]
+      expect(
+        request?.guard.documents.find((document) => document.uri === secondaryUri)?.textSnapshot,
+      ).toBe(secondary.textSnapshot)
+      expect(request?.guard.isCurrent(secondaryUri)).toBe(false)
+    },
+  )
+
+  it('rechecks the originating document after the rename prompt resolves', async () => {
+    const prompt = deferred<string | null>()
+    const editor = await connectedEditor('const value = 1', 8, {
+      onRequestRenameName: () => prompt.promise,
+    })
+
+    expect(editor.runCommand('editor.action.rename')).toBe(true)
+    await flushPromises()
+    editor.type('!')
+    prompt.resolve('renamed')
+    await flushPromises()
+
+    expect(editor.renameRequests()).toHaveLength(0)
+    expect(editor.workspaceEditRequests()).toHaveLength(0)
   })
 
   it('propagates the host rename-name callback through resolved options', async () => {

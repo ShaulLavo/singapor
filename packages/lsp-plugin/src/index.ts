@@ -50,6 +50,7 @@ export {
   type LanguageServerDiagnosticHighlightGroups,
   type LanguageServerDiagnosticSeverity,
 } from './diagnostics'
+export { viewDocumentSnapshot } from './viewDocumentSnapshot'
 export {
   SemanticTokenLayerOwner,
   type LanguageServerSemanticTokensFactory,

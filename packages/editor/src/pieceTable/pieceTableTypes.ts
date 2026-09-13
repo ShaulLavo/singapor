@@ -56,10 +56,8 @@ export type PieceTableBuffers = {
   // acted on: the fold is not reversible, and only the host can decide whether
   // a warning is owed. See pieceTable/lineEndings.ts.
   readonly containsUnusualLineTerminators: boolean
-  // Lazily built '\n' offset index per buffer, shared across snapshots via
-  // spread copies. Each entry records the text it scanned, because a buffer id
-  // rolled back by undo can be re-minted for text a discarded branch never had;
-  // see bufferLineIndex in buffers.ts.
+  // Original-piece counting builds its index; append indexes remain lazy.
+  // Entries retain exact text so undo branches can safely reuse a buffer id.
   readonly lineIndexes?: Map<PieceBufferId, PieceBufferLineIndex>
 }
 

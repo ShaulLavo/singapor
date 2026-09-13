@@ -132,6 +132,7 @@ export type ConnectedEditorOptions = {
   ) => Promise<ApplyWorkspaceEditResult>
   readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
   readonly onDefinitionLinkHover?: LanguageServerPluginOptions['onDefinitionLinkHover']
+  readonly onConnectionCreated?: LanguageServerPluginOptions['onConnectionCreated']
 }
 
 /**
@@ -381,6 +382,7 @@ function activateProvider(
     },
     onRequestRenameName: options.onRequestRenameName,
     onDefinitionLinkHover: options.onDefinitionLinkHover,
+    onConnectionCreated: options.onConnectionCreated,
     onRequestError: (_serverId, _method, error) => errors.push(error),
   }).activate({
     registerHighlighter: () => disposable,

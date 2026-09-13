@@ -1,4 +1,4 @@
-import { lspPositionToOffset } from '@singapor/lsp'
+import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 export type LanguageServerDiagnosticSeverity = 'error' | 'warning' | 'information' | 'hint'
@@ -47,13 +47,13 @@ export function summarizeDiagnostics(
 }
 
 export function diagnosticHighlightGroups(
-  text: string,
+  document: LspTextDocumentSnapshot,
   diagnostics: readonly lsp.Diagnostic[],
 ): LanguageServerDiagnosticHighlightGroups {
   const groups = emptyHighlightGroups()
 
   for (const diagnostic of diagnostics) {
-    const range = highlightRangeForDiagnostic(text, diagnostic)
+    const range = highlightRangeForDiagnostic(document, diagnostic)
     if (!range) continue
     groups[severityForDiagnostic(diagnostic)].push(range)
   }
@@ -62,18 +62,18 @@ export function diagnosticHighlightGroups(
 }
 
 function highlightRangeForDiagnostic(
-  text: string,
+  document: LspTextDocumentSnapshot,
   diagnostic: lsp.Diagnostic,
 ): DiagnosticHighlightRange | null {
-  const start = lspPositionToOffset(text, diagnostic.range.start)
-  const end = lspPositionToOffset(text, diagnostic.range.end)
+  const start = lspPositionToOffsetInSnapshot(document, diagnostic.range.start)
+  const end = lspPositionToOffsetInSnapshot(document, diagnostic.range.end)
   if (end > start) return { start, end }
-  return expandEmptyRange(text, start)
+  return expandEmptyRange(document.textSnapshot.length, start)
 }
 
-function expandEmptyRange(text: string, offset: number): DiagnosticHighlightRange | null {
-  if (text.length === 0) return null
-  if (offset < text.length) return { start: offset, end: offset + 1 }
+function expandEmptyRange(length: number, offset: number): DiagnosticHighlightRange | null {
+  if (length === 0) return null
+  if (offset < length) return { start: offset, end: offset + 1 }
   if (offset > 0) return { start: offset - 1, end: offset }
   return null
 }

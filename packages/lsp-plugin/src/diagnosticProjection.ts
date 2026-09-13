@@ -1,7 +1,6 @@
 import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
 import { projectDecorationRangeThroughEdits } from '@singapor/core/extensions'
 import {
-  lspPositionToOffset,
   lspPositionToOffsetInSnapshot,
   offsetToLspPositionInSnapshot,
   type LspTextDocumentSnapshot,
@@ -45,15 +44,16 @@ function editsForChange(change: DocumentSessionChange | null): readonly TextEdit
 }
 
 /**
- * Filter `diagnostics` down to those whose range contains `offset` in
- * `text`. Zero-width diagnostics match only their exact start offset.
+ * Filter `diagnostics` down to those whose range contains `offset`. Zero-width diagnostics
+ * match only their exact start offset. Runs on every pointer move, so it must stay on the
+ * line-start index: a text scan per diagnostic is quadratic on a large file.
  */
 export function diagnosticsAtOffset(
-  text: string,
+  document: LspTextDocumentSnapshot,
   offset: number,
   diagnostics: readonly lsp.Diagnostic[],
 ): readonly lsp.Diagnostic[] {
-  return diagnostics.filter((diagnostic) => diagnosticContainsOffset(text, diagnostic, offset))
+  return diagnostics.filter((diagnostic) => diagnosticContainsOffset(document, diagnostic, offset))
 }
 
 function projectDiagnosticsThroughSnapshotChange(
@@ -108,12 +108,12 @@ function projectDiagnosticThroughSnapshotEdits(
 }
 
 function diagnosticContainsOffset(
-  text: string,
+  document: LspTextDocumentSnapshot,
   diagnostic: lsp.Diagnostic,
   offset: number,
 ): boolean {
-  const start = lspPositionToOffset(text, diagnostic.range.start)
-  const end = lspPositionToOffset(text, diagnostic.range.end)
+  const start = lspPositionToOffsetInSnapshot(document, diagnostic.range.start)
+  const end = lspPositionToOffsetInSnapshot(document, diagnostic.range.end)
   if (end > start) return offset >= start && offset <= end
   return offset === start
 }

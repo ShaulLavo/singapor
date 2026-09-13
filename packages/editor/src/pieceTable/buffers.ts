@@ -424,7 +424,7 @@ export const createOriginalPiece = (buffers: PieceTableBuffers): Piece | null =>
     start: 0,
     length: original.length,
     order: PIECE_ORDER_STEP,
-    lineBreaks: countLineBreaks(original),
+    lineBreaks: bufferLineIndex(buffers, buffers.original, original).count,
     visible: true,
   }
 }

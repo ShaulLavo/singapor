@@ -5,7 +5,7 @@
 - Owner: Cross-repo
 - Priority: P2
 - Effort: L
-- Dependencies: [E001](e001-stress-fixtures.md), [E008](e008-in-buffer-search.md)
+- Dependencies: [E001](../examples/stress/README.md), [E008](e008-in-buffer-search.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`, 2026-09-05.
 
 ## Outcome

@@ -2,6 +2,7 @@ import type { TextSnapshot } from '../documentTextSnapshot'
 import type { TextEditBatch } from '../textEditBatch'
 import { IndentationFoldIndex, sameIndentationSnapshot } from './indentationFoldIndex'
 import {
+  editorPerformanceDiagnosticsEnabled,
   recordEditorPerformanceDiagnostic,
   traceEditorPerformanceTask,
 } from './performanceDiagnostics'
@@ -33,6 +34,7 @@ type FallbackFoldControllerOptions = {
   context(): FallbackFoldContext
   publish(index: IndentationFoldIndex | null): void
   changed(): void
+  loggingEnabled(): boolean
   log(detail: Readonly<Record<string, unknown>>): void
 }
 
@@ -100,6 +102,10 @@ export class EditorFallbackFoldController {
     }
     if (this.current && !compatible(this.current, context)) this.current = null
     this.options.publish(this.current)
+    if (this.current) {
+      this.options.scheduler.cancel(WORK_KEY)
+      return
+    }
     this.scheduleSlice(150, 400)
   }
 
@@ -179,10 +185,7 @@ export class EditorFallbackFoldController {
     }
     this.current = job.index
     this.job = null
-    this.report(
-      { ...job, trigger },
-      job.index.diagnostics.outcome === 'reused' ? 'reused' : 'completed',
-    )
+    this.report(job, undefined, trigger)
     this.options.publish(job.index)
     this.options.changed()
   }
@@ -190,11 +193,11 @@ export class EditorFallbackFoldController {
   private suppress(context: FallbackFoldContext): void {
     this.reset()
     this.options.publish(null)
-    recordEditorPerformanceDiagnostic('editor.fallbackFolds.selection', {
+    recordEditorPerformanceDiagnostic('editor.fallbackFolds.selection', () => ({
       ...context.selection,
       grammarProjectionSuppression: context.grammarProjectionSuppression,
       outcome: 'skipped',
-    })
+    }))
   }
 
   private cancelJob(): void {
@@ -205,7 +208,14 @@ export class EditorFallbackFoldController {
     this.job = null
   }
 
-  private report(job: FallbackFoldJob, outcome: 'completed' | 'cancelled' | 'reused'): void {
+  private report(
+    job: FallbackFoldJob,
+    outcome?: 'cancelled' | 'reused',
+    trigger = job.trigger,
+  ): void {
+    const loggingEnabled = this.options.loggingEnabled()
+    if (!loggingEnabled && !editorPerformanceDiagnosticsEnabled()) return
+
     const work = job.index.diagnostics
     const detail = {
       ...job.context.selection,
@@ -217,14 +227,14 @@ export class EditorFallbackFoldController {
       languageId: job.context.languageId,
       tabSize: job.context.tabSize,
       grammarProjectionSuppression: job.context.grammarProjectionSuppression,
-      trigger: job.trigger,
-      outcome,
+      trigger,
+      outcome: outcome ?? (work.outcome === 'reused' ? 'reused' : 'completed'),
       durationMs: job.durationMs,
       durationScope: 'controller-index-work',
       materializations: 0,
     }
     recordEditorPerformanceDiagnostic('editor.fallbackFoldRanges', detail)
-    this.options.log(detail)
+    if (loggingEnabled) this.options.log(detail)
   }
 }
 

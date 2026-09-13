@@ -38,6 +38,9 @@ describe('piece table buffers', () => {
       lineBreaks: 1,
       visible: true,
     })
+    const index = buffers.lineIndexes?.get(buffers.original)
+    expect(index).toMatchObject({ count: 1, scannedLength: 10, text: 'alpha\nbeta' })
+    expect(index?.offsets[0]).toBe(5)
   })
 
   it('creates sliced pieces and reads their backing buffer', () => {
@@ -232,8 +235,6 @@ describe('piece table buffers', () => {
 describe('piece table line index across a branched history', () => {
   it('re-scans a buffer id re-minted on another branch', () => {
     const base = createPieceTableSnapshot('one\ntwo\nthree')
-    // The first render builds the index Map, which every later snapshot then
-    // inherits by spread — without it the branches would not share one.
     renderEveryOffset(base)
 
     const abandoned = insertIntoPieceTable(base, 8, 'x\ny')

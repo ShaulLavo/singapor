@@ -25,7 +25,13 @@ function result(id = 'control-1', duration = 10) {
           latencyMs: latencies(scenario, duration),
           correct: true,
           observation: { checked: true },
-          cleanup: { active: false, hosts: 0, pendingFrames: 0 },
+          cleanup: {
+            active: false,
+            hosts: 0,
+            pendingFrames: 0,
+            trackedObjects: scenario === 'churn' ? 4 : 2,
+            retainedObjects: 0,
+          },
           memory: { status: 'unsupported', reason: 'unit fixture' },
         })),
       ),
@@ -86,28 +92,54 @@ describe('benchmark comparisons', () => {
     const missing = result()
     delete missing.samples[0]!.latencyMs.attach
     expect(() => validateResult(missing)).toThrow(/coverage/)
-    const supported = (id: string, usedBytes: number) => {
-      const run = result(id)
-      return {
-        ...run,
-        samples: run.samples.map((sample) => ({
-          ...sample,
-          cleanup: { ...sample.cleanup, retainedObjects: 0 },
-          memory: {
-            status: 'supported',
-            before: memorySnapshot(100),
-            after: memorySnapshot(usedBytes),
-          },
-        })),
-      }
-    }
-    const baseline = supported('a', 100)
-    const calibration = calibrate([baseline, supported('b', 101), supported('c', 99)])
-    expect(compare(baseline, supported('rerun', 100), calibration).passed).toBe(true)
-    const retained = compare(baseline, supported('retained', 1000), calibration)
+    const baseline = supportedResult('a', 100)
+    const calibration = calibrate([baseline, supportedResult('b', 101), supportedResult('c', 99)])
+    expect(compare(baseline, supportedResult('rerun', 100), calibration).passed).toBe(true)
+    const retained = compare(baseline, supportedResult('retained', 1000), calibration)
     expect(retained.metrics.every((metric: { passed: boolean }) => metric.passed)).toBe(true)
     expect(retained.passed).toBe(false)
   })
+
+  it('rejects a missing post-churn snapshot from one repetition', () => {
+    const candidate = supportedResult('missing-post-churn', 100)
+    const sample = candidate.samples.find((sample) => sample.scenario === 'churn')!
+    delete sample.memory.postChurn
+    expect(() => validateResult(candidate)).toThrow(/Missing post-churn memory/)
+  })
+
+  it('rejects a memory capability change for one repetition', () => {
+    const baseline = supportedResult('a', 100)
+    const calibration = calibrate([baseline, supportedResult('b', 101), supportedResult('c', 99)])
+    const candidate = {
+      ...supportedResult('missing-memory', 100),
+      samples: baseline.samples.map((sample, index) => ({
+        ...sample,
+        memory:
+          index === 0
+            ? { status: 'unsupported', reason: 'Measurement unavailable' }
+            : sample.memory,
+      })),
+    }
+    expect(() => compare(baseline, candidate, calibration)).toThrow(/memory capabilities/)
+    expect(() => calibrate([baseline, candidate, supportedResult('c', 99)])).toThrow(
+      /memory capabilities/,
+    )
+  })
+
+  it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY, -1, 0.5])(
+    'rejects invalid retained object count %s',
+    (retainedObjects) => {
+      const baseline = supportedResult('invalid-retention', 100)
+      const candidate = {
+        ...baseline,
+        samples: baseline.samples.map((sample) => ({
+          ...sample,
+          cleanup: { ...sample.cleanup, retainedObjects },
+        })),
+      }
+      expect(() => validateResult(candidate)).toThrow(/retained objects/)
+    },
+  )
 
   it('rejects duplicate, nonfinite, failed and uncalibrated results', () => {
     const duplicate = result()
@@ -128,6 +160,22 @@ describe('benchmark comparisons', () => {
     ).toThrow(/source trees/)
   })
 })
+
+function supportedResult(id: string, usedBytes: number) {
+  const run = result(id)
+  return {
+    ...run,
+    samples: run.samples.map((sample) => ({
+      ...sample,
+      memory: {
+        status: 'supported',
+        before: memorySnapshot(100),
+        after: memorySnapshot(usedBytes),
+        ...(sample.scenario === 'churn' ? { postChurn: memorySnapshot(usedBytes) } : {}),
+      },
+    })),
+  }
+}
 
 function memorySnapshot(usedBytes: number) {
   return { usedBytes, totalBytes: 2000, nodes: 20, documents: 1, jsEventListeners: 3 }

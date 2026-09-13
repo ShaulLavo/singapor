@@ -44,16 +44,47 @@ function editsForChange(change: DocumentSessionChange | null): readonly TextEdit
 }
 
 /**
- * Filter `diagnostics` down to those whose range contains `offset`. Zero-width diagnostics
- * match only their exact start offset. Runs on every pointer move, so it must stay on the
- * line-start index: a text scan per diagnostic is quadratic on a large file.
+ * Diagnostic ranges resolved to offsets once per publish, so a pointer move over a large file
+ * compares numbers instead of walking the line index for every diagnostic.
+ */
+export type DiagnosticOffsetIndex = {
+  readonly diagnostics: readonly lsp.Diagnostic[]
+  readonly starts: readonly number[]
+  readonly ends: readonly number[]
+}
+
+export function indexDiagnosticOffsets(
+  document: LspTextDocumentSnapshot,
+  diagnostics: readonly lsp.Diagnostic[],
+): DiagnosticOffsetIndex {
+  const starts: number[] = []
+  const ends: number[] = []
+  for (const diagnostic of diagnostics) {
+    starts.push(lspPositionToOffsetInSnapshot(document, diagnostic.range.start))
+    ends.push(lspPositionToOffsetInSnapshot(document, diagnostic.range.end))
+  }
+  return { diagnostics, starts, ends }
+}
+
+/**
+ * The diagnostics whose range contains `offset`. Zero-width diagnostics match only their exact
+ * start offset.
  */
 export function diagnosticsAtOffset(
-  document: LspTextDocumentSnapshot,
+  index: DiagnosticOffsetIndex,
   offset: number,
-  diagnostics: readonly lsp.Diagnostic[],
 ): readonly lsp.Diagnostic[] {
-  return diagnostics.filter((diagnostic) => diagnosticContainsOffset(document, diagnostic, offset))
+  const matches: lsp.Diagnostic[] = []
+  for (let position = 0; position < index.diagnostics.length; position += 1) {
+    if (!rangeContainsOffset(index.starts[position]!, index.ends[position]!, offset)) continue
+    matches.push(index.diagnostics[position]!)
+  }
+  return matches
+}
+
+function rangeContainsOffset(start: number, end: number, offset: number): boolean {
+  if (end > start) return offset >= start && offset <= end
+  return offset === start
 }
 
 function projectDiagnosticsThroughSnapshotChange(
@@ -105,15 +136,4 @@ function projectDiagnosticThroughSnapshotEdits(
       end: offsetToLspPositionInSnapshot(nextDocument, range.end),
     },
   }
-}
-
-function diagnosticContainsOffset(
-  document: LspTextDocumentSnapshot,
-  diagnostic: lsp.Diagnostic,
-  offset: number,
-): boolean {
-  const start = lspPositionToOffsetInSnapshot(document, diagnostic.range.start)
-  const end = lspPositionToOffsetInSnapshot(document, diagnostic.range.end)
-  if (end > start) return offset >= start && offset <= end
-  return offset === start
 }

@@ -25,7 +25,11 @@ import {
   type DefinitionResult,
   type OffsetRange,
 } from './definitionNavigation'
-import { diagnosticsAtOffset } from './diagnosticProjection'
+import {
+  diagnosticsAtOffset,
+  indexDiagnosticOffsets,
+  type DiagnosticOffsetIndex,
+} from './diagnosticProjection'
 import { LINK_HIGHLIGHT_STYLE } from './plugin.styles'
 import type { ActiveDocument, LanguageServerNavigationCommand } from './pluginTypes'
 import {
@@ -94,6 +98,7 @@ export class HoverDefinitionController {
   private hoverOperation: HoverOperation | null = null
   private hoverAbort: AbortController | null = null
   private hoverRequestId = 0
+  private diagnosticIndex: { index: DiagnosticOffsetIndex; textVersion: number } | null = null
   private definitionRequestId = 0
   private definitionHoverRequestId = 0
   private lastPointerOffset: number | null = null
@@ -264,6 +269,24 @@ export class HoverDefinitionController {
     this.clearDefinitionLink()
   }
 
+  // Keyed on the published array and the text it was projected onto, so a pointer move pays for
+  // the index only when either changes.
+  private diagnosticIndexFor(active: ActiveDocument): DiagnosticOffsetIndex {
+    const diagnostics = this.options.getDiagnostics()
+    const cached = this.diagnosticIndex
+    if (
+      cached &&
+      cached.index.diagnostics === diagnostics &&
+      cached.textVersion === active.textVersion
+    ) {
+      return cached.index
+    }
+
+    const index = indexDiagnosticOffsets(active, diagnostics)
+    this.diagnosticIndex = { index, textVersion: active.textVersion }
+    return index
+  }
+
   private scheduleHover(offset: number): void {
     this.cancelHoverHide()
     const active = this.options.getActiveDocument()
@@ -291,7 +314,7 @@ export class HoverDefinitionController {
       active,
       offset,
       targetRange,
-      diagnostics: diagnosticsAtOffset(active, offset, this.options.getDiagnostics()),
+      diagnostics: diagnosticsAtOffset(this.diagnosticIndexFor(active), offset),
       focusOnShow,
       hovers: [],
       pending: true,

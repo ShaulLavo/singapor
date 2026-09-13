@@ -2,7 +2,11 @@ import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
 import { describe, expect, it } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import { diagnosticsAtOffset, projectDiagnosticsInSnapshot } from '../src/diagnosticProjection'
+import {
+  diagnosticsAtOffset,
+  indexDiagnosticOffsets,
+  projectDiagnosticsInSnapshot,
+} from '../src/diagnosticProjection'
 import { snapshotDocument } from './snapshotDocument'
 
 describe('diagnostic projection', () => {
@@ -12,9 +16,11 @@ describe('diagnostic projection', () => {
     const zeroWidth = diagnostic(2, 1, 1)
     const diagnostics = [diagnostic(0, 0, 1), onSecondLine, zeroWidth]
 
-    expect(diagnosticsAtOffset(document, 4, diagnostics)).toEqual([onSecondLine])
-    expect(diagnosticsAtOffset(document, 7, diagnostics)).toEqual([zeroWidth])
-    expect(diagnosticsAtOffset(document, 8, diagnostics)).toEqual([])
+    const index = indexDiagnosticOffsets(document, diagnostics)
+
+    expect(diagnosticsAtOffset(index, 4)).toEqual([onSecondLine])
+    expect(diagnosticsAtOffset(index, 7)).toEqual([zeroWidth])
+    expect(diagnosticsAtOffset(index, 8)).toEqual([])
   })
 
   it('projects diagnostics through snapshot-backed edits without materializing text', () => {

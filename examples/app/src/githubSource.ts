@@ -1,5 +1,5 @@
 export const REPOSITORY_OWNER = 'ShaulLavo'
-export const REPOSITORY_NAME = 'singapor'
+export const REPOSITORY_NAME = 'singapore'
 const REPOSITORY_BRANCH = 'main'
 
 const COMMIT_ENDPOINT = `https://api.github.com/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/commits/${REPOSITORY_BRANCH}`

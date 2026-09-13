@@ -329,7 +329,7 @@ test('keeps syntax highlights in live diff editor rows', async ({ page }) => {
 })
 
 async function mockGitHubSource(page: Page, path: string, text: string): Promise<void> {
-  await page.route('https://api.github.com/repos/ShaulLavo/singapor/commits/main', (route) =>
+  await page.route('https://api.github.com/repos/ShaulLavo/singapore/commits/main', (route) =>
     route.fulfill({
       json: {
         sha: 'mock-commit-sha',
@@ -338,7 +338,7 @@ async function mockGitHubSource(page: Page, path: string, text: string): Promise
     }),
   )
   await page.route(
-    'https://api.github.com/repos/ShaulLavo/singapor/git/trees/tree-sha?recursive=1',
+    'https://api.github.com/repos/ShaulLavo/singapore/git/trees/tree-sha?recursive=1',
     (route) =>
       route.fulfill({
         json: {
@@ -349,7 +349,7 @@ async function mockGitHubSource(page: Page, path: string, text: string): Promise
       }),
   )
   await page.route(
-    `https://raw.githubusercontent.com/ShaulLavo/singapor/mock-commit-sha/${path}`,
+    `https://raw.githubusercontent.com/ShaulLavo/singapore/mock-commit-sha/${path}`,
     (route) =>
       route.fulfill({
         body: text,

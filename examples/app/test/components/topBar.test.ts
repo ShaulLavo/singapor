@@ -6,8 +6,8 @@ describe('createTopBar', () => {
   it('tracks repository status', () => {
     const topBar = createTopBar()
 
-    topBar.setRepositoryName('ShaulLavo/singapor')
-    expect(topBar.element.querySelector('#dir-name')?.textContent).toBe('ShaulLavo/singapor')
+    topBar.setRepositoryName('ShaulLavo/singapore')
+    expect(topBar.element.querySelector('#dir-name')?.textContent).toBe('ShaulLavo/singapore')
 
     topBar.setBusyState(true)
     expect(topBar.element.querySelectorAll('button')).toHaveLength(2)

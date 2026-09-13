@@ -18,7 +18,7 @@ describe('source cache', () => {
     await saveSourceSnapshotToCache(snapshot(), opfs)
 
     await expect(loadCachedSourceSnapshot(opfs)).resolves.toMatchObject({
-      repo: 'singapor',
+      repo: 'singapore',
       commitSha: 'commit-sha',
       treeSha: 'tree-sha',
       files: [{ path: 'README.md', text: '# Editor' }],
@@ -48,7 +48,7 @@ describe('source cache', () => {
 function snapshot(): SourceSnapshot {
   return {
     owner: 'ShaulLavo',
-    repo: 'singapor',
+    repo: 'singapore',
     branch: 'main',
     commitSha: 'commit-sha',
     treeSha: 'tree-sha',

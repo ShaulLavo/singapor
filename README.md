@@ -2,8 +2,6 @@
 
 a code editor for the browser, written from scratch. same shelf as monaco and codemirror
 
-named after monaco. another editor, another city-state
-
 ![](docs/images/editor.webp)
 
 piece table storage, rendering through the css highlight api, tree-sitter and lsp as optional plugins. the core owns the text and the editing runtime. loading and saving are the host's job

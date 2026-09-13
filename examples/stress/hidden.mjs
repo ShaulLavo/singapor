@@ -34,7 +34,7 @@ let browser
 try {
   const pkg = JSON.parse(await readFile(resolve(repository, 'packages/editor/package.json')))
   const aliases = Object.entries(pkg.exports).map(([name, target]) => ({
-    find: name === '.' ? '@singapor/core' : '@singapor/core' + name.slice(1),
+    find: name === '.' ? '@singapore-editor/core' : '@singapore-editor/core' + name.slice(1),
     replacement: resolve(
       coreDist,
       (typeof target === 'string' ? target : target.import).replace('./dist/', ''),

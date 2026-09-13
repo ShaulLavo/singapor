@@ -3,22 +3,22 @@ import {
   createEditorPreparedDocument,
   type EditorInitialPaintEvent,
   type EditorPreparedDocument,
-} from '@singapor/core/editor'
+} from '@singapore-editor/core/editor'
 import {
   createEditorBufferSession,
   createEditorTextBuffer,
   type EditorTextBuffer,
-} from '@singapor/core/document'
-import { createError } from '@singapor/core/logging/evlog'
+} from '@singapore-editor/core/document'
+import { createError } from '@singapore-editor/core/logging/evlog'
 import {
   createTreeSitterSyntaxPlugin,
   createTreeSitterSyntaxProvider,
   TreeSitterWorkerClient,
   type TreeSitterBackend,
   type TreeSitterSyntaxProvider,
-} from '@singapor/tree-sitter'
-import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '@singapor/tree-sitter-languages'
-import '@singapor/core/style.css'
+} from '@singapore-editor/tree-sitter'
+import { TYPESCRIPT_TREE_SITTER_LANGUAGE } from '@singapore-editor/tree-sitter-languages'
+import '@singapore-editor/core/style.css'
 import { createFoldGutterPlugin } from '../../../packages/gutters/dist/index.js'
 import '../../../packages/gutters/dist/style.css'
 import { generateFallbackFixture } from './fallbackFixture.ts'

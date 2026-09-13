@@ -6,7 +6,7 @@ import {
   registerEditorColor,
   transparentEditorColor,
   type VirtualizedTextHighlightStyle,
-} from '@singapor/core/rendering'
+} from '@singapore-editor/core/rendering'
 
 import type { LanguageServerDiagnosticSeverity } from './diagnostics'
 

@@ -3,7 +3,7 @@ import {
   createPieceTableSnapshot,
   type PieceTableSnapshot,
   type TextEdit,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import { TREE_SITTER_LANGUAGE_CONTRIBUTIONS } from '../../tree-sitter-languages/src/index'
 import { resolveTreeSitterLanguageContribution } from '../src'
 import { createTreeSitterEditPayload } from '../src/session'

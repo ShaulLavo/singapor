@@ -1,12 +1,12 @@
 import {
   createDocumentLogicalRevisionScope,
   type DocumentLogicalRevisionScope,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import {
   composeWorkspaceEditClientCapabilities,
   type LspClient,
   type LspWorkspace,
-} from '@singapor/lsp'
+} from '@singapore-editor/lsp'
 
 import {
   createWebSocketLspTransportFactory,

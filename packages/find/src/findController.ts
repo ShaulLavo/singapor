@@ -3,16 +3,16 @@ import {
   type DocumentSessionChange,
   type TextEdit,
   type TextSnapshot,
-} from '@singapor/core/document'
-import type { EditorSetSelectionOptions } from '@singapor/core/editor'
+} from '@singapore-editor/core/document'
+import type { EditorSetSelectionOptions } from '@singapore-editor/core/editor'
 import type {
   EditorDisposable,
   EditorResolvedSelection,
   EditorSelectionRange,
   EditorViewContributionUpdateKind,
-} from '@singapor/core/extensions'
-import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
-import { EditorSecondaryViewScheduler } from '@singapor/core/secondary-views'
+} from '@singapore-editor/core/extensions'
+import type { VirtualizedTextHighlightStyle } from '@singapore-editor/core/rendering'
+import { EditorSecondaryViewScheduler } from '@singapore-editor/core/secondary-views'
 import {
   escapeRegExpCharacters,
   FIND_MATCHES_LIMIT,

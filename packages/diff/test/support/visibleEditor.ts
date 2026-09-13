@@ -1,5 +1,5 @@
-import { Editor } from '@singapor/core/editor'
-import { EditorSecondaryTextView } from '@singapor/core/secondary-views'
+import { Editor } from '@singapore-editor/core/editor'
+import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
 
 export function createVisibleEditor(...args: ConstructorParameters<typeof Editor>): Editor {
   const editor = new Editor(...args)

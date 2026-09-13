@@ -1,4 +1,7 @@
-import type { EditorViewContributionContext, EditorViewSnapshot } from '@singapor/core/extensions'
+import type {
+  EditorViewContributionContext,
+  EditorViewSnapshot,
+} from '@singapore-editor/core/extensions'
 import type { ResolvedDecodeOptions } from './options'
 import type { DecodeRevealRow } from './rows'
 import type { RevealHandle } from './reveal'

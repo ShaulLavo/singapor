@@ -13,8 +13,8 @@ import {
   type SelectionAffinity,
   type TextEdit,
   type TextSnapshot,
-} from '@singapor/core/document'
-import type { EditorCommandId } from '@singapor/core/editor'
+} from '@singapore-editor/core/document'
+import type { EditorCommandId } from '@singapore-editor/core/editor'
 import type {
   EditorCommandHandler,
   EditorEditContributionContext,
@@ -22,8 +22,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import type { LspManagedTransport, LspTransportHandler } from '@singapor/lsp'
+} from '@singapore-editor/core/extensions'
+import type { LspManagedTransport, LspTransportHandler } from '@singapore-editor/lsp'
 import { vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

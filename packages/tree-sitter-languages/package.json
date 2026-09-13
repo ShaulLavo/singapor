@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/tree-sitter-languages",
+  "name": "@singapore-editor/tree-sitter-languages",
   "version": "0.1.1",
   "files": [
     "README.md",
@@ -28,7 +28,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/tree-sitter": "workspace:*",
+    "@singapore-editor/tree-sitter": "workspace:*",
     "@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
     "tree-sitter-css": "^0.25.0",
     "tree-sitter-html": "^0.23.2",
@@ -37,7 +37,7 @@
     "tree-sitter-typescript": "^0.23.2"
   },
   "devDependencies": {
-    "@singapor/core": "workspace:*",
+    "@singapore-editor/core": "workspace:*",
     "@types/node": "^25.9.6",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "oxfmt": "0.54.0",
@@ -48,7 +48,7 @@
     "web-tree-sitter": "^0.26.13"
   },
   "peerDependencies": {
-    "@singapor/core": "workspace:*",
-    "@singapor/tree-sitter": "workspace:*"
+    "@singapore-editor/core": "workspace:*",
+    "@singapore-editor/tree-sitter": "workspace:*"
   }
 }

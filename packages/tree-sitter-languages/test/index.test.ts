@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createPieceTableSnapshot } from '@singapor/core/document'
-import type { EditorPluginContext } from '@singapor/core/extensions'
+import { createPieceTableSnapshot } from '@singapore-editor/core/document'
+import type { EditorPluginContext } from '@singapore-editor/core/extensions'
 import type {
   TreeSitterLanguageAssets,
   TreeSitterLanguageContribution,
-} from '@singapor/tree-sitter'
+} from '@singapore-editor/tree-sitter'
 import {
   JAVASCRIPT_TREE_SITTER_LANGUAGE,
   TREE_SITTER_LANGUAGE_CONTRIBUTIONS,

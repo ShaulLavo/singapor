@@ -1,4 +1,4 @@
-import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
 import {
   editorLanguageConfiguration,
   reindentEditsForRanges,
@@ -7,7 +7,7 @@ import {
   type EditorViewContributionContext,
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 
 import type { LanguageServerCompletionEditFeature } from './completion'
 

@@ -1,5 +1,5 @@
-import { createStringTextSnapshot } from '@singapor/core/document'
-import { arrayLspLineStarts, type LspWorkspace } from '@singapor/lsp'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import { arrayLspLineStarts, type LspWorkspace } from '@singapore-editor/lsp'
 
 export function syncedDocument(workspace: LspWorkspace | undefined, uri: string, text: string) {
   if (!workspace) throw new Error('missing connected workspace')

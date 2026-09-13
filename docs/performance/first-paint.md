@@ -61,7 +61,7 @@ The paired Platform `editor-visible-snapshot.browser.tsx` suite passed all 11 ch
 linked Editor build. Its test server blocked the cache-linked JetBrains Mono asset, so those
 geometry comparisons used the same fallback font for both views. No Platform code changed.
 
-The existing example built with `bun run build --filter=@singapor/example-app`. A Playwright check
+The existing example built with `bun run build --filter=@singapore-editor/example-app`. A Playwright check
 loaded that production output through request routing, opened a JSON file through the example's
 GitHub boundary, observed real Tree-sitter highlights, and typed into the document. The only
 substituted data was the external GitHub response. The page reported no runtime errors.

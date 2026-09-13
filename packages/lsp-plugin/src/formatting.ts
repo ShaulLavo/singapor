@@ -1,7 +1,7 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import type { TextEdit } from '@singapor/core'
-import { lspPositionToOffset } from '@singapor/lsp'
+import type { TextEdit } from '@singapore-editor/core'
+import { lspPositionToOffset } from '@singapore-editor/lsp'
 
 import { minimalReplacementEdits, REDIFF_LENGTH_LIMIT } from './minimalEdits'
 

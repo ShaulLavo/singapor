@@ -1,11 +1,11 @@
-# @singapor/markdown
+# @singapore-editor/markdown
 
 Markdown live preview for the Singapore editor. Markdown text stays the document — this renders it as
 formatted text without ever converting it into another model.
 
 ```ts
-import { createMarkdownPreviewPlugin } from '@singapor/markdown'
-import '@singapor/markdown/style.css'
+import { createMarkdownPreviewPlugin } from '@singapore-editor/markdown'
+import '@singapore-editor/markdown/style.css'
 
 new Editor(container, {
   plugins: [markdown(), createMarkdownPreviewPlugin()],
@@ -13,7 +13,7 @@ new Editor(container, {
 ```
 
 The plugin's presence is the switch. It needs a markdown language plugin alongside it (for example
-`markdown()` from `@singapor/tree-sitter-languages`), because it reads that grammar's captures.
+`markdown()` from `@singapore-editor/tree-sitter-languages`), because it reads that grammar's captures.
 
 ## What it does
 

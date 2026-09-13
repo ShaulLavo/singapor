@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createPieceTableSnapshot } from '@singapor/core/document'
+import { createPieceTableSnapshot } from '@singapore-editor/core/document'
 import { TreeSitterSyntaxSession } from '../src/session.ts'
 import type { TreeSitterLanguageDescriptor } from '../src/treeSitter/registry.ts'
 import type { TreeSitterBackend } from '../src/treeSitter/workerClient.ts'

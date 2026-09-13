@@ -6408,7 +6408,7 @@
       "specifier": "./testing"
     }
   ],
-  "packageName": "@singapor/core",
+  "packageName": "@singapore-editor/core",
   "packagePath": "packages/editor",
   "reviewPolicy": "Any new public export must be reviewed and this inventory updated in the same change.",
   "schemaVersion": 1

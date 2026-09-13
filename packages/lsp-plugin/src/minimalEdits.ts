@@ -1,4 +1,4 @@
-import type { TextEdit } from '@singapor/core'
+import type { TextEdit } from '@singapore-editor/core'
 
 /**
  * The longest replacement still worth re-diffing.

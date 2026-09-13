@@ -1,12 +1,12 @@
-import { Editor } from '@singapor/core/editor'
+import { Editor } from '@singapore-editor/core/editor'
 import {
   registerEditorLanguageConfiguration,
   type EditorDisposable,
   type EditorPlugin,
   type EditorViewContributionContext,
-} from '@singapor/core/extensions'
-import { resetEditorInstanceCount, setHighlightRegistry } from '@singapor/core/testing'
-import type { LspManagedTransport, LspTransportHandler } from '@singapor/lsp'
+} from '@singapore-editor/core/extensions'
+import { resetEditorInstanceCount, setHighlightRegistry } from '@singapore-editor/core/testing'
+import type { LspManagedTransport, LspTransportHandler } from '@singapore-editor/lsp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createLanguageServerAdapterPlugin } from '../src/plugin'

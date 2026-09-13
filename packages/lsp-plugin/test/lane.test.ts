@@ -1,4 +1,4 @@
-import type { LspClient, LspWorkspace } from '@singapor/lsp'
+import type { LspClient, LspWorkspace } from '@singapore-editor/lsp'
 import { describe, expect, it, vi } from 'vitest'
 
 import { acquireLanguageServerLane } from '../src/lane'

@@ -1,10 +1,10 @@
-import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
-import { projectDecorationRangeThroughEdits } from '@singapor/core/extensions'
+import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
+import { projectDecorationRangeThroughEdits } from '@singapore-editor/core/extensions'
 import {
   lspPositionToOffsetInSnapshot,
   offsetToLspPositionInSnapshot,
   type LspTextDocumentSnapshot,
-} from '@singapor/lsp'
+} from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 export type SnapshotDocumentSession = {

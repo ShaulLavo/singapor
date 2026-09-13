@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 
-// Against the editor's source, not its published build. Resolving @singapor/core
+// Against the editor's source, not its published build. Resolving @singapore-editor/core
 // through its exports map picks up dist/, so a test here would pass or fail on
 // whatever was last built rather than on what the editor currently does. The
 // subpaths are derived from that same exports map so the two cannot drift.
@@ -19,7 +19,7 @@ const coreSourceAliases = Object.entries(coreExports).flatMap(([subpath, target]
   // would then swallow every subpath.
   return [
     {
-      find: new RegExp(`^@singapor/core${subpath.slice(1).replaceAll('/', '\\/')}$`),
+      find: new RegExp(`^@singapore-editor/core${subpath.slice(1).replaceAll('/', '\\/')}$`),
       replacement: `${coreRoot}/${dist.replace(/^\.\/dist\//, 'src/').replace(/\.js$/, '.ts')}`,
     },
   ]

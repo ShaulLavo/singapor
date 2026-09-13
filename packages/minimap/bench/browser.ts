@@ -1,7 +1,7 @@
-import { Editor } from '@singapor/core/editor'
-import { createError } from '@singapor/core/logging/evlog'
-import type { EditorToken } from '@singapor/core/syntax'
-import '@singapor/core/style.css'
+import { Editor } from '@singapore-editor/core/editor'
+import { createError } from '@singapore-editor/core/logging/evlog'
+import type { EditorToken } from '@singapore-editor/core/syntax'
+import '@singapore-editor/core/style.css'
 import { createMinimapPlugin } from '../src/index'
 import { MinimapWorkerClient } from '../src/workerClient'
 

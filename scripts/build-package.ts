@@ -192,7 +192,7 @@ function inlineModuleWorkers(inlineWorkerEntries: Set<string>): Plugin {
 async function assertInlineWorkersHaveNoSiblingChunks(
   inlineWorkerEntries: ReadonlySet<string>,
 ): Promise<void> {
-  if (manifest.name !== '@singapor/core') return
+  if (manifest.name !== '@singapore-editor/core') return
   if (inlineWorkerEntries.size === 0) return
 
   const assetsDirectory = path.join(distRoot, 'assets')

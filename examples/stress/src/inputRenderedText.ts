@@ -1,4 +1,4 @@
-import { createError } from '@singapor/core/logging/evlog'
+import { createError } from '@singapore-editor/core/logging/evlog'
 
 type RenderedChunk = {
   readonly start: number

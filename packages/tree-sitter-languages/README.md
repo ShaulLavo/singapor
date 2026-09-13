@@ -1,4 +1,4 @@
-# @singapor/tree-sitter-languages
+# @singapore-editor/tree-sitter-languages
 
 Bundled Tree-sitter language contributions for Singapore.
 
@@ -8,14 +8,14 @@ language contributions and queries.
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/tree-sitter @singapor/tree-sitter-languages
+npm install @singapore-editor/core @singapore-editor/tree-sitter @singapore-editor/tree-sitter-languages
 ```
 
 ## Usage
 
 ```ts
-import { Editor } from '@singapor/core/editor'
-import { javaScript, typeScript } from '@singapor/tree-sitter-languages'
+import { Editor } from '@singapore-editor/core/editor'
+import { javaScript, typeScript } from '@singapore-editor/tree-sitter-languages'
 
 const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [javaScript({ jsx: true }), typeScript({ tsx: true })],

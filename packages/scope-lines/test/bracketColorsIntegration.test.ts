@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { Editor } from '@singapor/core/editor'
+import { Editor } from '@singapore-editor/core/editor'
 import {
   resetEditorInstanceCount,
   setEditorSyntaxSessionFactory,
   setHighlightRegistry,
-} from '@singapor/core/testing'
-import { createEmptySyntaxResult } from '@singapor/core/syntax'
-import type { BracketInfo, EditorSyntaxResult, EditorSyntaxSession } from '@singapor/core/syntax'
+} from '@singapore-editor/core/testing'
+import { createEmptySyntaxResult } from '@singapore-editor/core/syntax'
+import type {
+  BracketInfo,
+  EditorSyntaxResult,
+  EditorSyntaxSession,
+} from '@singapore-editor/core/syntax'
 import { createBracketColorsPlugin } from '../src/index'
 
 /**

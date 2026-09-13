@@ -12,8 +12,8 @@ export async function loadCorePackage(path) {
   const packagePath = resolve(directory, 'package.json')
   await requirePath(packagePath, 'file')
   const manifest = JSON.parse(await readFile(packagePath, 'utf8'))
-  if (manifest?.name !== '@singapor/core' || !manifest.exports?.['.'])
-    fail('Core package must export @singapor/core')
+  if (manifest?.name !== '@singapore-editor/core' || !manifest.exports?.['.'])
+    fail('Core package must export @singapore-editor/core')
   const aliases = []
   for (const [subpath, target] of Object.entries(manifest.exports)) {
     if (subpath !== '.' && !/^\.\/[\w./-]+$/.test(subpath))
@@ -26,7 +26,10 @@ export async function loadCorePackage(path) {
     if (!distPath || distPath === '..' || distPath.startsWith(`..${sep}`))
       fail(`Core export escapes dist: ${subpath}`)
     await requirePath(replacement, 'file')
-    aliases.push({ find: `@singapor/core${subpath === '.' ? '' : subpath.slice(1)}`, replacement })
+    aliases.push({
+      find: `@singapore-editor/core${subpath === '.' ? '' : subpath.slice(1)}`,
+      replacement,
+    })
   }
   aliases.sort((left, right) => right.find.length - left.find.length)
   return { directory, sourceDirectory, aliases }

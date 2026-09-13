@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createError } from '@singapor/core/logging/evlog'
+import { createError } from '@singapore-editor/core/logging/evlog'
 
 describe('evlog logging helpers', () => {
   it('creates structured errors with readable diagnostics and private internal context', () => {

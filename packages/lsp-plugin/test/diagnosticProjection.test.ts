@@ -1,4 +1,4 @@
-import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
 import { describe, expect, it } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

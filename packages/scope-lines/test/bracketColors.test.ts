@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { BracketInfo } from '@singapor/core/syntax'
-import { applyEditorTheme, type VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
+import type { BracketInfo } from '@singapore-editor/core/syntax'
+import {
+  applyEditorTheme,
+  type VirtualizedTextHighlightStyle,
+} from '@singapore-editor/core/rendering'
 import type {
   EditorPlugin,
   EditorPluginContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import { createBracketColorsPlugin, createScopeLinesPlugin } from '../src/index'
 
 type PaintedHighlight = {

@@ -1,8 +1,8 @@
 import type {
   VirtualizedTextHighlightRange,
   VirtualizedTextRowDecoration,
-} from '@singapor/core/rendering'
-import type { EditorViewSnapshot } from '@singapor/core/extensions'
+} from '@singapore-editor/core/rendering'
+import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
 import type { DiffRenderRow } from './types'
 
 /**

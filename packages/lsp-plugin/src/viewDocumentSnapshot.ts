@@ -1,6 +1,6 @@
-import { createStringTextSnapshot } from '@singapor/core/document'
-import type { EditorViewSnapshot } from '@singapor/core/extensions'
-import { arrayLspLineStarts, type LspTextDocumentSnapshot } from '@singapor/lsp'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
+import { arrayLspLineStarts, type LspTextDocumentSnapshot } from '@singapore-editor/lsp'
 
 /**
  * The view's text and line-start index as an LSP document snapshot, so position conversion

@@ -1,5 +1,5 @@
-import type { VirtualizedTextRowDecoration } from '@singapor/core/rendering'
-import type { EditorInjectedTextRow } from '@singapor/core/extensions'
+import type { VirtualizedTextRowDecoration } from '@singapore-editor/core/rendering'
+import type { EditorInjectedTextRow } from '@singapore-editor/core/extensions'
 import type { DiffFile, DiffHunk, DiffHunkLine, DiffRenderRow } from './types'
 
 export type LiveDiffProjection = {

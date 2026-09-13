@@ -332,7 +332,7 @@ Scratch vitest (dom project), `stubProportionalLayout` plus `offsetWidth = 2000`
 *Evidence:*
 
 ```
-Dropped a two-line file into packages/tree-sitter/src importing `type { EditorSelectionRangeProvider } from '@singapor/core/extensions'` and ran `bunx tsgo --noEmit` in that package: `src/zz-scratch-import.ts(1,15): error TS2724: '"@singapor/core/extensions"' has no exported member named 'EditorSelectionRangeProvider'. Did you mean 'EditorSelectionRange'?` (file removed). grep for both names across packages/editor/src/index.ts, editor.ts, internal.ts and public/ returns exit 1.
+Dropped a two-line file into packages/tree-sitter/src importing `type { EditorSelectionRangeProvider } from '@singapore-editor/core/extensions'` and ran `bunx tsgo --noEmit` in that package: `src/zz-scratch-import.ts(1,15): error TS2724: '"@singapore-editor/core/extensions"' has no exported member named 'EditorSelectionRangeProvider'. Did you mean 'EditorSelectionRange'?` (file removed). grep for both names across packages/editor/src/index.ts, editor.ts, internal.ts and public/ returns exit 1.
 ```
 
 ### [MINOR] `packages/editor/src/editor/Editor.ts:1644`

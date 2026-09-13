@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/typescript-lsp",
+  "name": "@singapore-editor/typescript-lsp",
   "version": "0.1.1",
   "files": [
     "README.md",
@@ -38,14 +38,14 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/lsp": "workspace:*",
-    "@singapor/lsp-plugin": "workspace:*",
+    "@singapore-editor/lsp": "workspace:*",
+    "@singapore-editor/lsp-plugin": "workspace:*",
     "@typescript/vfs": "^1.6.4",
     "typescript": "~6.0.3",
     "vscode-languageserver-protocol": "^3.18.3"
   },
   "devDependencies": {
-    "@singapor/core": "workspace:*",
+    "@singapore-editor/core": "workspace:*",
     "@types/node": "^25.9.6",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "happy-dom": "^20.14.5",
@@ -54,6 +54,6 @@
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "@singapor/core": "workspace:*"
+    "@singapore-editor/core": "workspace:*"
   }
 }

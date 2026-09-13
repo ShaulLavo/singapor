@@ -5,9 +5,9 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core'
-import type { DocumentSessionChange } from '@singapor/core'
-import { offsetToLspPosition } from '@singapor/lsp'
+} from '@singapore-editor/core'
+import type { DocumentSessionChange } from '@singapore-editor/core'
+import { offsetToLspPosition } from '@singapore-editor/lsp'
 
 import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
 import type { ActiveDocument } from './pluginTypes'

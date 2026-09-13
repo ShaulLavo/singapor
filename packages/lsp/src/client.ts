@@ -260,7 +260,7 @@ export class LspClient {
   private initializeParams(): lsp.InitializeParams {
     return {
       processId: this.config.processId ?? null,
-      clientInfo: this.config.clientInfo ?? { name: '@singapor/lsp' },
+      clientInfo: this.config.clientInfo ?? { name: '@singapore-editor/lsp' },
       locale: this.config.locale,
       rootUri: this.config.rootUri ?? null,
       capabilities: this.clientCapabilities,

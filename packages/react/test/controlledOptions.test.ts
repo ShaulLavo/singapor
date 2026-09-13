@@ -1,5 +1,5 @@
-import { EDITOR_OPTION_DESCRIPTORS, type EditorControlledOptionName } from '@singapor/core'
-import { Editor } from '@singapor/core/editor'
+import { EDITOR_OPTION_DESCRIPTORS, type EditorControlledOptionName } from '@singapore-editor/core'
+import { Editor } from '@singapore-editor/core/editor'
 import { act, createElement, useLayoutEffect, type ReactElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

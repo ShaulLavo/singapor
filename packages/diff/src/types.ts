@@ -1,5 +1,5 @@
-import type { EditorSyntaxLanguageId, EditorSyntaxProvider } from '@singapor/core/syntax'
-import type { EditorHighlighterProvider } from '@singapor/core/extensions'
+import type { EditorSyntaxLanguageId, EditorSyntaxProvider } from '@singapore-editor/core/syntax'
+import type { EditorHighlighterProvider } from '@singapore-editor/core/extensions'
 
 export type DiffFileChangeType = 'change' | 'add' | 'delete' | 'rename' | 'rename-change'
 

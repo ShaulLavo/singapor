@@ -4,7 +4,7 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import {
   resolveDecodeOptions,
   type DecodePluginOptions,

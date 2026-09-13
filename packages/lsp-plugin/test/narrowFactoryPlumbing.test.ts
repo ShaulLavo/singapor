@@ -5,13 +5,13 @@ import type {
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
   SemanticTokenLayer,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import type {
   LspClient,
   LspNotificationHandler,
   LspWebSocketLike,
   LspWebSocketConstructor,
-} from '@singapor/lsp'
+} from '@singapore-editor/lsp'
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
@@ -293,7 +293,7 @@ describe('capabilities and clientInfo through the narrow factory', () => {
   it('keeps the package name when the host names nobody', async () => {
     const harness = await narrowPlugin()
 
-    expect(harness.initializeParams.clientInfo?.name).toBe('@singapor/lsp')
+    expect(harness.initializeParams.clientInfo?.name).toBe('@singapore-editor/lsp')
     expect(harness.initializeParams.capabilities.textDocument?.semanticTokens).toBeUndefined()
   })
 })

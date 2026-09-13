@@ -1,11 +1,11 @@
-import { createStringTextSnapshot } from '@singapor/core/document'
-import type { EditorCommandId } from '@singapor/core/editor'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import type { EditorCommandId } from '@singapore-editor/core/editor'
 import type {
   DocumentSessionChange,
   DocumentSyncPoint,
   DocumentSyncSegment,
   TextEdit,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import type {
   EditorCommandContributionContext,
   EditorCommandHandler,
@@ -16,11 +16,14 @@ import type {
   EditorViewContributionProvider,
   EditorViewSnapshot,
   SemanticTokenLayer,
-} from '@singapor/core/extensions'
-import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
-import type { LspClient, LspWebSocketLike, LspWorkerLike } from '@singapor/lsp'
-import { semanticTokensClientCapability } from '@singapor/lsp'
-import { HOVER_REQUEST_DEBOUNCE_MS, TOOLTIP_HIDE_DELAY_MS } from '@singapor/lsp-plugin/tooltip'
+} from '@singapore-editor/core/extensions'
+import { EDITOR_MINIMAP_FEATURE } from '@singapore-editor/core/extensions'
+import type { LspClient, LspWebSocketLike, LspWorkerLike } from '@singapore-editor/lsp'
+import { semanticTokensClientCapability } from '@singapore-editor/lsp'
+import {
+  HOVER_REQUEST_DEBOUNCE_MS,
+  TOOLTIP_HIDE_DELAY_MS,
+} from '@singapore-editor/lsp-plugin/tooltip'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'

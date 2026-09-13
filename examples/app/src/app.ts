@@ -1,20 +1,27 @@
-import { createMergeConflictPlugin, Editor, type EditorPlugin } from '@singapor/core/editor'
-import { createDiffPlugin } from '@singapor/diff'
-import '@singapor/core/style.css'
-import '@singapor/diff/style.css'
-import '@singapor/find/style.css'
-import '@singapor/minimap/style.css'
-import '@singapor/scope-lines/style.css'
-import { createEditorFindPlugin } from '@singapor/find'
-import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapor/gutters'
-import { createMinimapPlugin } from '@singapor/minimap'
-import { createScopeLinesPlugin, createStickyScrollPlugin } from '@singapor/scope-lines'
-import { css, html, javaScript, json, markdown, typeScript } from '@singapor/tree-sitter-languages'
+import { createMergeConflictPlugin, Editor, type EditorPlugin } from '@singapore-editor/core/editor'
+import { createDiffPlugin } from '@singapore-editor/diff'
+import '@singapore-editor/core/style.css'
+import '@singapore-editor/diff/style.css'
+import '@singapore-editor/find/style.css'
+import '@singapore-editor/minimap/style.css'
+import '@singapore-editor/scope-lines/style.css'
+import { createEditorFindPlugin } from '@singapore-editor/find'
+import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapore-editor/gutters'
+import { createMinimapPlugin } from '@singapore-editor/minimap'
+import { createScopeLinesPlugin, createStickyScrollPlugin } from '@singapore-editor/scope-lines'
+import {
+  css,
+  html,
+  javaScript,
+  json,
+  markdown,
+  typeScript,
+} from '@singapore-editor/tree-sitter-languages'
 import {
   createTypeScriptLspPlugin,
   type TypeScriptLspDiagnosticSummary,
   type TypeScriptLspStatus,
-} from '@singapor/typescript-lsp'
+} from '@singapore-editor/typescript-lsp'
 import { createEditorPane } from './components/editorPane.ts'
 import { el } from './components/dom.ts'
 import { createSidebar } from './components/sidebar.ts'
@@ -71,7 +78,7 @@ export function mountApp(): void {
   })
   const sharedPlugins: readonly EditorPlugin[] = [
     foldGutter,
-    // Shiki highlighter: import createShikiHighlighterPlugin from "@singapor/core/shiki".
+    // Shiki highlighter: import createShikiHighlighterPlugin from "@singapore-editor/core/shiki".
     // createShikiHighlighterPlugin({ theme: "github-dark" }),
     createMergeConflictPlugin(),
     createEditorFindPlugin(),
@@ -115,7 +122,7 @@ export function mountApp(): void {
     if (document.querySelector('dialog[aria-label="Piece tree inspector"]')) return
     const [{ openPieceTreeInspector }, { getPieceTreeSnapshot }] = await Promise.all([
       import('./components/pieceTreeInspector.ts'),
-      import('@singapor/core/debug'),
+      import('@singapore-editor/core/debug'),
     ])
     if (document.querySelector('dialog[aria-label="Piece tree inspector"]')) return
     openPieceTreeInspector(() => getPieceTreeSnapshot(editor.getTextSnapshot()))

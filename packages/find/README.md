@@ -1,20 +1,20 @@
-# @singapor/find
+# @singapore-editor/find
 
-Find and replace plugin for `@singapor/core`.
+Find and replace plugin for `@singapore-editor/core`.
 
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/find
+npm install @singapore-editor/core @singapore-editor/find
 ```
 
 ## Usage
 
 ```ts
-import { Editor } from '@singapor/core/editor'
-import { createEditorFindPlugin } from '@singapor/find'
-import '@singapor/core/style.css'
-import '@singapor/find/style.css'
+import { Editor } from '@singapore-editor/core/editor'
+import { createEditorFindPlugin } from '@singapore-editor/find'
+import '@singapore-editor/core/style.css'
+import '@singapore-editor/find/style.css'
 
 const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [createEditorFindPlugin()],

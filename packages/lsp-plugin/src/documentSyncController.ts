@@ -1,6 +1,6 @@
-import type { DocumentSyncPoint, TextSnapshot } from '@singapor/core/document'
-import type { EditorDisposable, EditorViewSnapshot } from '@singapor/core/extensions'
-import type { LspWorkspace } from '@singapor/lsp'
+import type { DocumentSyncPoint, TextSnapshot } from '@singapore-editor/core/document'
+import type { EditorDisposable, EditorViewSnapshot } from '@singapore-editor/core/extensions'
+import type { LspWorkspace } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { DocumentSync } from './documentSync'

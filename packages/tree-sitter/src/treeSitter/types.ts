@@ -1,5 +1,5 @@
-import type { TextEdit } from '@singapor/core/document'
-import type { EditorToken, PackedEditorTokens } from '@singapor/core/syntax'
+import type { TextEdit } from '@singapore-editor/core/document'
+import type { EditorToken, PackedEditorTokens } from '@singapore-editor/core/syntax'
 import type { TreeSitterLanguageDescriptor, TreeSitterLanguageId } from './registry'
 import type { TreeSitterSourceDescriptor } from './source'
 

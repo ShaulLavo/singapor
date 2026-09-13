@@ -1,5 +1,5 @@
-import type { TextEdit } from '@singapor/core/document'
-import { createError } from '@singapor/core/logging/evlog'
+import type { TextEdit } from '@singapore-editor/core/document'
+import { createError } from '@singapore-editor/core/logging/evlog'
 import { resolveMinimapOptions } from '../src/options'
 import { MinimapWorkerRenderer } from '../src/renderer'
 import type {

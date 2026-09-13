@@ -45,17 +45,17 @@ For system design and open architecture questions, see
 
 | Package                           | Purpose                                                                                                                                                                  |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@singapor/core`                  | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, Shiki highlighter, and plugin contracts. |
-| `@singapor/gutters`               | Line-number and fold-gutter plugins for the core editor.                                                                                                                 |
-| `@singapor/find`                  | Find and replace plugin for the core editor.                                                                                                                             |
-| `@singapor/markdown`              | Markdown live preview: renders markdown as formatted text while the buffer keeps holding markdown source.                                                                |
-| `@singapor/minimap`               | Minimap plugin with worker-backed document rendering.                                                                                                                    |
-| `@singapor/scope-lines`           | Scope-line view contribution plugin.                                                                                                                                     |
-| `@singapor/tree-sitter`           | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers.                                                 |
-| `@singapor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON.                                                                          |
-| `@singapor/typescript-lsp`        | TypeScript language-service plugin built on the generic LSP layer.                                                                                                       |
-| `@singapor/lsp`                   | Generic LSP transport and plugin primitives.                                                                                                                             |
-| `@singapor/example-app`           | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing.                                             |
+| `@singapore-editor/core`                  | Core editor runtime, document model, anchors, selections, syntax sessions, folds, transforms, virtualization, renderer, themes, Shiki highlighter, and plugin contracts. |
+| `@singapore-editor/gutters`               | Line-number and fold-gutter plugins for the core editor.                                                                                                                 |
+| `@singapore-editor/find`                  | Find and replace plugin for the core editor.                                                                                                                             |
+| `@singapore-editor/markdown`              | Markdown live preview: renders markdown as formatted text while the buffer keeps holding markdown source.                                                                |
+| `@singapore-editor/minimap`               | Minimap plugin with worker-backed document rendering.                                                                                                                    |
+| `@singapore-editor/scope-lines`           | Scope-line view contribution plugin.                                                                                                                                     |
+| `@singapore-editor/tree-sitter`           | Optional Tree-sitter runtime plugin, worker client, language registry, source adapter, and structural selection helpers.                                                 |
+| `@singapore-editor/tree-sitter-languages` | Tree-sitter language contributions and queries for JavaScript, TypeScript, HTML, CSS, and JSON.                                                                          |
+| `@singapore-editor/typescript-lsp`        | TypeScript language-service plugin built on the generic LSP layer.                                                                                                       |
+| `@singapore-editor/lsp`                   | Generic LSP transport and plugin primitives.                                                                                                                             |
+| `@singapore-editor/example-app`           | Demo application using the editor, language plugins, gutters, minimap, and File System Access/GitHub-backed source browsing.                                             |
 
 ## Requirements
 
@@ -83,8 +83,8 @@ Vite.
 Minimal editor embedding looks like this:
 
 ```ts
-import { Editor } from '@singapor/core/editor'
-import '@singapor/core/style.css'
+import { Editor } from '@singapore-editor/core/editor'
+import '@singapore-editor/core/style.css'
 
 const editor = new Editor(document.querySelector('#editor')!)
 editor.openDocument({

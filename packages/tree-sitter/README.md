@@ -1,21 +1,21 @@
-# @singapor/tree-sitter
+# @singapore-editor/tree-sitter
 
-Tree-sitter syntax runtime for `@singapor/core`.
+Tree-sitter syntax runtime for `@singapore-editor/core`.
 
 This package provides the syntax provider, language registry, worker client, source adapter, and
-structural selection helpers. Pair it with `@singapor/tree-sitter-languages` for bundled language
+structural selection helpers. Pair it with `@singapore-editor/tree-sitter-languages` for bundled language
 contributions.
 
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/tree-sitter
+npm install @singapore-editor/core @singapore-editor/tree-sitter
 ```
 
 ## Usage
 
 ```ts
-import { createTreeSitterSyntaxProvider } from '@singapor/tree-sitter'
+import { createTreeSitterSyntaxProvider } from '@singapore-editor/tree-sitter'
 
 const syntaxProvider = createTreeSitterSyntaxProvider()
 ```

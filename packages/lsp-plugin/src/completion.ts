@@ -1,14 +1,21 @@
-import type { DocumentSessionChange, SelectionAffinity, TextEdit } from '@singapor/core/document'
-import type { EditorEditContributionContext, EditorSelectionRange } from '@singapor/core/extensions'
-import { createEditorCapabilityToken } from '@singapor/core/extensions'
-import { lspPositionToOffset } from '@singapor/lsp'
+import type {
+  DocumentSessionChange,
+  SelectionAffinity,
+  TextEdit,
+} from '@singapore-editor/core/document'
+import type {
+  EditorEditContributionContext,
+  EditorSelectionRange,
+} from '@singapore-editor/core/extensions'
+import { createEditorCapabilityToken } from '@singapore-editor/core/extensions'
+import { lspPositionToOffset } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 import {
   parseSnippet,
   snippetInitialSelection,
   type ParsedSnippet,
   type SnippetRange,
-} from '@singapor/core/internal'
+} from '@singapore-editor/core/internal'
 
 import { createAnchoredSurface } from './anchoredSurface'
 import { fuzzyMatch, looseFuzzyMatch, type FuzzyMatch } from './fuzzyMatch'

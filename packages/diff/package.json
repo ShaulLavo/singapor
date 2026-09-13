@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/diff",
+  "name": "@singapore-editor/diff",
   "version": "0.2.0",
   "files": [
     "README.md",
@@ -30,7 +30,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/core": "workspace:*",
+    "@singapore-editor/core": "workspace:*",
     "diff": "^9.0.0"
   },
   "devDependencies": {

@@ -3,9 +3,9 @@ import {
   createEditorBufferSession,
   createEditorTextBuffer,
   createEditorViewSession,
-} from '@singapor/core/document'
-import { Editor, type EditorCommandId, type EditorOptions } from '@singapor/core/editor'
-import { setHighlightRegistry } from '@singapor/core/testing'
+} from '@singapore-editor/core/document'
+import { Editor, type EditorCommandId, type EditorOptions } from '@singapore-editor/core/editor'
+import { setHighlightRegistry } from '@singapore-editor/core/testing'
 import { createEditorFindPlugin } from '../src/plugin'
 
 const editors: Editor[] = []

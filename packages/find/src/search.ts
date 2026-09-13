@@ -4,7 +4,7 @@ import {
   isWholeWordRange,
   type TextOffsetRange,
   type TextSnapshot,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 
 // Bounds the match set the widget counts and paints, so a pathological query
 // on a huge file cannot stall the frame.

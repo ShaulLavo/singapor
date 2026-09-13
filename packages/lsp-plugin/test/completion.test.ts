@@ -1,5 +1,5 @@
-import type { EditorEditContributionContext } from '@singapor/core/extensions'
-import type { SelectionAffinity } from '@singapor/core/document'
+import type { EditorEditContributionContext } from '@singapore-editor/core/extensions'
+import type { SelectionAffinity } from '@singapore-editor/core/document'
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

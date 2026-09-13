@@ -1,5 +1,8 @@
-import type { EditorPlugin, EditorInlineReplacementContext } from '@singapor/core/extensions'
-import type { InlineReplacementSpec } from '@singapor/core/rendering'
+import type {
+  EditorPlugin,
+  EditorInlineReplacementContext,
+} from '@singapore-editor/core/extensions'
+import type { InlineReplacementSpec } from '@singapore-editor/core/rendering'
 import { markdownInlineReplacements } from './replacements'
 import './style.css'
 

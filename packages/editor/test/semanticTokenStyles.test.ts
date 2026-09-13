@@ -4,7 +4,7 @@ import { createSemanticTokenStyles } from '../src/syntax'
 
 /**
  * The twenty-three token types LSP itself defines. Written out here rather than imported from
- * `@singapor/lsp` on purpose: the editor does not depend on that package, and a second copy of the
+ * `@singapore-editor/lsp` on purpose: the editor does not depend on that package, and a second copy of the
  * list is what catches the two drifting apart.
  */
 const STANDARD_TOKEN_TYPES = [

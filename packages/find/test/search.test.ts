@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createStringTextSnapshot } from '@singapor/core/document'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import { parseReplaceString } from '../src/replacePattern'
 import {
   FIND_MATCHES_LIMIT,

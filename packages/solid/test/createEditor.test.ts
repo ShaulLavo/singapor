@@ -1,6 +1,6 @@
 import { createRoot, createSignal } from 'solid-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Editor } from '@singapor/core/editor'
+import type { Editor } from '@singapore-editor/core/editor'
 import {
   createEditor,
   type SolidEditorCommands,

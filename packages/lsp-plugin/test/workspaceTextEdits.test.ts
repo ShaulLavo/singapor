@@ -5,12 +5,12 @@ import {
   createEditorTextBuffer,
   createPieceTableSnapshot,
   materializePieceTableFullText,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import type {
   DocumentTextSnapshot,
   EditorTextBuffer,
   PieceTableSnapshot,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import { describe, expect, it } from 'vitest'
 
 import type { ParsedWorkspaceTextEdit, WorkspaceEditOperation } from '../src/workspaceEdit'

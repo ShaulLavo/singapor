@@ -13,9 +13,13 @@ import {
   type EditorBufferSession,
   type EditorTextBuffer,
   type TextEdit,
-} from '@singapor/core/document'
-import type { EditorViewSnapshot } from '@singapor/core/extensions'
-import { LspWorkspace, type LspDocumentChange, type LspWorkspaceSyncTarget } from '@singapor/lsp'
+} from '@singapore-editor/core/document'
+import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
+import {
+  LspWorkspace,
+  type LspDocumentChange,
+  type LspWorkspaceSyncTarget,
+} from '@singapore-editor/lsp'
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

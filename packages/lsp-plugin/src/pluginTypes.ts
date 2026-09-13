@@ -1,4 +1,8 @@
-import type { LspLineStarts, LspTextSnapshot, LspWebSocketTransportOptions } from '@singapor/lsp'
+import type {
+  LspLineStarts,
+  LspTextSnapshot,
+  LspWebSocketTransportOptions,
+} from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type {

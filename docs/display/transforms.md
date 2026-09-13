@@ -264,7 +264,7 @@ break hand-written contexts. The plugin host always provides it; a plugin that f
 running on a host too old for the contribution and should say so rather than silently registering
 nothing.
 
-`@singapor/markdown` is the first consumer. It derives replacements from the existing markdown
+`@singapore-editor/markdown` is the first consumer. It derives replacements from the existing markdown
 highlight queries, which name things generically (`punctuation.delimiter` covers both emphasis fences
 and link brackets), so constructs are recovered structurally: by containment for emphasis and code
 spans, by adjacency for links and images.

@@ -4,7 +4,7 @@ import {
   type EditorControlledSelection,
   type EditorOptionDescriptor,
   type EditorOptionSync,
-} from '@singapor/core'
+} from '@singapore-editor/core'
 import {
   Editor,
   type EditorChangeHandler,
@@ -21,7 +21,7 @@ import {
   type EditorSetSelectionOptions,
   type EditorSetTextOptions,
   type EditorState,
-} from '@singapor/core/editor'
+} from '@singapore-editor/core/editor'
 import {
   createEditorBufferSession,
   type DocumentSession,
@@ -30,15 +30,15 @@ import {
   type EditorTextBuffer,
   type EditorViewSession,
   type TextSnapshot,
-} from '@singapor/core/document'
-import type { EditorSyntaxLanguageId } from '@singapor/core/syntax'
-import type { EditorTheme, HiddenCharactersMode } from '@singapor/core/rendering'
+} from '@singapore-editor/core/document'
+import type { EditorSyntaxLanguageId } from '@singapore-editor/core/syntax'
+import type { EditorTheme, HiddenCharactersMode } from '@singapore-editor/core/rendering'
 import type {
   EditorInitialPaintEvent,
   EditorPlugin,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import {
   createElement,
   useCallback,

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import * as keymap from '@singapor/core/keymap'
+import * as keymap from '@singapore-editor/core/keymap'
 import { defaultEditorKeyBindings, vscodeEditorKeyBindings } from '../src/keymap/presets'
 
 test('built public keymap entry imports without DOM and contains distinct complete packs', () => {

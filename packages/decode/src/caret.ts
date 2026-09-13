@@ -1,4 +1,4 @@
-import type { EditorViewContributionContext } from '@singapor/core/extensions'
+import type { EditorViewContributionContext } from '@singapore-editor/core/extensions'
 import type { DecodeRevealRow } from './rows'
 
 const LAYER_CLASS = 'editor-decode-caret-layer'

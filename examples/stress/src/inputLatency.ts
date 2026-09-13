@@ -1,6 +1,6 @@
-import type { Editor } from '@singapor/core/editor'
-import { pointToOffset, type EditorTextBuffer } from '@singapor/core/document'
-import { createError } from '@singapor/core/logging/evlog'
+import type { Editor } from '@singapore-editor/core/editor'
+import { pointToOffset, type EditorTextBuffer } from '@singapore-editor/core/document'
+import { createError } from '@singapore-editor/core/logging/evlog'
 import { verifyRenderedText } from './inputRenderedText.ts'
 
 export type InputScenario =

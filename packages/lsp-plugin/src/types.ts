@@ -1,11 +1,15 @@
-import type { DocumentLogicalRevisionScope } from '@singapor/core/document'
+import type { DocumentLogicalRevisionScope } from '@singapore-editor/core/document'
 import type {
   EditorDisposable,
   EditorPlugin,
   EditorTextAnchor,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import type { LspClient, LspNotificationHandler, LspWebSocketTransportOptions } from '@singapor/lsp'
+} from '@singapore-editor/core/extensions'
+import type {
+  LspClient,
+  LspNotificationHandler,
+  LspWebSocketTransportOptions,
+} from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { LanguageServerConnectionContext } from './connectionContext'
@@ -160,7 +164,7 @@ export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
   readonly timeoutMs?: number
   /**
    * Merged over `defaultClientCapabilities()`, so a host declares only what it adds. Build a
-   * semantic-tokens block with `semanticTokensClientCapability()` from `@singapor/lsp` rather than
+   * semantic-tokens block with `semanticTokensClientCapability()` from `@singapore-editor/lsp` rather than
    * by hand: it refuses the flags this editor cannot honour, each of which a real server acts on.
    */
   readonly capabilities?: lsp.ClientCapabilities

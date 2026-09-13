@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/gutters",
+  "name": "@singapore-editor/gutters",
   "version": "0.1.1",
   "files": [
     "README.md",
@@ -47,7 +47,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/core": "workspace:*"
+    "@singapore-editor/core": "workspace:*"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260613.1",

@@ -1,8 +1,8 @@
 import {
   createDocumentLogicalRevisionScope,
   createStringTextSnapshot,
-} from '@singapor/core/document'
-import { arrayLspLineStarts, LspWorkspace, type LspClient } from '@singapor/lsp'
+} from '@singapore-editor/core/document'
+import { arrayLspLineStarts, LspWorkspace, type LspClient } from '@singapore-editor/lsp'
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createStringTextSnapshot } from '@singapor/core/document'
-import type { EditorViewSnapshot } from '@singapor/core/extensions'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
 import {
   TEST_DOCUMENT_SYNC_POINT,
   unchangedChangesSinceDocumentSyncPoint,
@@ -9,7 +9,7 @@ import {
   createEditorSecondaryViewProjection,
   EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
-} from '@singapor/core/secondary-views'
+} from '@singapore-editor/core/secondary-views'
 
 describe('secondary view projections', () => {
   it('projects snapshot-owned view data without reading lazy fullText when a text snapshot exists', () => {

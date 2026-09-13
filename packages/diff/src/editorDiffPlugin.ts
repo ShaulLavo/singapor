@@ -10,9 +10,9 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import type { DocumentSessionChange } from '@singapor/core/document'
-import type { EditorToken } from '@singapor/core/syntax'
+} from '@singapore-editor/core/extensions'
+import type { DocumentSessionChange } from '@singapore-editor/core/document'
+import type { EditorToken } from '@singapore-editor/core/syntax'
 import { createDiffGutterContribution } from './diffGutter'
 import {
   diffInlineHighlightRanges,

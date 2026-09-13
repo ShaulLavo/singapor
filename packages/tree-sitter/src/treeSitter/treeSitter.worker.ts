@@ -12,8 +12,8 @@ import {
   packEditorTokens,
   packedEditorTokenTransfers,
   treeSitterCapturesToEditorTokens,
-} from '@singapor/core/syntax'
-import type { PackedEditorTokens } from '@singapor/core/syntax'
+} from '@singapore-editor/core/syntax'
+import type { PackedEditorTokens } from '@singapore-editor/core/syntax'
 import parserWasmUrl from 'web-tree-sitter/web-tree-sitter.wasm?url'
 import type { TreeSitterLanguageDescriptor } from './registry'
 import {

@@ -5,7 +5,7 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import { createDecodePlugin, type DecodePluginOptions } from '../src/index'
 import { tokenizeLengths } from '../src/tokenize'
 import { collectRevealRows } from '../src/rows'

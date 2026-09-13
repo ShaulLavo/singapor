@@ -1,5 +1,5 @@
-import type { EditorCommandId } from '@singapor/core/editor'
-import type { DocumentSessionChange } from '@singapor/core/document'
+import type { EditorCommandId } from '@singapore-editor/core/editor'
+import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import type {
   EditorCapabilityToken,
   EditorCommandContributionContext,
@@ -10,8 +10,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import type { LspClient, LspNotificationHandler } from '@singapor/lsp'
+} from '@singapore-editor/core/extensions'
+import type { LspClient, LspNotificationHandler } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
@@ -42,8 +42,8 @@ import {
 import { createRenameWidgetController, type RenameWidgetController } from './renameWidget'
 import { parseWorkspaceEdit } from './workspaceEdit'
 import { currentWorkspaceEditOrigin } from './workspaceEditProvenance'
-import { wordRangeAtOffset } from '@singapor/core/internal'
-import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
+import { wordRangeAtOffset } from '@singapore-editor/core/internal'
+import { lspPositionToOffset, offsetToLspPosition } from '@singapore-editor/lsp'
 import type { LspConnectionProvider, LspConnectionTransportFactory } from './lspConnection'
 import {
   acquireResolvedLanguageServerLane,
@@ -64,7 +64,7 @@ import type {
 } from './pluginTypes'
 import { PullDiagnosticsController } from './pullDiagnostics'
 import { formattingChangesText, formattingOptions, prepareFormattingEdits } from './formatting'
-import type { TextEdit } from '@singapor/core'
+import type { TextEdit } from '@singapore-editor/core'
 import type {
   LanguageServerConnectionContext,
   LanguageServerDefinitionTarget,
@@ -83,7 +83,7 @@ import type {
   LanguageServerStatus,
   WorkspaceEditOriginGuard,
 } from './types'
-// Re-exported so `@singapor/lsp-plugin` keeps handing this out from where it always did; it is
+// Re-exported so `@singapore-editor/lsp-plugin` keeps handing this out from where it always did; it is
 // defined in `types.ts` because the narrow factory's options need it and a shared vocabulary module
 // that imports the module consuming it is a cycle.
 export type { LanguageServerConnectionContext } from './types'

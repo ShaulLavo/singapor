@@ -1,4 +1,4 @@
-import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapor/lsp'
+import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 export type LanguageServerDiagnosticSeverity = 'error' | 'warning' | 'information' | 'hint'

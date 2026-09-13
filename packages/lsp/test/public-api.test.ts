@@ -103,10 +103,10 @@ describe('public API facade', () => {
     }
     const text = sourceText()
 
-    expect(packageJson.dependencies ?? {}).not.toHaveProperty('@singapor/core')
-    expect(packageJson.peerDependencies ?? {}).not.toHaveProperty('@singapor/core')
-    expect(packageJson.devDependencies ?? {}).not.toHaveProperty('@singapor/core')
-    expect(text).not.toContain('@singapor/core')
+    expect(packageJson.dependencies ?? {}).not.toHaveProperty('@singapore-editor/core')
+    expect(packageJson.peerDependencies ?? {}).not.toHaveProperty('@singapore-editor/core')
+    expect(packageJson.devDependencies ?? {}).not.toHaveProperty('@singapore-editor/core')
+    expect(text).not.toContain('@singapore-editor/core')
     expect(text).not.toContain('EditorPlugin')
   })
 })

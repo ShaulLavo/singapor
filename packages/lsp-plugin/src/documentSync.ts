@@ -4,12 +4,12 @@ import {
   type DocumentSyncPoint,
   type DocumentSyncSegment,
   type TextEdit,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import { defineLazyFullTextProperty } from '@singapor/core/internal'
+} from '@singapore-editor/core/extensions'
+import { defineLazyFullTextProperty } from '@singapore-editor/core/internal'
 import {
   recordLspPerformanceDiagnostic,
   type LspDocumentTransitionNotification,
@@ -17,7 +17,7 @@ import {
   type LspTextSnapshot,
   type LspWorkspaceDocumentAttachment,
   type LspWorkspace,
-} from '@singapor/lsp'
+} from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { projectDiagnosticsInSnapshot } from './diagnosticProjection'

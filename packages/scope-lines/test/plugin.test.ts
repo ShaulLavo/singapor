@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createStringTextSnapshot, type TextSnapshot } from '@singapor/core/document'
-import type { VirtualizedFoldMarker } from '@singapor/core/rendering'
+import { createStringTextSnapshot, type TextSnapshot } from '@singapore-editor/core/document'
+import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
 import type {
   EditorPluginContext,
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import { createScopeLinesPlugin } from '../src/index'
 
 const TEST_DOCUMENT_SYNC_SEGMENT = Object.freeze(

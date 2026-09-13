@@ -168,7 +168,7 @@ describe('TypeScript LSP worker', () => {
           {
             path: 'packages/editor/package.json',
             text: JSON.stringify({
-              name: '@singapor/core',
+              name: '@singapore-editor/core',
               exports: { './editor': './src/editor.ts' },
             }),
           },
@@ -178,7 +178,7 @@ describe('TypeScript LSP worker', () => {
           },
           {
             path: 'examples/app/src/app.ts',
-            text: 'import { Editor } from "@singapor/core/editor";',
+            text: 'import { Editor } from "@singapore-editor/core/editor";',
           },
         ],
       },
@@ -191,15 +191,17 @@ describe('TypeScript LSP worker', () => {
           uri: 'file:///examples/app/src/app.ts',
           languageId: 'typescript',
           version: 0,
-          text: 'import { Editor } from "@singapor/core/editor";',
+          text: 'import { Editor } from "@singapore-editor/core/editor";',
         },
       },
     })
 
-    await waitFor(() => sourceFiles.has('/node_modules/@singapor/core/package.json'))
+    await waitFor(() => sourceFiles.has('/node_modules/@singapore-editor/core/package.json'))
 
-    expect(sourceFiles.get('/node_modules/@singapor/core/package.json')).toContain('@singapor/core')
-    expect(sourceFiles.get('/node_modules/@singapor/core/src/editor.ts')).toBe(
+    expect(sourceFiles.get('/node_modules/@singapore-editor/core/package.json')).toContain(
+      '@singapore-editor/core',
+    )
+    expect(sourceFiles.get('/node_modules/@singapore-editor/core/src/editor.ts')).toBe(
       'export class Editor {}',
     )
   })

@@ -91,7 +91,7 @@ function generatedSource(source) {
   const ranges = collectRanges(values)
   verifyRanges(ranges)
   const pattern = ranges.map(formatRange).join('')
-  return `/** Generated from Unicode ${UNICODE_VERSION} DerivedBidiClass.txt.\n * Source: ${SOURCE_URL}\n * License: scripts/unicode/LICENSE.txt (published with @singapor/core).\n * Run \`bun run bidi:generate\` to update.\n */\nexport const RTL_BIDI_CHARACTER =\n  /[${pattern}]/u\n`
+  return `/** Generated from Unicode ${UNICODE_VERSION} DerivedBidiClass.txt.\n * Source: ${SOURCE_URL}\n * License: scripts/unicode/LICENSE.txt (published with @singapore-editor/core).\n * Run \`bun run bidi:generate\` to update.\n */\nexport const RTL_BIDI_CHARACTER =\n  /[${pattern}]/u\n`
 }
 
 function verifySource(source) {

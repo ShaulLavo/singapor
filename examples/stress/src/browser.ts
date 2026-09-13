@@ -1,15 +1,15 @@
-import { Editor, type EditorInitialPaintEvent } from '@singapor/core/editor'
+import { Editor, type EditorInitialPaintEvent } from '@singapore-editor/core/editor'
 import {
   createEditorBufferSession,
   createEditorTextBuffer,
   pointToOffset,
   type EditorTextBuffer,
-} from '@singapor/core/document'
-import { createError } from '@singapor/core/logging/evlog'
-import { createEditorFindPlugin } from '@singapor/find'
-import { typeScript } from '@singapor/tree-sitter-languages'
-import '@singapor/core/style.css'
-import '@singapor/find/style.css'
+} from '@singapore-editor/core/document'
+import { createError } from '@singapore-editor/core/logging/evlog'
+import { createEditorFindPlugin } from '@singapore-editor/find'
+import { typeScript } from '@singapore-editor/tree-sitter-languages'
+import '@singapore-editor/core/style.css'
+import '@singapore-editor/find/style.css'
 import { createInputLatencyProbe } from './inputLatency.ts'
 import { fixtureFacts, generateFixture, normalizedText, type FixtureId } from './fixtures.ts'
 

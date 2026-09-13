@@ -1,18 +1,18 @@
-# @singapor/react
+# @singapore-editor/react
 
-React bindings for `@singapor/core`.
+React bindings for `@singapore-editor/core`.
 
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/react react react-dom
+npm install @singapore-editor/core @singapore-editor/react react react-dom
 ```
 
 ## Usage
 
 ```tsx
-import { EditorHost, useEditor } from '@singapor/react'
-import '@singapor/core/style.css'
+import { EditorHost, useEditor } from '@singapore-editor/react'
+import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
   const controller = useEditor({

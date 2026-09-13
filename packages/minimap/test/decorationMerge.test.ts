@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { EditorMinimapDecoration } from '@singapor/core/extensions'
+import type { EditorMinimapDecoration } from '@singapore-editor/core/extensions'
 import { mergeDenseDecorations, MINIMAP_DECORATION_MERGE_LIMIT } from '../src/decorationMerge'
 
 const MATCH_COLOR = 'rgba(234, 179, 8, 0.34)'

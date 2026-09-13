@@ -29,7 +29,7 @@ import {
 import type { FoldRange } from '../src/syntax'
 
 /**
- * The gutter package types itself against the published `@singapor/core` facade, so the plugin
+ * The gutter package types itself against the published `@singapore-editor/core` facade, so the plugin
  * objects its own `create*Plugin` helpers build carry dist's `EditorPlugin` — a nominally different
  * type from the src one this Editor takes. The contributions are plain structural types that do
  * cross that line, so they are registered here through the same one-line wrapper the package uses.

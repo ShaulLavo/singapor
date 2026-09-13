@@ -7,7 +7,7 @@
     "skipLibCheck": true,
     "moduleResolution": "Bundler",
     "paths": {
-      "@singapor/tree-sitter": ["./src/index.ts"]
+      "@singapore-editor/tree-sitter": ["./src/index.ts"]
     },
     "allowImportingTsExtensions": true,
     "allowArbitraryExtensions": true,

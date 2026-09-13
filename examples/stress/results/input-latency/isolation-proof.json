@@ -18,9 +18,9 @@
     "verifiedAfterBuildAt": "2026-09-07T17:23:07.596Z",
     "resolvedCoreExports": 15,
     "dependencies": {
-      "@singapor/find": "/work/tmp/editor-brrrr/frozen-suite/packages/find/dist/index.js",
-      "@singapor/tree-sitter-languages": "/work/tmp/editor-brrrr/frozen-suite/packages/tree-sitter-languages/dist/index.js",
-      "@singapor/tree-sitter": "/work/tmp/editor-brrrr/frozen-suite/packages/tree-sitter/dist/index.js"
+      "@singapore-editor/find": "/work/tmp/editor-brrrr/frozen-suite/packages/find/dist/index.js",
+      "@singapore-editor/tree-sitter-languages": "/work/tmp/editor-brrrr/frozen-suite/packages/tree-sitter-languages/dist/index.js",
+      "@singapore-editor/tree-sitter": "/work/tmp/editor-brrrr/frozen-suite/packages/tree-sitter/dist/index.js"
     }
   },
   "restoration": {

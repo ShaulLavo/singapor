@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/scope-lines",
+  "name": "@singapore-editor/scope-lines",
   "version": "0.1.1",
   "files": [
     "README.md",
@@ -31,7 +31,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/core": "workspace:*"
+    "@singapore-editor/core": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

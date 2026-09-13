@@ -3,8 +3,8 @@ import {
   type EditorMinimapDecoration,
   type EditorMinimapFeature,
   type EditorViewContributionContext,
-} from '@singapor/core/extensions'
-import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapor/lsp'
+} from '@singapore-editor/core/extensions'
+import { lspPositionToOffsetInSnapshot, type LspTextDocumentSnapshot } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {

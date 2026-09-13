@@ -1,12 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { Editor } from '@singapor/core/editor'
+import { Editor } from '@singapore-editor/core/editor'
 import type {
   EditorPlugin,
   EditorViewContributionContext,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import { setHighlightRegistry } from '@singapor/core/testing'
-import { EditorSecondaryTextView } from '@singapor/core/secondary-views'
+} from '@singapore-editor/core/extensions'
+import { setHighlightRegistry } from '@singapore-editor/core/testing'
+import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
 import {
   createEditorFindContributionProviders,
   createEditorFindPlugin,

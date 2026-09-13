@@ -1,11 +1,11 @@
-# @singapor/diff
+# @singapore-editor/diff
 
 Diff rendering and editor-diff helpers for Singapore.
 
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/diff
+npm install @singapore-editor/core @singapore-editor/diff
 ```
 
 ## Usage
@@ -15,10 +15,10 @@ expansion state and the gutter; the **host owns the editor's document**, because
 can mutate document text. So the host pushes the plugin's rows in and re-applies its tokens:
 
 ```ts
-import { createDiffPlugin, joinRenderLines, parseGitPatch } from '@singapor/diff'
-import { Editor } from '@singapor/core/editor'
-import '@singapor/core/style.css'
-import '@singapor/diff/style.css'
+import { createDiffPlugin, joinRenderLines, parseGitPatch } from '@singapore-editor/diff'
+import { Editor } from '@singapore-editor/core/editor'
+import '@singapore-editor/core/style.css'
+import '@singapore-editor/diff/style.css'
 
 const plugin = createDiffPlugin({ mode: 'document', side: 'stacked' })
 const editor = new Editor(host, {

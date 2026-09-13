@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/find",
+  "name": "@singapore-editor/find",
   "version": "0.1.1",
   "files": [
     "README.md",
@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "@singapor/core": "workspace:*",
+    "@singapore-editor/core": "workspace:*",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "@vitest/browser-playwright": "^4.1.11",
     "happy-dom": "^20.14.5",
@@ -41,6 +41,6 @@
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "@singapor/core": "workspace:*"
+    "@singapore-editor/core": "workspace:*"
   }
 }

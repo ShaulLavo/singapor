@@ -1,11 +1,11 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { Editor } from '@singapor/core/editor'
+import { Editor } from '@singapore-editor/core/editor'
 import { createVisibleEditor } from './support/visibleEditor'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxSessionOptions,
   type EditorToken,
-} from '@singapor/core/syntax'
+} from '@singapore-editor/core/syntax'
 import { createDiffPlugin, createTextDiff, diffSyntaxBackend, joinRenderLines } from '../src'
 import { createDiffGutterContribution } from '../src/diffGutter'
 import { diffGutterDigits } from '../src/gutters'

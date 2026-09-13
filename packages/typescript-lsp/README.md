@@ -1,4 +1,4 @@
-# @singapor/typescript-lsp
+# @singapore-editor/typescript-lsp
 
 TypeScript language-service plugin for Singapore.
 
@@ -8,14 +8,14 @@ This package wires the generic LSP adapter to a browser worker backed by TypeScr
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/typescript-lsp
+npm install @singapore-editor/core @singapore-editor/typescript-lsp
 ```
 
 ## Usage
 
 ```ts
-import { Editor } from '@singapor/core/editor'
-import { createTypeScriptLspPlugin } from '@singapor/typescript-lsp'
+import { Editor } from '@singapore-editor/core/editor'
+import { createTypeScriptLspPlugin } from '@singapore-editor/typescript-lsp'
 
 const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [createTypeScriptLspPlugin()],

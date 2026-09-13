@@ -1,4 +1,4 @@
-import type { SemanticTokenSpan } from '@singapor/core/syntax'
+import type { SemanticTokenSpan } from '@singapore-editor/core/syntax'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 /**

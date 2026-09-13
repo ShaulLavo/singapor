@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { EditorGutterRowContext, EditorPluginContext } from '@singapor/core/extensions'
+import type { EditorGutterRowContext, EditorPluginContext } from '@singapore-editor/core/extensions'
 import {
   createFoldGutterContribution,
   createFoldGutterPlugin,

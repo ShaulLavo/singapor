@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import * as lspPlugin from '@singapor/lsp-plugin'
+import * as lspPlugin from '@singapore-editor/lsp-plugin'
 import {
   LanguageServerDocumentSyncController,
   type LanguageServerDocumentSyncControllerRegistration,
   type LanguageServerDocumentUriTransition,
-} from '@singapor/lsp-plugin/document-sync-controller'
+} from '@singapore-editor/lsp-plugin/document-sync-controller'
 import {
   parseWorkspaceEdit,
   prepareWorkspaceTextReplay,
@@ -15,7 +15,7 @@ import {
   type WorkspaceEditOperation,
   type WorkspaceTextDocumentProvenance,
   type WorkspaceTextReplayInput,
-} from '@singapor/lsp-plugin/workspace-edit'
+} from '@singapore-editor/lsp-plugin/workspace-edit'
 import type {
   ApplyWorkspaceEditRequest,
   ApplyWorkspaceEditResult,
@@ -24,7 +24,7 @@ import type {
   LanguageServerRenamePrompt,
   OnApplyWorkspaceEdit,
   WorkspaceEditOriginGuard,
-} from '@singapor/lsp-plugin'
+} from '@singapore-editor/lsp-plugin'
 
 describe('WorkspaceEdit public API', () => {
   it('exports parser and replay contracts from root and workspace-edit', () => {

@@ -1,4 +1,4 @@
-import type { EditorViewContributionContext } from '@singapor/core/extensions'
+import type { EditorViewContributionContext } from '@singapore-editor/core/extensions'
 import type { ResolvedDecodeOptions, DecodeMode } from './options'
 import type { DecodeRevealRow } from './rows'
 import { buildCarets, removeCarets } from './caret'

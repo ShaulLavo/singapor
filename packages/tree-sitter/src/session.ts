@@ -8,7 +8,7 @@ import {
   type PieceTableSnapshot,
   pieceTableSnapshotsHaveSameText,
   type TextEdit,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import {
   createEmptySyntaxResult,
   createEditorRuntimeSessionId,
@@ -20,8 +20,8 @@ import {
   type EditorSyntaxFoldingSupport,
   treeSitterCapturesToEditorTokens,
   unpackEditorTokens,
-} from '@singapor/core/syntax'
-import { documentSessionChangeTextSnapshot } from '@singapor/core/internal'
+} from '@singapore-editor/core/syntax'
+import { documentSessionChangeTextSnapshot } from '@singapore-editor/core/internal'
 import type {
   TreeSitterDegradedState,
   TreeSitterInputEdit,

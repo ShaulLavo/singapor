@@ -3,8 +3,8 @@ import {
   type EditorDisposable,
   type EditorViewContributionContext,
   type EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import { offsetToLspPosition, type LspClient } from '@singapor/lsp'
+} from '@singapore-editor/core/extensions'
+import { offsetToLspPosition, type LspClient } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { completionNeedsResolve, type LanguageServerCompletionTrigger } from './completion'

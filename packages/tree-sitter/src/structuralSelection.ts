@@ -1,12 +1,12 @@
-import type { PieceTableSnapshot, TextOffsetRange } from '@singapor/core/document'
-import type { FoldRange } from '@singapor/core/syntax'
+import type { PieceTableSnapshot, TextOffsetRange } from '@singapore-editor/core/document'
+import type { FoldRange } from '@singapore-editor/core/syntax'
 import {
   createAnchorSelection,
   normalizeSelectionSet,
   type PieceTableAnchor,
   resolveSelection,
   type SelectionSet,
-} from '@singapor/core/internal'
+} from '@singapore-editor/core/internal'
 import type { TreeSitterBackend } from './treeSitter/workerClient'
 import type {
   TreeSitterLanguageId,

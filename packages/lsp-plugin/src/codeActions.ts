@@ -1,12 +1,12 @@
 import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import {
   lspPositionToOffsetInSnapshot,
   offsetToLspPosition,
   type LspTextDocumentSnapshot,
-} from '@singapor/lsp'
+} from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { OffsetRange } from './definitionNavigation'

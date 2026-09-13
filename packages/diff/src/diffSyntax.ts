@@ -1,5 +1,8 @@
-import { createDocumentTextSnapshot, createPieceTableSnapshot } from '@singapor/core/document'
-import type { EditorHighlighterProvider } from '@singapor/core/extensions'
+import {
+  createDocumentTextSnapshot,
+  createPieceTableSnapshot,
+} from '@singapore-editor/core/document'
+import type { EditorHighlighterProvider } from '@singapore-editor/core/extensions'
 import {
   createEmptySyntaxResult,
   createSyntaxLanguageConfiguration,
@@ -9,11 +12,11 @@ import {
   type EditorSyntaxServiceRequest,
   type EditorSyntaxSessionOptions,
   type EditorToken,
-} from '@singapor/core/syntax'
+} from '@singapore-editor/core/syntax'
 import {
   EditorSecondaryViewScheduler,
   type EditorSecondaryWorkContext,
-} from '@singapor/core/secondary-views'
+} from '@singapore-editor/core/secondary-views'
 import { languageIdForPath } from './lines'
 import type { DiffFile, DiffRenderRow, DiffSyntaxBackend } from './types'
 

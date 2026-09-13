@@ -1,4 +1,4 @@
-import type { LspClient } from '@singapor/lsp'
+import type { LspClient } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 export type PullDiagnosticsDocument = {

@@ -1,10 +1,10 @@
-import type { DocumentSessionChange, SelectionAffinity } from '@singapor/core/document'
+import type { DocumentSessionChange, SelectionAffinity } from '@singapore-editor/core/document'
 import type {
   EditorCapabilityToken,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {

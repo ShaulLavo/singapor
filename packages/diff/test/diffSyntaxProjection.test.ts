@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { EditorToken } from '@singapor/core/syntax'
+import type { EditorToken } from '@singapore-editor/core/syntax'
 import { projectDiffSyntaxTokens } from '../src/diffSyntax'
 import type { DiffRenderRow } from '../src/types'
 

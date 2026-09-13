@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from 'vitest'
-import { Editor } from '@singapor/core/editor'
-import type { EditorHighlightResult, EditorPlugin } from '@singapor/core/extensions'
+import { Editor } from '@singapore-editor/core/editor'
+import type { EditorHighlightResult, EditorPlugin } from '@singapore-editor/core/extensions'
 import { createScopeLinesPlugin } from '../src/index'
-import '@singapor/core/style.css'
+import '@singapore-editor/core/style.css'
 
 const editors: Editor[] = []
 const elements: HTMLElement[] = []

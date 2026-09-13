@@ -38,7 +38,7 @@ assert.ok(
 const selectedGroups = selectGroups(values.group)
 const minimumChromaticPixels = 20
 const decoratedHighlightRow = 2
-const coreBuild = await rebuildPackage(values['core-directory'], '@singapor/core')
+const coreBuild = await rebuildPackage(values['core-directory'], '@singapore-editor/core')
 const core = await loadCorePackage(coreBuild.directory)
 const { sourceSha256, builtSha256 } = coreBuild
 const directory = await mkdtemp('/work/tmp/e032-browser-')

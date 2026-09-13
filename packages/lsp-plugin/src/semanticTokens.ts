@@ -6,8 +6,8 @@ import type {
   SemanticTokenLayer,
   SemanticTokenLayerController,
   SemanticTokenLayerOptions,
-} from '@singapor/core/extensions'
-import { createSemanticTokenLayer } from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
+import { createSemanticTokenLayer } from '@singapore-editor/core/extensions'
 
 import type { LanguageServerConnectionContext } from './connectionContext'
 

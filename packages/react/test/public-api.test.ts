@@ -4,7 +4,7 @@ import {
   useEditor,
   useEditorSelector,
   type ReactEditorController,
-} from '@singapor/react'
+} from '@singapore-editor/react'
 
 describe('public API facade', () => {
   it('exports the React editor adapter from the package root', () => {

@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { Editor } from '@singapor/core/editor'
-import { EditorSecondaryTextView } from '@singapor/core/secondary-views'
-import { setEditorSyntaxSessionFactory, setHighlightRegistry } from '@singapor/core/testing'
+import { Editor } from '@singapore-editor/core/editor'
+import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
+import { setEditorSyntaxSessionFactory, setHighlightRegistry } from '@singapore-editor/core/testing'
 import {
   createEmptySyntaxResult,
   type EditorSyntaxCapture,
   type EditorSyntaxResult,
   type EditorSyntaxSession,
-} from '@singapor/core/syntax'
-import type { EditorPluginContext } from '@singapor/core/extensions'
+} from '@singapore-editor/core/syntax'
+import type { EditorPluginContext } from '@singapore-editor/core/extensions'
 import { createMarkdownPreviewPlugin } from '../src/index'
 
 /**

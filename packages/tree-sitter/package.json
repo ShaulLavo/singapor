@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/tree-sitter",
+  "name": "@singapore-editor/tree-sitter",
   "version": "0.1.1",
   "files": [
     "README.md",
@@ -29,7 +29,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/core": "workspace:*",
+    "@singapore-editor/core": "workspace:*",
     "web-tree-sitter": "^0.26.13"
   },
   "devDependencies": {
@@ -44,6 +44,6 @@
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "@singapor/core": "workspace:*"
+    "@singapore-editor/core": "workspace:*"
   }
 }

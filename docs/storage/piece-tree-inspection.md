@@ -1,6 +1,6 @@
 # Piece tree inspection
 
-The opt-in `@singapor/core/debug` entry point exposes tree diagnostics. No edit calls the checker,
+The opt-in `@singapore-editor/core/debug` entry point exposes tree diagnostics. No edit calls the checker,
 formatter, or inspection session. A traversal of 124 built modules reachable from the document
 and editor entry points finds no inspection module. `getPieceTreeSnapshot(editor.getTextSnapshot())` returns the
 underlying immutable piece-table snapshot, or `null` for a string-backed view, without reading text.

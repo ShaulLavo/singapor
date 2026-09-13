@@ -1,18 +1,18 @@
-# @singapor/panes
+# @singapore-editor/panes
 
 Small DOM utility for resizable pane groups.
 
 ## Install
 
 ```sh
-npm install @singapor/panes
+npm install @singapore-editor/panes
 ```
 
 ## Usage
 
 ```ts
-import { ResizablePaneGroup } from '@singapor/panes'
-import '@singapor/panes/style.css'
+import { ResizablePaneGroup } from '@singapore-editor/panes'
+import '@singapore-editor/panes/style.css'
 
 const group = new ResizablePaneGroup(document.querySelector('#panes')!, {
   orientation: 'horizontal',

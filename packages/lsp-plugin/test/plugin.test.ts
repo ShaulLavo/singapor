@@ -1,5 +1,5 @@
-import type { EditorCommandId } from '@singapor/core/editor'
-import { createStringTextSnapshot } from '@singapor/core/document'
+import type { EditorCommandId } from '@singapore-editor/core/editor'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
 import {
   createEditorCapabilityToken,
   type EditorCommandContributionContext,
@@ -9,13 +9,13 @@ import {
   type EditorViewContributionContext,
   type EditorViewContributionProvider,
   type EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import type {
   LspManagedTransport,
   LspTransportHandler,
   LspWebSocketLike,
   LspWorkspace,
-} from '@singapor/lsp'
+} from '@singapore-editor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { syncedDocument } from './syncedDocument'

@@ -4,9 +4,12 @@ import {
   createPieceTableSnapshot,
   deleteFromPieceTable,
   insertIntoPieceTable,
-} from '@singapor/core/document'
-import { getPieceTreeSnapshot } from '@singapor/core/debug'
-import { createDocumentTextSnapshot, createStringTextSnapshot } from '@singapor/core/document'
+} from '@singapore-editor/core/document'
+import { getPieceTreeSnapshot } from '@singapore-editor/core/debug'
+import {
+  createDocumentTextSnapshot,
+  createStringTextSnapshot,
+} from '@singapore-editor/core/document'
 import { openPieceTreeInspector } from '../../src/components/pieceTreeInspector.ts'
 
 afterEach(() => document.body.replaceChildren())

@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/minimap",
+  "name": "@singapore-editor/minimap",
   "version": "0.1.1",
   "files": [
     "README.md",
@@ -35,7 +35,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/core": "workspace:*"
+    "@singapore-editor/core": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

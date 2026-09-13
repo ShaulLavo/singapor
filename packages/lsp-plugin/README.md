@@ -1,14 +1,14 @@
-# @singapor/lsp-plugin
+# @singapore-editor/lsp-plugin
 
 Editor integration layer for LSP-backed Singapore language features.
 
-This package adapts `@singapor/lsp` transports to `@singapor/core` plugins for diagnostics,
+This package adapts `@singapore-editor/lsp` transports to `@singapore-editor/core` plugins for diagnostics,
 completion, hover, definition navigation, references, and document synchronization.
 
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/lsp @singapor/lsp-plugin
+npm install @singapore-editor/core @singapore-editor/lsp @singapore-editor/lsp-plugin
 ```
 
 ## Usage
@@ -17,7 +17,7 @@ npm install @singapor/core @singapor/lsp @singapor/lsp-plugin
 import {
   createLanguageServerAdapterPlugin,
   createWebSocketLspTransportFactory,
-} from '@singapor/lsp-plugin'
+} from '@singapore-editor/lsp-plugin'
 
 const plugin = createLanguageServerAdapterPlugin({
   name: 'typescript-lsp',

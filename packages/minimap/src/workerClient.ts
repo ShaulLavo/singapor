@@ -1,17 +1,17 @@
-import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
-import type { EditorToken } from '@singapor/core/syntax'
-import { createError } from '@singapor/core/logging/evlog'
+import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
+import type { EditorToken } from '@singapore-editor/core/syntax'
+import { createError } from '@singapore-editor/core/logging/evlog'
 import type {
   EditorMinimapDecoration,
   EditorResolvedSelection,
   EditorViewportSnapshot,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import {
   createEditorSecondaryViewProjection,
   EditorSecondaryViewScheduler,
   type EditorSecondaryViewTextProjection,
-} from '@singapor/core/secondary-views'
+} from '@singapore-editor/core/secondary-views'
 import { parseCssColor, RGBA_BLACK, RGBA_WHITE, transparent } from './color'
 import type {
   MinimapBaseStyles,

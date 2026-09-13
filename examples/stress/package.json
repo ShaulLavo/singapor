@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/stress",
+  "name": "@singapore-editor/stress",
   "private": true,
   "type": "module",
   "scripts": {
@@ -23,10 +23,10 @@
     "input:proof": "node test/verify-input-results.mjs results/input-latency"
   },
   "dependencies": {
-    "@singapor/core": "workspace:*",
-    "@singapor/find": "workspace:*",
-    "@singapor/tree-sitter": "workspace:*",
-    "@singapor/tree-sitter-languages": "workspace:*",
+    "@singapore-editor/core": "workspace:*",
+    "@singapore-editor/find": "workspace:*",
+    "@singapore-editor/tree-sitter": "workspace:*",
+    "@singapore-editor/tree-sitter-languages": "workspace:*",
     "evlog": "^2.29.0"
   },
   "devDependencies": {

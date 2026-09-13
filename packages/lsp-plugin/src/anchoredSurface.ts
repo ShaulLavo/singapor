@@ -1,4 +1,7 @@
-import type { EditorDisposable, EditorViewContributionUpdateKind } from '@singapor/core/extensions'
+import type {
+  EditorDisposable,
+  EditorViewContributionUpdateKind,
+} from '@singapore-editor/core/extensions'
 
 /**
  * The placement every floating surface in this plugin shares.

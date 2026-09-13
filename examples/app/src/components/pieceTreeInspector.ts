@@ -8,7 +8,7 @@ import {
   type PieceTreeInspection,
   type PieceTreeValidation,
   type PieceNodeChange,
-} from '@singapor/core/debug'
+} from '@singapore-editor/core/debug'
 import { el } from './dom.ts'
 
 const ROW_LIMIT = 200

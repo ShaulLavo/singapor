@@ -1,4 +1,4 @@
-import type { EditorViewContributionContext } from '@singapor/core/extensions'
+import type { EditorViewContributionContext } from '@singapore-editor/core/extensions'
 import { describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

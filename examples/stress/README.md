@@ -292,7 +292,7 @@ node examples/stress/run.mjs --suite input-latency --core-directory /work/tmp/ed
 ```
 
 Use the same frozen directory for all three controls and the independent reference rerun.
-`--core-directory` aliases every `@singapor/core` export to the selected package's `dist`; omitting
+`--core-directory` aliases every `@singapore-editor/core` export to the selected package's `dist`; omitting
 it selects the active `packages/editor` package. It cannot be combined with `--url`.
 The selected path is recorded as `environment.coreDirectory`, without changing the workload config.
 `environment.sourceHash` enumerates the selected `src` tree under canonical `packages/editor/src`

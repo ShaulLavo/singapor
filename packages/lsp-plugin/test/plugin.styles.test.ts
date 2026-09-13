@@ -1,4 +1,4 @@
-import { applyEditorTheme } from '@singapor/core/rendering'
+import { applyEditorTheme } from '@singapore-editor/core/rendering'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import type { LanguageServerDiagnosticSeverity } from '../src/diagnostics'

@@ -30,15 +30,15 @@ pushes to `main`, and manual dispatch.
   `packages/lsp-plugin/src`, and `packages/typescript-lsp/src`.
 - Missing package scripts for the root Turborepo contract: `build`, `test`, `typecheck`, `lint`,
   `format`, and `format:check`.
-- Duplicate LSP module candidates between `@singapor/lsp-plugin` and `@singapor/typescript-lsp`.
-- The current `@singapor/core` public export inventory.
+- Duplicate LSP module candidates between `@singapore-editor/lsp-plugin` and `@singapore-editor/typescript-lsp`.
+- The current `@singapore-editor/core` public export inventory.
 - Production timer usage that must stay justified until Phase 3 scheduling work replaces it.
 
 ## Current Known Issues
 
 - Package cycles: none reported in the Phase 0 baseline.
-- Source cycles: seven components across the overlapping scan scopes remain in `@singapor/core`
-  and `@singapor/lsp-plugin`. The scan includes type imports.
+- Source cycles: seven components across the overlapping scan scopes remain in `@singapore-editor/core`
+  and `@singapore-editor/lsp-plugin`. The scan includes type imports.
 - Duplicate modules: the LSP plugin and TypeScript-LSP packages share four same-name modules.
 - Package scripts: every workspace package provides all six expected scripts.
 - Public API: 15 explicit entry points are inventoried, including the opt-in debug and keymap APIs.
@@ -53,7 +53,7 @@ selection reveal, scroll viewports, and row decoration projection; these remain 
 
 ## Review Rules
 
-- New public `@singapor/core` exports must update `core-public-api.json` in the same reviewed change.
+- New public `@singapore-editor/core` exports must update `core-public-api.json` in the same reviewed change.
 - New production timers must update `timer-usage.json` with a specific justification. Leaving the
   generated `TODO` text makes `bun run health` fail.
 - A new timer ID cannot inherit a reason from another occurrence with the same source text. An inline
@@ -67,6 +67,6 @@ selection reveal, scroll viewports, and row decoration projection; these remain 
 
 - `health-baseline.json` records package cycles, source cycles, duplicate modules, ignored roots, and
   missing package scripts.
-- `core-public-api.json` records `@singapor/core` package entry points and exported names.
+- `core-public-api.json` records `@singapore-editor/core` package entry points and exported names.
 - `timer-usage.json` records production timer usage and required justifications.
 - `performance-baseline.md` records the first reproducible performance numbers for Phase 0.

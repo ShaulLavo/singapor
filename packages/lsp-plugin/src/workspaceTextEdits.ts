@@ -7,7 +7,7 @@ import {
   pointToOffset,
   prepareDocumentTransactionSequence,
   readPieceTableTextRange,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import type {
   DocumentLogicalRevisionScope,
   DocumentTextSnapshot,
@@ -16,9 +16,9 @@ import type {
   PreparedDocumentTransactionSequence,
   TextEdit,
   TextSnapshot,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 
-import type { LspTextSnapshot } from '@singapor/lsp'
+import type { LspTextSnapshot } from '@singapore-editor/lsp'
 
 import type {
   ParsedWorkspacePosition,

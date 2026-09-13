@@ -4,8 +4,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core'
-import { lspPositionToOffset, offsetToLspPosition } from '@singapor/lsp'
+} from '@singapore-editor/core'
+import { lspPositionToOffset, offsetToLspPosition } from '@singapore-editor/lsp'
 
 import type { ActiveDocument } from './pluginTypes'
 import type { LanguageServerFeatureRouter } from './serverSet'

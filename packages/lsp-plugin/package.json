@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/lsp-plugin",
+  "name": "@singapore-editor/lsp-plugin",
   "version": "0.1.1",
   "files": [
     "README.md",
@@ -102,7 +102,7 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/lsp": "workspace:*",
+    "@singapore-editor/lsp": "workspace:*",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
@@ -110,9 +110,9 @@
     "vscode-languageserver-protocol": "^3.18.3"
   },
   "devDependencies": {
-    "@singapor/core": "workspace:*",
-    "@singapor/find": "workspace:*",
-    "@singapor/scope-lines": "workspace:*",
+    "@singapore-editor/core": "workspace:*",
+    "@singapore-editor/find": "workspace:*",
+    "@singapore-editor/scope-lines": "workspace:*",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "happy-dom": "^20.14.5",
     "oxfmt": "0.54.0",
@@ -121,6 +121,6 @@
     "vitest": "^4.1.11"
   },
   "peerDependencies": {
-    "@singapor/core": "workspace:*"
+    "@singapore-editor/core": "workspace:*"
   }
 }

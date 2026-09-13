@@ -185,7 +185,7 @@ async function sourceAliases() {
     if (!(await stat(source).catch(() => null))?.isFile())
       source = source.replace(/\.ts$/, '/index.ts')
     aliases.push({
-      find: `@singapor/core${subpath === '.' ? '' : subpath.slice(1)}`,
+      find: `@singapore-editor/core${subpath === '.' ? '' : subpath.slice(1)}`,
       replacement: source,
     })
   }

@@ -1,12 +1,12 @@
-import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
+import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
 import type {
   EditorEditContributionContext,
   EditorPluginContext,
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import type { LspManagedTransport, LspTransportHandler } from '@singapor/lsp'
+} from '@singapore-editor/core/extensions'
+import type { LspManagedTransport, LspTransportHandler } from '@singapore-editor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

@@ -1,20 +1,20 @@
-# @singapor/scope-lines
+# @singapore-editor/scope-lines
 
-Scope-line view contribution plugin for `@singapor/core`.
+Scope-line view contribution plugin for `@singapore-editor/core`.
 
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/scope-lines
+npm install @singapore-editor/core @singapore-editor/scope-lines
 ```
 
 ## Usage
 
 ```ts
-import { Editor } from '@singapor/core/editor'
-import { createScopeLinesPlugin } from '@singapor/scope-lines'
-import '@singapor/core/style.css'
-import '@singapor/scope-lines/style.css'
+import { Editor } from '@singapore-editor/core/editor'
+import { createScopeLinesPlugin } from '@singapore-editor/scope-lines'
+import '@singapore-editor/core/style.css'
+import '@singapore-editor/scope-lines/style.css'
 
 const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [createScopeLinesPlugin()],

@@ -6,12 +6,12 @@ import {
   applyBatchToPieceTable,
   createPieceTableSnapshot,
   type TextEdit,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import {
   createAnchorSelection,
   createSelectionSet,
   resolveSelection,
-} from '@singapor/core/internal'
+} from '@singapore-editor/core/internal'
 import {
   expandTreeSitterSelection,
   resolveTreeSitterLanguageContribution,

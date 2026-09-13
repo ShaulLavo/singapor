@@ -4,7 +4,7 @@ import {
   type EditorControlledOptionName,
   type EditorControlledSelection,
   type EditorOptionSync,
-} from '@singapor/core'
+} from '@singapore-editor/core'
 import {
   Editor,
   type EditorChangeHandler,
@@ -24,15 +24,15 @@ import {
   type EditorSetTextOptions,
   type EditorState,
   type EditorSuspiciousCharactersOptions,
-} from '@singapor/core/editor'
-import type { DocumentSessionChange, TextSnapshot } from '@singapor/core/document'
-import type { EditorSyntaxLanguageId } from '@singapor/core/syntax'
-import type { EditorTheme, HiddenCharactersMode } from '@singapor/core/rendering'
+} from '@singapore-editor/core/editor'
+import type { DocumentSessionChange, TextSnapshot } from '@singapore-editor/core/document'
+import type { EditorSyntaxLanguageId } from '@singapore-editor/core/syntax'
+import type { EditorTheme, HiddenCharactersMode } from '@singapore-editor/core/rendering'
 import type {
   EditorPlugin,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import { batch, createEffect, createSignal, onCleanup, untrack, type Accessor } from 'solid-js'
 
 export type SolidEditorReactiveValue<T> = T | Accessor<T>

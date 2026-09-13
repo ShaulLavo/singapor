@@ -3,8 +3,8 @@ import {
   createStringTextSnapshot,
   type DocumentSessionChange,
   type TextEdit,
-} from '@singapor/core/document'
-import type { EditorViewSnapshot } from '@singapor/core/extensions'
+} from '@singapore-editor/core/document'
+import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
 import { resolveMinimapOptions } from '../src/options'
 import { computeRenderLayout } from '../src/layout'
 import { MinimapWorkerClient, type MinimapHost } from '../src/workerClient'

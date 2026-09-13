@@ -1,5 +1,5 @@
 {
-  "name": "@singapor/markdown",
+  "name": "@singapore-editor/markdown",
   "version": "0.1.0",
   "files": [
     "README.md",
@@ -30,10 +30,10 @@
     "format:check": "oxfmt --check ."
   },
   "dependencies": {
-    "@singapor/core": "workspace:*"
+    "@singapore-editor/core": "workspace:*"
   },
   "devDependencies": {
-    "@singapor/tree-sitter-languages": "workspace:*",
+    "@singapore-editor/tree-sitter-languages": "workspace:*",
     "@types/node": "^25.9.6",
     "@typescript/native-preview": "7.0.0-dev.20260613.1",
     "happy-dom": "^20.14.5",

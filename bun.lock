@@ -12,17 +12,17 @@
       },
     },
     "examples/app": {
-      "name": "@singapor/example-app",
+      "name": "@singapore-editor/example-app",
       "version": "0.0.0",
       "dependencies": {
-        "@singapor/core": "workspace:*",
-        "@singapor/diff": "workspace:*",
-        "@singapor/find": "workspace:*",
-        "@singapor/gutters": "workspace:*",
-        "@singapor/minimap": "workspace:*",
-        "@singapor/scope-lines": "workspace:*",
-        "@singapor/tree-sitter-languages": "workspace:*",
-        "@singapor/typescript-lsp": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
+        "@singapore-editor/diff": "workspace:*",
+        "@singapore-editor/find": "workspace:*",
+        "@singapore-editor/gutters": "workspace:*",
+        "@singapore-editor/minimap": "workspace:*",
+        "@singapore-editor/scope-lines": "workspace:*",
+        "@singapore-editor/tree-sitter-languages": "workspace:*",
+        "@singapore-editor/typescript-lsp": "workspace:*",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -36,12 +36,12 @@
       },
     },
     "examples/stress": {
-      "name": "@singapor/stress",
+      "name": "@singapore-editor/stress",
       "dependencies": {
-        "@singapor/core": "workspace:*",
-        "@singapor/find": "workspace:*",
-        "@singapor/tree-sitter": "workspace:*",
-        "@singapor/tree-sitter-languages": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
+        "@singapore-editor/find": "workspace:*",
+        "@singapore-editor/tree-sitter": "workspace:*",
+        "@singapore-editor/tree-sitter-languages": "workspace:*",
         "evlog": "^2.29.0",
       },
       "devDependencies": {
@@ -54,10 +54,10 @@
       },
     },
     "packages/decode": {
-      "name": "@singapor/decode",
+      "name": "@singapore-editor/decode",
       "version": "0.1.0",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
       "devDependencies": {
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
@@ -69,10 +69,10 @@
       },
     },
     "packages/diff": {
-      "name": "@singapor/diff",
+      "name": "@singapore-editor/diff",
       "version": "0.2.0",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
         "diff": "^9.0.0",
       },
       "devDependencies": {
@@ -85,7 +85,7 @@
       },
     },
     "packages/editor": {
-      "name": "@singapor/core",
+      "name": "@singapore-editor/core",
       "version": "0.1.2",
       "dependencies": {
         "@shikijs/engine-oniguruma": "4.4.3",
@@ -108,11 +108,11 @@
       },
     },
     "packages/find": {
-      "name": "@singapor/find",
+      "name": "@singapore-editor/find",
       "version": "0.1.1",
       "devDependencies": {
         "@playwright/test": "^1.63.0",
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
         "@vitest/browser-playwright": "^4.1.11",
         "happy-dom": "^20.14.5",
@@ -122,14 +122,14 @@
         "vitest": "^4.1.11",
       },
       "peerDependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
     },
     "packages/gutters": {
-      "name": "@singapor/gutters",
+      "name": "@singapore-editor/gutters",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
       "devDependencies": {
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
@@ -141,7 +141,7 @@
       },
     },
     "packages/lsp": {
-      "name": "@singapor/lsp",
+      "name": "@singapore-editor/lsp",
       "version": "0.1.1",
       "dependencies": {
         "vscode-languageserver-protocol": "^3.18.3",
@@ -157,10 +157,10 @@
       },
     },
     "packages/lsp-plugin": {
-      "name": "@singapor/lsp-plugin",
+      "name": "@singapore-editor/lsp-plugin",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/lsp": "workspace:*",
+        "@singapore-editor/lsp": "workspace:*",
         "remark-gfm": "^4.0.1",
         "remark-parse": "^11.0.0",
         "remark-stringify": "^11.0.0",
@@ -168,9 +168,9 @@
         "vscode-languageserver-protocol": "^3.18.3",
       },
       "devDependencies": {
-        "@singapor/core": "workspace:*",
-        "@singapor/find": "workspace:*",
-        "@singapor/scope-lines": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
+        "@singapore-editor/find": "workspace:*",
+        "@singapore-editor/scope-lines": "workspace:*",
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
         "happy-dom": "^20.14.5",
         "oxfmt": "0.54.0",
@@ -179,17 +179,17 @@
         "vitest": "^4.1.11",
       },
       "peerDependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
     },
     "packages/markdown": {
-      "name": "@singapor/markdown",
+      "name": "@singapore-editor/markdown",
       "version": "0.1.0",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
       "devDependencies": {
-        "@singapor/tree-sitter-languages": "workspace:*",
+        "@singapore-editor/tree-sitter-languages": "workspace:*",
         "@types/node": "^25.9.6",
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
         "happy-dom": "^20.14.5",
@@ -201,10 +201,10 @@
       },
     },
     "packages/minimap": {
-      "name": "@singapor/minimap",
+      "name": "@singapore-editor/minimap",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -218,7 +218,7 @@
       },
     },
     "packages/panes": {
-      "name": "@singapor/panes",
+      "name": "@singapore-editor/panes",
       "version": "0.1.1",
       "devDependencies": {
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
@@ -230,10 +230,10 @@
       },
     },
     "packages/react": {
-      "name": "@singapor/react",
+      "name": "@singapore-editor/react",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -253,16 +253,16 @@
         "vitest": "^4.1.11",
       },
       "peerDependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
         "react": ">=18.0.0",
         "react-dom": ">=18.0.0",
       },
     },
     "packages/scope-lines": {
-      "name": "@singapor/scope-lines",
+      "name": "@singapore-editor/scope-lines",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
       "devDependencies": {
         "@playwright/test": "^1.63.0",
@@ -276,10 +276,10 @@
       },
     },
     "packages/solid": {
-      "name": "@singapor/solid",
+      "name": "@singapore-editor/solid",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
       "devDependencies": {
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
@@ -291,15 +291,15 @@
         "vitest": "^4.1.11",
       },
       "peerDependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
         "solid-js": ">=1.8 <2",
       },
     },
     "packages/tree-sitter": {
-      "name": "@singapor/tree-sitter",
+      "name": "@singapore-editor/tree-sitter",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
         "web-tree-sitter": "^0.26.13",
       },
       "devDependencies": {
@@ -314,14 +314,14 @@
         "vitest": "^4.1.11",
       },
       "peerDependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
     },
     "packages/tree-sitter-languages": {
-      "name": "@singapor/tree-sitter-languages",
+      "name": "@singapore-editor/tree-sitter-languages",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/tree-sitter": "workspace:*",
+        "@singapore-editor/tree-sitter": "workspace:*",
         "@tree-sitter-grammars/tree-sitter-markdown": "^0.3.2",
         "tree-sitter-css": "^0.25.0",
         "tree-sitter-html": "^0.23.2",
@@ -330,7 +330,7 @@
         "tree-sitter-typescript": "^0.23.2",
       },
       "devDependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
         "@types/node": "^25.9.6",
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
         "oxfmt": "0.54.0",
@@ -341,22 +341,22 @@
         "web-tree-sitter": "^0.26.13",
       },
       "peerDependencies": {
-        "@singapor/core": "workspace:*",
-        "@singapor/tree-sitter": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
+        "@singapore-editor/tree-sitter": "workspace:*",
       },
     },
     "packages/typescript-lsp": {
-      "name": "@singapor/typescript-lsp",
+      "name": "@singapore-editor/typescript-lsp",
       "version": "0.1.1",
       "dependencies": {
-        "@singapor/lsp": "workspace:*",
-        "@singapor/lsp-plugin": "workspace:*",
+        "@singapore-editor/lsp": "workspace:*",
+        "@singapore-editor/lsp-plugin": "workspace:*",
         "@typescript/vfs": "^1.6.4",
         "typescript": "~6.0.3",
         "vscode-languageserver-protocol": "^3.18.3",
       },
       "devDependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
         "@types/node": "^25.9.6",
         "@typescript/native-preview": "7.0.0-dev.20260613.1",
         "happy-dom": "^20.14.5",
@@ -365,7 +365,7 @@
         "vitest": "^4.1.11",
       },
       "peerDependencies": {
-        "@singapor/core": "workspace:*",
+        "@singapore-editor/core": "workspace:*",
       },
     },
   },
@@ -590,41 +590,41 @@
 
     "@shikijs/vscode-textmate": ["@shikijs/vscode-textmate@10.0.2", "", {}, "sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg=="],
 
-    "@singapor/core": ["@singapor/core@workspace:packages/editor"],
+    "@singapore-editor/core": ["@singapore-editor/core@workspace:packages/editor"],
 
-    "@singapor/decode": ["@singapor/decode@workspace:packages/decode"],
+    "@singapore-editor/decode": ["@singapore-editor/decode@workspace:packages/decode"],
 
-    "@singapor/diff": ["@singapor/diff@workspace:packages/diff"],
+    "@singapore-editor/diff": ["@singapore-editor/diff@workspace:packages/diff"],
 
-    "@singapor/example-app": ["@singapor/example-app@workspace:examples/app"],
+    "@singapore-editor/example-app": ["@singapore-editor/example-app@workspace:examples/app"],
 
-    "@singapor/find": ["@singapor/find@workspace:packages/find"],
+    "@singapore-editor/find": ["@singapore-editor/find@workspace:packages/find"],
 
-    "@singapor/gutters": ["@singapor/gutters@workspace:packages/gutters"],
+    "@singapore-editor/gutters": ["@singapore-editor/gutters@workspace:packages/gutters"],
 
-    "@singapor/lsp": ["@singapor/lsp@workspace:packages/lsp"],
+    "@singapore-editor/lsp": ["@singapore-editor/lsp@workspace:packages/lsp"],
 
-    "@singapor/lsp-plugin": ["@singapor/lsp-plugin@workspace:packages/lsp-plugin"],
+    "@singapore-editor/lsp-plugin": ["@singapore-editor/lsp-plugin@workspace:packages/lsp-plugin"],
 
-    "@singapor/markdown": ["@singapor/markdown@workspace:packages/markdown"],
+    "@singapore-editor/markdown": ["@singapore-editor/markdown@workspace:packages/markdown"],
 
-    "@singapor/minimap": ["@singapor/minimap@workspace:packages/minimap"],
+    "@singapore-editor/minimap": ["@singapore-editor/minimap@workspace:packages/minimap"],
 
-    "@singapor/panes": ["@singapor/panes@workspace:packages/panes"],
+    "@singapore-editor/panes": ["@singapore-editor/panes@workspace:packages/panes"],
 
-    "@singapor/react": ["@singapor/react@workspace:packages/react"],
+    "@singapore-editor/react": ["@singapore-editor/react@workspace:packages/react"],
 
-    "@singapor/scope-lines": ["@singapor/scope-lines@workspace:packages/scope-lines"],
+    "@singapore-editor/scope-lines": ["@singapore-editor/scope-lines@workspace:packages/scope-lines"],
 
-    "@singapor/solid": ["@singapor/solid@workspace:packages/solid"],
+    "@singapore-editor/solid": ["@singapore-editor/solid@workspace:packages/solid"],
 
-    "@singapor/stress": ["@singapor/stress@workspace:examples/stress"],
+    "@singapore-editor/stress": ["@singapore-editor/stress@workspace:examples/stress"],
 
-    "@singapor/tree-sitter": ["@singapor/tree-sitter@workspace:packages/tree-sitter"],
+    "@singapore-editor/tree-sitter": ["@singapore-editor/tree-sitter@workspace:packages/tree-sitter"],
 
-    "@singapor/tree-sitter-languages": ["@singapor/tree-sitter-languages@workspace:packages/tree-sitter-languages"],
+    "@singapore-editor/tree-sitter-languages": ["@singapore-editor/tree-sitter-languages@workspace:packages/tree-sitter-languages"],
 
-    "@singapor/typescript-lsp": ["@singapor/typescript-lsp@workspace:packages/typescript-lsp"],
+    "@singapore-editor/typescript-lsp": ["@singapore-editor/typescript-lsp@workspace:packages/typescript-lsp"],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 

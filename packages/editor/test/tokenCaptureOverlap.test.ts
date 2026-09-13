@@ -7,7 +7,7 @@ import { type VirtualizedTextHighlightRegistry, VirtualizedTextView } from '../s
 /**
  * The paint-order half of exact-span capture resolution.
  *
- * The token-level assertions live beside the real grammars, in @singapor/tree-sitter-languages. What
+ * The token-level assertions live beside the real grammars, in @singapore-editor/tree-sitter-languages. What
  * only a mounted view can show is the consequence: that a span four rules claim reaches one
  * highlight group rather than four, and that which colour wins no longer depends on what this
  * document's shared token registry happened to see first.
@@ -23,7 +23,7 @@ const MAX_START = MAX_SOURCE.indexOf('MAX')
 const MAX_END = MAX_START + 'MAX'.length
 
 // The capture names the shipped TypeScript and JavaScript queries really do produce over `MAX`,
-// pinned against the live grammars by the exact-span suite in @singapor/tree-sitter-languages.
+// pinned against the live grammars by the exact-span suite in @singapore-editor/tree-sitter-languages.
 const MAX_CAPTURES: readonly EditorSyntaxCapture[] = [
   { captureName: 'keyword.declaration', endIndex: 5, startIndex: 0 },
   { captureName: 'constant', endIndex: MAX_END, startIndex: MAX_START },

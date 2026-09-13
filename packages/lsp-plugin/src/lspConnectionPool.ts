@@ -1,4 +1,4 @@
-import type { LspClient, LspNotificationHandler } from '@singapor/lsp'
+import type { LspClient, LspNotificationHandler } from '@singapore-editor/lsp'
 
 import {
   LspConnection,

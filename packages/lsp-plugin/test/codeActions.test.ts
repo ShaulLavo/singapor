@@ -3,9 +3,9 @@ import {
   editorCommandPackForCommand,
   editorKeymapLayerForCommandPack,
   readonlySafeEditorCommandPacks,
-} from '@singapor/core/editor'
+} from '@singapore-editor/core/editor'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { LspWorkspace } from '@singapor/lsp'
+import type { LspWorkspace } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { codeActionAutoTriggerRange, preferredQuickFix } from '../src/codeActions'

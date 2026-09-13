@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import type { Editor } from '@singapor/core/editor'
+import type { Editor } from '@singapore-editor/core/editor'
 import { createVisibleEditor } from './support/visibleEditor'
 import { createDiffPlugin, createDiffRegionStore, createTextDiff, joinRenderLines } from '../src'
 import type { DiffFile, DiffGutterSide, DiffPlugin, DiffRegionStore } from '../src'

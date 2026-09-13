@@ -1,5 +1,8 @@
-import type { EditorViewContributionContext, EditorViewSnapshot } from '@singapor/core/extensions'
-import type { LspClient } from '@singapor/lsp'
+import type {
+  EditorViewContributionContext,
+  EditorViewSnapshot,
+} from '@singapore-editor/core/extensions'
+import type { LspClient } from '@singapore-editor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

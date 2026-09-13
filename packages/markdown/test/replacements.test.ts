@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Language, Parser, Query } from 'web-tree-sitter'
-import type { EditorSyntaxCapture } from '@singapor/core/syntax'
-import { createInlineMap, inlineRowForBufferRow } from '@singapor/core/rendering'
-import { createPieceTableSnapshot } from '@singapor/core/document'
+import type { EditorSyntaxCapture } from '@singapore-editor/core/syntax'
+import { createInlineMap, inlineRowForBufferRow } from '@singapore-editor/core/rendering'
+import { createPieceTableSnapshot } from '@singapore-editor/core/document'
 import { markdownInlineReplacements } from '../src/replacements'
 
 /**

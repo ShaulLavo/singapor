@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createError } from '@singapor/core/logging/evlog'
+import { createError } from '@singapore-editor/core/logging/evlog'
 
 type BuildPlugin = {
   name: string
@@ -93,7 +93,7 @@ async function addPackageAliases(aliases: Map<string, string>, packageDirectory:
   if (!existsSync(packagePath)) return
   const manifest: unknown = JSON.parse(await readFile(packagePath, 'utf8'))
   if (!manifest || typeof manifest !== 'object' || !('name' in manifest)) return
-  if (typeof manifest.name !== 'string' || !manifest.name.startsWith('@singapor/')) return
+  if (typeof manifest.name !== 'string' || !manifest.name.startsWith('@singapore-editor/')) return
   if (!('exports' in manifest) || !manifest.exports || typeof manifest.exports !== 'object') return
   for (const [subpath, declaration] of Object.entries(manifest.exports)) {
     const target = importTarget(declaration)
@@ -210,7 +210,7 @@ globalThis.postMessage = (response, transfer) => {
   const plugin: BuildPlugin = {
     name: 'sab-benchmark-current-source',
     setup(build) {
-      build.onResolve({ filter: /^@singapor\// }, (args) => {
+      build.onResolve({ filter: /^@singapore-editor\// }, (args) => {
         const path = aliases.get(args.path)
         if (!path)
           benchmarkFailure('BENCH_SOURCE_EXPORT_MISSING', `No source export for ${args.path}`)

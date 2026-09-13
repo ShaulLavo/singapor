@@ -1,5 +1,5 @@
-import type { TextSnapshot } from '@singapor/core/document'
-import type { VirtualizedFoldMarker } from '@singapor/core/rendering'
+import type { TextSnapshot } from '@singapore-editor/core/document'
+import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
 import type {
   EditorPlugin,
   EditorViewContribution,
@@ -9,9 +9,9 @@ import type {
   EditorVisiblePaintCapture,
   EditorVisiblePaintRectangle,
   EditorVisibleRowSnapshot,
-} from '@singapor/core/extensions'
-import { createStringTextSnapshot } from '@singapor/core/document'
-import type { DocumentSessionChange } from '@singapor/core/document'
+} from '@singapore-editor/core/extensions'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import './style.css'
 
 export { BRACKET_COLOR_Z_INDEX, createBracketColorsPlugin } from './bracketColors'

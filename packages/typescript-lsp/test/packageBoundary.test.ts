@@ -36,13 +36,13 @@ const SHARED_LSP_PLUGIN_FILES = [
   'websocket.ts',
 ] as const
 
-describe('@singapor/typescript-lsp package boundary', () => {
-  it('keeps generic LSP implementation files owned by @singapor/lsp-plugin', () => {
+describe('@singapore-editor/typescript-lsp package boundary', () => {
+  it('keeps generic LSP implementation files owned by @singapore-editor/lsp-plugin', () => {
     const files = sourceFiles()
 
     expect([...files].sort()).toEqual([...TYPE_SCRIPT_SPECIALIZATION_FILES].sort())
     for (const file of SHARED_LSP_PLUGIN_FILES) {
-      expect(files.has(file), `${file} belongs in @singapor/lsp-plugin`).toBe(false)
+      expect(files.has(file), `${file} belongs in @singapore-editor/lsp-plugin`).toBe(false)
     }
   })
 
@@ -60,7 +60,7 @@ describe('@singapor/typescript-lsp package boundary', () => {
       './ts-diagnostics': distEntry('tsDiagnostics'),
     })
     expect(packageJson.dependencies).toMatchObject({
-      '@singapor/lsp-plugin': 'workspace:*',
+      '@singapore-editor/lsp-plugin': 'workspace:*',
     })
     expect(packageJson.dependencies).not.toHaveProperty('unified')
     expect(packageJson.dependencies).not.toHaveProperty('remark-parse')

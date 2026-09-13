@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { createPieceTableSnapshot } from '@singapor/core/document'
+import { createPieceTableSnapshot } from '@singapore-editor/core/document'
 import {
   createAnchorSelection,
   createSelectionSet,
   resolveSelection,
-} from '@singapor/core/internal'
-import type { EditorDisposable, EditorPlugin, EditorPluginContext } from '@singapor/core/extensions'
-import type { FoldRange } from '@singapor/core/syntax'
+} from '@singapore-editor/core/internal'
+import type {
+  EditorDisposable,
+  EditorPlugin,
+  EditorPluginContext,
+} from '@singapore-editor/core/extensions'
+import type { FoldRange } from '@singapore-editor/core/syntax'
 import { createTreeSitterLanguagePlugin } from '../src/index'
 import {
   expandTreeSitterSelection,

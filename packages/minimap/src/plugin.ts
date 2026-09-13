@@ -1,4 +1,4 @@
-import type { DocumentSessionChange } from '@singapor/core/document'
+import type { DocumentSessionChange } from '@singapore-editor/core/document'
 import type {
   EditorDisposable,
   EditorCapabilityContribution,
@@ -11,8 +11,8 @@ import type {
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
   EditorViewportSnapshot,
-} from '@singapor/core/extensions'
-import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
+import { EDITOR_MINIMAP_FEATURE } from '@singapore-editor/core/extensions'
 import { mergeDenseDecorations } from './decorationMerge'
 import { computeRenderLayout } from './layout'
 import { resolveMinimapOptions } from './options'

@@ -6,7 +6,7 @@ import {
   createPieceTableSnapshot,
   insertIntoPieceTable,
   materializePieceTableFullText,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import {
   createTreeSitterSourceDescriptor,
   readTreeSitterInputRange,

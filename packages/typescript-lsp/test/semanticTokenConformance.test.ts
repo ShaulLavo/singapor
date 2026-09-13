@@ -22,7 +22,7 @@ import type {
   DocumentSyncPoint,
   DocumentSyncSegment,
   TextEdit,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import type {
   EditorPluginContext,
   EditorViewContribution,
@@ -35,12 +35,12 @@ import type {
   SemanticTokenPushResult,
   SemanticTokenRangeRequest,
   SemanticTokenSpan,
-} from '@singapor/core/extensions'
-import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
-import { editorColorValue } from '@singapor/core/rendering'
-import type { LspClient, LspWebSocketConstructor, LspWebSocketLike } from '@singapor/lsp'
-import { semanticTokensClientCapability } from '@singapor/lsp'
-import { createLanguageServerPlugin, decodeSemanticTokens } from '@singapor/lsp-plugin'
+} from '@singapore-editor/core/extensions'
+import type { VirtualizedTextHighlightStyle } from '@singapore-editor/core/rendering'
+import { editorColorValue } from '@singapore-editor/core/rendering'
+import type { LspClient, LspWebSocketConstructor, LspWebSocketLike } from '@singapore-editor/lsp'
+import { semanticTokensClientCapability } from '@singapore-editor/lsp'
+import { createLanguageServerPlugin, decodeSemanticTokens } from '@singapore-editor/lsp-plugin'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { typeScriptLibraryFilesFromDisk } from './realTypeScriptService'
@@ -526,7 +526,7 @@ describe('the TypeScript worker and the semantic token layer, end to end', () =>
       // The host builds the block and passes it in: this editor declares none by default, and a
       // server only answers a client that asked (§C3).
       capabilities: semanticTokensClientCapability({ requests: { full: true, range: true } }),
-      clientInfo: { name: '@singapor/typescript-lsp conformance fixture' },
+      clientInfo: { name: '@singapore-editor/typescript-lsp conformance fixture' },
       semanticTokens: {
         ...semanticTokens,
         viewportDelayMs: VIEWPORT_DELAY_MS,

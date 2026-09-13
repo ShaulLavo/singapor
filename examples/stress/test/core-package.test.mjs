@@ -25,7 +25,7 @@ beforeEach(async () => {
   coreDirectory = resolve(directory, 'packages/editor')
   await put(
     resolve(coreDirectory, 'package.json'),
-    JSON.stringify({ name: '@singapor/core', exports }),
+    JSON.stringify({ name: '@singapore-editor/core', exports }),
   )
   await put(resolve(coreDirectory, 'src/index.ts'), 'export const selected = 1\n')
   for (const path of ['index.js', 'logging/index.js', 'logging/evlog.js', 'style.css'])
@@ -47,19 +47,19 @@ describe('benchmark core package selection', () => {
     )
     const resolveImport = config.createResolver()
     const expected = {
-      '@singapor/core': 'index.js',
-      '@singapor/core/logging': 'logging/index.js',
-      '@singapor/core/logging/evlog': 'logging/evlog.js',
-      '@singapor/core/style.css': 'style.css',
+      '@singapore-editor/core': 'index.js',
+      '@singapore-editor/core/logging': 'logging/index.js',
+      '@singapore-editor/core/logging/evlog': 'logging/evlog.js',
+      '@singapore-editor/core/style.css': 'style.css',
     }
     for (const [specifier, path] of Object.entries(expected))
       expect(await resolveImport(specifier)).toBe(resolve(coreDirectory, 'dist', path))
     expect(core.sourceDirectory).toBe(resolve(coreDirectory, 'src'))
     expect(core.aliases.map((alias) => alias.find)).toEqual([
-      '@singapor/core/logging/evlog',
-      '@singapor/core/style.css',
-      '@singapor/core/logging',
-      '@singapor/core',
+      '@singapore-editor/core/logging/evlog',
+      '@singapore-editor/core/style.css',
+      '@singapore-editor/core/logging',
+      '@singapore-editor/core',
     ])
   })
 
@@ -72,9 +72,12 @@ describe('benchmark core package selection', () => {
   )
 
   it.each([
-    ['another package', { name: '@singapor/other', exports }],
-    ['source export', { name: '@singapor/core', exports: { '.': './src/index.ts' } }],
-    ['escaping export', { name: '@singapor/core', exports: { '.': './dist/../src/index.ts' } }],
+    ['another package', { name: '@singapore-editor/other', exports }],
+    ['source export', { name: '@singapore-editor/core', exports: { '.': './src/index.ts' } }],
+    [
+      'escaping export',
+      { name: '@singapore-editor/core', exports: { '.': './dist/../src/index.ts' } },
+    ],
   ])('rejects %s', async (_label, manifest) => {
     await put(resolve(coreDirectory, 'package.json'), JSON.stringify(manifest))
     await expect(loadCorePackage(coreDirectory)).rejects.toThrow(/Core (package|export)/)

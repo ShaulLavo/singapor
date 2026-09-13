@@ -5,9 +5,12 @@ import {
   createDocumentSession,
   createPieceTableSnapshot,
   diffPieceTableSnapshots,
-} from '@singapor/core/document'
-import { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
-import { EditorPluginHost } from '@singapor/core/testing'
+} from '@singapore-editor/core/document'
+import {
+  styleForTreeSitterCapture,
+  treeSitterCapturesToEditorTokens,
+} from '@singapore-editor/core/syntax'
+import { EditorPluginHost } from '@singapore-editor/core/testing'
 import {
   createTreeSitterLanguagePlugin,
   createTreeSitterSyntaxPlugin,

@@ -1,18 +1,18 @@
-import type { BracketInfo } from '@singapor/core/syntax'
-import { collectBracketLevels } from '@singapor/core/editor'
+import type { BracketInfo } from '@singapore-editor/core/syntax'
+import { collectBracketLevels } from '@singapore-editor/core/editor'
 import {
   editorColorReference,
   firstEditorColor,
   registerEditorColor,
   type VirtualizedTextHighlightStyle,
-} from '@singapor/core/rendering'
+} from '@singapore-editor/core/rendering'
 import type {
   EditorPlugin,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 
 export type BracketColorsPluginOptions = {
   readonly enabled?: boolean

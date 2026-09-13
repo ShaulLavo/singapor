@@ -1,4 +1,7 @@
-import type { EditorViewContributionContext, EditorViewSnapshot } from '@singapor/core/extensions'
+import type {
+  EditorViewContributionContext,
+  EditorViewSnapshot,
+} from '@singapore-editor/core/extensions'
 import { describe, expect, it, vi } from 'vitest'
 
 import { LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE } from '../src/completion'

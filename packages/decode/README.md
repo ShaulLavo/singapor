@@ -1,12 +1,12 @@
-# @singapor/decode
+# @singapore-editor/decode
 
 Opt-in editor plugin that animates a file _writing itself_ when it opens — the text reveals as if
 it were being generated in front of you. The plugin's presence is the switch: include
 `createDecodePlugin(...)` in the editor's plugin list to turn it on, remove it to turn it off.
 
 ```ts
-import { createDecodePlugin } from '@singapor/decode'
-import '@singapor/decode/style.css'
+import { createDecodePlugin } from '@singapore-editor/decode'
+import '@singapore-editor/decode/style.css'
 
 createDecodePlugin({ mode: 'autoregressive' }) // or 'parallel'
 ```

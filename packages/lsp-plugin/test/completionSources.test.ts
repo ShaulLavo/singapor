@@ -1,5 +1,5 @@
-import type { DocumentSessionChange, TextEdit } from '@singapor/core/document'
-import { createEditorLanguageFeatureToken } from '@singapor/core/extensions'
+import type { DocumentSessionChange, TextEdit } from '@singapore-editor/core/document'
+import { createEditorLanguageFeatureToken } from '@singapore-editor/core/extensions'
 import type {
   EditorDisposable,
   EditorEditContributionContext,
@@ -7,8 +7,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import type { LspManagedTransport, LspTransportHandler } from '@singapor/lsp'
+} from '@singapore-editor/core/extensions'
+import type { LspManagedTransport, LspTransportHandler } from '@singapore-editor/lsp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 

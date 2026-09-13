@@ -7,8 +7,8 @@ import type {
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
+import { EDITOR_MINIMAP_FEATURE } from '@singapore-editor/core/extensions'
 import { MINIMAP_DECORATION_MERGE_LIMIT } from '../src/decorationMerge'
 import { createMinimapPlugin } from '../src/plugin'
 import { RenderMinimap } from '../src/types'

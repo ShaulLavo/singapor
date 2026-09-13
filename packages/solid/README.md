@@ -1,19 +1,19 @@
-# @singapor/solid
+# @singapore-editor/solid
 
-Solid bindings for `@singapor/core`.
+Solid bindings for `@singapore-editor/core`.
 
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/solid solid-js
+npm install @singapore-editor/core @singapore-editor/solid solid-js
 ```
 
 ## Usage
 
 ```tsx
-import { createEditor } from '@singapor/solid'
+import { createEditor } from '@singapore-editor/solid'
 import { onMount } from 'solid-js'
-import '@singapor/core/style.css'
+import '@singapore-editor/core/style.css'
 
 export function EditorPanel() {
   let host!: HTMLDivElement

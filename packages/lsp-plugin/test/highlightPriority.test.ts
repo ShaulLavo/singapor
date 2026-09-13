@@ -1,6 +1,6 @@
-import { SEMANTIC_TOKEN_Z_INDEX } from '@singapor/core/extensions'
-import { FIND_HIGHLIGHT_Z_INDEX } from '@singapor/find'
-import { BRACKET_COLOR_Z_INDEX } from '@singapor/scope-lines'
+import { SEMANTIC_TOKEN_Z_INDEX } from '@singapore-editor/core/extensions'
+import { FIND_HIGHLIGHT_Z_INDEX } from '@singapore-editor/find'
+import { BRACKET_COLOR_Z_INDEX } from '@singapore-editor/scope-lines'
 import { describe, expect, it } from 'vitest'
 
 import { DIAGNOSTIC_STYLES } from '../src/plugin.styles'

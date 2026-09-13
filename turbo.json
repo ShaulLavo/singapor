@@ -12,8 +12,8 @@
     "typecheck": {
       "dependsOn": ["^build", "build"]
     },
-    "@singapor/core#typecheck": {
-      "dependsOn": ["build", "@singapor/tree-sitter-languages#build"]
+    "@singapore-editor/core#typecheck": {
+      "dependsOn": ["build", "@singapore-editor/tree-sitter-languages#build"]
     },
     "lint": {},
     "format": {
@@ -23,8 +23,8 @@
     "test": {
       "dependsOn": ["^build", "build"]
     },
-    "@singapor/core#test": {
-      "dependsOn": ["build", "@singapor/tree-sitter-languages#build"]
+    "@singapore-editor/core#test": {
+      "dependsOn": ["build", "@singapore-editor/tree-sitter-languages#build"]
     }
   }
 }

@@ -1,5 +1,5 @@
-import type { EditorDisposable, EditorPlugin } from '@singapor/core/extensions'
-import type { LspWebSocketTransportOptions, LspWorkerLike } from '@singapor/lsp'
+import type { EditorDisposable, EditorPlugin } from '@singapore-editor/core/extensions'
+import type { LspWebSocketTransportOptions, LspWorkerLike } from '@singapore-editor/lsp'
 import type {
   LanguageServerConnectionContext,
   LanguageServerDefinitionTarget,
@@ -11,7 +11,7 @@ import type {
   LanguageServerReferencesResult,
   LanguageServerSemanticTokensOptions,
   LanguageServerStatus,
-} from '@singapor/lsp-plugin'
+} from '@singapore-editor/lsp-plugin'
 import type ts from 'typescript'
 import type * as lsp from 'vscode-languageserver-protocol'
 
@@ -44,7 +44,7 @@ export type TypeScriptLspPluginOptions = {
   readonly timeoutMs?: number
   /**
    * Merged over `defaultClientCapabilities()`. Build a semantic-tokens block with
-   * `semanticTokensClientCapability()` from `@singapor/lsp` rather than by hand — the worker
+   * `semanticTokensClientCapability()` from `@singapore-editor/lsp` rather than by hand — the worker
    * advertises `semanticTokensProvider`, but a server only answers a client that asked.
    */
   readonly capabilities?: lsp.ClientCapabilities

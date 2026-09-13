@@ -2,8 +2,11 @@ import { readFile } from 'node:fs/promises'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { Language, Parser, Query } from 'web-tree-sitter'
 
-import type { EditorSyntaxCapture, EditorToken } from '@singapor/core/syntax'
-import { styleForTreeSitterCapture, treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
+import type { EditorSyntaxCapture, EditorToken } from '@singapore-editor/core/syntax'
+import {
+  styleForTreeSitterCapture,
+  treeSitterCapturesToEditorTokens,
+} from '@singapore-editor/core/syntax'
 
 /**
  * Capture-to-token conversion against the grammars and queries this package actually ships.

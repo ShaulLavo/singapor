@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { applyBatchToPieceTable, createPieceTableSnapshot } from '@singapor/core/document'
+import { applyBatchToPieceTable, createPieceTableSnapshot } from '@singapore-editor/core/document'
 import {
   createTreeSitterSourceDescriptor,
   readTreeSitterInputRange,

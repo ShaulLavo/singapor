@@ -3,8 +3,8 @@ import {
   createStringTextSnapshot,
   type DocumentSessionChange,
   type DocumentSyncPoint,
-} from '@singapor/core/document'
-import { projectDecorationRangeThroughEdits } from '@singapor/core/extensions'
+} from '@singapore-editor/core/document'
+import { projectDecorationRangeThroughEdits } from '@singapore-editor/core/extensions'
 import type {
   EditorCapabilityContribution,
   EditorCapabilityContributionContext,
@@ -26,13 +26,13 @@ import type {
   EditorViewContributionProvider,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import {
   EDITOR_FIND_FEATURE,
   EDITOR_FIND_FEATURE_ID,
   EDITOR_MINIMAP_FEATURE,
-} from '@singapor/core/extensions'
-import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
+} from '@singapore-editor/core/extensions'
+import type { VirtualizedTextHighlightStyle } from '@singapore-editor/core/rendering'
 import {
   EditorFindController,
   type EditorFindHost,

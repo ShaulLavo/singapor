@@ -11,7 +11,7 @@ import {
   type SelectionAffinity,
   type TextEdit,
   type TextSnapshot,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import {
   EditorFindController,
   type EditorFindHost,

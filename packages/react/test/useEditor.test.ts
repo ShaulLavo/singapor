@@ -1,11 +1,15 @@
-import { Editor, observeEditorMountTiming, type EditorHighlightResult } from '@singapor/core/editor'
-import type { EditorInitialPaintEvent, EditorPlugin } from '@singapor/core/extensions'
+import {
+  Editor,
+  observeEditorMountTiming,
+  type EditorHighlightResult,
+} from '@singapore-editor/core/editor'
+import type { EditorInitialPaintEvent, EditorPlugin } from '@singapore-editor/core/extensions'
 import {
   createDocumentSession,
   createEditorTextBuffer,
   createEditorViewSession,
-} from '@singapor/core/document'
-import type { EditorResolvedSelection } from '@singapor/core/extensions'
+} from '@singapore-editor/core/document'
+import type { EditorResolvedSelection } from '@singapore-editor/core/extensions'
 import { act, createElement, StrictMode, useLayoutEffect, type ReactElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'

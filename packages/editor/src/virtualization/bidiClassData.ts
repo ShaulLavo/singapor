@@ -1,6 +1,6 @@
 /** Generated from Unicode 17.0.0 DerivedBidiClass.txt.
  * Source: https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedBidiClass.txt
- * License: scripts/unicode/LICENSE.txt (published with @singapor/core).
+ * License: scripts/unicode/LICENSE.txt (published with @singapore-editor/core).
  * Run `bun run bidi:generate` to update.
  */
 export const RTL_BIDI_CHARACTER =

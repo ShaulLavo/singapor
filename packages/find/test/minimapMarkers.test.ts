@@ -4,9 +4,9 @@ import type {
   EditorMinimapFeature,
   EditorViewContributionContext,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import { EDITOR_MINIMAP_FEATURE } from '@singapor/core/extensions'
-import type { VirtualizedTextHighlightStyle } from '@singapor/core/rendering'
+} from '@singapore-editor/core/extensions'
+import { EDITOR_MINIMAP_FEATURE } from '@singapore-editor/core/extensions'
+import type { VirtualizedTextHighlightStyle } from '@singapore-editor/core/rendering'
 import { createEditorFindContributionProviders } from '../src'
 
 const MINIMAP_MATCH_SOURCE = 'editor-find-test-find-match'

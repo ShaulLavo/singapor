@@ -1,6 +1,6 @@
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import type { DocumentSessionChange } from '@singapor/core'
+import type { DocumentSessionChange } from '@singapore-editor/core'
 
 /**
  * What a single edit means for the signature widget.

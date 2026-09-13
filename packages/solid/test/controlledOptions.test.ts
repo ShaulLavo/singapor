@@ -1,6 +1,6 @@
-import { EDITOR_OPTION_DESCRIPTORS, type EditorControlledOptionName } from '@singapor/core'
-import { Editor, type EditorScrollPosition } from '@singapor/core/editor'
-import type { EditorTheme } from '@singapor/core/rendering'
+import { EDITOR_OPTION_DESCRIPTORS, type EditorControlledOptionName } from '@singapore-editor/core'
+import { Editor, type EditorScrollPosition } from '@singapore-editor/core/editor'
+import type { EditorTheme } from '@singapore-editor/core/rendering'
 import { createReaction, createRoot, createSignal, getListener, type Accessor } from 'solid-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {

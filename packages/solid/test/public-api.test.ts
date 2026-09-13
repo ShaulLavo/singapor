@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createEditor, type SolidEditorController } from '@singapor/solid'
+import { createEditor, type SolidEditorController } from '@singapore-editor/solid'
 
 describe('public API facade', () => {
   it('exports the Solid editor primitive from the package root', () => {

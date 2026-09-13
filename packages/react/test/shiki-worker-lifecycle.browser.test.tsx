@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import githubDarkTheme from '@shikijs/themes/github-dark'
 import typeScriptWasmUrl from 'tree-sitter-typescript/tree-sitter-typescript.wasm?url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createShikiHighlighterPlugin } from '@singapor/core/shiki'
+import { createShikiHighlighterPlugin } from '@singapore-editor/core/shiki'
 
 import { EditorHost, useEditor } from '../src'
 import { createTreeSitterLanguagePlugin } from '../../tree-sitter/src/index'

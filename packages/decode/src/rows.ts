@@ -3,7 +3,7 @@ import type {
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
   EditorVisibleChunkSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 
 /** Class on the scroll element that hides the real rows until each is revealed. */
 export const ACTIVE_CLASS = 'editor-decode-active'

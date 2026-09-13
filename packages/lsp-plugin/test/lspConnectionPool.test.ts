@@ -1,4 +1,4 @@
-import type { LspManagedTransport, LspTransportHandler } from '@singapor/lsp'
+import type { LspManagedTransport, LspTransportHandler } from '@singapore-editor/lsp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {

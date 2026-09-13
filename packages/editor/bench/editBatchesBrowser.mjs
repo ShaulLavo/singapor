@@ -1,5 +1,5 @@
-import { Editor } from '@singapor/core/editor'
-import '@singapor/core/style.css'
+import { Editor } from '@singapore-editor/core/editor'
+import '@singapore-editor/core/style.css'
 import { generateFixture } from '../../../examples/stress/src/fixtures.ts'
 import { inspectProjections, installProjections } from './editBatchProjections.mjs'
 

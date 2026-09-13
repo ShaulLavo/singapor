@@ -56,8 +56,12 @@ export {
   type TreeSitterSelectionCommandResult,
   type TreeSitterSelectionExpansionState,
 } from './structuralSelection'
-import type { EditorSyntaxProvider } from '@singapor/core/syntax'
-import type { EditorDisposable, EditorPlugin, EditorPluginContext } from '@singapor/core/extensions'
+import type { EditorSyntaxProvider } from '@singapore-editor/core/syntax'
+import type {
+  EditorDisposable,
+  EditorPlugin,
+  EditorPluginContext,
+} from '@singapore-editor/core/extensions'
 import type {
   TreeSitterLanguageAssets,
   TreeSitterLanguageContribution,
@@ -106,7 +110,9 @@ type TreeSitterLanguageReference = {
   references: number
 }
 
-const DEFAULT_TREE_SITTER_PROVIDER_KEY = Symbol.for('@singapor/tree-sitter/default-provider')
+const DEFAULT_TREE_SITTER_PROVIDER_KEY = Symbol.for(
+  '@singapore-editor/tree-sitter/default-provider',
+)
 
 export const createTreeSitterSyntaxProvider = (
   options: TreeSitterSyntaxProviderOptions = {},

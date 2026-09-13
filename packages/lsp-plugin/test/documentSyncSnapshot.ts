@@ -1,5 +1,5 @@
-import type { DocumentSyncSegment } from '@singapor/core/document'
-import type { EditorViewSnapshot } from '@singapor/core/extensions'
+import type { DocumentSyncSegment } from '@singapore-editor/core/document'
+import type { EditorViewSnapshot } from '@singapore-editor/core/extensions'
 
 const TEST_DOCUMENT_SYNC_SEGMENT = Object.freeze({}) as DocumentSyncSegment
 const keyedSegments = new Map<string, DocumentSyncSegment>()

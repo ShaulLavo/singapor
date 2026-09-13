@@ -1,15 +1,15 @@
-import type { DocumentSessionChange, TextSnapshot } from '@singapor/core/document'
-import { createStringTextSnapshot } from '@singapor/core/document'
-import type { EditorTheme, VirtualizedFoldMarker } from '@singapor/core/rendering'
-import type { EditorToken } from '@singapor/core/syntax'
+import type { DocumentSessionChange, TextSnapshot } from '@singapore-editor/core/document'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import type { EditorTheme, VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
+import type { EditorToken } from '@singapore-editor/core/syntax'
 import type {
   EditorPlugin,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
-import { EditorSecondaryTextView } from '@singapor/core/secondary-views'
+} from '@singapore-editor/core/extensions'
+import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
 import './style.css'
 
 export type StickyScrollPluginOptions = {

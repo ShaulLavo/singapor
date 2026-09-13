@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import * as core from '@singapor/core'
+import * as core from '@singapore-editor/core'
 import {
   acquireDocumentMutationLease,
   beginReverseDocumentTransactionSequence,
@@ -40,7 +40,7 @@ import {
   type TextCharacterClass,
   type TextEdit,
   type TextOffsetRange,
-} from '@singapor/core/document'
+} from '@singapore-editor/core/document'
 import {
   Editor,
   type EditorInitialPaintEvent as EditorInitialPaintEventFromEditor,
@@ -49,7 +49,7 @@ import {
   type EditorSetSelectionOptions,
   type EditorViewSnapshotJSON as EditorViewSnapshotJSONFromEditor,
   type EditorVisibleSnapshotJSON as EditorVisibleSnapshotJSONFromEditor,
-} from '@singapor/core/editor'
+} from '@singapore-editor/core/editor'
 import {
   createEditorCapabilityToken,
   createEditorLanguageFeatureToken,
@@ -96,28 +96,31 @@ import {
   type EditorViewContributionContext,
   projectDecorationRangeThroughEdits,
   reindentEditsForRanges,
-} from '@singapor/core/extensions'
-import { applyEditorTheme, type EditorTheme } from '@singapor/core/rendering'
+} from '@singapore-editor/core/extensions'
+import { applyEditorTheme, type EditorTheme } from '@singapore-editor/core/rendering'
 import {
   EditorSecondaryTextView,
   EditorSecondaryViewScheduler,
-} from '@singapor/core/secondary-views'
-import { createEmptySyntaxResult, treeSitterCapturesToEditorTokens } from '@singapor/core/syntax'
-import { EditorPluginHost } from '@singapor/core/testing'
-import { debugPieceTable } from '@singapor/core/debug'
+} from '@singapore-editor/core/secondary-views'
+import {
+  createEmptySyntaxResult,
+  treeSitterCapturesToEditorTokens,
+} from '@singapore-editor/core/syntax'
+import { EditorPluginHost } from '@singapore-editor/core/testing'
+import { debugPieceTable } from '@singapore-editor/core/debug'
 import {
   createSelectionSet,
   type EditorSelectionContributionContext,
   type SelectionSet,
   VirtualizedTextView,
-} from '@singapor/core/internal'
+} from '@singapore-editor/core/internal'
 import {
   createMergeConflictDocumentText,
   EDITOR_MERGE_CONFLICT_FEATURE,
   parseMergeConflicts,
   type EditorState,
   type MergeConflictRegion,
-} from '@singapor/core'
+} from '@singapore-editor/core'
 
 /** The keys a consumer cannot leave out, so that a field turning optional shows up as a break. */
 type RequiredFields<T> = {
@@ -442,7 +445,7 @@ describe('public API facade', () => {
   })
 
   it('exports every field a selection set a workspace package hands back must carry', () => {
-    // @singapor/tree-sitter builds whole sets and returns them for the editor to adopt, so a field
+    // @singapore-editor/tree-sitter builds whole sets and returns them for the editor to adopt, so a field
     // that is not optional here is one its own build has to fill in.
     const required: RequiredFields<SelectionSet<number>>[] = ['selections', 'normalized']
     // A hand-assembled set may name no last-added cursor — every reader goes through

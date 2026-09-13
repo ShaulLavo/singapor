@@ -2,7 +2,7 @@ import {
   arrayLspLineStarts,
   type LspTextDocumentSnapshot,
   type LspTextSnapshot,
-} from '@singapor/lsp'
+} from '@singapore-editor/lsp'
 
 /** A document whose full text cannot be read, so a test fails if a path rescans it. */
 export function snapshotDocument(text: string): LspTextDocumentSnapshot {

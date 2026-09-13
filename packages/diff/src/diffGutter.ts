@@ -1,4 +1,7 @@
-import type { EditorGutterContribution, EditorGutterRowContext } from '@singapor/core/extensions'
+import type {
+  EditorGutterContribution,
+  EditorGutterRowContext,
+} from '@singapore-editor/core/extensions'
 import {
   diffGutterIndicatorText,
   diffGutterLaneTone,

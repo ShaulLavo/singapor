@@ -1,17 +1,17 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Editor } from '@singapor/core/editor'
-import { VirtualizedTextView } from '@singapor/core/internal'
-import type { VirtualizedFoldMarker } from '@singapor/core/rendering'
-import type { EditorToken } from '@singapor/core/syntax'
+import { Editor } from '@singapore-editor/core/editor'
+import { VirtualizedTextView } from '@singapore-editor/core/internal'
+import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
+import type { EditorToken } from '@singapore-editor/core/syntax'
 import type {
   EditorPluginContext,
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
   EditorVisibleRowSnapshot,
-} from '@singapor/core/extensions'
-import { EditorSecondaryTextView } from '@singapor/core/secondary-views'
-import { resetEditorInstanceCount, setHighlightRegistry } from '@singapor/core/testing'
+} from '@singapore-editor/core/extensions'
+import { EditorSecondaryTextView } from '@singapore-editor/core/secondary-views'
+import { resetEditorInstanceCount, setHighlightRegistry } from '@singapore-editor/core/testing'
 import { createStickyScrollPlugin } from '../src/stickyScroll'
 
 const LINES = [

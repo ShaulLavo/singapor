@@ -1,4 +1,4 @@
-import type { LspRequestOptions, LspWorkspace } from '@singapor/lsp'
+import type { LspRequestOptions, LspWorkspace } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import type { AcquiredLanguageServerLane } from './lane'

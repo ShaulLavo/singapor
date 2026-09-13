@@ -1,15 +1,15 @@
-import type { EditorTheme } from '@singapor/core/rendering'
+import type { EditorTheme } from '@singapore-editor/core/rendering'
 import type {
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
-} from '@singapor/core/extensions'
+} from '@singapore-editor/core/extensions'
 import {
   lspPositionToOffsetInSnapshot,
   offsetToLspPositionInSnapshot,
   type LspRequestOptions,
   type LspTextDocumentSnapshot,
-} from '@singapor/lsp'
+} from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'

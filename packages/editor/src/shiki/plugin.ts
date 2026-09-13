@@ -42,7 +42,9 @@ export type ShikiHighlighterPluginOptions = {
 }
 
 const DEFAULT_THEME = 'github-dark'
-const DEFAULT_SHIKI_WORKER_OWNER_KEY = Symbol.for('@singapor/core/shiki/default-worker-owner')
+const DEFAULT_SHIKI_WORKER_OWNER_KEY = Symbol.for(
+  '@singapore-editor/core/shiki/default-worker-owner',
+)
 
 const DEFAULT_LANGUAGE_MAP: ShikiLanguageMap = {
   css: 'css',

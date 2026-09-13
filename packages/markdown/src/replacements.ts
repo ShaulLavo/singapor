@@ -1,5 +1,5 @@
-import type { EditorSyntaxCapture } from '@singapor/core/syntax'
-import type { InlineReplacementSpec } from '@singapor/core/rendering'
+import type { EditorSyntaxCapture } from '@singapore-editor/core/syntax'
+import type { InlineReplacementSpec } from '@singapore-editor/core/rendering'
 
 /**
  * Turns Tree-sitter markdown captures into the inline replacements a live-preview view renders.

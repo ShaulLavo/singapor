@@ -2,8 +2,8 @@ import type {
   EditorGutterContribution,
   EditorGutterRowContext,
   EditorPlugin,
-} from '@singapor/core/extensions'
-import type { VirtualizedFoldMarker } from '@singapor/core/rendering'
+} from '@singapore-editor/core/extensions'
+import type { VirtualizedFoldMarker } from '@singapore-editor/core/rendering'
 import { addClassName, normalizeNonNegativeNumber, setElementHidden } from './utils'
 import './foldGutter.css'
 

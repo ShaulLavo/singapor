@@ -1,5 +1,5 @@
-import { createStringTextSnapshot } from '@singapor/core/document'
-import { arrayLspLineStarts, type LspTextDocumentSnapshot } from '@singapor/lsp'
+import { createStringTextSnapshot } from '@singapore-editor/core/document'
+import { arrayLspLineStarts, type LspTextDocumentSnapshot } from '@singapore-editor/lsp'
 import { describe, expect, it } from 'vitest'
 import { diagnosticHighlightGroups, summarizeDiagnostics } from '../src'
 import type * as lsp from 'vscode-languageserver-protocol'

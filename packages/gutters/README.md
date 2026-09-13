@@ -1,20 +1,20 @@
-# @singapor/gutters
+# @singapore-editor/gutters
 
-Line-number and fold-gutter plugins for `@singapor/core`.
+Line-number and fold-gutter plugins for `@singapore-editor/core`.
 
 ## Install
 
 ```sh
-npm install @singapor/core @singapor/gutters
+npm install @singapore-editor/core @singapore-editor/gutters
 ```
 
 ## Usage
 
 ```ts
-import { Editor } from '@singapor/core/editor'
-import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapor/gutters'
-import '@singapor/core/style.css'
-import '@singapor/gutters/style.css'
+import { Editor } from '@singapore-editor/core/editor'
+import { createFoldGutterPlugin, createLineGutterPlugin } from '@singapore-editor/gutters'
+import '@singapore-editor/core/style.css'
+import '@singapore-editor/gutters/style.css'
 
 const editor = new Editor(document.querySelector('#editor')!, {
   plugins: [createLineGutterPlugin(), createFoldGutterPlugin()],
@@ -42,4 +42,4 @@ snapshots because restoring them would require the source fold marker.
 - `createFoldGutterPlugin` adds fold controls for syntax fold markers.
 - `createLineGutterContribution` and `createFoldGutterContribution` expose the lower-level gutter
   contributions.
-- `@singapor/gutters/style.css` imports both gutter styles.
+- `@singapore-editor/gutters/style.css` imports both gutter styles.

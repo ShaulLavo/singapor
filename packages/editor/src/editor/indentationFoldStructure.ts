@@ -144,7 +144,13 @@ function branch(
   left: FoldBlockTree,
   right: FoldBlockTree,
   compare: CompareFoldLines,
+  previous?: Extract<FoldBlockTree, { kind: 'branch' }>,
 ): FoldBlockTree {
+  // Stable line references keep their order when a block is replaced.
+  const maxEnd =
+    previous && left.maxEnd === previous.left.maxEnd && right.maxEnd === previous.right.maxEnd
+      ? previous.maxEnd
+      : maximumFoldLine(left.maxEnd, right.maxEnd, compare)
   return {
     kind: 'branch',
     left,
@@ -153,7 +159,7 @@ function branch(
     length: left.length + right.length,
     count: left.count + right.count,
     leaves: left.leaves + right.leaves,
-    maxEnd: maximumFoldLine(left.maxEnd, right.maxEnd, compare),
+    maxEnd,
   }
 }
 
@@ -219,11 +225,12 @@ export function updateFoldBlockTree(
 ): FoldBlockTree {
   if (tree.kind === 'leaf') return foldBlockLeaf(block)
   if (index < tree.left.leaves)
-    return branch(updateFoldBlockTree(tree.left, index, block, compare), tree.right, compare)
+    return branch(updateFoldBlockTree(tree.left, index, block, compare), tree.right, compare, tree)
   return branch(
     tree.left,
     updateFoldBlockTree(tree.right, index - tree.left.leaves, block, compare),
     compare,
+    tree,
   )
 }
 

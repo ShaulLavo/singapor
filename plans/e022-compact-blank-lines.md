@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P2
 - Effort: M
-- Dependencies: [E001](e001-stress-fixtures.md)
+- Dependencies: [E001](../examples/stress/README.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
 ## Outcome
@@ -77,7 +77,7 @@ Decide whether mirrored compaction improves navigation only after comparing the 
 
 ## Steps
 
-1. Add compact-layout scenarios to [E001](e001-stress-fixtures.md)'s fixtures and record the normal-layout baseline.
+1. Add compact-layout scenarios to [E001](../examples/stress/README.md)'s fixtures and record the normal-layout baseline.
    Include alternating empty lines, long blank runs, huge files, folds, wraps, injected rows, and edits near the top.
 2. Build prototype A and route all vertical mapping through one row geometry contract.
    Prove a click, caret rectangle, and virtualized row agree before benchmarking it.

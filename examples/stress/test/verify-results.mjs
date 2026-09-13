@@ -48,6 +48,15 @@ expectRejected(() => compare(controls[0], hash, limits), 'fixture hashes')
 const options = structuredClone(rerun)
 options.config.diagnostics = !options.config.diagnostics
 expectRejected(() => compare(controls[0], options, limits), 'feature options')
+const missingChurnMemory = structuredClone(rerun)
+delete churnSample(missingChurnMemory).memory.postChurn
+expectRejected(() => validateResult(missingChurnMemory), 'missing post-churn memory')
+const partialMemory = structuredClone(rerun)
+churnSample(partialMemory).memory = { status: 'unsupported', reason: 'deliberate missing sample' }
+expectRejected(() => compare(controls[0], partialMemory, limits), 'partial memory coverage')
+const missingRetention = structuredClone(rerun)
+delete missingRetention.samples[0].cleanup.retainedObjects
+expectRejected(() => validateResult(missingRetention), 'missing retained-object count')
 
 console.log(
   JSON.stringify(
@@ -76,6 +85,9 @@ console.log(
       missingSamplesRejected: true,
       fixtureHashesRejected: true,
       differentOptionsRejected: true,
+      missingPostChurnMemoryRejected: true,
+      partialMemoryCoverageRejected: true,
+      missingRetainedObjectsRejected: true,
       initialControlCheck: initialControlCheck(),
       unchangedComparison: {
         failedLatencyLimits: comparison.metrics.filter((metric) => !metric.passed),
@@ -86,6 +98,14 @@ console.log(
     2,
   ),
 )
+
+function churnSample(result) {
+  const sample = result.samples.find(
+    (entry) => entry.fixture === 'ordinary' && entry.scenario === 'churn' && entry.state === 'cold',
+  )
+  if (!sample) fail('Memory probes require an ordinary cold churn sample')
+  return sample
+}
 
 function initialControlCheck() {
   if (controls.length < 4) return null

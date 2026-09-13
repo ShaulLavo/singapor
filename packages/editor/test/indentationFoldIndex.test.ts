@@ -151,7 +151,15 @@ describe('snapshot indentation fold index', () => {
     }).complete()
     const from = text.indexOf('body', text.length / 2) + 2
     const value = edit(previous, from, from, 'long')
+    const position = value['position'].bind(value)
+    let positions = 0
+    value['position'] = (reference) => {
+      positions += 1
+      return position(reference)
+    }
     expect(value.step()).toBe(true)
+    expect(positions).toBe(0)
+    value['position'] = position
     expect(value.diagnostics.rowsRead).toBe(1)
     expect(value.diagnostics.propagationRows).toBe(0)
     expect(value.diagnostics.outcome).toBe('reused')
@@ -539,7 +547,12 @@ describe('snapshot indentation fold index', () => {
       const replacement = replacements[Math.floor(random() * replacements.length)]!
       const value = edit(previous, from, to, replacement).complete()
       text = text.slice(0, from) + replacement + text.slice(to)
-      expect(value.all(), `edit ${iteration}: ${from}-${to} ${replacement}`).toEqual(oracle(text))
+      const expected = oracle(text)
+      expect(value.all(), `edit ${iteration}: ${from}-${to} ${replacement}`).toEqual(expected)
+      const row = value.snapshot.lineAt(from)
+      expect(value.ranges(row, row)).toEqual(
+        expected.filter((fold) => fold.startLine <= row && fold.endLine >= row),
+      )
       previous = value
     }
   })

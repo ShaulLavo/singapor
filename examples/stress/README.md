@@ -100,6 +100,9 @@ separately for heap bytes, DOM nodes, listeners, tracked objects, and live post-
 The comparator rejects missing/duplicate samples, invalid timings, fixture hash differences,
 different browser/hardware/features, and missing calibration coverage. Tests prove unchanged
 comparison, slowdown detection, deterministic fixtures, real Unicode edits, and mixed endings.
+Memory capability must match for every fixture, scenario, state, and repetition. Supported churn
+samples require post-churn memory and retained-object counts; dropping one measurement cannot
+hide a retention regression. Unsupported memory remains explicit and requires a reason.
 `--verify-cancellation` cancels a running asynchronous churn scenario and checks released resources.
 After recording controls, `bun run --cwd examples/stress proof` replays the checked comparison,
 verifies that limits derive from those controls, and proves rejection of missing samples, changed
@@ -149,6 +152,43 @@ also records retention immediately before that fence, when disposal RPCs may sti
 The final artifact records fixture hashes, browser and
 hardware, source identity, asset requests, logs, diagnostics, and raw timing samples. It rejects
 source changes during a run and writes the output only after every sample succeeds.
+
+### Snapshot indentation folding
+
+E034 adds `--fallback-cases` to exercise folding and 36 trusted keyboard inputs on the seeded
+500,000-line document. The [implementation report](../../docs/performance/e034-snapshot-indentation-folds.md)
+separates production latency from diagnostic work counts, ready preparation, and cold fold commands.
+
+Freeze matching source and built core packages before comparing them. The Linux experiment runner
+defaults to twelve blocks, with all six baseline/control/candidate orders twice. Each arm records five
+documents for each direct/prepared and cold/warm group. It starts no server and refuses existing
+capture outputs. Keep source and built dependencies unchanged until capture finishes.
+
+Use an isolated checkout for a long comparison if other work may change the repository.
+`--core-directory` freezes the selected core; the source hash still covers other workspace packages.
+Copy their built outputs and point workspace dependency links at the isolated checkout too.
+
+```sh
+node examples/stress/fallback-validation-design.mjs /work/tmp/e034-design.json /work/tmp/e034-captures
+node examples/stress/fallback-experiment.mjs --design /work/tmp/e034-design.json \
+  --baseline-core /work/tmp/e034-baseline --candidate-core /work/tmp/e034-candidate \
+  --cpu-affinity 8,10,12,14
+node examples/stress/fallback-validation.mjs /work/tmp/e034-design.json /work/tmp/e034-report.json
+```
+
+For a larger declaration, append its block count after the capture directory, for example `24`.
+The count must be an integer of at least twelve and divisible by six. The generator, runner, and
+analyzer require every arm order to occur equally often. Choose the count before capture and use
+new output paths for each declaration; changing the count does not relax any acceptance threshold.
+
+Select available physical cores on the measurement machine before declaring the experiment.
+The analyzer validates complete samples, matching artifacts and environments, text/fold/disposal
+evidence, and input coverage. It resamples whole paired blocks and reports approximate, simultaneous
+one-sided bounds for p95 input-to-change and initial text callbacks. Acceptance requires every primary
+upper bound at or below zero and no detected unchanged-control drift. An unresolved result exits
+nonzero. A clock-resolution envelope is explanatory and does not relax that requirement.
+Frame and screenshot-completion times remain separate secondary measurements. The older
+`fallback-compare.mjs` prints descriptive summaries; it is not the acceptance validator.
 
 ## Hidden retained views
 

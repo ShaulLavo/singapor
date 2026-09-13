@@ -1,10 +1,17 @@
 # E034 snapshot indentation folds
 
-E034 is implemented with performance validation pending. The saved browser measurements below
-cover the original implementation committed as `33e632a`, before its review corrections.
-They establish reduced repeated work, but do not establish the required absence of p95 input
-and first-text regressions. The [executable plan](../../plans/e034-snapshot-indentation-folds.md)
-tracks the remaining acceptance checks.
+E034 is completed by user acceptance on 2026-09-13. The user accepted the implementation with
+the measured performance limitations below, including the unresolved warm prepared input result.
+Its p95 is 0.9 ms against 1.0 ms for the pooled controls, with an upper difference bound of +0.1 ms.
+Seven of eight primary checks pass. The recorded statistical verdict and thresholds remain unchanged.
+
+The [completion results](#completion-validation) cover all 72 captures, separate preparation costs,
+and diagnostic evidence. The execution plan has been removed. Earlier measurements below cover
+the original `33e632a` implementation and review
+corrections. Those measurements and the first isolated study remain separate from the confirmation.
+
+[Archive replay](e034-completion-replay.json) verified all 939 manifest file hashes and reproduced
+both study reports and the direct-input profile analysis byte for byte.
 
 Snapshot indexing removes repeated whole-document scans from fallback folding.
 The E034 browser comparison measures fallback folding on the same 500,000-line document before
@@ -61,7 +68,7 @@ paints text and markers together. A same-line edit preserves the in-place text p
 ordering. Publication skips a separate marker pass while that edit is painting; a changed fold
 map queues the normal render.
 
-## Fixture and measurements
+## Original implementation measurements
 
 `--fallback-cases` adds fixed indentation and explicit regions to the existing seeded E003
 fixture. Top-level sections start every 5,000 rows. Nested headers occur every 500 rows, and
@@ -370,4 +377,200 @@ taskset -c 8,10,12,14 bun run --cwd examples/stress bench:first-paint \
 
 The focused fold and rendering regressions, index tests, prepared-document and scheduler checks
 pass. Core build, typecheck, scoped lint, workspace format checks, architecture health, and the backlog verifier pass.
-The original production p95 evidence remains inconclusive, so E034 retains its executable plan.
+Those original production p95 records remain inconclusive and do not substitute for the new
+completion experiment.
+
+## Completion validation
+
+The confirmation completed all 24 independent blocks: 72 browser captures, 1,440 recorded
+documents, and 51,840 input events. The [confirmation analysis](e034-completion-analysis.json)
+reports seven passing primary upper bounds and one unresolved result. Warm prepared input has
+difference bounds from -0.1 to +0.1 ms. Warm direct input passes with an upper bound of zero.
+No primary endpoint demonstrates a regression, and the unchanged controls show no detected
+systematic drift. These findings do not satisfy the declared requirement that all eight upper
+bounds pass within one study. The user accepted completion with this unresolved result on 2026-09-13.
+
+The baseline is `88cd55da61e895542cfe248082221cf992be74e5`. The candidate is
+`4146ab67e84f0bdae6be3d8e8e0f718406998dc3` with `candidate-acceptance.patch`.
+The [evidence archive](e034-completion-evidence.tar.gz) retains raw captures, declarations, source
+and build proofs, diagnostics, verification records, and replay instructions. Its reports predate
+the user acceptance and retain the open status recorded then. Earlier experiments remain in their
+own directories. Frozen build directories are excluded from the archive.
+
+### Completed confirmation
+
+`confirmation-design.json` was preregistered at `2026-09-12T18:39:46.132Z`, with SHA-256
+`ba528c9dcfe851306c3eb355828bf170e196708b1fe716089daf33b436a7b2a0`.
+The fixed protocol kept the same candidate, baseline, eight primary endpoints, and thresholds.
+All observations were fresh. No earlier captures or endpoint passes were pooled into the analysis.
+Acceptance was evaluated after all 72 captures. The declared protocol permits no extension or
+repeat of this unchanged candidate after the inconclusive result.
+
+All values below are milliseconds. The difference is candidate p95 minus pooled control p95.
+Each group contains 120 recorded documents and 4,320 input events per arm. The input measurement
+ends at `onChange`; the text callback records the public initial paint event.
+
+| Attachment | Metric | Pooled controls p95 | Candidate p95 | Difference | Lower bound | Upper bound |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Direct, cold | Input to onChange | 1.5 | 1.4 | -0.1 | -0.1 | 0.0 |
+| Direct, cold | Text callback | 58.6 | 21.5 | -37.1 | -37.4 | -36.3 |
+| Direct, warm | Input to onChange | 1.0 | 0.9 | -0.1 | -0.1 | 0.0 |
+| Direct, warm | Text callback | 39.2 | 8.9 | -30.3 | -30.6 | -29.6 |
+| Prepared, cold | Input to onChange | 1.5 | 1.5 | 0.0 | -0.1 | 0.0 |
+| Prepared, cold | Text callback | 18.6 | 11.8 | -6.8 | -7.0 | -6.7 |
+| Prepared, warm | Input to onChange | 1.0 | 0.9 | -0.1 | -0.1 | +0.1 |
+| Prepared, warm | Text callback | 8.5 | 3.1 | -5.4 | -5.6 | -5.2 |
+
+Each block ran baseline, unchanged control, and candidate in separate Chromium processes.
+All six orders occurred four times. The analyzer used 32,768 seeded resamples of whole paired
+blocks, keeping warm documents and their input events together. Bonferroni adjustment across
+the eight primary endpoints gives nominal simultaneous 95% coverage for the upper bounds, and
+separately for the lower bounds. These percentile-bootstrap bounds are approximate with 24
+independent blocks and a tail estimate. Individual keys are not independent experimental samples.
+
+The declared statistical gate requires every primary upper bound at or below zero. The fixed 1e-7 ms epsilon handles
+floating-point subtraction only. The observed 0.1 ms clock grid and separate 0.2 ms quantization
+envelope do not permit a latency regression. The threshold was not changed after capture.
+Each study has its own nominal bound family, with no joint 95% coverage claim across studies.
+
+The secondary frame-callback metric is slower in both cold groups. Direct p95 rises from 10.7 to
+15.0 ms, with difference bounds +4.1 to +4.5 ms. Prepared p95 rises from 10.7 to 14.5 ms, with
+bounds +3.5 to +4.1 ms. Both warm frame-callback groups improve. Screenshot-completion upper
+bounds improve in all four groups. Frame callbacks and screenshots include scheduling or capture
+delay, and neither proves physical display presentation. These secondary measurements remain
+separate from the declared primary acceptance rule.
+
+### Preparation, commands, and memory
+
+The [confirmation costs](e034-completion-costs.json) record the following descriptive p95 costs
+in milliseconds, using 120 samples per cell. These costs have no separate confidence bounds.
+Preparation includes buffer creation and completes before the prepared attachment timer starts.
+Direct attachment has no preparation stage. The input workload executes its first fold command
+before typing, so it measures edits of a ready index rather than input during initial discovery.
+
+| Attachment | Cost | Baseline p95 | Control p95 | Candidate p95 |
+| --- | --- | ---: | ---: | ---: |
+| Direct, cold | First fold command | 83.2 | 83.2 | 127.1 |
+| Direct, cold | Fold-all | 6.4 | 6.4 | 9.4 |
+| Direct, warm | First fold command | 69.3 | 69.4 | 120.0 |
+| Direct, warm | Fold-all | 5.2 | 5.2 | 8.1 |
+| Prepared, cold | Preparation | 122.1 | 122.3 | 153.1 |
+| Prepared, cold | First fold command | 2.4 | 2.3 | 1.7 |
+| Prepared, cold | Fold-all | 6.4 | 6.4 | 9.3 |
+| Prepared, warm | Preparation | 102.1 | 102.3 | 144.0 |
+| Prepared, warm | First fold command | 1.4 | 1.4 | 0.9 |
+| Prepared, warm | Fold-all | 5.3 | 5.3 | 8.0 |
+
+Buffer creation p95 ranges from 32.4 to 38.7 ms in the baseline groups and from 6.0 to 7.0 ms
+in the candidate. Ready preparation and direct first-command discovery still cost more, as does
+fold-all. The faster attachment callback does not remove those costs.
+
+The following cells show initial → edited memory p95 in MiB. Each sample sums JavaScript
+`usedSize + backingStorageSize` after forced collection. These process-level values include
+benchmark reference strings and editor storage, so they do not isolate index allocation.
+
+| Attachment | Baseline | Control | Candidate |
+| --- | ---: | ---: | ---: |
+| Direct, cold | 22.17 → 51.40 | 22.17 → 51.40 | 39.84 → 55.08 |
+| Direct, warm | 23.50 → 51.95 | 23.50 → 51.95 | 41.25 → 55.63 |
+| Prepared, cold | 24.41 → 53.71 | 24.41 → 53.71 | 42.19 → 57.41 |
+| Prepared, warm | 25.80 → 54.29 | 25.80 → 54.29 | 43.59 → 57.98 |
+
+### Diagnostic evidence
+
+Implementation and correctness checks are complete. The gutter-enabled diagnostic uses the same
+core-build and browser-bundle hashes as both completed production studies. Its broad source hash
+matches the first isolated study. Adding block-count support to the benchmark tools changed that
+source hash before confirmation, while the measured core and browser bundle stayed unchanged.
+`completion-diagnostic-proof.json` and the confirmation identity proofs retain those distinctions.
+
+Direct and prepared groups, both cold and warm, pass exact text, fold-boundary, and disposal
+checks. Each group records 36 edit events reading 36 rows, with 3,906 unchanged blocks reused per
+edit and 1,200 folds. Fallback materializations, retained roots after disposal, and dropped
+diagnostics are all zero.
+
+The direct groups force cold discovery through an explicit synchronous fold command. Their
+maximum slice contains 35,158 metadata operations and 159 stack steps. Those command counts are
+not background slice bounds. Prepared discovery runs in background slices and records maxima of
+512 metadata operations and four stack steps per slice. Diagnostic timings do not enter either
+production study. `marker-verification.txt` records the 215 passing focused tests covering
+rendering, snapshots, prepared documents, and shared fold state. `confirmation-tool-verification.txt`
+records the 58 passing benchmark validator tests and scoped lint and formatting checks.
+
+![Candidate fold gutter after thirty-six edits](e034-completion-folds.png)
+
+### Earlier isolated study
+
+`isolated-design.json` completed 12 blocks, 36 captures, 720 recorded documents, and 25,920 input
+events. Seven of eight primary upper bounds passed, but warm direct input remained unresolved:
+both p95 values were 1.0 ms, with difference bounds -0.1 to +0.2 ms. Warm prepared input passed
+in that study. Its `isolated-analysis.json` and `isolated-costs.json` remain in the evidence archive
+as historical results. No observations or passing endpoints from that study enter confirmation.
+Neither study passes all eight endpoints, and combining their different seven-endpoint successes
+would violate the declared acceptance rule.
+
+### Implementation changes
+
+The completion candidate removes repeated work from folding and first text. A compatible ready
+index no longer schedules a background callback that would immediately return. Diagnostics are
+read once only when a performance sink or logger consumes them. Fold publication still occurs
+before scheduling is skipped, so manual projections and view-local collapse reconciliation retain
+their previous ordering. Focused controller tests cover scheduler inactivity, no diagnostic reads
+without a consumer, and diagnostic-only delivery.
+
+Subtree maximum endpoints are reused when both child endpoints are unchanged. Updating those
+branches no longer resolves global line positions to repeat comparisons with unchanged inputs.
+Visible fold markers are queried once per consecutive run of primary document rows in an update
+pass; hidden gaps and injected/wrapped continuation rows are excluded. The same map serves row
+comparison and painting. Without gutters or collapsed folds, rendering skips the marker query.
+Installing a gutter or collapsing a fold resumes marker queries. View-local collapse state and
+the existing nearest-fold and tie selection are preserved.
+
+The renderer's raw `mountedRows` describe markers used for painting and can contain null markers
+when no gutter or collapsed fold needs them. Public `EditorViewSnapshot.visibleRows` retain semantic
+fold metadata: an explicit marker read fills one shared lazy batch from the snapshot's captured
+source. The captured source remains valid after later edits or disposal.
+
+The first-text investigation also found repeated whole-document work outside fallback discovery.
+LF-only text now takes the existing native terminator probe and an LF-presence check instead of
+visiting every character to count a line-ending majority that cannot differ. CRLF, mixed endings,
+unusual terminators and explicit fallback semantics retain their original results. Original-piece
+creation gets its newline count from the existing offset-index builder, removing the independent
+counting scan. Initial painting reuses that index. Index construction remains necessary and moves
+into buffer creation: direct attachment pays it during creation, while prepared attachment pays it
+during preparation before the attachment timer. This move alone is not an eliminated cost.
+
+Headless buffers now retain the original index immediately. For the 500,000-line short-lines
+fixture, its 499,999 offsets occupy a 524,288-entry array: exactly 2,097,152 bytes (2 MiB), plus
+unmeasured object and map overhead. The original text remains shared. Rendered documents already
+retained this index after their first positional read; this change makes that allocation earlier.
+Append-buffer indexes remain lazy.
+
+Diagnostic CPU profiles of the initial corrected build found 5.10 ms of fallback scheduling across
+180 warm prepared inputs. The hidden-input path consumed essentially the same sampled time in the
+baseline and candidate. The endpoint-reuse optimization targets the repeated position resolutions
+observed in that profile. The profiles included benchmark-owned expected-string reconstruction
+after input, so their garbage-collection samples cannot establish an
+Editor allocation regression. Production comparisons use the same minified runner and options
+across all three arms, without CPU profiling or a diagnostics sink.
+
+### Two aborted declarations
+
+The first declaration, `final-design.json`, started at 16:07 UTC on 2026-09-12 with the earlier
+controller-only optimization. Ten complete blocks and one additional control produced 31 result
+files. The next baseline run failed before document capture at 16:44:43 UTC because a Chromium
+temporary file disappeared during hashing. The result files and failed log remain in `final/`.
+The ten complete blocks were analyzed as exploratory evidence; all eight primary upper bounds
+remained positive. The repaired runner separates Vite output from Chromium temporary files.
+
+The second declaration, `acceptance-design.json`, started at 17:22:51 UTC. Five captures passed
+before concurrent LSP edits changed hashed source files in the shared checkout. The sixth capture
+finished its workload but failed the source guard at 17:30:06 UTC. Its first-text log and two
+screenshots remain in `acceptance/`, but it produced no completed result JSON. The five valid
+records remain separate, along with `source-drift-abort.md` and its attribution evidence.
+
+`isolated-design.json` declared twelve fresh blocks at 17:35:07 UTC. The completed experiment used
+a detached checkout with isolated workspace package outputs and dependency links. Only external
+package dependencies shared the existing store. Source, core-build, and browser-bundle hashes
+matched the earlier valid baseline and candidate, and the source guard remained enabled.
+Neither aborted declaration nor any pilot contributes measurements to the isolated result.

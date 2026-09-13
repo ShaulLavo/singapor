@@ -5,7 +5,7 @@
 - Owner: Cross-repo
 - Priority: P3
 - Effort: XL
-- Dependencies: [E001](e001-stress-fixtures.md), [E007](e007-chunked-document-consumers.md)
+- Dependencies: [E001](../examples/stress/README.md), [E007](e007-chunked-document-consumers.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
 ## Outcome

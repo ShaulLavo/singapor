@@ -46,6 +46,8 @@ const LINE_FEED = 0x0a
 const LINE_SEPARATOR = 0x2028
 const PARAGRAPH_SEPARATOR = 0x2029
 const BYTE_ORDER_MARK = 0xfeff
+const LINE_TERMINATOR_PROBE = /[\r\u2028\u2029]/
+const LINE_TERMINATORS = /\r\n|[\r\u2028\u2029]/g
 
 type LineTerminatorScan = {
   readonly lineEnding: DocumentLineEnding
@@ -56,6 +58,12 @@ type LineTerminatorScan = {
 // only as a flag, never as a vote: a Word paste dropped into a CRLF file must
 // not flip what that file is saved as.
 const scanLineTerminators = (text: string, fallback: DocumentLineEnding): LineTerminatorScan => {
+  if (!LINE_TERMINATOR_PROBE.test(text))
+    return {
+      lineEnding: text.includes('\n') ? '\n' : fallback,
+      containsUnusualLineTerminators: false,
+    }
+
   let carriageReturns = 0
   let lineFeeds = 0
   let pairs = 0
@@ -63,24 +71,27 @@ const scanLineTerminators = (text: string, fallback: DocumentLineEnding): LineTe
 
   for (let index = 0; index < text.length; index++) {
     const code = text.charCodeAt(index)
-    if (code === CARRIAGE_RETURN) {
-      if (text.charCodeAt(index + 1) === LINE_FEED) {
-        pairs++
-        index++
-      } else {
-        carriageReturns++
-      }
-    } else if (code === LINE_FEED) {
-      lineFeeds++
-    } else if (code === LINE_SEPARATOR || code === PARAGRAPH_SEPARATOR) {
-      unusual = true
+    if (code === CARRIAGE_RETURN && text.charCodeAt(index + 1) === LINE_FEED) {
+      pairs++
+      index++
+      continue
     }
+    if (code === CARRIAGE_RETURN) {
+      carriageReturns++
+      continue
+    }
+    if (code === LINE_FEED) {
+      lineFeeds++
+      continue
+    }
+    if (code === LINE_SEPARATOR || code === PARAGRAPH_SEPARATOR) unusual = true
   }
 
   const total = carriageReturns + lineFeeds + pairs
   const majorityCarriageReturn = carriageReturns + pairs > total / 2
+  const lineEnding = majorityCarriageReturn ? '\r\n' : '\n'
   return {
-    lineEnding: total === 0 ? fallback : majorityCarriageReturn ? '\r\n' : '\n',
+    lineEnding: total === 0 ? fallback : lineEnding,
     containsUnusualLineTerminators: unusual,
   }
 }
@@ -92,9 +103,6 @@ export const detectDocumentLineEnding = (
   text: string,
   fallback: DocumentLineEnding = DEFAULT_DOCUMENT_LINE_ENDING,
 ): DocumentLineEnding => scanLineTerminators(text, fallback).lineEnding
-
-const LINE_TERMINATOR_PROBE = /[\r\u2028\u2029]/
-const LINE_TERMINATORS = /\r\n|[\r\u2028\u2029]/g
 
 // Collapses CRLF and lone CR to LF. Lone CR counts as a terminator because
 // classic-Mac and mis-transcoded files use it, and leaving it in would make it

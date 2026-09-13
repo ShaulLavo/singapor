@@ -60,7 +60,7 @@ describe('piece tree inspection', () => {
     })
     expect(validatePieceTreeInvariants(snapshot)).toEqual({
       issues: [],
-      counts: { nodes: 2, visible: 1, invisible: 1, reverseEntries: 2, lineIndexes: 0 },
+      counts: { nodes: 2, visible: 1, invisible: 1, reverseEntries: 2, lineIndexes: 1 },
     })
   })
 

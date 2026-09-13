@@ -63,7 +63,9 @@ const files = git(
 ).split('\n')
 const sourceHash = await hashBenchmarkSource(repository, files, core.sourceDirectory)
 await mkdir('/work/tmp', { recursive: true })
-const directory = await mkdtemp('/work/tmp/editor-first-paint-')
+const temporaryDirectory = await mkdtemp('/work/tmp/editor-first-paint-')
+const directory = resolve(temporaryDirectory, 'build')
+const browserDirectory = resolve(temporaryDirectory, 'browser')
 let browser
 let partialOutput
 let interrupted = false
@@ -75,6 +77,7 @@ process.on('SIGINT', interrupt)
 process.on('SIGTERM', interrupt)
 
 try {
+  await mkdir(browserDirectory)
   await build({
     root,
     configFile: false,
@@ -87,7 +90,10 @@ try {
       rollupOptions: { input: resolve(root, 'first-paint.html') },
     },
   })
-  browser = await chromium.launch({ headless: true, env: { ...process.env, TMPDIR: directory } })
+  browser = await chromium.launch({
+    headless: true,
+    env: { ...process.env, TMPDIR: browserDirectory },
+  })
   const result = {
     schemaVersion: 1,
     suite: 'first-paint',
@@ -157,7 +163,7 @@ try {
   process.removeListener('SIGTERM', interrupt)
   await browser?.close()
   if (partialOutput) await rm(partialOutput, { force: true })
-  await rm(directory, { recursive: true, force: true })
+  await rm(temporaryDirectory, { recursive: true, force: true })
 }
 
 async function routeAsset(route) {

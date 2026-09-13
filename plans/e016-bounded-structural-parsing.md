@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P2
 - Effort: L
-- Dependencies: [E001](e001-stress-fixtures.md)
+- Dependencies: [E001](../examples/stress/README.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
 ## Outcome

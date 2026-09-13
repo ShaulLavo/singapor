@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P2
 - Effort: M
-- Dependencies: [E001](e001-stress-fixtures.md)
+- Dependencies: [E001](../examples/stress/README.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`
 
 ## Outcome
@@ -24,7 +24,7 @@ capture. Keep diagnostics cheap when disabled and bounded when someone leaves th
   a deprecated containment comment. It does not define a registry of switchable debug flags.
 - [Tree-sitter results](../packages/tree-sitter/src/treeSitter/types.ts) already include timings;
   [the worker client](../packages/tree-sitter/src/treeSitter/workerClient.ts) owns worker requests.
-- [E001](e001-stress-fixtures.md) supplies repeatable scenarios and measurement definitions.
+- [E001](../examples/stress/README.md) supplies repeatable scenarios and measurement definitions.
 
 Inventory real emitters and available counters before promising panels. JavaScript does not expose
 an exact per-subsystem allocator ledger or arbitrary click-to-allocation source mapping by default.

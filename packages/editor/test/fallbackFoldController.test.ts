@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDocumentSession } from '../src/documentSession'
 import { EditorFallbackFoldController } from '../src/editor/fallbackFoldController'
-import type { IndentationFoldIndex } from '../src/editor/indentationFoldIndex'
+import { IndentationFoldIndex } from '../src/editor/indentationFoldIndex'
 import { EditorSecondaryWorkScheduler } from '../src/editor/secondaryWorkScheduler'
 import { createTextEditBatch } from '../src/textEditBatch'
 
@@ -13,6 +13,8 @@ beforeEach(() => vi.useFakeTimers())
 
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
@@ -132,6 +134,71 @@ describe('snapshot fallback fold lifecycle', () => {
     expect(fixture.folds.index?.diagnostics.coldReason).toBeTruthy()
     expect(fixture.folds.index?.diagnostics.factBlocksReused).toBe(0)
   })
+
+  it('leaves no delayed work after an ordinary edit reuses its fold topology', () => {
+    const fixture = controller('root\n  child\nnext')
+    fixture.folds.flush()
+    const before = fixture.session.getTextSnapshot()
+    const edits = [{ from: 8, to: 8, text: 'x' }]
+    fixture.session.applyEdits(edits)
+    const after = fixture.session.getTextSnapshot()
+    fixture.setContext({ snapshot: after, documentVersion: 2 })
+
+    fixture.folds.update(createTextEditBatch(before, after, edits))
+    fixture.folds.schedule()
+
+    expect(fixture.folds.index?.snapshot).toBe(after)
+    expect(fixture.folds.index?.all()).toMatchObject([{ startLine: 0, endLine: 1 }])
+    expect(fixture.scheduler.has('editor.fallbackFolds')).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(fixture.logs).toContainEqual(
+      expect.objectContaining({ trigger: 'edit', outcome: 'reused' }),
+    )
+  })
+
+  it('does not read diagnostics when no diagnostic sink or logger consumes them', () => {
+    vi.stubGlobal('__EDITOR_PERFORMANCE_DIAGNOSTICS__', null)
+    const diagnostics = vi.spyOn(IndentationFoldIndex.prototype, 'diagnostics', 'get')
+    const fixture = controller('root\n  child\nnext')
+    fixture.setLoggingEnabled(false)
+
+    fixture.folds.flush()
+    const before = fixture.session.getTextSnapshot()
+    const edits = [{ from: 8, to: 8, text: 'x' }]
+    fixture.session.applyEdits(edits)
+    const after = fixture.session.getTextSnapshot()
+    fixture.setContext({ snapshot: after, documentVersion: 2 })
+    fixture.folds.update(createTextEditBatch(before, after, edits))
+
+    expect(fixture.folds.index?.all()).toMatchObject([{ startLine: 0, endLine: 1 }])
+    expect(diagnostics).not.toHaveBeenCalled()
+    expect(fixture.logs).toEqual([])
+  })
+
+  it('reports diagnostics once when recording is enabled without a logger', () => {
+    const record = vi.fn()
+    vi.stubGlobal('__EDITOR_PERFORMANCE_DIAGNOSTICS__', record)
+    const diagnostics = vi.spyOn(IndentationFoldIndex.prototype, 'diagnostics', 'get')
+    const fixture = controller('root\n  child\nnext')
+    fixture.setLoggingEnabled(false)
+
+    fixture.folds.flush()
+
+    expect(diagnostics).toHaveBeenCalledTimes(1)
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'editor.fallbackFoldRanges',
+        detail: expect.objectContaining({
+          trigger: 'explicit-command',
+          outcome: 'completed',
+          rowsRead: 3,
+          foldCount: 1,
+          materializations: 0,
+        }),
+      }),
+    )
+    expect(fixture.logs).toEqual([])
+  })
 })
 
 function controller(text: string) {
@@ -139,6 +206,7 @@ function controller(text: string) {
   const scheduler = new EditorSecondaryWorkScheduler()
   const published: Array<IndentationFoldIndex | null> = []
   const logs: Readonly<Record<string, unknown>>[] = []
+  let loggingEnabled = true
   let context: Context = {
     snapshot: session.getTextSnapshot(),
     documentId: 'fold-controller',
@@ -162,6 +230,7 @@ function controller(text: string) {
     context: () => context,
     publish: (index) => published.push(index),
     changed: () => undefined,
+    loggingEnabled: () => loggingEnabled,
     log: (detail) => logs.push(detail),
   })
   const dispose = () => {
@@ -171,11 +240,15 @@ function controller(text: string) {
   disposers.push(dispose)
   return {
     folds,
+    scheduler,
     session,
     published,
     logs,
     dispose,
     context: () => context,
+    setLoggingEnabled: (enabled: boolean) => {
+      loggingEnabled = enabled
+    },
     setContext: (next: Partial<Context>) => {
       context = { ...context, ...next }
     },

@@ -6,9 +6,9 @@
   "plans": [
     {
       "id": "E001",
-      "file": "e001-stress-fixtures.md",
+      "reference": "../examples/stress/README.md",
       "title": "Repeatable stress fixtures and browser benchmarks",
-      "status": "Implemented; local calibration provisional",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",
@@ -412,9 +412,9 @@
     },
     {
       "id": "E034",
-      "file": "e034-snapshot-indentation-folds.md",
+      "reference": "../docs/performance/e034-snapshot-indentation-folds.md",
       "title": "Maintain indentation folds from document snapshots",
-      "status": "Implemented; performance validation pending",
+      "status": "Completed",
       "owner": "Editor",
       "kind": "Implementation",
       "priority": "P1",

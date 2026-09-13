@@ -43,6 +43,21 @@ describe('detectDocumentLineEnding', () => {
 })
 
 describe('normalizeDocumentText', () => {
+  test.each([
+    ['', '\r\n'],
+    ['single line', '\r\n'],
+    ['a\nb', '\n'],
+    ['λ\n語', '\n'],
+    ['\n', '\n'],
+  ] as const)('preserves LF-only classification and fallback for %j', (text, lineEnding) => {
+    expect(normalizeDocumentText(text, '\r\n')).toEqual({
+      text,
+      lineEnding,
+      byteOrderMark: '',
+      containsUnusualLineTerminators: false,
+    })
+  })
+
   test('flattens carriage returns and reports what it found', () => {
     expect(normalizeDocumentText('a\r\nb\r\nc')).toEqual({
       text: 'a\nb\nc',

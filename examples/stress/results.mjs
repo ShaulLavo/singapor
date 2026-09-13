@@ -18,6 +18,10 @@ function positiveInteger(value, label) {
   if (!Number.isSafeInteger(value) || value < 1) fail(`Invalid ${label}`)
 }
 
+function nonnegativeInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) fail(`Invalid ${label}`)
+}
+
 export function validateResult(result) {
   if (result?.schemaVersion !== 1 || !Array.isArray(result.samples))
     fail('Unsupported result schema')
@@ -73,6 +77,10 @@ function validateSample(sample, result, fixtures, keys) {
     sample.cleanup.pendingFrames !== 0
   )
     fail(`Failed correctness or cleanup ${key}`)
+  nonnegativeInteger(sample.cleanup.trackedObjects, `tracked objects ${key}`)
+  nonnegativeInteger(sample.cleanup.retainedObjects, `retained objects ${key}`)
+  if (sample.cleanup.retainedObjects > sample.cleanup.trackedObjects)
+    fail(`Retained objects exceed tracked objects ${key}`)
   if (!sample.latencyMs || !Object.keys(sample.latencyMs).length) fail(`Missing latency ${key}`)
   for (const values of Object.values(sample.latencyMs)) {
     if (!Array.isArray(values)) fail(`Raw latency samples required ${key}`)
@@ -88,7 +96,7 @@ function validateSample(sample, result, fixtures, keys) {
     fail(`Missing memory capability ${key}`)
   if (sample.memory.status === 'unsupported' && !sample.memory.reason)
     fail(`Missing unsupported-memory reason ${key}`)
-  if (sample.memory.status === 'supported') validateMemory(sample.memory)
+  if (sample.memory.status === 'supported') validateMemory(sample.memory, sample.scenario)
 }
 
 function validateLatencyCoverage(sample, config) {
@@ -115,7 +123,8 @@ function expectedLatencies(sample, config) {
   return { attach: 1, visibleTextUpperBound: 1 }
 }
 
-function validateMemory(memory) {
+function validateMemory(memory, scenario) {
+  if (scenario === 'churn' && !memory.postChurn) fail('Missing post-churn memory snapshot')
   for (const snapshot of [
     memory.before,
     memory.after,
@@ -139,6 +148,16 @@ function comparable(left, right) {
   same(left.environment.browser, right.environment.browser, 'browser')
   same(left.environment.hardware, right.environment.hardware, 'hardware')
   same(left.environment.runtime, right.environment.runtime, 'runner runtime')
+  same(memoryCapabilities(left), memoryCapabilities(right), 'memory capabilities per sample')
+}
+
+function memoryCapabilities(result) {
+  return result.samples
+    .map(
+      (sample) =>
+        `${sample.fixture}/${sample.scenario}/${sample.state}/${sample.repetition}/${sample.memory.status}`,
+    )
+    .sort()
 }
 
 function groups(result) {

@@ -126,7 +126,12 @@ export function setFoldStateLayout(
 ): FoldStateUpdate {
   const nextFoldMap = foldMapMatchesText(foldMap, view.model.textLength) ? foldMap : null
   const foldMapChanged = view.model.foldMap !== nextFoldMap
-  if (!foldMapChanged && markers.length === 0 && view.foldMarkerByStartRow.size === 0) {
+  if (
+    !foldMapChanged &&
+    view.foldMarkerSource === null &&
+    markers.length === 0 &&
+    view.foldMarkerByStartRow.size === 0
+  ) {
     return { foldMapChanged: false, foldMarkersChanged: false, changed: false }
   }
 

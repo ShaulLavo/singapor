@@ -692,7 +692,7 @@ export class VirtualizedTextView {
     const mapChanged = view.model.foldMap !== nextMap
     view.foldMarkerSource = source
     view.foldMarkers = []
-    view.foldMarkerByStartRow = source
+    view.foldMarkerByStartRow = new Map()
     view.foldMarkerByKey = new Map()
     view.model.foldMap = nextMap
     if (mapChanged) {
@@ -1079,6 +1079,14 @@ export class VirtualizedTextView {
       borderBoxWidth: snapshot.borderBoxWidth,
       visibleRange: snapshot.visibleRange,
     }
+  }
+
+  public captureDeferredFoldMarkerSource(): FoldMarkerSource | null {
+    const view = this.view
+    const source = view.foldMarkerSource
+    if (!source || source.size === 0) return null
+    if (view.gutterContributions.length > 0 || view.model.foldMap?.ranges.length) return null
+    return source
   }
 
   public getState(): VirtualizedTextViewState {

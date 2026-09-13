@@ -176,6 +176,7 @@ import {
   type EditorViewContributionProvider,
   type EditorViewContributionUpdateKind,
   type EditorViewSnapshot,
+  type EditorVisibleRowSnapshot,
   type EditorViewportSnapshot,
 } from '../plugins'
 import { lastAddedSelectionIndex, markSelectionSetDirty, resolveSelection } from '../selections'
@@ -561,6 +562,7 @@ export class Editor {
       }),
       publish: (index) => this.foldState.setFoldProjections(this.foldProjections(index), index),
       changed: () => this.notifyViewContributions('layout', null),
+      loggingEnabled: () => this.pluginHost.hasLoggers(),
       log: (fold) => this.log({ action: 'editor.folds.fallback', level: 'debug', fold }),
     })
     // Read per press rather than copied: outdent, backspace-through-indentation and the indentation
@@ -3067,6 +3069,52 @@ export class Editor {
         : new LineStartsView(textSnapshot)
     this.lineStartsViewCache = { textVersion: this.textVersion, view: lineStartsView }
     const sync = this.currentDocumentEditChain()
+    const deferredMarkerSource = this.view.captureDeferredFoldMarkerSource()
+    let visibleFoldMarkers: ReadonlyMap<number, VirtualizedFoldMarker> | undefined
+    const visibleRows: EditorVisibleRowSnapshot[] = viewState.mountedRows.map((row) => {
+      const snapshotRow: EditorVisibleRowSnapshot = {
+        index: row.index,
+        bufferRow: row.bufferRow,
+        source: row.source,
+        injectedTextRowId: row.injectedTextRowId,
+        metadata: row.metadata,
+        startOffset: row.startOffset,
+        endOffset: row.endOffset,
+        text: row.text,
+        kind: row.kind,
+        primaryText: row.source === 'document',
+        firstWrapSegment: row.primaryText,
+        top: row.top,
+        height: row.height,
+        leftSpacerWidth: row.leftSpacerWidth,
+        contentCursorLine: row.cursorLineContentActive,
+        gutterNumberCursorLine: row.gutterNumberCursorLine,
+        gutterCursorLineBackgroundLaneIds: [...row.gutterCursorLineBackgroundLaneIds],
+        mountedPaintSupport: row.mountedPaintSupport,
+        chunks: row.chunks.map((chunk) => ({
+          sourceStartOffset: chunk.startOffset,
+          sourceEndOffset: chunk.endOffset,
+          rowLocalStart: chunk.localStart,
+          rowLocalEnd: chunk.localEnd,
+          text: chunk.text,
+          mountedPaint: chunk.mountedPaint,
+        })),
+        foldMarker: row.foldMarker,
+      }
+      if (!deferredMarkerSource || !snapshotRow.firstWrapSegment) return snapshotRow
+      Object.defineProperty(snapshotRow, 'foldMarker', {
+        enumerable: true,
+        get: () => {
+          visibleFoldMarkers ??= deferredMarkerSource.readRows(
+            visibleRows
+              .filter((visibleRow) => visibleRow.firstWrapSegment)
+              .map((visibleRow) => visibleRow.bufferRow),
+          )
+          return visibleFoldMarkers.get(snapshotRow.bufferRow) ?? null
+        },
+      })
+      return snapshotRow
+    })
     return createEditorViewSnapshot(
       defineLazyFullTextProperty({
         documentId: this.documentId,
@@ -3104,35 +3152,7 @@ export class Editor {
         get foldMarkers() {
           return viewState.foldMarkers
         },
-        visibleRows: viewState.mountedRows.map((row) => ({
-          index: row.index,
-          bufferRow: row.bufferRow,
-          source: row.source,
-          injectedTextRowId: row.injectedTextRowId,
-          metadata: row.metadata,
-          startOffset: row.startOffset,
-          endOffset: row.endOffset,
-          text: row.text,
-          kind: row.kind,
-          primaryText: row.source === 'document',
-          firstWrapSegment: row.primaryText,
-          top: row.top,
-          height: row.height,
-          leftSpacerWidth: row.leftSpacerWidth,
-          contentCursorLine: row.cursorLineContentActive,
-          gutterNumberCursorLine: row.gutterNumberCursorLine,
-          gutterCursorLineBackgroundLaneIds: [...row.gutterCursorLineBackgroundLaneIds],
-          mountedPaintSupport: row.mountedPaintSupport,
-          chunks: row.chunks.map((chunk) => ({
-            sourceStartOffset: chunk.startOffset,
-            sourceEndOffset: chunk.endOffset,
-            rowLocalStart: chunk.localStart,
-            rowLocalEnd: chunk.localEnd,
-            text: chunk.text,
-            mountedPaint: chunk.mountedPaint,
-          })),
-          foldMarker: row.foldMarker,
-        })),
+        visibleRows,
         viewport,
       }),
       { paintPending: true },

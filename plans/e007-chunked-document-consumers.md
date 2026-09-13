@@ -5,7 +5,7 @@
 - Owner: Editor
 - Priority: P1
 - Effort: L
-- Dependencies: [E001](e001-stress-fixtures.md)
+- Dependencies: [E001](../examples/stress/README.md)
 - Inspected baseline: `9abb944f3a2b8d6516953fdec75e8df5e1a94811`, 2026-09-05.
 
 ## Outcome
@@ -40,7 +40,7 @@ E008 owns matcher changes. E009 owns worker transport representation decisions.
 The 2026-09-08 split assigns eager display rows to [E031](../docs/performance/e031-projection.md),
 session render batches to [E032](../docs/performance/e032-edit-batches.md), implicit getters, plugin
 contexts and framework full-text APIs to [E033](e033-explicit-full-text-boundary.md), and
-indentation fallback to [E034](e034-snapshot-indentation-folds.md). Keep one call-site inventory;
+indentation fallback to [E034](../docs/performance/e034-snapshot-indentation-folds.md). Keep one call-site inventory;
 coordinate source contracts with E033 without making its final enforcement gate a prerequisite here.
 Keep required host save, export, and external protocol serialization explicit and supported.
 Platform filesystem writes and remote LSP proxy changes need their own host implementation scope.

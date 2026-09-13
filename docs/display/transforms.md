@@ -21,6 +21,7 @@ unchanged suffix entries.
 
 `TextSnapshot.lineCount`, `lineStart`, and `lineAt` provide source rank/select. Piece snapshots reuse
 the buffer newline indexes; detached string snapshots build an explicit source-owned index once.
+Original-piece creation builds its index while counting newlines; append-buffer indexes remain lazy.
 The first buffer-index scan is recorded as `textSnapshot.sourceIndex`, separately from projection
 text reads. `LineStartsView` delegates to these methods. Its `toArray()` is an explicit export for
 consumers that need a dense source index; painting and geometry do not call it.

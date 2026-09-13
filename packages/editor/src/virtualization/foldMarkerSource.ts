@@ -1,8 +1,8 @@
 import type { VirtualizedFoldMarker } from './virtualizedTextViewTypes'
 
-/** Row lookups keep viewport painting independent of the document's fold count. */
+/** Only primary document rows in the current update pass are requested. */
 export type FoldMarkerSource = {
   readonly size: number
-  get(row: number): VirtualizedFoldMarker | undefined
+  readRows(rows: readonly number[]): ReadonlyMap<number, VirtualizedFoldMarker>
   all(): readonly VirtualizedFoldMarker[]
 }

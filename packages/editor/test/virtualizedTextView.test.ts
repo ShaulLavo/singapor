@@ -483,7 +483,7 @@ describe('VirtualizedTextView', () => {
       view.setIndexedFoldState(
         {
           size: 1,
-          get: (row) => (row === 0 ? marker : undefined),
+          readRows: (rows) => new Map(rows.includes(0) ? [[0, marker]] : []),
           all: () => [marker],
         },
         null,
@@ -1509,6 +1509,8 @@ describe('VirtualizedTextView', () => {
       languageId: null,
       tabSize: 2,
     }).complete()
+    const headerReads = vi.spyOn(nextIndex, 'headers')
+    const allFolds = vi.spyOn(nextIndex, 'all')
     firstRowFolds.length = 0
 
     view.runAtomicRender(() => {
@@ -1529,6 +1531,8 @@ describe('VirtualizedTextView', () => {
     expect(view.getState().mountedRows[1]!.startOffset).toBe(6)
     expect(tokenHighlightRangeForNode(first.textNode)?.range.endOffset).toBe(5)
     expect(fullText).not.toHaveBeenCalled()
+    expect(headerReads).toHaveBeenCalledExactlyOnceWith(0, 2)
+    expect(allFolds).not.toHaveBeenCalled()
   })
 
   it('renders the final projection when the edit callback collapses a fold', () => {

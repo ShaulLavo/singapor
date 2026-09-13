@@ -148,7 +148,7 @@ function clickScope(context: EditorViewContributionContext): void {
   for (const button of context.container.querySelectorAll<HTMLButtonElement>(
     '.editor-find-button',
   )) {
-    if (button.querySelector('.ph-selection')) {
+    if (button.querySelector('[data-icon="selection"]')) {
       button.click()
       return
     }

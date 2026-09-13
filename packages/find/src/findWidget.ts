@@ -1,24 +1,11 @@
 import type { EditorFindWidgetState } from './findController'
+import { createFindIcon, FIND_ICONS, type FindIcon } from './findIcons'
 
 const EDITOR_THEME_VARIABLES = [
   '--editor-background',
   '--editor-foreground',
   '--editor-caret-color',
 ] as const
-
-const FIND_ICONS = {
-  caseSensitive: 'text-a-underline',
-  close: 'x',
-  next: 'caret-down',
-  preserveCase: 'text-aa',
-  previous: 'caret-up',
-  regex: 'asterisk',
-  replace: 'swap',
-  replaceAll: 'arrows-clockwise',
-  replaceToggle: 'caret-right',
-  scope: 'selection',
-  wholeWord: 'textbox',
-} as const
 
 export type EditorFindWidgetOptions = {
   readonly onSearchInput: (value: string) => void
@@ -35,8 +22,6 @@ export type EditorFindWidgetOptions = {
   readonly onReplaceOne: () => void
   readonly onReplaceAll: () => void
 }
-
-type PhosphorIconName = (typeof FIND_ICONS)[keyof typeof FIND_ICONS]
 
 export class EditorFindWidget {
   private readonly root: HTMLDivElement
@@ -227,14 +212,14 @@ export class EditorFindWidget {
 
 function createFindButton(
   document: Document,
-  icon: PhosphorIconName,
+  icon: FindIcon,
   title: string,
   onClick?: () => void,
 ): HTMLButtonElement {
   const button = document.createElement('button')
   button.type = 'button'
   button.className = 'editor-find-button'
-  button.appendChild(createPhosphorIcon(document, icon))
+  button.appendChild(createFindIcon(document, icon))
   setNativeTooltip(button, title)
   if (onClick) button.addEventListener('click', onClick)
   return button
@@ -249,13 +234,6 @@ function syncEditorThemeVariables(target: HTMLElement, source: HTMLElement): voi
       source.style.getPropertyValue(variable).trim() || style.getPropertyValue(variable).trim()
     if (value) target.style.setProperty(variable, value)
   }
-}
-
-function createPhosphorIcon(document: Document, icon: PhosphorIconName): HTMLElement {
-  const element = document.createElement('i')
-  element.className = `ph ph-${icon}`
-  element.setAttribute('aria-hidden', 'true')
-  return element
 }
 
 function setTogglePressed(button: HTMLButtonElement, pressed: boolean, label: string): void {

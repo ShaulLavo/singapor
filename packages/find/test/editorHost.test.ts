@@ -385,7 +385,7 @@ function selectedText(probe: EditorProbe): string {
 // every time it is pressed.
 function clickScope(container: HTMLElement): void {
   for (const button of container.querySelectorAll<HTMLButtonElement>('.editor-find-button')) {
-    if (button.querySelector('.ph-selection')) {
+    if (button.querySelector('[data-icon="selection"]')) {
       button.click()
       return
     }

@@ -29,9 +29,6 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
   },
-  "dependencies": {
-    "@phosphor-icons/web": "^2.1.2"
-  },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@singapor/core": "workspace:*",

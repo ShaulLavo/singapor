@@ -452,7 +452,7 @@ function clickButton(container: HTMLElement, icon: string): void {
 
 function buttonWithIcon(container: HTMLElement, icon: string): HTMLButtonElement {
   for (const button of container.querySelectorAll<HTMLButtonElement>('.editor-find-button')) {
-    if (button.querySelector(`.ph-${icon}`)) return button
+    if (button.querySelector(`[data-icon="${icon}"]`)) return button
   }
 
   throw new Error(`missing find button: ${icon}`)
@@ -464,7 +464,7 @@ function pressedToggles(container: HTMLElement): readonly string[] {
     if (button.getAttribute('aria-pressed') !== 'true') continue
 
     const name = Object.entries(FIND_TOGGLE_NAMES).find(([icon]) =>
-      button.querySelector(`.ph-${icon}`),
+      button.querySelector(`[data-icon="${icon}"]`),
     )
     if (name) pressed.push(name[1])
   }

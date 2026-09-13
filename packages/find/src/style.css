@@ -1,5 +1,3 @@
-@import '@phosphor-icons/web/regular';
-
 .editor-find-widget {
   --editor-find-background-fallback: #252526;
   --editor-find-border-fallback: rgba(255, 255, 255, 0.12);
@@ -153,9 +151,8 @@
   outline-offset: -1px;
 }
 
-.editor-find-button .ph {
+.editor-find-button .editor-find-icon {
   display: block;
-  font-size: 16px;
   height: 16px;
   width: 16px;
 }
@@ -192,10 +189,10 @@
   }
 }
 
-.editor-find-replace-toggle .ph {
+.editor-find-replace-toggle .editor-find-icon {
   transition: transform 120ms ease;
 }
 
-.editor-find-replace-toggle[aria-expanded='true'] .ph {
+.editor-find-replace-toggle[aria-expanded='true'] .editor-find-icon {
   transform: rotate(90deg);
 }

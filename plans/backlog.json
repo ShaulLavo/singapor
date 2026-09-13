@@ -426,6 +426,22 @@
         "Input latency as an enforced budget",
         "Defer startup work off the first-paint path"
       ]
+    },
+    {
+      "id": "E035",
+      "file": "e035-packed-token-store.md",
+      "title": "Make packed tokens the canonical token store",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Implementation",
+      "priority": "P1",
+      "effort": "L",
+      "baseline": "954e95c4ef88cf1fee36e26b16f534cbfc39186d",
+      "dependsOn": ["E002"],
+      "topics": [
+        "Packed tokens end to end (drop the per-edit unpack)",
+        "Input latency as an enforced budget"
+      ]
     }
   ]
 }

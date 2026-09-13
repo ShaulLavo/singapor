@@ -180,11 +180,22 @@ describe('createMinimapPlugin', () => {
       scrollBox.clientWidth = 400
       scrollBox.offsetHeight = 100
       scrollBox.clientHeight = 100
-      contribution?.update(snapshot({ clientWidth: 62, clientHeight: 100 }), 'viewport')
+      contribution?.update(
+        snapshot({ clientWidth: 62, clientHeight: 100, borderBoxWidth: 400, borderBoxHeight: 100 }),
+        'viewport',
+      )
       expect(reservedLane).toBe(54)
       expect(testContext.reserveOverlayWidth).toHaveBeenCalledOnce()
 
-      contribution?.update(snapshot({ clientWidth: 346, clientHeight: 100 }), 'viewport')
+      contribution?.update(
+        snapshot({
+          clientWidth: 346,
+          clientHeight: 100,
+          borderBoxWidth: 400,
+          borderBoxHeight: 100,
+        }),
+        'viewport',
+      )
       expect(testContext.reserveOverlayWidth).toHaveBeenCalledOnce()
       expect(
         testContext.container.querySelector<HTMLElement>('.editor-minimap')?.style.height,
@@ -192,6 +203,36 @@ describe('createMinimapPlugin', () => {
 
       contribution?.dispose()
     } finally {
+      restoreRuntime()
+    }
+  })
+
+  it('reads the scroll box from the DOM only when a layout could have changed it', () => {
+    const restoreRuntime = installMinimapRuntime()
+    const computedStyle = vi.spyOn(window, 'getComputedStyle')
+    try {
+      const providers = activateMinimap()
+      const testContext = context(snapshot({ clientWidth: 80, clientHeight: 20 }))
+      defineScrollBox(testContext.scrollElement, {
+        offsetWidth: 80,
+        offsetHeight: 20,
+        clientWidth: 80,
+        clientHeight: 20,
+      })
+      const contribution = providers.view?.createContribution(testContext)
+      computedStyle.mockClear()
+
+      for (let frame = 0; frame < 6; frame += 1) {
+        contribution?.update(snapshot({ scrollTop: frame * 20 }), 'viewport')
+      }
+      expect(computedStyle).not.toHaveBeenCalled()
+
+      contribution?.update(snapshot(), 'layout')
+      expect(computedStyle).toHaveBeenCalled()
+
+      contribution?.dispose()
+    } finally {
+      computedStyle.mockRestore()
       restoreRuntime()
     }
   })

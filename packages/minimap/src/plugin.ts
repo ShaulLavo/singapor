@@ -75,6 +75,7 @@ class MinimapContribution implements EditorViewContribution {
   private activeSliderDrag: SliderDrag | null = null
   private appliedReservedWidth = 0
   private layoutSignature = ''
+  private scrollBox: MinimapScrollBox | null = null
   private pendingSliderScrollTop: number | null = null
   private sliderScrollFrame = 0
   private disposed = false
@@ -114,6 +115,7 @@ class MinimapContribution implements EditorViewContribution {
     this.latestSnapshot = snapshot
     this.latestViewport = snapshot.viewport
     if (snapshot.geometryCommitted === false) return
+    if (kind === 'document' || kind === 'layout') this.scrollBox = null
     if (kind === 'document' || kind === 'layout' || kind === 'viewport') {
       this.synchronizeLayoutReservation()
     }
@@ -144,6 +146,7 @@ class MinimapContribution implements EditorViewContribution {
 
   private readonly reserveWidth = (_width: number): void => {
     if (this.context.getSnapshot().geometryCommitted === false) return
+    this.scrollBox = null
     this.synchronizeLayoutReservation()
   }
 
@@ -191,14 +194,32 @@ class MinimapContribution implements EditorViewContribution {
   }
 
   private measureScrollGeometry(): MinimapScrollGeometry {
-    const element = this.context.scrollElement
     const viewport = this.latestViewport
+    const box = this.currentScrollBox()
+    return {
+      ...box,
+      overflowsX: viewport.clientWidth > 0 && viewport.scrollWidth > viewport.clientWidth,
+      overflowsY:
+        box.clientHeight > 0 &&
+        Math.max(viewport.scrollHeight, this.latestSnapshot.totalHeight) > box.clientHeight,
+    }
+  }
+
+  // The box is read from the DOM (computed style and a forced layout) only when something could
+  // have changed it: a document or layout update, a lane change, or a viewport whose height or
+  // border box no longer matches. A scroll reuses the last measurement.
+  private currentScrollBox(): MinimapScrollBox {
+    const viewport = this.latestViewport
+    const cached = this.scrollBox
+    if (cached && scrollBoxMatchesViewport(cached, viewport)) return cached
+
+    const element = this.context.scrollElement
     const style = element.ownerDocument.defaultView?.getComputedStyle(element)
     const clientWidth =
       element.clientWidth ||
       (viewport.clientWidth > 0 ? viewport.clientWidth + this.appliedReservedWidth : 0)
     const clientHeight = element.clientHeight || viewport.clientHeight
-    return {
+    const box: MinimapScrollBox = {
       width: element.offsetWidth || viewport.borderBoxWidth || clientWidth,
       height: element.offsetHeight || viewport.borderBoxHeight || clientHeight,
       clientWidth,
@@ -210,11 +231,9 @@ class MinimapContribution implements EditorViewContribution {
         bottom: cssPixels(style?.borderBottomWidth),
       },
       overlayScrollbars: overlayScrollbarDimensions(element, style),
-      overflowsX: viewport.clientWidth > 0 && viewport.scrollWidth > viewport.clientWidth,
-      overflowsY:
-        clientHeight > 0 &&
-        Math.max(viewport.scrollHeight, this.latestSnapshot.totalHeight) > clientHeight,
     }
+    this.scrollBox = box
+    return box
   }
 
   private currentLayoutWidth(
@@ -466,6 +485,20 @@ function createHost(
     slider,
     sliderHorizontal,
   }
+}
+
+type MinimapScrollBox = Omit<MinimapScrollGeometry, 'overflowsX' | 'overflowsY'>
+
+function scrollBoxMatchesViewport(
+  box: MinimapScrollBox,
+  viewport: EditorViewportSnapshot,
+): boolean {
+  // The view reports the element's own offset box, so a size change shows up here exactly.
+  // Its client height subtracts padding, so it only stands in when no border box is reported.
+  if (viewport.borderBoxWidth !== undefined && viewport.borderBoxHeight !== undefined) {
+    return viewport.borderBoxWidth === box.width && viewport.borderBoxHeight === box.height
+  }
+  return viewport.clientHeight <= 0 || viewport.clientHeight === box.clientHeight
 }
 
 function hostClassName(options: ResolvedMinimapOptions): string {

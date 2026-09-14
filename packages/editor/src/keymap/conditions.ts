@@ -17,6 +17,13 @@ export function editorKeyConditionMatches(
   return context[condition]
 }
 const mutations = new Set<EditorCommandId>([
+  'merge-conflict.accept.current',
+  'merge-conflict.accept.incoming',
+  'merge-conflict.accept.both',
+  'merge-conflict.accept.selection',
+  'merge-conflict.accept.all-current',
+  'merge-conflict.accept.all-incoming',
+  'merge-conflict.accept.all-both',
   'undo',
   'redo',
   'deleteBackward',

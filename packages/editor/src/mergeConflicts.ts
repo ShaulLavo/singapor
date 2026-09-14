@@ -16,6 +16,11 @@ export type MergeConflictRegion = {
   readonly baseMarker?: TextOffsetRange
   readonly separatorMarker: TextOffsetRange
   readonly endMarker: TextOffsetRange
+  /** Zero-based buffer rows of the marker lines; whole-line decorations key on these. */
+  readonly startMarkerLine: number
+  readonly baseMarkerLine?: number
+  readonly separatorMarkerLine: number
+  readonly endMarkerLine: number
   readonly ours: TextOffsetRange
   readonly base?: TextOffsetRange
   readonly theirs: TextOffsetRange
@@ -39,6 +44,7 @@ export type CreateMergeConflictDocumentTextOptions = {
 }
 
 type LineRange = {
+  readonly line: number
   readonly start: number
   readonly end: number
   readonly text: string
@@ -317,6 +323,10 @@ function completePendingConflict(
     baseMarker: pending.baseMarker ? lineToRange(pending.baseMarker) : undefined,
     separatorMarker: lineToRange(pending.separatorMarker),
     endMarker: lineToRange(endMarker),
+    startMarkerLine: pending.startMarker.line,
+    baseMarkerLine: pending.baseMarker?.line,
+    separatorMarkerLine: pending.separatorMarker.line,
+    endMarkerLine: endMarker.line,
     ours: rangeFrom(pending.startMarker.end, pending.oursEnd),
     base: baseRange(pending),
     theirs: rangeFrom(pending.theirsStart, endMarker.start),
@@ -380,16 +390,19 @@ function conflictMarkerLabel(line: string, marker: string): string | null {
 
 function* iterateLines(text: string): Generator<LineRange> {
   let start = 0
+  let line = 0
   while (start < text.length) {
     const newline = text.indexOf('\n', start)
     const contentEnd = newline === -1 ? text.length : newline
     const end = newline === -1 ? text.length : newline + 1
     yield {
+      line,
       start,
       end,
       text: text.slice(start, contentEnd),
     }
     start = end
+    line += 1
   }
 }
 

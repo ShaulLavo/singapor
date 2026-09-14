@@ -9,37 +9,49 @@ import type {
   EditorDisposable,
   EditorFeatureContribution,
   EditorFeatureContributionContext,
+  EditorInjectedTextRow,
   EditorInternalPluginContext,
+  EditorMinimapDecoration,
+  EditorMinimapFeature,
   EditorPlugin,
+  EditorResolvedSelection,
   EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from './plugins'
-import { createEditorCapabilityToken } from './plugins'
+import { createEditorCapabilityToken, EDITOR_MINIMAP_FEATURE } from './plugins'
 import type { TextEdit } from './tokens'
-import type { VirtualizedTextHighlightStyle } from './virtualization'
+import type { VirtualizedTextRowDecoration } from './virtualization'
 import type { EditorSetSelectionOptions } from './editor/selectionReveal'
 
 export const EDITOR_MERGE_CONFLICT_FEATURE_ID = 'editor.mergeConflicts'
 
+export type MergeConflictNavigationDirection = 'next' | 'previous'
+
 export type EditorMergeConflictFeature = {
   getConflicts(): readonly MergeConflictRegion[]
   resolveConflict(index: number, resolution: MergeConflictResolution): boolean
+  resolveAllConflicts(resolution: MergeConflictResolution): boolean
   revealConflict(index: number): boolean
+  navigateConflict(direction: MergeConflictNavigationDirection): boolean
 }
 
 export const EDITOR_MERGE_CONFLICT_FEATURE =
   createEditorCapabilityToken<EditorMergeConflictFeature>(EDITOR_MERGE_CONFLICT_FEATURE_ID)
 
 export type EditorMergeConflictPluginOptions = {
-  readonly actions?: boolean
+  /** The action line above each conflict. Defaults to on. */
+  readonly lens?: boolean
+  /** Handles "Compare Changes"; without it the lens does not offer one. */
+  readonly compare?: (conflict: MergeConflictRegion) => void
 }
 
 type MergeConflictHost = {
   hasDocument(): boolean
   materializeFullText(): string
   focusEditor(): void
+  getSelections(): readonly EditorResolvedSelection[]
   setSelection(
     anchor: number,
     head: number,
@@ -51,21 +63,48 @@ type MergeConflictHost = {
     timingName: string,
     selection?: { readonly anchor: number; readonly head: number },
   ): void
-  setRangeHighlight(
-    name: string,
-    ranges: readonly { readonly start: number; readonly end: number }[],
-    style: VirtualizedTextHighlightStyle,
+  setRowDecorations(
+    sourceId: string,
+    decorations: ReadonlyMap<number, VirtualizedTextRowDecoration>,
   ): void
-  clearRangeHighlight(name: string): void
+  clearRowDecorations(sourceId: string): void
 }
 
 type ConflictListener = () => void
 
-const MERGE_CONFLICT_OUTER_STYLE = { backgroundColor: 'rgba(245, 158, 11, 0.16)' }
-const MERGE_CONFLICT_OURS_STYLE = { backgroundColor: 'rgba(34, 197, 94, 0.18)' }
-const MERGE_CONFLICT_BASE_STYLE = { backgroundColor: 'rgba(161, 161, 170, 0.18)' }
-const MERGE_CONFLICT_THEIRS_STYLE = { backgroundColor: 'rgba(59, 130, 246, 0.18)' }
+type MergeConflictSideAtSelection = 'ours' | 'theirs' | 'base' | 'splitter' | null
+
+const ROW_DECORATION_SOURCE_ID = 'editor.mergeConflicts'
+const LENS_ROW_ID_PREFIX = 'editor.mergeConflicts.lens:'
+const LENS_ROW_CLASS = 'editor-merge-conflict-lens-row'
 const MERGE_CONFLICT_MARKER_CHAR_PATTERN = /[<=>|\r\n]/
+// The overview-ruler marks. Literals, not tokens: the minimap paints on a canvas in a worker with
+// no element to resolve a custom property against.
+const CURRENT_MINIMAP_COLOR = 'rgba(64, 200, 174, 0.5)'
+const INCOMING_MINIMAP_COLOR = 'rgba(64, 166, 255, 0.5)'
+const COMMON_MINIMAP_COLOR = 'rgba(96, 96, 96, 0.4)'
+
+const CURRENT_HEADER_ROW: VirtualizedTextRowDecoration = {
+  className: 'editor-merge-conflict-current-header',
+}
+const CURRENT_CONTENT_ROW: VirtualizedTextRowDecoration = {
+  className: 'editor-merge-conflict-current-content',
+}
+const COMMON_HEADER_ROW: VirtualizedTextRowDecoration = {
+  className: 'editor-merge-conflict-common-header',
+}
+const COMMON_CONTENT_ROW: VirtualizedTextRowDecoration = {
+  className: 'editor-merge-conflict-common-content',
+}
+const SPLITTER_ROW: VirtualizedTextRowDecoration = {
+  className: 'editor-merge-conflict-splitter',
+}
+const INCOMING_CONTENT_ROW: VirtualizedTextRowDecoration = {
+  className: 'editor-merge-conflict-incoming-content',
+}
+const INCOMING_HEADER_ROW: VirtualizedTextRowDecoration = {
+  className: 'editor-merge-conflict-incoming-header',
+}
 
 export function createMergeConflictPlugin(
   options: EditorMergeConflictPluginOptions = {},
@@ -76,49 +115,45 @@ export function createMergeConflictPlugin(
     name: EDITOR_MERGE_CONFLICT_FEATURE_ID,
     activate(context) {
       const internalContext = context as EditorInternalPluginContext
-      return [
+      const disposables: EditorDisposable[] = [
         internalContext.registerEditorFeatureContribution({
           createContribution(contributionContext) {
-            controller = new EditorMergeConflictController(
-              featureHost(contributionContext),
-              contributionContext.highlightPrefix,
-            )
-            return createMergeConflictFeatureContribution(contributionContext, controller)
+            controller = new EditorMergeConflictController(featureHost(contributionContext))
+            return createMergeConflictFeatureContribution(contributionContext, controller, options)
           },
         }),
         context.registerViewContribution({
           createContribution(contributionContext) {
             if (!controller) return null
-            if (options.actions === false) return null
-            return new MergeConflictActionsContribution(contributionContext, controller)
+            return new MergeConflictViewContribution(contributionContext, controller, options)
           },
         }),
       ]
+      if (options.lens === false) return disposables
+
+      disposables.push(
+        context.registerInjectedTextRowProvider({
+          getInjectedTextRows: (rowContext) =>
+            controller ? lensRows(controller.conflictsForText(rowContext.text)) : [],
+          onDidChangeInjectedTextRows: (listener) =>
+            controller ? controller.subscribe(listener) : { dispose() {} },
+        }),
+      )
+      return disposables
     },
   }
 }
 
 class EditorMergeConflictController {
-  private readonly outerHighlightName: string
-  private readonly oursHighlightName: string
-  private readonly baseHighlightName: string
-  private readonly theirsHighlightName: string
   private readonly listeners = new Set<ConflictListener>()
   private conflicts: readonly MergeConflictRegion[] = []
   private signature = ''
+  private parsedText: string | null = null
 
-  public constructor(
-    private readonly host: MergeConflictHost,
-    highlightPrefix: string,
-  ) {
-    this.outerHighlightName = `${highlightPrefix}-merge-conflict-outer`
-    this.oursHighlightName = `${highlightPrefix}-merge-conflict-ours`
-    this.baseHighlightName = `${highlightPrefix}-merge-conflict-base`
-    this.theirsHighlightName = `${highlightPrefix}-merge-conflict-theirs`
-  }
+  public constructor(private readonly host: MergeConflictHost) {}
 
   public dispose(): void {
-    this.clearHighlights()
+    this.host.clearRowDecorations(ROW_DECORATION_SOURCE_ID)
     this.listeners.clear()
   }
 
@@ -148,11 +183,19 @@ class EditorMergeConflictController {
     return this.conflicts
   }
 
+  /** The injected-row provider is handed the text it lays out; parse that, not a stale read. */
+  public conflictsForText(text: string): readonly MergeConflictRegion[] {
+    if (text === this.parsedText) return this.conflicts
+
+    this.setConflicts(parseMergeConflicts(text), text)
+    return this.conflicts
+  }
+
   public activateFromSnapshot(
     snapshot: EditorViewSnapshot,
     kind: EditorViewContributionUpdateKind,
   ): void {
-    if (kind === 'document' || kind === 'clear') this.setConflicts([])
+    if (kind === 'document' || kind === 'clear') this.setConflicts([], null)
     if (this.conflicts.length > 0) return
     if (!snapshotMayContainMergeConflict(snapshot)) return
 
@@ -169,7 +212,13 @@ class EditorMergeConflictController {
     if (!resolved) return false
 
     this.host.applyEdits(
-      [{ from: resolved.range.start, to: resolved.range.end, text: resolved.replacement }],
+      [
+        {
+          from: resolved.range.start,
+          to: resolved.range.end,
+          text: resolved.replacement,
+        },
+      ],
       'input.resolveMergeConflict',
       {
         anchor: resolved.selection.start,
@@ -177,6 +226,43 @@ class EditorMergeConflictController {
       },
     )
     return true
+  }
+
+  public resolveAllConflicts(resolution: MergeConflictResolution): boolean {
+    this.refresh()
+    const text = this.host.materializeFullText()
+    const edits: TextEdit[] = []
+    for (const conflict of this.conflicts) {
+      const resolved = resolveMergeConflict(text, conflict, resolution)
+      if (!resolved) continue
+      edits.push({
+        from: resolved.range.start,
+        to: resolved.range.end,
+        text: resolved.replacement,
+      })
+    }
+    if (edits.length === 0) return false
+
+    this.host.applyEdits(edits, 'input.resolveAllMergeConflicts')
+    return true
+  }
+
+  public resolveConflictAtSelection(resolution: MergeConflictResolution): boolean {
+    const conflict = this.conflictAtSelection()
+    if (!conflict) return false
+
+    return this.resolveConflict(conflict.index, resolution)
+  }
+
+  /** Whichever side the caret sits in; a caret on the splitter or in the base block resolves nothing. */
+  public resolveSelectedSide(): boolean {
+    const conflict = this.conflictAtSelection()
+    if (!conflict) return false
+
+    const side = sideAtOffset(conflict, this.headOffset())
+    if (side !== 'ours' && side !== 'theirs') return false
+
+    return this.resolveConflict(conflict.index, side)
   }
 
   public revealConflict(index: number): boolean {
@@ -194,13 +280,31 @@ class EditorMergeConflictController {
     return true
   }
 
+  public navigateConflict(direction: MergeConflictNavigationDirection): boolean {
+    this.refresh()
+    const target = conflictForNavigation(this.conflicts, this.headOffset(), direction)
+    if (!target) return false
+
+    return this.revealConflict(target.index)
+  }
+
+  public conflictAtSelection(): MergeConflictRegion | null {
+    this.refresh()
+    const offset = this.headOffset()
+    return this.conflicts.find((conflict) => conflictContainsOffset(conflict, offset)) ?? null
+  }
+
+  private headOffset(): number {
+    return this.host.getSelections()[0]?.headOffset ?? 0
+  }
+
   private refresh(): void {
     if (!this.host.hasDocument()) {
-      this.setConflicts([])
+      this.setConflicts([], null)
       return
     }
 
-    this.setConflicts(parseMergeConflicts(this.host.materializeFullText()))
+    this.conflictsForText(this.host.materializeFullText())
   }
 
   private canSkipRefreshForChange(change: DocumentSessionChange | null): boolean {
@@ -210,60 +314,15 @@ class EditorMergeConflictController {
     return change.edits.every(isMergeConflictNeutralInsertion)
   }
 
-  private setConflicts(conflicts: readonly MergeConflictRegion[]): void {
+  private setConflicts(conflicts: readonly MergeConflictRegion[], text: string | null): void {
+    this.parsedText = text
     const signature = conflictSignature(conflicts)
     if (this.signature === signature) return
 
     this.conflicts = conflicts
     this.signature = signature
-    this.updateHighlights()
+    this.host.setRowDecorations(ROW_DECORATION_SOURCE_ID, rowDecorations(conflicts))
     this.emitChange()
-  }
-
-  private updateHighlights(): void {
-    this.host.setRangeHighlight(
-      this.outerHighlightName,
-      this.conflictRanges(),
-      MERGE_CONFLICT_OUTER_STYLE,
-    )
-    this.host.setRangeHighlight(
-      this.oursHighlightName,
-      this.oursRanges(),
-      MERGE_CONFLICT_OURS_STYLE,
-    )
-    this.host.setRangeHighlight(
-      this.baseHighlightName,
-      this.baseRanges(),
-      MERGE_CONFLICT_BASE_STYLE,
-    )
-    this.host.setRangeHighlight(
-      this.theirsHighlightName,
-      this.theirsRanges(),
-      MERGE_CONFLICT_THEIRS_STYLE,
-    )
-  }
-
-  private clearHighlights(): void {
-    this.host.clearRangeHighlight(this.outerHighlightName)
-    this.host.clearRangeHighlight(this.oursHighlightName)
-    this.host.clearRangeHighlight(this.baseHighlightName)
-    this.host.clearRangeHighlight(this.theirsHighlightName)
-  }
-
-  private conflictRanges(): readonly { readonly start: number; readonly end: number }[] {
-    return this.conflicts.map((conflict) => conflict.range)
-  }
-
-  private oursRanges(): readonly { readonly start: number; readonly end: number }[] {
-    return this.conflicts.map((conflict) => conflict.ours)
-  }
-
-  private baseRanges(): readonly { readonly start: number; readonly end: number }[] {
-    return this.conflicts.flatMap((conflict) => (conflict.base ? [conflict.base] : []))
-  }
-
-  private theirsRanges(): readonly { readonly start: number; readonly end: number }[] {
-    return this.conflicts.map((conflict) => conflict.theirs)
   }
 
   private emitChange(): void {
@@ -271,23 +330,31 @@ class EditorMergeConflictController {
   }
 }
 
-class MergeConflictActionsContribution implements EditorViewContribution {
+/**
+ * What the view adds on top of the row tints: VS Code's CodeLens line for a conflict, "Accept
+ * Current Change | Accept Incoming Change | Accept Both Changes | Compare Changes", laid over the
+ * empty row injected above the `<<<<<<<` marker, and the overview-ruler marks in the minimap.
+ */
+class MergeConflictViewContribution implements EditorViewContribution {
   private readonly root: HTMLDivElement
   private readonly subscription: EditorDisposable
-  private latestSnapshot: EditorViewSnapshot
+  private readonly minimap: EditorMinimapFeature | null
+  private minimapConflicts: readonly MergeConflictRegion[] | null = null
 
   public constructor(
-    context: EditorViewContributionContext,
+    private readonly context: EditorViewContributionContext,
     private readonly controller: EditorMergeConflictController,
+    private readonly options: EditorMergeConflictPluginOptions,
   ) {
     const document = context.scrollElement.ownerDocument
-    this.latestSnapshot = context.getSnapshot()
     this.root = document.createElement('div')
-    this.root.className = 'editor-merge-conflict-actions-layer'
+    this.root.className = 'editor-merge-conflict-lens-layer'
     context.contentElement.appendChild(this.root)
+    this.minimap = context.getFeature?.(EDITOR_MINIMAP_FEATURE) ?? null
     this.subscription = controller.subscribe(() => this.render(context.getSnapshot()))
-    this.controller.activateFromSnapshot(this.latestSnapshot, 'document')
-    this.render(this.latestSnapshot)
+    const snapshot = context.getSnapshot()
+    this.controller.activateFromSnapshot(snapshot, 'document')
+    this.render(snapshot)
   }
 
   public update(
@@ -296,119 +363,141 @@ class MergeConflictActionsContribution implements EditorViewContribution {
     _change?: DocumentSessionChange | null,
   ): void {
     this.controller.activateFromSnapshot(snapshot, kind)
-    this.latestSnapshot = snapshot
     this.render(snapshot)
   }
 
   public dispose(): void {
     this.subscription.dispose()
+    this.minimap?.clearDecorations(ROW_DECORATION_SOURCE_ID)
     this.root.remove()
   }
 
   private render(snapshot: EditorViewSnapshot): void {
+    const conflicts = this.controller.peekConflicts()
+    this.publishMinimap(conflicts)
     this.root.textContent = ''
-    for (const conflict of this.visibleConflicts(snapshot)) {
-      this.root.appendChild(this.createActionRow(snapshot, conflict))
+    if (this.options.lens === false) return
+    for (const row of snapshot.visibleRows) {
+      const index = lensRowConflictIndex(row.injectedTextRowId)
+      if (index === null) continue
+      const conflict = conflicts[index]
+      if (!conflict) continue
+      this.root.appendChild(this.createLens(conflict, row.top))
     }
   }
 
-  private visibleConflicts(snapshot: EditorViewSnapshot): readonly MergeConflictRegion[] {
-    const rows = snapshot.visibleRows
-    if (rows.length === 0) return []
-
-    const first = rows[0]!
-    const last = rows[rows.length - 1]!
-    return this.controller.peekConflicts().filter((conflict) => {
-      if (conflict.range.end < first.startOffset) return false
-      return conflict.range.start <= last.endOffset + 1
-    })
+  private publishMinimap(conflicts: readonly MergeConflictRegion[]): void {
+    if (!this.minimap || conflicts === this.minimapConflicts) return
+    this.minimapConflicts = conflicts
+    this.minimap.setDecorations(ROW_DECORATION_SOURCE_ID, minimapBands(conflicts))
   }
 
-  private createActionRow(
-    snapshot: EditorViewSnapshot,
-    conflict: MergeConflictRegion,
-  ): HTMLDivElement {
+  private createLens(conflict: MergeConflictRegion, top: number): HTMLDivElement {
     const document = this.root.ownerDocument
-    const row = document.createElement('div')
-    row.className = 'editor-merge-conflict-actions'
-    row.style.transform = `translate3d(0, ${this.actionTop(snapshot, conflict)}px, 0)`
-    row.append(
-      this.createResolveButton(conflict.index, {
-        icon: 'ours',
-        label: `Use ${shortConflictSideLabel(conflict.oursLabel, 'Local')}`,
-        resolution: 'ours',
-        title: `Use ${conflict.oursLabel}`,
-      }),
-      this.createResolveButton(conflict.index, {
-        icon: 'theirs',
-        label: `Use ${shortConflictSideLabel(conflict.theirsLabel, 'Remote')}`,
-        resolution: 'theirs',
-        title: `Use ${conflict.theirsLabel}`,
-      }),
-      this.createResolveButton(conflict.index, {
-        icon: 'both',
-        label: 'Use Both',
-        resolution: 'both',
-        title: 'Use both local and remote changes',
-      }),
-    )
-    if (conflict.base)
-      row.appendChild(
-        this.createResolveButton(conflict.index, {
-          icon: 'base',
-          label: `Use ${shortConflictSideLabel(conflict.baseLabel ?? 'Base', 'Base')}`,
-          resolution: 'base',
-          title: `Use ${conflict.baseLabel ?? 'Base'}`,
+    const lens = document.createElement('div')
+    lens.className = 'editor-merge-conflict-lens'
+    lens.style.transform = `translate3d(0, ${Math.max(0, top)}px, 0)`
+    const actions: HTMLElement[] = [
+      this.createAction('Accept Current Change', () =>
+        this.controller.resolveConflict(conflict.index, 'ours'),
+      ),
+      this.createAction('Accept Incoming Change', () =>
+        this.controller.resolveConflict(conflict.index, 'theirs'),
+      ),
+      this.createAction('Accept Both Changes', () =>
+        this.controller.resolveConflict(conflict.index, 'both'),
+      ),
+    ]
+    const compare = this.options.compare
+    if (compare) {
+      actions.push(
+        this.createAction('Compare Changes', () => {
+          compare(conflict)
+          return true
         }),
       )
-    return row
+    }
+    actions.forEach((action, index) => {
+      if (index > 0) lens.appendChild(this.createSeparator())
+      lens.appendChild(action)
+    })
+    return lens
   }
 
-  private actionTop(snapshot: EditorViewSnapshot, conflict: MergeConflictRegion): number {
-    const row = visibleRowForOffset(snapshot, conflict.range.start)
-    if (!row) return snapshot.viewport.scrollTop
-    return Math.max(0, row.top)
-  }
-
-  private createResolveButton(index: number, action: MergeConflictAction): HTMLButtonElement {
+  private createAction(label: string, run: () => boolean): HTMLButtonElement {
     const button = this.root.ownerDocument.createElement('button')
     button.type = 'button'
-    button.className = 'editor-merge-conflict-action'
-    button.ariaLabel = action.title
-    button.dataset.tooltip = action.title
-    button.title = action.title
-    button.append(createActionIcon(this.root.ownerDocument, action.icon), action.label)
-    addResolveButtonListeners(button, () =>
-      this.controller.resolveConflict(index, action.resolution),
-    )
+    button.tabIndex = -1
+    button.className = 'editor-merge-conflict-lens-action'
+    button.textContent = label
+    addLensActionListeners(button, () => {
+      const handled = run()
+      this.context.focusEditor()
+      return handled
+    })
     return button
   }
-}
 
-type MergeConflictActionIcon = 'ours' | 'theirs' | 'both' | 'base'
-
-type MergeConflictAction = {
-  readonly icon: MergeConflictActionIcon
-  readonly label: string
-  readonly resolution: MergeConflictResolution
-  readonly title: string
+  private createSeparator(): HTMLSpanElement {
+    const separator = this.root.ownerDocument.createElement('span')
+    separator.className = 'editor-merge-conflict-lens-separator'
+    separator.ariaHidden = 'true'
+    separator.textContent = '|'
+    return separator
+  }
 }
 
 function createMergeConflictFeatureContribution(
   context: EditorFeatureContributionContext,
   controller: EditorMergeConflictController,
+  options: EditorMergeConflictPluginOptions,
 ): EditorFeatureContribution {
   const feature: EditorMergeConflictFeature = {
     getConflicts: () => controller.getConflicts(),
     resolveConflict: (index, resolution) => controller.resolveConflict(index, resolution),
+    resolveAllConflicts: (resolution) => controller.resolveAllConflicts(resolution),
     revealConflict: (index) => controller.revealConflict(index),
+    navigateConflict: (direction) => controller.navigateConflict(direction),
   }
-  const registration = context.registerFeature(EDITOR_MERGE_CONFLICT_FEATURE, feature)
+  const disposables: EditorDisposable[] = [
+    context.registerFeature(EDITOR_MERGE_CONFLICT_FEATURE, feature),
+    context.registerCommand('merge-conflict.accept.current', () =>
+      controller.resolveConflictAtSelection('ours'),
+    ),
+    context.registerCommand('merge-conflict.accept.incoming', () =>
+      controller.resolveConflictAtSelection('theirs'),
+    ),
+    context.registerCommand('merge-conflict.accept.both', () =>
+      controller.resolveConflictAtSelection('both'),
+    ),
+    context.registerCommand('merge-conflict.accept.selection', () =>
+      controller.resolveSelectedSide(),
+    ),
+    context.registerCommand('merge-conflict.accept.all-current', () =>
+      controller.resolveAllConflicts('ours'),
+    ),
+    context.registerCommand('merge-conflict.accept.all-incoming', () =>
+      controller.resolveAllConflicts('theirs'),
+    ),
+    context.registerCommand('merge-conflict.accept.all-both', () =>
+      controller.resolveAllConflicts('both'),
+    ),
+    context.registerCommand('merge-conflict.next', () => controller.navigateConflict('next')),
+    context.registerCommand('merge-conflict.previous', () =>
+      controller.navigateConflict('previous'),
+    ),
+    context.registerCommand('merge-conflict.compare', () => {
+      const conflict = options.compare ? controller.conflictAtSelection() : null
+      if (!conflict) return false
+      options.compare?.(conflict)
+      return true
+    }),
+  ]
 
   return {
     handleEditorChange: (change) => controller.handleEditorChange(change),
     dispose() {
-      registration.dispose()
+      for (const disposable of disposables) disposable.dispose()
       controller.dispose()
     },
   }
@@ -419,24 +508,142 @@ function featureHost(context: EditorFeatureContributionContext): MergeConflictHo
     hasDocument: () => context.hasDocument(),
     materializeFullText: () => context.materializeFullText(),
     focusEditor: () => context.focusEditor(),
+    getSelections: () => context.getSelections(),
     setSelection: (anchor, head, timingName, options) =>
       context.setSelection(anchor, head, timingName, options),
     applyEdits: (edits, timingName, selection) => context.applyEdits(edits, timingName, selection),
-    setRangeHighlight: (name, ranges, style) => context.setRangeHighlight(name, ranges, style),
-    clearRangeHighlight: (name) => context.clearRangeHighlight(name),
+    setRowDecorations: (sourceId, decorations) => context.setRowDecorations(sourceId, decorations),
+    clearRowDecorations: (sourceId) => context.clearRowDecorations(sourceId),
   }
 }
 
-function visibleRowForOffset(
-  snapshot: EditorViewSnapshot,
+function lensRows(conflicts: readonly MergeConflictRegion[]): readonly EditorInjectedTextRow[] {
+  return conflicts.map((conflict) => ({
+    id: `${LENS_ROW_ID_PREFIX}${conflict.index}`,
+    anchorBufferRow: conflict.startMarkerLine,
+    placement: 'before',
+    text: '',
+    className: LENS_ROW_CLASS,
+  }))
+}
+
+function minimapBands(
+  conflicts: readonly MergeConflictRegion[],
+): readonly EditorMinimapDecoration[] {
+  return conflicts.flatMap((conflict) => {
+    const currentEnd = conflict.baseMarkerLine ?? conflict.separatorMarkerLine
+    const bands = [
+      minimapBand(conflict.startMarkerLine, currentEnd, CURRENT_MINIMAP_COLOR),
+      minimapBand(
+        conflict.separatorMarkerLine + 1,
+        conflict.endMarkerLine + 1,
+        INCOMING_MINIMAP_COLOR,
+      ),
+    ]
+    if (conflict.baseMarkerLine !== undefined) {
+      bands.push(
+        minimapBand(conflict.baseMarkerLine, conflict.separatorMarkerLine, COMMON_MINIMAP_COLOR),
+      )
+    }
+    return bands
+  })
+}
+
+/** Rows are zero-based and the end exclusive; the minimap counts lines from one, both ends inclusive. */
+function minimapBand(
+  startRow: number,
+  endRowExclusive: number,
+  color: string,
+): EditorMinimapDecoration {
+  return {
+    startLineNumber: startRow + 1,
+    startColumn: 1,
+    endLineNumber: Math.max(startRow, endRowExclusive - 1) + 1,
+    endColumn: 1,
+    color,
+    position: 'inline',
+  }
+}
+
+function lensRowConflictIndex(injectedTextRowId: string | undefined): number | null {
+  if (!injectedTextRowId?.startsWith(LENS_ROW_ID_PREFIX)) return null
+  const index = Number(injectedTextRowId.slice(LENS_ROW_ID_PREFIX.length))
+  return Number.isInteger(index) ? index : null
+}
+
+function rowDecorations(
+  conflicts: readonly MergeConflictRegion[],
+): ReadonlyMap<number, VirtualizedTextRowDecoration> {
+  const decorations = new Map<number, VirtualizedTextRowDecoration>()
+  for (const conflict of conflicts) addConflictRowDecorations(decorations, conflict)
+  return decorations
+}
+
+function addConflictRowDecorations(
+  decorations: Map<number, VirtualizedTextRowDecoration>,
+  conflict: MergeConflictRegion,
+): void {
+  const currentEnd = conflict.baseMarkerLine ?? conflict.separatorMarkerLine
+  decorations.set(conflict.startMarkerLine, CURRENT_HEADER_ROW)
+  setRowRange(decorations, conflict.startMarkerLine + 1, currentEnd, CURRENT_CONTENT_ROW)
+  if (conflict.baseMarkerLine !== undefined) {
+    decorations.set(conflict.baseMarkerLine, COMMON_HEADER_ROW)
+    setRowRange(
+      decorations,
+      conflict.baseMarkerLine + 1,
+      conflict.separatorMarkerLine,
+      COMMON_CONTENT_ROW,
+    )
+  }
+  decorations.set(conflict.separatorMarkerLine, SPLITTER_ROW)
+  setRowRange(
+    decorations,
+    conflict.separatorMarkerLine + 1,
+    conflict.endMarkerLine,
+    INCOMING_CONTENT_ROW,
+  )
+  decorations.set(conflict.endMarkerLine, INCOMING_HEADER_ROW)
+}
+
+function setRowRange(
+  decorations: Map<number, VirtualizedTextRowDecoration>,
+  start: number,
+  endExclusive: number,
+  decoration: VirtualizedTextRowDecoration,
+): void {
+  for (let row = start; row < endExclusive; row += 1) decorations.set(row, decoration)
+}
+
+function conflictContainsOffset(conflict: MergeConflictRegion, offset: number): boolean {
+  return offset >= conflict.range.start && offset < conflict.range.end
+}
+
+function sideAtOffset(conflict: MergeConflictRegion, offset: number): MergeConflictSideAtSelection {
+  const currentEnd = conflict.baseMarker ?? conflict.separatorMarker
+  if (offset < currentEnd.start) return 'ours'
+  if (offset >= conflict.separatorMarker.end) return 'theirs'
+  if (offset < conflict.separatorMarker.start) return 'base'
+  return 'splitter'
+}
+
+/** VS Code's order: the next conflict past the caret, wrapping to the far end; one conflict never moves. */
+function conflictForNavigation(
+  conflicts: readonly MergeConflictRegion[],
   offset: number,
-): EditorViewSnapshot['visibleRows'][number] | null {
-  for (const row of snapshot.visibleRows) {
-    if (offset < row.startOffset) continue
-    if (offset <= row.endOffset + 1) return row
+  direction: MergeConflictNavigationDirection,
+): MergeConflictRegion | null {
+  if (conflicts.length === 0) return null
+  if (conflicts.length === 1) {
+    return conflictContainsOffset(conflicts[0]!, offset) ? null : conflicts[0]!
   }
 
-  return snapshot.visibleRows[0] ?? null
+  const forwards = direction === 'next'
+  const ordered = forwards ? conflicts : [...conflicts].reverse()
+  const candidate = ordered.find((conflict) => {
+    if (conflictContainsOffset(conflict, offset)) return false
+    return forwards ? offset < conflict.range.start : offset > conflict.range.start
+  })
+  return candidate ?? ordered[0]!
 }
 
 function conflictSignature(conflicts: readonly MergeConflictRegion[]): string {
@@ -451,6 +658,10 @@ function conflictSignature(conflicts: readonly MergeConflictRegion[]): string {
         conflict.base?.end ?? '',
         conflict.theirs.start,
         conflict.theirs.end,
+        conflict.startMarkerLine,
+        conflict.baseMarkerLine ?? '',
+        conflict.separatorMarkerLine,
+        conflict.endMarkerLine,
         conflict.oursLabel,
         conflict.baseLabel ?? '',
         conflict.theirsLabel,
@@ -475,57 +686,27 @@ function lineStartsWithMergeConflictMarker(text: string): boolean {
   return text.startsWith('>>>>>>>')
 }
 
-function shortConflictSideLabel(label: string, fallback: string): string {
-  const separatorIndex = label.indexOf(':')
-  const candidate = separatorIndex > 0 ? label.slice(0, separatorIndex).trim() : label.trim()
-  if (!candidate) return fallback
-  if (candidate.length > 14) return fallback
-
-  return candidate
-}
-
-function createActionIcon(document: Document, icon: MergeConflictActionIcon): SVGSVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('aria-hidden', 'true')
-  svg.setAttribute('class', `editor-merge-conflict-action-icon icon-${icon}`)
-  svg.setAttribute('viewBox', '0 0 16 16')
-  for (const pathData of actionIconPaths(icon)) {
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-    path.setAttribute('d', pathData)
-    svg.appendChild(path)
-  }
-
-  return svg
-}
-
-function actionIconPaths(icon: MergeConflictActionIcon): readonly string[] {
-  if (icon === 'ours') return ['M3.5 8.2 6.5 11 12.5 4.8']
-  if (icon === 'theirs') return ['M9 3.5 13.5 8 9 12.5', 'M2.5 8h10.5']
-  if (icon === 'base') return ['M8 2.5a5.5 5.5 0 1 0 5.5 5.5', 'M8 5v3l2 1.5']
-
-  return ['M4 3.5v9', 'M12 3.5v9', 'M5.5 8h5']
-}
-
-function addResolveButtonListeners(button: HTMLButtonElement, resolve: () => boolean): void {
+/** Pointer-down runs the action and swallows the press so the editor never sees a click on its row. */
+function addLensActionListeners(button: HTMLButtonElement, run: () => boolean): void {
   let handledPointerDown = false
 
   button.addEventListener('pointerdown', (event) => {
     handledPointerDown = true
-    consumeResolveEvent(event)
-    resolve()
+    consumeLensEvent(event)
+    run()
   })
   button.addEventListener('click', (event) => {
-    consumeResolveEvent(event)
+    consumeLensEvent(event)
     if (handledPointerDown) {
       handledPointerDown = false
       return
     }
 
-    resolve()
+    run()
   })
 }
 
-function consumeResolveEvent(event: Event): void {
+function consumeLensEvent(event: Event): void {
   event.preventDefault()
   event.stopPropagation()
 }

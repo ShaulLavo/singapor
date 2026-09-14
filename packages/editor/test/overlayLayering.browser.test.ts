@@ -47,17 +47,12 @@ describe('overlay stacking scale', () => {
   it('layers the shipped overlay rules from the scale rather than a literal', () => {
     const host = document.createElement('div')
     host.style.setProperty('--editor-z-overlay-surface', '111')
-    host.style.setProperty('--editor-z-overlay-popup', '333')
     const layer = document.createElement('div')
-    const action = document.createElement('button')
-    layer.className = 'editor-merge-conflict-actions-layer'
-    action.className = 'editor-merge-conflict-action'
-    action.dataset.tooltip = 'Accept'
-    host.append(layer, action)
+    layer.className = 'editor-merge-conflict-lens-layer'
+    host.append(layer)
     document.body.append(host)
 
     expect(getComputedStyle(layer).zIndex).toBe('111')
-    expect(getComputedStyle(action, '::after').zIndex).toBe('333')
 
     host.remove()
   })
@@ -71,7 +66,10 @@ describe('overlay width reservation', () => {
     container.style.height = '120px'
     container.style.width = '360px'
     document.body.append(container)
-    const view = new VirtualizedTextView(container, { rowHeight: 20, overscan: 0 })
+    const view = new VirtualizedTextView(container, {
+      rowHeight: 20,
+      overscan: 0,
+    })
     const scroll = container.querySelector<HTMLElement>('.editor-virtualized')!
     const bounds = container.getBoundingClientRect()
     const text = 'long line '.repeat(100)

@@ -130,7 +130,9 @@ function createMockHighlighterSession(
 
 function createHighlighterPlugin(
   session: EditorHighlighterSession,
-  options: { readonly loadTheme?: () => Promise<EditorTheme | null | undefined> } = {},
+  options: {
+    readonly loadTheme?: () => Promise<EditorTheme | null | undefined>
+  } = {},
 ): EditorPlugin {
   return {
     activate: (context) => {
@@ -138,7 +140,10 @@ function createHighlighterPlugin(
         createSession: () => session,
       }
       if (!options.loadTheme) return context.registerHighlighter(provider)
-      return context.registerHighlighter({ ...provider, loadTheme: options.loadTheme })
+      return context.registerHighlighter({
+        ...provider,
+        loadTheme: options.loadTheme,
+      })
     },
   }
 }
@@ -157,7 +162,12 @@ function createViewContributionPlugin(events: ViewContributionEvent[]): EditorPl
             })
           },
           dispose: () => {
-            events.push({ kind: 'dispose', snapshot: null, changeKind: null, editCount: 0 })
+            events.push({
+              kind: 'dispose',
+              snapshot: null,
+              changeKind: null,
+              editCount: 0,
+            })
           },
         }),
       }),
@@ -409,7 +419,11 @@ function typeIntoHiddenInput(value: string, caret = value.length): void {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
-function hiddenInputWindow(): { value: string; selectionStart: number; selectionEnd: number } {
+function hiddenInputWindow(): {
+  value: string
+  selectionStart: number
+  selectionEnd: number
+} {
   const input = editorInput()
   return {
     selectionEnd: input.selectionEnd,
@@ -434,8 +448,14 @@ function createPasteEvent(text: string): ClipboardEvent {
     getData: (format: string): string => (format === 'text/plain' ? text : ''),
     setData: () => undefined,
   }
-  const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
-  Object.defineProperty(event, 'clipboardData', { configurable: true, value: clipboardData })
+  const event = new Event('paste', {
+    bubbles: true,
+    cancelable: true,
+  }) as ClipboardEvent
+  Object.defineProperty(event, 'clipboardData', {
+    configurable: true,
+    value: clipboardData,
+  })
   return event
 }
 
@@ -448,7 +468,10 @@ function createDropEvent(text: string, init: MouseEventInit = {}): DragEvent {
     cancelable: true,
     ...init,
   }) as DragEvent
-  Object.defineProperty(event, 'dataTransfer', { configurable: true, value: dataTransfer })
+  Object.defineProperty(event, 'dataTransfer', {
+    configurable: true,
+    value: dataTransfer,
+  })
   return event
 }
 
@@ -496,8 +519,14 @@ function createCopyEvent(): {
       values.set(format, value)
     },
   }
-  const event = new Event('copy', { bubbles: true, cancelable: true }) as ClipboardEvent
-  Object.defineProperty(event, 'clipboardData', { configurable: true, value: clipboardData })
+  const event = new Event('copy', {
+    bubbles: true,
+    cancelable: true,
+  }) as ClipboardEvent
+  Object.defineProperty(event, 'clipboardData', {
+    configurable: true,
+    value: clipboardData,
+  })
 
   return {
     event,
@@ -709,8 +738,14 @@ function mockEditorViewport(
   height: number,
   scrollHeight = 200,
 ): void {
-  Object.defineProperty(element, 'clientHeight', { configurable: true, value: height })
-  Object.defineProperty(element, 'scrollHeight', { configurable: true, value: scrollHeight })
+  Object.defineProperty(element, 'clientHeight', {
+    configurable: true,
+    value: height,
+  })
+  Object.defineProperty(element, 'scrollHeight', {
+    configurable: true,
+    value: scrollHeight,
+  })
   Object.defineProperty(element, 'getBoundingClientRect', {
     configurable: true,
     value: () => ({
@@ -732,8 +767,14 @@ function mockEditorHorizontalViewport(
   width: number,
   scrollWidth: number,
 ): void {
-  Object.defineProperty(element, 'clientWidth', { configurable: true, value: width })
-  Object.defineProperty(element, 'scrollWidth', { configurable: true, value: scrollWidth })
+  Object.defineProperty(element, 'clientWidth', {
+    configurable: true,
+    value: width,
+  })
+  Object.defineProperty(element, 'scrollWidth', {
+    configurable: true,
+    value: scrollWidth,
+  })
 }
 
 type ScrollMetricProperty =
@@ -853,7 +894,9 @@ describe('Editor', () => {
     resetEditorInstanceCount()
     container = document.createElement('div')
     document.body.appendChild(container)
-    editor = createVisibleEditor(container, { plugins: withTestLanguagePlugins() })
+    editor = createVisibleEditor(container, {
+      plugins: withTestLanguagePlugins(),
+    })
   })
 
   afterEach(() => {
@@ -1014,7 +1057,10 @@ describe('Editor', () => {
 
   describe('setTheme', () => {
     it('updates and clears configured editor theme variables', () => {
-      editor.setTheme({ backgroundColor: '#ffffff', foregroundColor: '#24292e' })
+      editor.setTheme({
+        backgroundColor: '#ffffff',
+        foregroundColor: '#24292e',
+      })
 
       expect(editorRoot().style.getPropertyValue('--editor-background')).toBe('#ffffff')
       expect(editorRoot().style.getPropertyValue('--editor-foreground')).toBe('#24292e')
@@ -1047,8 +1093,12 @@ describe('Editor', () => {
       await flushMicrotasks()
       await flushSyntaxDebounce()
 
-      editor.syncText('const a = 1;!\nconst b = 2;', { languageId: 'typescript' })
-      editor.syncText('const a = 1;!\nconst b = 2;?', { languageId: 'typescript' })
+      editor.syncText('const a = 1;!\nconst b = 2;', {
+        languageId: 'typescript',
+      })
+      editor.syncText('const a = 1;!\nconst b = 2;?', {
+        languageId: 'typescript',
+      })
       await flushSyntaxDebounce()
 
       // One request for the burst, carrying both edits in the coordinates of the last text the
@@ -1512,6 +1562,16 @@ describe('Editor', () => {
   })
 
   describe('merge conflicts', () => {
+    it('resolves an adjacent conflict at its opening marker', () => {
+      const conflict = '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n'
+      editor.addPlugin(createMergeConflictPlugin())
+      editor.setText(conflict + conflict)
+      editor.setSelection(conflict.length)
+
+      expect(editor.dispatchCommand('merge-conflict.accept.incoming')).toBe(true)
+      expect(editor.materializeFullText()).toBe(conflict + 'theirs\n')
+    })
+
     it('reports conflict marker regions in the current document', () => {
       editor.setText(['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n'))
 
@@ -1544,7 +1604,39 @@ describe('Editor', () => {
       expect(editor.getMergeConflicts()).toHaveLength(1)
     })
 
-    it('renders conflict action rows that resolve the current conflict', () => {
+    it('renders a lens line above the conflict that resolves it', () => {
+      editor.dispose()
+      container.textContent = ''
+      const compare = vi.fn()
+      editor = createVisibleEditor(container, {
+        plugins: withTestLanguagePlugins(createMergeConflictPlugin({ compare })),
+      })
+      editor.setText(['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n'))
+
+      const actions = [
+        ...container.querySelectorAll<HTMLButtonElement>('.editor-merge-conflict-lens-action'),
+      ]
+
+      expect(actions.map((action) => action.textContent)).toEqual([
+        'Accept Current Change',
+        'Accept Incoming Change',
+        'Accept Both Changes',
+        'Compare Changes',
+      ])
+      expect(container.querySelector('.editor-merge-conflict-current-header')).not.toBeNull()
+      expect(container.querySelector('.editor-merge-conflict-incoming-header')).not.toBeNull()
+
+      actions[3]!.click()
+      expect(compare).toHaveBeenCalledWith(expect.objectContaining({ index: 0 }))
+
+      actions[1]!.click()
+
+      expect(editor.materializeFullText()).toBe('theirs\n')
+      expect(container.querySelector('.editor-merge-conflict-lens')).toBeNull()
+      expect(container.querySelector('.editor-merge-conflict-current-header')).toBeNull()
+    })
+
+    it('omits the compare lens when no host handles it', () => {
       editor.dispose()
       container.textContent = ''
       editor = createVisibleEditor(container, {
@@ -1552,25 +1644,14 @@ describe('Editor', () => {
       })
       editor.setText(['<<<<<<< HEAD', 'ours', '=======', 'theirs', '>>>>>>> branch'].join('\n'))
 
-      const actions = [
-        ...container.querySelectorAll<HTMLButtonElement>('.editor-merge-conflict-action'),
-      ]
-
-      expect(actions.map((action) => action.textContent)).toEqual([
-        'Use HEAD',
-        'Use branch',
-        'Use Both',
+      const labels = [
+        ...container.querySelectorAll<HTMLButtonElement>('.editor-merge-conflict-lens-action'),
+      ].map((action) => action.textContent)
+      expect(labels).toEqual([
+        'Accept Current Change',
+        'Accept Incoming Change',
+        'Accept Both Changes',
       ])
-      expect(actions.map((action) => action.title)).toEqual([
-        'Use HEAD',
-        'Use branch',
-        'Use both local and remote changes',
-      ])
-
-      actions[1]!.click()
-
-      expect(editor.materializeFullText()).toBe('theirs\n')
-      expect(container.querySelector('.editor-merge-conflict-actions')).toBeNull()
     })
   })
 
@@ -1622,7 +1703,9 @@ describe('Editor', () => {
         const previousVersion = events.at(-1)?.snapshot?.textVersion
         const buffer = createEditorTextBuffer('alpha\nbeta\ngamma')
 
-        editor.attachSession(createEditorBufferSession(buffer), { documentId: 'attached.ts' })
+        editor.attachSession(createEditorBufferSession(buffer), {
+          documentId: 'attached.ts',
+        })
 
         const snapshot = events.at(-1)?.snapshot
         expect(snapshot?.textSnapshot?.lineCount).toBe(3)
@@ -1661,7 +1744,9 @@ describe('Editor', () => {
     it('receives document, token, selection, and content updates', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor = createVisibleEditor(container, {
+        plugins: [createViewContributionPlugin(events)],
+      })
 
       editor.openDocument({ documentId: 'test.ts', text: 'const a = 1;' })
       editor.setTokens([{ start: 0, end: 5, style: { color: '#ff0000' } }])
@@ -1679,7 +1764,9 @@ describe('Editor', () => {
     it('reports a pass that ends on a caret move as the edit it made', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor = createVisibleEditor(container, {
+        plugins: [createViewContributionPlugin(events)],
+      })
       editor.openDocument({ documentId: 'test.ts', text: 'alpha beta' })
       events.length = 0
 
@@ -1702,7 +1789,9 @@ describe('Editor', () => {
     it('increments snapshot textVersion for text edits', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor = createVisibleEditor(container, {
+        plugins: [createViewContributionPlugin(events)],
+      })
 
       editor.openDocument({ documentId: 'test.ts', text: 'const a = 1;' })
       const openVersion = events.at(-1)?.snapshot?.textVersion
@@ -1718,7 +1807,9 @@ describe('Editor', () => {
     it('uses cached scroll metrics when creating snapshots', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
-      editor = new Editor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor = new Editor(container, {
+        plugins: [createViewContributionPlugin(events)],
+      })
       const view = Reflect.get(editor, 'view') as VirtualizedTextView
       view.measureInitialViewport()
 
@@ -1750,7 +1841,9 @@ describe('Editor', () => {
     it('resets scroll when opening a new document without an explicit position', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor = createVisibleEditor(container, {
+        plugins: [createViewContributionPlugin(events)],
+      })
 
       editor.openDocument({
         documentId: 'large.txt',
@@ -1781,12 +1874,22 @@ describe('Editor', () => {
     it('renders the restored viewport once, without drawing the outgoing offset first', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor = createVisibleEditor(container, {
+        plugins: [createViewContributionPlugin(events)],
+      })
       const text = Array.from({ length: 400 }, (_value, index) => `line ${index}`).join('\n')
 
-      editor.openDocument({ documentId: 'first.txt', text, scrollPosition: { top: 900 } })
+      editor.openDocument({
+        documentId: 'first.txt',
+        text,
+        scrollPosition: { top: 900 },
+      })
       events.length = 0
-      editor.openDocument({ documentId: 'second.txt', text, scrollPosition: { top: 1200 } })
+      editor.openDocument({
+        documentId: 'second.txt',
+        text,
+        scrollPosition: { top: 1200 },
+      })
 
       const reported = events
         .map((event) => event.snapshot?.viewport.scrollTop)
@@ -1806,7 +1909,10 @@ describe('Editor', () => {
       editor.setText('short')
 
       expect(editorRoot().scrollTop).toBeLessThan(120)
-      expect(editor.getScrollPosition()).toEqual({ top: editorRoot().scrollTop, left: 0 })
+      expect(editor.getScrollPosition()).toEqual({
+        top: editorRoot().scrollTop,
+        left: 0,
+      })
     })
 
     it('uses cached line starts when reserving overlay width', () => {
@@ -1939,7 +2045,9 @@ describe('Editor', () => {
     it('disposes view contributions with the editor', () => {
       const events: ViewContributionEvent[] = []
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor = createVisibleEditor(container, {
+        plugins: [createViewContributionPlugin(events)],
+      })
 
       editor.dispose()
 
@@ -1984,7 +2092,10 @@ describe('Editor', () => {
       }
 
       editor.dispose()
-      editor = createVisibleEditor(container, { defaultText: 'one\ntwo', plugins: [plugin] })
+      editor = createVisibleEditor(container, {
+        defaultText: 'one\ntwo',
+        plugins: [plugin],
+      })
 
       expect(providerContexts.at(-1)).toEqual({
         documentId: null,
@@ -2076,7 +2187,9 @@ describe('Editor', () => {
       }
 
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: [abandoned, replacement] })
+      editor = createVisibleEditor(container, {
+        plugins: [abandoned, replacement],
+      })
 
       expect(editor.dispatchCommand('findNext')).toBe(true)
       expect(replacementRan).toBe(true)
@@ -2172,7 +2285,10 @@ describe('Editor', () => {
       }
 
       editor.dispose()
-      editor = createVisibleEditor(container, { defaultText: 'one\ntwo', plugins: [plugin] })
+      editor = createVisibleEditor(container, {
+        defaultText: 'one\ntwo',
+        plugins: [plugin],
+      })
 
       const feature = requireDecorationContributionContext(featureContext)
       feature.setRowDecorations(
@@ -2213,7 +2329,10 @@ describe('Editor', () => {
       }
 
       editor.dispose()
-      editor = createVisibleEditor(container, { defaultText: 'one', plugins: [plugin] })
+      editor = createVisibleEditor(container, {
+        defaultText: 'one',
+        plugins: [plugin],
+      })
 
       const feature = requireDecorationContributionContext(featureContext)
       feature.setRowDecorations('first', new Map([[0, { className: 'first-row' }]]))
@@ -2868,7 +2987,9 @@ describe('Editor', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }))
 
       expect(session.materializeFullText()).toBe('abc')
-      editor = createVisibleEditor(container, { plugins: withTestLanguagePlugins() })
+      editor = createVisibleEditor(container, {
+        plugins: withTestLanguagePlugins(),
+      })
     })
 
     it('measures input timing from the browser event timestamp', () => {
@@ -2887,7 +3008,10 @@ describe('Editor', () => {
         data: '!',
         inputType: 'insertText',
       })
-      Object.defineProperty(event, 'timeStamp', { configurable: true, value: 1 })
+      Object.defineProperty(event, 'timeStamp', {
+        configurable: true,
+        value: 1,
+      })
       editorRoot().dispatchEvent(event)
 
       const timing = changes.at(-1)?.timings.find(({ name }) => name === 'input.beforeinput')
@@ -3223,7 +3347,10 @@ describe('Editor', () => {
 
     it('leaves a drag over a readonly document unclaimed', () => {
       editor.dispose()
-      editor = createVisibleEditor(container, { defaultText: 'abcd', editability: 'readonly' })
+      editor = createVisibleEditor(container, {
+        defaultText: 'abcd',
+        editability: 'readonly',
+      })
       mockEditorViewport(editorRoot(), 120, 40)
 
       const dragOver = createDragOverEvent({ clientX: 20, clientY: 10 })
@@ -4033,7 +4160,12 @@ describe('Editor', () => {
       expect(editor.dispatchCommand('editor.action.moveSelectionToNextFindMatch')).toBe(true)
       expect(resolvedSelectionMetadata(session)).toEqual([
         { affinity: 'after', anchor: 8, goal: SelectionGoal.none(), head: 11 },
-        { affinity: 'before', anchor: 19, goal: SelectionGoal.none(), head: 16 },
+        {
+          affinity: 'before',
+          anchor: 19,
+          goal: SelectionGoal.none(),
+          head: 16,
+        },
       ])
       expect(session.getSelections().lastAddedIndex).toBe(1)
       expect(revealCaret).toHaveBeenLastCalledWith(16, 'before', undefined)
@@ -4121,14 +4253,20 @@ describe('Editor', () => {
         session.getSnapshot(),
         session.getSelections().selections[0]!,
       )
-      expect({ start: selection.startOffset, end: selection.endOffset }).toEqual({
+      expect({
+        start: selection.startOffset,
+        end: selection.endOffset,
+      }).toEqual({
         start: 0,
         end: 3,
       })
 
       expect(editor.findNext()).toBe(true)
       selection = resolveSelection(session.getSnapshot(), session.getSelections().selections[0]!)
-      expect({ start: selection.startOffset, end: selection.endOffset }).toEqual({
+      expect({
+        start: selection.startOffset,
+        end: selection.endOffset,
+      }).toEqual({
         start: 8,
         end: 11,
       })
@@ -4242,7 +4380,11 @@ describe('Editor', () => {
       })
       editorRoot().dispatchEvent(mouseDown)
       document.dispatchEvent(
-        new MouseEvent('mousemove', { cancelable: true, clientX: 30, clientY: 10 }),
+        new MouseEvent('mousemove', {
+          cancelable: true,
+          clientX: 30,
+          clientY: 10,
+        }),
       )
 
       expect(mouseDown.defaultPrevented).toBe(true)
@@ -4253,7 +4395,11 @@ describe('Editor', () => {
       expect(resolved.endOffset).toBe(3)
 
       document.dispatchEvent(
-        new MouseEvent('mouseup', { cancelable: true, clientX: 30, clientY: 10 }),
+        new MouseEvent('mouseup', {
+          cancelable: true,
+          clientX: 30,
+          clientY: 10,
+        }),
       )
 
       resolved = resolveSelection(session.getSnapshot(), session.getSelections().selections[0]!)
@@ -4267,8 +4413,18 @@ describe('Editor', () => {
       mockEditorViewport(editorRoot(), 120, 40)
       const view = Reflect.get(editor, 'view') as VirtualizedTextView
       vi.spyOn(view, 'textPositionFromPoint')
-        .mockReturnValueOnce({ affinity: 'after', displayRow: 0, offset: 1, rowX: 8 })
-        .mockReturnValueOnce({ affinity: 'after', displayRow: 0, offset: 3, rowX: 24 })
+        .mockReturnValueOnce({
+          affinity: 'after',
+          displayRow: 0,
+          offset: 1,
+          rowX: 8,
+        })
+        .mockReturnValueOnce({
+          affinity: 'after',
+          displayRow: 0,
+          offset: 3,
+          rowX: 24,
+        })
 
       pressMouse({ clientX: 8, clientY: 10 })
       moveMouse({ clientX: 24, clientY: 10 })
@@ -4294,7 +4450,11 @@ describe('Editor', () => {
         }),
       )
       document.dispatchEvent(
-        new MouseEvent('mousemove', { cancelable: true, clientX: 30, clientY: 10 }),
+        new MouseEvent('mousemove', {
+          cancelable: true,
+          clientX: 30,
+          clientY: 10,
+        }),
       )
 
       const staleRange = document.createRange()
@@ -4314,7 +4474,11 @@ describe('Editor', () => {
       expect(resolved.endOffset).toBe(3)
 
       document.dispatchEvent(
-        new MouseEvent('mouseup', { cancelable: true, clientX: 30, clientY: 10 }),
+        new MouseEvent('mouseup', {
+          cancelable: true,
+          clientX: 30,
+          clientY: 10,
+        }),
       )
     })
 
@@ -4326,7 +4490,9 @@ describe('Editor', () => {
 
       const textNode = rowTextNode()
       const original = (
-        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+        document as Document & {
+          caretRangeFromPoint?: (x: number, y: number) => Range | null
+        }
       ).caretRangeFromPoint
       Object.defineProperty(document, 'caretRangeFromPoint', {
         configurable: true,
@@ -4354,7 +4520,11 @@ describe('Editor', () => {
         }
       }
 
-      expect(hiddenInputWindow()).toEqual({ selectionEnd: 3, selectionStart: 1, value: 'abcd' })
+      expect(hiddenInputWindow()).toEqual({
+        selectionEnd: 3,
+        selectionStart: 1,
+        value: 'abcd',
+      })
     })
 
     it('renders and copies pointer drag selections with selection sync disabled', () => {
@@ -4377,10 +4547,18 @@ describe('Editor', () => {
           }),
         )
         document.dispatchEvent(
-          new MouseEvent('mousemove', { cancelable: true, clientX: 30, clientY: 10 }),
+          new MouseEvent('mousemove', {
+            cancelable: true,
+            clientX: 30,
+            clientY: 10,
+          }),
         )
         document.dispatchEvent(
-          new MouseEvent('mouseup', { cancelable: true, clientX: 30, clientY: 10 }),
+          new MouseEvent('mouseup', {
+            cancelable: true,
+            clientX: 30,
+            clientY: 10,
+          }),
         )
 
         expect(selectionRanges()).toHaveLength(1)
@@ -4402,7 +4580,9 @@ describe('Editor', () => {
 
       const textNode = rowTextNode()
       const originalCaretRangeFromPoint = (
-        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+        document as Document & {
+          caretRangeFromPoint?: (x: number, y: number) => Range | null
+        }
       ).caretRangeFromPoint
       Object.defineProperty(document, 'caretRangeFromPoint', {
         configurable: true,
@@ -4464,7 +4644,9 @@ describe('Editor', () => {
 
       const textNode = rowTextNode()
       const originalCaretRangeFromPoint = (
-        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+        document as Document & {
+          caretRangeFromPoint?: (x: number, y: number) => Range | null
+        }
       ).caretRangeFromPoint
       Object.defineProperty(document, 'caretRangeFromPoint', {
         configurable: true,
@@ -4560,7 +4742,9 @@ describe('Editor', () => {
 
       const textNode = rowTextNode()
       const originalCaretRangeFromPoint = (
-        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+        document as Document & {
+          caretRangeFromPoint?: (x: number, y: number) => Range | null
+        }
       ).caretRangeFromPoint
       Object.defineProperty(document, 'caretRangeFromPoint', {
         configurable: true,
@@ -4724,7 +4908,9 @@ describe('Editor', () => {
       range.setStart(textNode, 8)
       range.setEnd(textNode, 8)
       const originalCaretRangeFromPoint = (
-        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+        document as Document & {
+          caretRangeFromPoint?: (x: number, y: number) => Range | null
+        }
       ).caretRangeFromPoint
       Object.defineProperty(document, 'caretRangeFromPoint', {
         configurable: true,
@@ -4801,7 +4987,9 @@ describe('Editor', () => {
       range.setStart(textNode, 8)
       range.setEnd(textNode, 8)
       const originalCaretRangeFromPoint = (
-        document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+        document as Document & {
+          caretRangeFromPoint?: (x: number, y: number) => Range | null
+        }
       ).caretRangeFromPoint
       Object.defineProperty(document, 'caretRangeFromPoint', {
         configurable: true,
@@ -4863,7 +5051,11 @@ describe('Editor', () => {
 
       pressMouse({ clientX: 16, clientY: 10 })
       releaseMouse({ clientX: 16, clientY: 10 })
-      const shiftClick = pressMouse({ clientX: 56, clientY: 10, shiftKey: true })
+      const shiftClick = pressMouse({
+        clientX: 56,
+        clientY: 10,
+        shiftKey: true,
+      })
 
       expect(shiftClick.defaultPrevented).toBe(true)
       expect(resolvedSelectionRanges(session)).toEqual([{ anchor: 2, head: 7, start: 2, end: 7 }])
@@ -5020,8 +5212,18 @@ describe('Editor', () => {
       mockEditorViewport(editorRoot(), 200, 200, 200)
       const view = Reflect.get(editor, 'view') as VirtualizedTextView
       vi.spyOn(view, 'textPositionFromPoint')
-        .mockReturnValueOnce({ affinity: 'before', displayRow: 0, offset: 8, rowX: 64 })
-        .mockReturnValueOnce({ affinity: 'after', displayRow: 0, offset: 8, rowX: 64 })
+        .mockReturnValueOnce({
+          affinity: 'before',
+          displayRow: 0,
+          offset: 8,
+          rowX: 64,
+        })
+        .mockReturnValueOnce({
+          affinity: 'after',
+          displayRow: 0,
+          offset: 8,
+          rowX: 64,
+        })
 
       pressMouse({ clientX: 64, clientY: 10 })
       moveMouse({ clientX: 64, clientY: 10 })
@@ -5139,8 +5341,18 @@ describe('Editor', () => {
       mockEditorViewport(editorRoot(), 200, 200, 200)
       const view = Reflect.get(editor, 'view') as VirtualizedTextView
       vi.spyOn(view, 'textPositionFromPoint')
-        .mockReturnValueOnce({ affinity: 'before', displayRow: 0, offset: 8, rowX: 64 })
-        .mockReturnValueOnce({ affinity: 'before', displayRow: 0, offset: 2, rowX: 16 })
+        .mockReturnValueOnce({
+          affinity: 'before',
+          displayRow: 0,
+          offset: 8,
+          rowX: 64,
+        })
+        .mockReturnValueOnce({
+          affinity: 'before',
+          displayRow: 0,
+          offset: 2,
+          rowX: 16,
+        })
 
       pressMouse({ clientX: 64, clientY: 10, detail: 2 })
       moveMouse({ clientX: 16, clientY: 10 })
@@ -5159,8 +5371,18 @@ describe('Editor', () => {
       mockEditorViewport(editorRoot(), 200, 200, 200)
       const view = Reflect.get(editor, 'view') as VirtualizedTextView
       vi.spyOn(view, 'textPositionFromPoint')
-        .mockReturnValueOnce({ affinity: 'after', displayRow: 1, offset: 5, rowX: 8 })
-        .mockReturnValueOnce({ affinity: 'after', displayRow: 2, offset: 9, rowX: 8 })
+        .mockReturnValueOnce({
+          affinity: 'after',
+          displayRow: 1,
+          offset: 5,
+          rowX: 8,
+        })
+        .mockReturnValueOnce({
+          affinity: 'after',
+          displayRow: 2,
+          offset: 9,
+          rowX: 8,
+        })
 
       pressMouse({ clientX: 8, clientY: 30, detail: 3 })
       moveMouse({ clientX: 8, clientY: 54 })
@@ -5380,7 +5602,12 @@ describe('Editor', () => {
       // How far right the rectangle may go is read off the same walk that places the cursors: a
       // second walk to work it out again would double every keypress on a tall box.
       expect(reads).toBeLessThanOrEqual(rows)
-      expect(resolvedSelectionRanges(session)[0]).toEqual({ anchor: 4, head: 5, start: 4, end: 5 })
+      expect(resolvedSelectionRanges(session)[0]).toEqual({
+        anchor: 4,
+        head: 5,
+        start: 4,
+        end: 5,
+      })
     })
 
     it('drops the column rectangle when the text under it changes', () => {
@@ -5512,7 +5739,10 @@ describe('Editor', () => {
       )
 
       expect(editor.materializeFullText()).toBe('abc')
-      expect(editor.getState()).toMatchObject({ canUndo: false, canRedo: true })
+      expect(editor.getState()).toMatchObject({
+        canUndo: false,
+        canRedo: true,
+      })
     })
 
     it('clears owned documents', () => {
@@ -6010,9 +6240,14 @@ describe('Editor', () => {
 
     it('keeps fold paint pending when the viewport moves before its first structural result', async () => {
       const events: ViewContributionEvent[] = []
-      const pending: { range: EditorSyntaxRange; result: Deferred<EditorSyntaxResult> }[] = []
+      const pending: {
+        range: EditorSyntaxRange
+        result: Deferred<EditorSyntaxResult>
+      }[] = []
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: [createViewContributionPlugin(events)] })
+      editor = createVisibleEditor(container, {
+        plugins: [createViewContributionPlugin(events)],
+      })
       setEditorSyntaxSessionFactory(() =>
         createMockSyntaxSession({
           refresh: async () => createSyntaxResult([]),
@@ -6027,7 +6262,11 @@ describe('Editor', () => {
         { length: 60_000 },
         (_, index) => `const line${index} = ${index};`,
       ).join('\n')
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await vi.waitFor(() => expect(pending).toHaveLength(1))
       editor.setScrollPosition({ top: 900_000, left: 0 })
       const firstRange = pending[0]!
@@ -6505,7 +6744,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
 
       expect(foldToggle().dataset.editorFoldState).toBe('expanded')
@@ -6516,7 +6759,9 @@ describe('Editor', () => {
       const text = 'if (x) {\n  y();\n}\nz();'
       const foldEnd = text.indexOf('\nz();')
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: withTestGutterPlugins() })
+      editor = createVisibleEditor(container, {
+        plugins: withTestGutterPlugins(),
+      })
       setEditorSyntaxSessionFactory(() =>
         createMockSyntaxSession({
           refresh: async () =>
@@ -6536,7 +6781,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
 
       expect(foldToggle().dataset.editorFoldState).toBe('expanded')
@@ -6591,7 +6840,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
 
       expect(latestFoldMarkers(events)).toHaveLength(2)
@@ -6613,7 +6866,9 @@ describe('Editor', () => {
       const text = 'if (x) {\n  y();\n}\nz();'
       const foldEnd = text.indexOf('\nz();')
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: withTestGutterPlugins() })
+      editor = createVisibleEditor(container, {
+        plugins: withTestGutterPlugins(),
+      })
       setEditorSyntaxSessionFactory(() =>
         createMockSyntaxSession({
           refresh: async () =>
@@ -6633,7 +6888,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
 
       expect(editor.fold(0)).toBe(true)
@@ -6687,7 +6946,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
 
       expect(editor.foldAll()).toBe(true)
@@ -6712,7 +6975,9 @@ describe('Editor', () => {
       const text = 'if (x) {\n  y();\n}\nz();'
       const foldEnd = text.indexOf('\nz();')
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: withTestGutterPlugins() })
+      editor = createVisibleEditor(container, {
+        plugins: withTestGutterPlugins(),
+      })
       setEditorSyntaxSessionFactory(() =>
         createMockSyntaxSession({
           refresh: async () =>
@@ -6732,7 +6997,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
 
       const buttons = [
@@ -6774,7 +7043,10 @@ describe('Editor', () => {
 
       dispatchEditorKey('ArrowLeft')
 
-      expect(editor.getState().cursor).toEqual({ row: 0, column: COLLAPSED_BLOCK_HEADER_END })
+      expect(editor.getState().cursor).toEqual({
+        row: 0,
+        column: COLLAPSED_BLOCK_HEADER_END,
+      })
       editorRoot().dispatchEvent(createInsertEvent('Q'))
       expect(rowsContainingText('if (x) {Q')).toHaveLength(1)
     })
@@ -6822,7 +7094,10 @@ describe('Editor', () => {
 
       editor.setSelection(COLLAPSED_BLOCK_HIDDEN_OFFSET)
 
-      expect(editor.getState().cursor).toEqual({ row: 0, column: COLLAPSED_BLOCK_HEADER_END })
+      expect(editor.getState().cursor).toEqual({
+        row: 0,
+        column: COLLAPSED_BLOCK_HEADER_END,
+      })
     })
 
     it('leaves a find match inside a collapsed region addressable by find itself', async () => {
@@ -6841,7 +7116,10 @@ describe('Editor', () => {
         session.getSnapshot(),
         session.getSelections().selections[0]!,
       )
-      expect({ start: firstMatch.startOffset, end: firstMatch.endOffset }).toEqual({
+      expect({
+        start: firstMatch.startOffset,
+        end: firstMatch.endOffset,
+      }).toEqual({
         start: 11,
         end: 12,
       })
@@ -6852,7 +7130,10 @@ describe('Editor', () => {
         session.getSnapshot(),
         session.getSelections().selections[0]!,
       )
-      expect({ start: secondMatch.startOffset, end: secondMatch.endOffset }).toEqual({
+      expect({
+        start: secondMatch.startOffset,
+        end: secondMatch.endOffset,
+      }).toEqual({
         start: 18,
         end: 19,
       })
@@ -6941,7 +7222,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text: 'world' })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text: 'world',
+      })
       await flushMicrotasks()
       setCollapsedDomSelection(2)
       editorRoot().dispatchEvent(createInsertEvent('X'))
@@ -6972,7 +7257,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text: 'aa\nbb\ncc' })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text: 'aa\nbb\ncc',
+      })
       await flushMicrotasks()
 
       editor.setSelection(1)
@@ -7005,7 +7294,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text: 'aa\nbb\ncc' })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text: 'aa\nbb\ncc',
+      })
       await flushMicrotasks()
 
       for (let count = 0; count < 4; count += 1) {
@@ -7031,7 +7324,9 @@ describe('Editor', () => {
       const foldEnd = text.indexOf('\nz();')
       const editResult = createDeferred<EditorSyntaxResult>()
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: withTestGutterPlugins() })
+      editor = createVisibleEditor(container, {
+        plugins: withTestGutterPlugins(),
+      })
       setEditorSyntaxSessionFactory(() =>
         createMockSyntaxSession({
           refresh: async () =>
@@ -7052,7 +7347,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
       editorRoot().dispatchEvent(createInsertEvent('!'))
 
@@ -7072,7 +7371,9 @@ describe('Editor', () => {
       const changes: DocumentSessionChange[] = []
       let refreshCount = 0
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: withTestGutterPlugins() })
+      editor = createVisibleEditor(container, {
+        plugins: withTestGutterPlugins(),
+      })
       setEditorSyntaxSessionFactory(() =>
         createMockSyntaxSession({
           refresh: async () => {
@@ -7110,7 +7411,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
       editorRoot().dispatchEvent(createInsertEvent('!'))
       editorRoot().dispatchEvent(
@@ -7144,7 +7449,9 @@ describe('Editor', () => {
       const foldEnd = text.indexOf('\nz();')
       const editResult = createDeferred<EditorSyntaxResult>()
       editor.dispose()
-      editor = createVisibleEditor(container, { plugins: withTestGutterPlugins() })
+      editor = createVisibleEditor(container, {
+        plugins: withTestGutterPlugins(),
+      })
       setEditorSyntaxSessionFactory(() =>
         createMockSyntaxSession({
           refresh: async () =>
@@ -7165,7 +7472,11 @@ describe('Editor', () => {
         }),
       )
 
-      editor.openDocument({ documentId: 'main.ts', languageId: 'typescript', text })
+      editor.openDocument({
+        documentId: 'main.ts',
+        languageId: 'typescript',
+        text,
+      })
       await flushMicrotasks()
       foldToggle().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       setCollapsedDomSelection(0)
@@ -7463,7 +7774,11 @@ describe('Editor', () => {
       editor.dispose()
       editor = createVisibleEditor(container)
 
-      editor.openDocument({ documentId: 'main.rs', languageId: 'rust', text: 'fn main() {}' })
+      editor.openDocument({
+        documentId: 'main.rs',
+        languageId: 'rust',
+        text: 'fn main() {}',
+      })
       await flushMicrotasks()
       editorRoot().dispatchEvent(createLineBreakEvent())
       await flushSyntaxDebounce()

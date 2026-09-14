@@ -428,7 +428,60 @@
   background: transparent;
 }
 
-.editor-merge-conflict-actions-layer {
+/* Inline merge conflicts, after VS Code's merge-conflict extension: the marker lines are the
+   "headers", tinted at full strength, and the block between them at 40% of that. Hosts bind the
+   tokens; the fallbacks are VS Code's own values, which are the same in light and dark. */
+.editor-virtualized-row.editor-merge-conflict-current-header {
+  background-color: var(--editor-merge-current-header-background, rgb(64 200 174 / 0.5));
+}
+
+.editor-virtualized-row.editor-merge-conflict-current-content {
+  background-color: var(--editor-merge-current-content-background, rgb(64 200 174 / 0.2));
+}
+
+.editor-virtualized-row.editor-merge-conflict-common-header {
+  background-color: var(--editor-merge-common-header-background, rgb(96 96 96 / 0.4));
+}
+
+.editor-virtualized-row.editor-merge-conflict-common-content {
+  background-color: var(--editor-merge-common-content-background, rgb(96 96 96 / 0.16));
+}
+
+.editor-virtualized-row.editor-merge-conflict-incoming-content {
+  background-color: var(--editor-merge-incoming-content-background, rgb(64 166 255 / 0.2));
+}
+
+.editor-virtualized-row.editor-merge-conflict-incoming-header {
+  background-color: var(--editor-merge-incoming-header-background, rgb(64 166 255 / 0.5));
+}
+
+.editor-virtualized-row.editor-merge-conflict-current-header,
+.editor-virtualized-row.editor-merge-conflict-common-header,
+.editor-virtualized-row.editor-merge-conflict-splitter,
+.editor-virtualized-row.editor-merge-conflict-incoming-header {
+  outline: 1px solid var(--editor-merge-border, transparent);
+  outline-offset: -1px;
+}
+
+/* The "(Current Change)" / "(Incoming Change)" trailer VS Code appends after a marker line. Drawn
+   by CSS so it is neither text nor selectable, and disappears with the marker. */
+.editor-virtualized-row.editor-merge-conflict-current-header::after,
+.editor-virtualized-row.editor-merge-conflict-incoming-header::after {
+  color: var(--editor-merge-description-foreground, rgb(153 153 153));
+  pointer-events: none;
+  user-select: none;
+}
+
+.editor-virtualized-row.editor-merge-conflict-current-header::after {
+  content: ' (Current Change)';
+}
+
+.editor-virtualized-row.editor-merge-conflict-incoming-header::after {
+  content: ' (Incoming Change)';
+}
+
+/* The CodeLens line: an empty row injected above `<<<<<<<`, with the actions laid over it. */
+.editor-merge-conflict-lens-layer {
   height: 0;
   left: 0;
   pointer-events: none;
@@ -438,108 +491,41 @@
   z-index: var(--editor-z-overlay-surface);
 }
 
-.editor-merge-conflict-actions {
+.editor-merge-conflict-lens {
   align-items: center;
-  background: var(--editor-background);
-  border: 1px solid rgba(245, 158, 11, 0.36);
-  border-radius: 6px;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
-  display: inline-flex;
-  gap: 3px;
-  height: calc(var(--editor-row-height) - 2px);
-  left: calc(var(--editor-gutter-width) + 6px);
-  padding: 0 4px;
+  color: var(--editor-merge-lens-foreground, rgb(153 153 153));
+  display: flex;
+  font-size: 90%;
+  height: var(--editor-row-height);
+  left: var(--editor-gutter-width);
+  line-height: var(--editor-row-height);
   pointer-events: auto;
   position: absolute;
   top: 0;
-}
-
-.editor-merge-conflict-action {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
-  color: var(--editor-foreground);
-  cursor: pointer;
-  display: inline-flex;
-  font: inherit;
-  gap: 4px;
-  height: calc(var(--editor-row-height) - 10px);
-  justify-content: center;
-  line-height: 1;
-  overflow: visible;
-  padding: 0 6px;
-  position: relative;
+  user-select: none;
   white-space: nowrap;
 }
 
-.editor-merge-conflict-action:hover {
-  background: rgba(255, 255, 255, 0.14);
+.editor-merge-conflict-lens-action {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  margin: 0;
+  padding: 0;
 }
 
-.editor-merge-conflict-action:focus-visible {
-  outline: 1px solid rgba(245, 158, 11, 0.82);
+.editor-merge-conflict-lens-action:hover {
+  color: var(--editor-merge-lens-active-foreground, var(--editor-foreground));
+}
+
+.editor-merge-conflict-lens-action:focus-visible {
+  outline: 1px solid var(--editor-merge-lens-active-foreground, var(--editor-foreground));
   outline-offset: 1px;
 }
 
-.editor-merge-conflict-action::after {
-  background: #111827;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 4px;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
-  color: #f8fafc;
-  content: attr(data-tooltip);
-  font:
-    11px/1.2 ui-sans-serif,
-    system-ui,
-    sans-serif;
-  left: 50%;
-  max-width: 44ch;
-  opacity: 0;
-  padding: 5px 7px;
-  pointer-events: none;
-  position: absolute;
-  text-align: center;
-  top: calc(100% + 6px);
-  transform: translate(-50%, -2px);
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease;
-  white-space: normal;
-  width: max-content;
-  z-index: var(--editor-z-overlay-popup);
-}
-
-.editor-merge-conflict-action:hover::after,
-.editor-merge-conflict-action:focus-visible::after {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-
-.editor-merge-conflict-action-icon {
-  display: block;
-  fill: none;
-  flex: 0 0 auto;
-  height: 12px;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-  width: 12px;
-}
-
-.editor-merge-conflict-action-icon.icon-ours {
-  color: #86efac;
-}
-
-.editor-merge-conflict-action-icon.icon-theirs {
-  color: #93c5fd;
-}
-
-.editor-merge-conflict-action-icon.icon-both {
-  color: #fcd34d;
-}
-
-.editor-merge-conflict-action-icon.icon-base {
-  color: #d4d4d8;
+.editor-merge-conflict-lens-separator {
+  padding: 0 0.5em;
 }

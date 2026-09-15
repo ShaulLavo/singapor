@@ -18,11 +18,15 @@ import type { EditorCommandId } from '@singapore-editor/core/editor'
 import type {
   EditorCommandHandler,
   EditorEditContributionContext,
+  EditorLanguageFeatureSelector,
+  EditorLanguageFeatureToken,
   EditorPluginContext,
+  EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
+import { createHoverPlugin } from '@singapore-editor/plugin-ui'
 import type { LspManagedTransport, LspTransportHandler } from '@singapore-editor/lsp'
 import { vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
@@ -166,16 +170,27 @@ export async function connectedEditor(
     snippetSessions,
     workspaceEditRequests,
   )
-  const contribution = provider.createContribution(
-    viewContributionContext({
-      element,
-      getSnapshot: () => snapshot,
-      getRangeClientRect: () => anchorRect,
-      getFeature: (token) => features.get(token) ?? null,
-      focusEditor,
-    }),
-  )
-  if (!contribution) throw new Error('missing contribution')
+  const context = viewContributionContext({
+    element,
+    getSnapshot: () => snapshot,
+    getRangeClientRect: () => anchorRect,
+    getFeature: (token) => features.get(token) ?? null,
+    focusEditor,
+  })
+  // The hover is the host's, so the harness installs it the way an application would.
+  const hover = activateHoverPlugin(commands).createContribution(context)
+  const languageServer = provider.createContribution(context)
+  if (!hover || !languageServer) throw new Error('missing contribution')
+  const contribution: EditorViewContribution = {
+    update: (next, kind, change) => {
+      hover.update(next, kind, change)
+      languageServer.update(next, kind, change)
+    },
+    dispose: () => {
+      languageServer.dispose()
+      hover.dispose()
+    },
+  }
 
   transport.receive({
     jsonrpc: '2.0',
@@ -426,6 +441,65 @@ function activateProvider(
   return provider
 }
 
+function activateHoverPlugin(
+  commands: Map<EditorCommandId, EditorCommandHandler>,
+): EditorViewContributionProvider {
+  let provider: EditorViewContributionProvider | null = null
+  const disposable = { dispose: () => undefined }
+  createHoverPlugin({ classNamespace: 'test' }).activate({
+    registerHighlighter: () => disposable,
+    registerSyntaxProvider: () => disposable,
+    registerViewContribution: (value) => {
+      provider = value
+      return disposable
+    },
+    registerCommandContribution: (value) => {
+      value.createContribution({
+        registerCommand: (commandId, handler) => {
+          commands.set(commandId, handler)
+          return { dispose: () => commands.delete(commandId) }
+        },
+      })
+      return disposable
+    },
+    registerCapabilityContribution: () => disposable,
+    registerEditContribution: () => disposable,
+    registerDecorationContribution: () => disposable,
+    registerGutterContribution: () => disposable,
+    registerInjectedTextRowProvider: () => disposable,
+  } satisfies EditorPluginContext)
+
+  if (!provider) throw new Error('missing hover provider')
+  return provider
+}
+
+/** The core registry, reduced to what a single-document harness needs: order of registration. */
+export function providerRegistry(): Pick<
+  Required<EditorViewContributionContext>,
+  'registerProvider' | 'getProviders'
+> {
+  const providers = new Map<string, unknown[]>()
+  return {
+    registerProvider: <T>(
+      token: EditorLanguageFeatureToken<T>,
+      _selector: EditorLanguageFeatureSelector,
+      provider: T,
+    ) => {
+      const list = providers.get(token.id) ?? []
+      list.push(provider)
+      providers.set(token.id, list)
+      return {
+        dispose: () => {
+          const index = list.indexOf(provider)
+          if (index !== -1) list.splice(index, 1)
+        },
+      }
+    },
+    getProviders: <T>(token: EditorLanguageFeatureToken<T>) =>
+      (providers.get(token.id) ?? []) as readonly T[],
+  }
+}
+
 function viewContributionContext(options: {
   element: HTMLDivElement
   getSnapshot(): EditorViewSnapshot
@@ -434,6 +508,7 @@ function viewContributionContext(options: {
   focusEditor(): void
 }): EditorViewContributionContext {
   return {
+    ...providerRegistry(),
     container: options.element,
     scrollElement: options.element,
     contentElement: options.element,

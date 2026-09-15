@@ -1,5 +1,6 @@
 import type {
   EditorViewContributionContext,
+  EditorViewContributionUpdateKind,
   EditorViewSnapshot,
 } from '@singapore-editor/core/extensions'
 import type { LspClient } from '@singapore-editor/lsp'
@@ -7,18 +8,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import {
-  HoverDefinitionController,
-  type HoverDefinitionControllerOptions,
-} from '../src/hoverDefinitionController'
+  DefinitionLinkController,
+  type DefinitionLinkControllerOptions,
+} from '../src/definitionLinkController'
+import { createLanguageServerHoverParticipant } from '../src/hoverParticipant'
 import type { ActiveDocument } from '../src/pluginTypes'
 import type { LanguageServerHoverUpdate } from '../src/serverSet'
 import {
+  createHoverController,
   createTooltipController,
   HOVER_ASYNC_DISPATCH_DELAY_MS,
   HOVER_LOADING_DELAY_MS,
   HOVER_REQUEST_DEBOUNCE_MS,
   TOOLTIP_HIDE_DELAY_MS,
-} from '../src/tooltip'
+} from '@singapore-editor/plugin-ui'
 import { connectedEditor, flushPromises, singleLineRange } from './connectedEditor'
 import { snapshotDocument } from './snapshotDocument'
 
@@ -372,11 +375,34 @@ function hoverController(
   document.body.append(element)
   let active = activeDocument(text)
   const snapshot = hoverSnapshot(active)
+  const request = vi.fn<LspClient['request']>()
+  const onDefinitionLinkHover =
+    vi.fn<NonNullable<DefinitionLinkControllerOptions['onDefinitionLinkHover']>>()
+  const onOpenDefinition = vi.fn()
+  const client = {
+    initialized: true,
+    serverCapabilities: { hoverProvider: true },
+    request,
+  } as unknown as LspClient
+  const router = {
+    canResolveCodeActions: () => false,
+    hasReady: () => client.initialized,
+    request: client.request.bind(client),
+  }
+  const participant = createLanguageServerHoverParticipant({
+    router,
+    requestHover: (_params, _options, onUpdate) => requestHover(onUpdate),
+    getActiveDocument: () => active,
+    getDiagnostics: () => [],
+    onRequestError: vi.fn(),
+  })
   const context = {
     container: element,
     scrollElement: element,
     contentElement: element,
+    hasDocument: () => true,
     getSnapshot: () => snapshot,
+    getProviders: () => [participant],
     focusEditor: vi.fn(),
     textOffsetFromPoint: vi.fn(() => 6),
     getRangeClientRect: vi.fn(() => new DOMRect(10, 20, 40, 18)),
@@ -384,31 +410,26 @@ function hoverController(
     setRangeHighlight: vi.fn(),
     clearRangeHighlight: vi.fn(),
   } as unknown as EditorViewContributionContext
-  const request = vi.fn<LspClient['request']>()
-  const onDefinitionLinkHover =
-    vi.fn<NonNullable<HoverDefinitionControllerOptions['onDefinitionLinkHover']>>()
-  const onOpenDefinition = vi.fn()
-  const client = {
-    initialized: true,
-    serverCapabilities: { hoverProvider: true },
-    request,
-  } as unknown as LspClient
-  const controller = new HoverDefinitionController({
+  const hover = createHoverController({ context, classNamespace: 'test' })
+  const definitionLink = new DefinitionLinkController({
     context,
-    router: {
-      canResolveCodeActions: () => false,
-      hasReady: () => client.initialized,
-      request: client.request.bind(client),
-    },
-    requestHover: (_params, _options, onUpdate) => requestHover(onUpdate),
-    hoverMarkdownCodeBackground: false,
+    router,
     getActiveDocument: () => active,
-    getDiagnostics: () => [],
-    completionContainsTarget: () => false,
     onDefinitionLinkHover,
     onOpenDefinition,
     onRequestError: vi.fn(),
   })
+  // One editor view holds both; a test drives them the way the view would.
+  const controller = {
+    update: (next: EditorViewSnapshot, kind: EditorViewContributionUpdateKind) => {
+      hover.update(next, kind)
+      definitionLink.update(next, kind)
+    },
+    dispose: () => {
+      definitionLink.dispose()
+      hover.dispose()
+    },
+  }
   return {
     controller,
     context,
@@ -467,7 +488,6 @@ function showOptions(anchor: DOMRect) {
   return {
     anchor,
     hoverText: 'hover text',
-    diagnostics: [],
     theme: null,
     preferredPlacement: 'top' as const,
   }
@@ -482,7 +502,7 @@ function measuredTooltipRect(element: HTMLElement): DOMRect {
 }
 
 function tooltip(): HTMLElement {
-  const element = document.querySelector<HTMLElement>('[role="dialog"]')
+  const element = document.querySelector<HTMLElement>('.editor-test-hover')
   if (!element) throw new Error('missing tooltip')
   return element
 }

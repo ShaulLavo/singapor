@@ -15,6 +15,7 @@ const PACKAGE_DIRS = [
   'packages/minimap',
   'packages/tree-sitter',
   'packages/tree-sitter-languages',
+  'packages/plugin-ui',
   'packages/lsp-plugin',
   'packages/typescript-lsp',
   'packages/diff',

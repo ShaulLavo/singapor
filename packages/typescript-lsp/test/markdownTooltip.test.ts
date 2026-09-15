@@ -4,7 +4,7 @@ import {
   normalizeTooltipMarkdown,
   renderTooltipMarkdown as renderLanguageServerTooltipMarkdown,
   type TooltipMarkdownRenderOptions,
-} from '@singapore-editor/lsp-plugin/markdown-tooltip'
+} from '@singapore-editor/plugin-ui'
 
 describe('tooltip Markdown rendering', () => {
   it('renders TypeScript fenced code blocks as pre/code', () => {

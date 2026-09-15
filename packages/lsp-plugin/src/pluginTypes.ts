@@ -20,7 +20,6 @@ import type {
 
 export type LanguageServerResolvedOptions = {
   readonly rootUri: lsp.DocumentUri | null
-  readonly hoverMarkdownCodeBackground: boolean
   readonly initializationOptions: unknown
   readonly timeoutMs: number
   readonly webSocketRoute: string | URL

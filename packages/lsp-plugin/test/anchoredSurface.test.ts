@@ -11,8 +11,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createAnchoredSurface } from '../src/anchoredSurface'
-import { HOVER_REQUEST_DEBOUNCE_MS } from '../src/tooltip'
+import { createAnchoredSurface, HOVER_REQUEST_DEBOUNCE_MS } from '@singapore-editor/plugin-ui'
 import { connectedEditor, flushPromises } from './connectedEditor'
 
 const RENAME_COMMAND = 'editor.action.rename'
@@ -267,9 +266,9 @@ function visibleTooltip(): HTMLElement {
 }
 
 function openTooltips(): readonly HTMLElement[] {
-  return Array.from(document.body.querySelectorAll<HTMLElement>('.editor-lsp-plugin-hover')).filter(
-    (element) => !element.hidden,
-  )
+  return Array.from(
+    document.body.querySelectorAll<HTMLElement>('.editor-test-hover, .editor-lsp-plugin-hover'),
+  ).filter((element) => !element.hidden)
 }
 
 function renameElement(): HTMLElement {

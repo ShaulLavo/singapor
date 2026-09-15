@@ -62,13 +62,27 @@
         "src/diagnostics.ts",
         "src/diagnosticsPresenter.ts",
         "src/documentSync.ts",
-        "src/hoverDefinitionController.ts",
-        "src/markdownTooltip.ts",
+        "src/definitionLinkController.ts",
+        "src/hoverParticipant.ts",
         "src/paths.ts",
         "src/pluginTypes.ts",
         "src/plugin.styles.ts",
-        "src/tooltip.ts",
         "src/websocket.ts"
+      ],
+      "project": "src/**/*.{ts,tsx}"
+    },
+    "packages/plugin-ui": {
+      "entry": [
+        "src/index.ts",
+        "src/anchoredSurface.ts",
+        "src/hoverController.ts",
+        "src/hoverParticipant.ts",
+        "src/hoverPlugin.ts",
+        "src/hoverToken.ts",
+        "src/markdownTooltip.ts",
+        "src/offsetRange.ts",
+        "src/styles.ts",
+        "src/tooltip.ts"
       ],
       "project": "src/**/*.{ts,tsx}"
     },

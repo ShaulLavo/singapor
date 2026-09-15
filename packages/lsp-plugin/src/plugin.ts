@@ -19,9 +19,14 @@ import {
   createCompletionEditFeature,
   type LanguageServerCompletionEditFeature,
 } from './completion'
-import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
+import {
+  anchoredSurfaceFollowsUpdate,
+  EDITOR_HOVER_PARTICIPANT,
+  hoverControllerFor,
+  isInsideEditorPopup,
+} from '@singapore-editor/plugin-ui'
 import { CodeActionController } from './codeActions'
-import type { OffsetRange } from './definitionNavigation'
+import type { OffsetRange } from '@singapore-editor/plugin-ui'
 import { CompletionController } from './completionController'
 import {
   createLanguageServerCompletionSource,
@@ -30,7 +35,8 @@ import {
 import { CompositeDiagnosticsPresenter, DiagnosticsPresenter } from './diagnosticsPresenter'
 import { activeDocumentForSnapshot, DocumentSync } from './documentSync'
 import { FormatOnTypeController } from './formatOnType'
-import { HoverDefinitionController } from './hoverDefinitionController'
+import { DefinitionLinkController } from './definitionLinkController'
+import { createLanguageServerHoverParticipant } from './hoverParticipant'
 import { SignatureHelpController } from './signatureHelpController'
 import { DocumentHighlightController } from './documentHighlightController'
 import {
@@ -100,7 +106,6 @@ const DEFAULT_COMPLETION_ACCEPT_TIMING_NAME = 'lspPlugin.completion.accept'
 export type LanguageServerCommandTarget = {
   goToDefinitionFromSelection(): boolean
   runNavigationCommand(command: LanguageServerNavigationCommand): boolean
-  showHover(): boolean
   moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean
   formatDocument(): boolean
   renameSymbol(): boolean
@@ -120,7 +125,6 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
    */
   readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
   readonly rootUri?: lsp.DocumentUri | null
-  readonly hoverMarkdownCodeBackground?: boolean
   readonly initializationOptions?: unknown
   readonly timeoutMs?: number
   /** See LanguageServerPluginOptions.capabilities. */
@@ -188,7 +192,6 @@ export type LanguageServerAdapterPluginOptions = LanguageServerLaneHostOptions &
 type LanguageServerResolvedAdapterOptions = {
   readonly name: string
   readonly onRequestRenameName?: (prompt: LanguageServerRenamePrompt) => Promise<string | null>
-  readonly hoverMarkdownCodeBackground: boolean
   readonly lanes: readonly LanguageServerResolvedLaneOptions[]
   readonly defaultHighlightPrefix: string
   readonly documentSync: LanguageServerDocumentSyncOptions
@@ -231,7 +234,6 @@ export function createLanguageServerPlugin(
   options: LanguageServerPluginOptions,
 ): LanguageServerPlugin {
   return createLanguageServerSetPlugin({
-    hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
     lanes: [languageServerLaneFromPluginOptions(options)],
     onApplyWorkspaceEdit: options.onApplyWorkspaceEdit,
     documentSync: options.documentSync,
@@ -305,14 +307,6 @@ class LanguageServerPluginState implements LanguageServerCommandTarget {
   public runNavigationCommand(command: LanguageServerNavigationCommand): boolean {
     for (const contribution of this.contributions) {
       if (contribution.runNavigationCommand(command)) return true
-    }
-
-    return false
-  }
-
-  public showHover(): boolean {
-    for (const contribution of this.contributions) {
-      if (contribution.showHover()) return true
     }
 
     return false
@@ -409,7 +403,8 @@ class LanguageServerContribution implements EditorViewContribution {
   private readonly diagnostics: CompositeDiagnosticsPresenter
   private readonly completionSources: LanguageServerCompletionSources
   private readonly completion: CompletionController
-  private readonly hoverDefinition: HoverDefinitionController
+  private readonly definitionLink: DefinitionLinkController
+  private readonly hoverParticipantRegistration: EditorDisposable | null
   private readonly signatureHelp: SignatureHelpController
   private readonly documentHighlights: DocumentHighlightController
   private readonly codeActions: CodeActionController
@@ -465,30 +460,41 @@ class LanguageServerContribution implements EditorViewContribution {
       completionWidgetClassNamespace: options.completion.widgetClassNamespace,
       completionAcceptOnCommitCharacter: options.completion.acceptOnCommitCharacter,
       getActiveDocument: () => this.activeDocument(),
-      ignorePointerTarget: (target) => this.hoverDefinition.containsTarget(target),
-      onBeforeShow: () => this.hoverDefinition.clearPointerUi(),
+      ignorePointerTarget: isInsideEditorPopup,
+      onBeforeShow: () => {
+        hoverControllerFor(context.scrollElement)?.hide()
+        this.definitionLink.clearPointerUi()
+      },
       onRequestSuccess: () => options.onInteractiveReady?.(),
       onRequestError: (error) => this.handleRequestError(error),
     })
-    this.hoverDefinition = new HoverDefinitionController({
+    this.definitionLink = new DefinitionLinkController({
       context,
       router: this.servers,
-      requestHover: (params, requestOptions, onUpdate) =>
-        this.servers.requestHover(params, requestOptions, onUpdate),
-      hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground,
       defaultHighlightPrefix: options.defaultHighlightPrefix,
       linkHighlightNameNamespace: options.hoverDefinition.linkHighlightNameNamespace,
-      tooltipClassNamespace: options.hoverDefinition.tooltipClassNamespace,
       navigationTimingNamePrefix: options.hoverDefinition.navigationTimingNamePrefix,
       getActiveDocument: () => this.activeDocument(),
-      getDiagnostics: () => this.diagnostics.diagnostics,
-      completionContainsTarget: (target) => this.completion.containsTarget(target),
       onDefinitionLinkHover: options.onDefinitionLinkHover,
       onOpenDefinition: options.onOpenDefinition,
       onOpenReferences: options.onOpenReferences,
-      onRequestSuccess: () => options.onInteractiveReady?.(),
       onRequestError: (error) => this.handleRequestError(error),
     })
+    // Every document: which server answers is the router's call, not the selector's.
+    this.hoverParticipantRegistration =
+      context.registerProvider?.(
+        EDITOR_HOVER_PARTICIPANT,
+        { language: '*' },
+        createLanguageServerHoverParticipant({
+          router: this.servers,
+          requestHover: (params, requestOptions, onUpdate) =>
+            this.servers.requestHover(params, requestOptions, onUpdate),
+          getActiveDocument: () => this.activeDocument(),
+          getDiagnostics: () => this.diagnostics.diagnostics,
+          onRequestSuccess: () => options.onInteractiveReady?.(),
+          onRequestError: (error) => this.handleRequestError(error),
+        }),
+      ) ?? null
     this.signatureHelp = new SignatureHelpController({
       router: this.servers,
       context,
@@ -527,7 +533,7 @@ class LanguageServerContribution implements EditorViewContribution {
 
     this.updateViewDocument(snapshot, kind)
     this.abortRenameOnDocumentDrift()
-    this.hoverDefinition.update(snapshot, kind)
+    this.definitionLink.update(snapshot, kind)
     if (anchoredSurfaceFollowsUpdate(kind)) this.reanchorRenamePrompt()
     for (const lane of this.lanes) {
       if (!lane.connection.isReady()) continue
@@ -549,7 +555,8 @@ class LanguageServerContribution implements EditorViewContribution {
 
     this.disposed = true
     this.state.unregister(this)
-    this.hoverDefinition.dispose()
+    this.definitionLink.dispose()
+    this.hoverParticipantRegistration?.dispose()
     this.completion.hide()
     for (const lane of this.lanes) {
       lane.documentSyncRegistration?.dispose()
@@ -580,11 +587,7 @@ class LanguageServerContribution implements EditorViewContribution {
   }
 
   public runNavigationCommand(command: LanguageServerNavigationCommand): boolean {
-    return this.hoverDefinition.runNavigationCommand(command)
-  }
-
-  public showHover(): boolean {
-    return this.hoverDefinition.showHoverFromSelection()
+    return this.definitionLink.runNavigationCommand(command)
   }
 
   public moveDiagnosticMarker(direction: DiagnosticMarkerDirection): boolean {
@@ -1032,7 +1035,6 @@ function resolveAdapterOptions(
 ): LanguageServerResolvedAdapterOptions {
   return {
     name: options.name,
-    hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground ?? false,
     lanes: [resolvedLaneFromAdapterOptions(options)],
     defaultHighlightPrefix: options.defaultHighlightPrefix ?? DEFAULT_HIGHLIGHT_PREFIX,
     documentSync: options.documentSync ?? {},
@@ -1059,7 +1061,6 @@ function resolveLanguageServerSetOptions(
 ): LanguageServerResolvedAdapterOptions {
   return {
     name: DEFAULT_PLUGIN_NAME,
-    hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground ?? false,
     lanes: options.lanes.map((lane) =>
       resolveLanguageServerLaneOptions({
         ...lane,
@@ -1201,10 +1202,6 @@ const LANGUAGE_SERVER_COMMANDS: readonly LanguageServerCommandSpec[] = [
         kind: 'typeDefinition',
         openMode: 'default',
       }),
-  },
-  {
-    id: 'editor.action.showHover',
-    run: (state) => state.showHover(),
   },
   {
     id: 'editor.action.goToReferences',

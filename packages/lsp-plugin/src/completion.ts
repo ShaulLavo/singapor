@@ -17,7 +17,7 @@ import {
   type SnippetRange,
 } from '@singapore-editor/core/internal'
 
-import { createAnchoredSurface } from './anchoredSurface'
+import { createAnchoredSurface } from '@singapore-editor/plugin-ui'
 import { fuzzyMatch, looseFuzzyMatch, type FuzzyMatch } from './fuzzyMatch'
 
 export const LANGUAGE_SERVER_COMPLETION_EDIT_FEATURE_ID = 'editor.lsp-plugin.completion-edit'

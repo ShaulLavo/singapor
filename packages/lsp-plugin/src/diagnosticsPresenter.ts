@@ -13,7 +13,7 @@ import {
   type LanguageServerDiagnosticSeverity,
 } from './diagnostics'
 import { DIAGNOSTIC_MARKER_COLORS, DIAGNOSTIC_STYLES } from './plugin.styles'
-import type { OffsetRange } from './definitionNavigation'
+import type { OffsetRange } from '@singapore-editor/plugin-ui'
 import type {
   LanguageServerDiagnosticMarkerClaim,
   LanguageServerDiagnosticMarkerEvent,

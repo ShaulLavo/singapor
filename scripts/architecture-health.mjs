@@ -25,6 +25,7 @@ const config = {
     { name: 'editor', root: 'packages/editor/src' },
     { name: 'editor-virtualization', root: 'packages/editor/src/virtualization' },
     { name: 'lsp-core', root: 'packages/lsp/src' },
+    { name: 'plugin-ui', root: 'packages/plugin-ui/src' },
     { name: 'lsp-plugin', root: 'packages/lsp-plugin/src' },
     { name: 'typescript-lsp', root: 'packages/typescript-lsp/src' },
   ],

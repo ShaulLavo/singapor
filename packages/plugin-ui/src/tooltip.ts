@@ -1,9 +1,8 @@
 import type { EditorTheme } from '@singapore-editor/core/rendering'
-import type * as lsp from 'vscode-languageserver-protocol'
 
 import { createAnchoredSurface, type AnchoredSurfacePlacement } from './anchoredSurface'
 import { renderTooltipMarkdown } from './markdownTooltip'
-import { DIAGNOSTIC_FOREGROUND_COLORS, HOVER_COLORS } from './plugin.styles'
+import { HOVER_COLORS, HOVER_THEME_VARIABLES } from './styles'
 
 /** The full pointer-settle delay. Semantic requests begin halfway through it. */
 export const HOVER_REQUEST_DEBOUNCE_MS = 300
@@ -29,17 +28,7 @@ const TOOLTIP_THEME_VARIABLES = [
   '--editor-font-family',
   '--editor-font-size',
   '--editor-row-height',
-  '--editor-lsp-hover-background',
-  '--editor-lsp-hover-foreground',
-  '--editor-lsp-hover-border',
-  '--editor-lsp-hover-shadow',
-  '--editor-lsp-hover-separator',
-  '--editor-lsp-hover-secondary-foreground',
-  '--editor-lsp-hover-action-success',
-  '--editor-lsp-diagnostic-error',
-  '--editor-lsp-diagnostic-warning',
-  '--editor-lsp-diagnostic-information',
-  '--editor-lsp-diagnostic-hint',
+  ...HOVER_THEME_VARIABLES,
   '--editor-syntax-bracket',
   '--editor-syntax-comment',
   '--editor-syntax-keyword',
@@ -67,11 +56,25 @@ type TooltipResizeState = {
 
 const lastTooltipDimensions = new WeakMap<Document, TooltipDimensions>()
 
+export type TooltipAction = {
+  readonly label: string
+  readonly run: () => void
+}
+
+/** One labelled line under the hover text: a diagnostic, a warning, a status. */
+export type TooltipNote = {
+  readonly label: string
+  /** A CSS colour for the label; usually a registered editor colour. */
+  readonly color: string
+  readonly text: string
+}
+
 export type TooltipShowOptions = {
+  readonly actions?: readonly TooltipAction[]
   readonly anchor: DOMRect
   readonly hoverText: string | null
   readonly hoverParts?: readonly string[]
-  readonly diagnostics: readonly lsp.Diagnostic[]
+  readonly notes?: readonly TooltipNote[]
   readonly theme: EditorTheme | null
   readonly loading?: boolean
   readonly focus?: boolean
@@ -84,6 +87,12 @@ export type TooltipOptions = {
   readonly reentryElement: HTMLElement
   readonly markdownCodeBackground?: boolean
   readonly classNamespace?: string
+  /**
+   * Extra CSS variables copied from `themeSource` onto the tooltip. The tooltip mounts on the
+   * body, outside the editor's cascade, so a note colour registered by a plugin only resolves here
+   * if that plugin names its variable.
+   */
+  readonly themeVariables?: readonly string[]
   onDidHide?(): void
   onRequestEditorFocus?(): void
 }
@@ -102,7 +111,7 @@ export type TooltipController = {
 
 export function createTooltipController(options: TooltipOptions): TooltipController {
   const { document, themeSource, reentryElement } = options
-  const classNamespace = options.classNamespace ?? 'lsp-plugin'
+  const classNamespace = options.classNamespace ?? 'plugin'
   const tooltip = createTooltipElement(document, classNamespace)
   document.body.append(tooltip)
 
@@ -155,6 +164,8 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     if (pointerDown || resize) return
     if (hideTimer) clearTimeout(hideTimer)
 
+    // @justification A pointer grace period before the hover goes away, cancelled by re-entry;
+    // it schedules no editor work.
     hideTimer = setTimeout(() => {
       hideTimer = null
       hide()
@@ -167,14 +178,15 @@ export function createTooltipController(options: TooltipOptions): TooltipControl
     const anchorChanged = !anchorRect || !sameRect(anchorRect, showOptions.anchor)
     if (anchorChanged) closestPointerDistance = null
     anchorRect = showOptions.anchor
-    placement =
-      showOptions.preferredPlacement ?? (showOptions.diagnostics.length > 0 ? 'bottom' : 'top')
-    syncEditorThemeVariables(tooltip, themeSource)
+    const notes = showOptions.notes ?? []
+    placement = showOptions.preferredPlacement ?? (notes.length > 0 ? 'bottom' : 'top')
+    syncEditorThemeVariables(tooltip, themeSource, options.themeVariables ?? [])
     applyTooltipDimensions(tooltip, reentryElement, tooltip.hidden !== false)
     renderTooltip(tooltip, {
+      actions: showOptions.actions,
       hoverText: showOptions.hoverText,
       hoverParts: showOptions.hoverParts,
-      diagnostics: showOptions.diagnostics,
+      notes,
       theme: showOptions.theme,
       loading: showOptions.loading ?? false,
       markdownCodeBackground: options.markdownCodeBackground ?? false,
@@ -343,9 +355,10 @@ function createTooltipElement(document: Document, classNamespace: string): HTMLD
 }
 
 type TooltipContent = {
+  readonly actions?: readonly TooltipAction[]
   readonly hoverText: string | null
   readonly hoverParts?: readonly string[]
-  readonly diagnostics: readonly lsp.Diagnostic[]
+  readonly notes: readonly TooltipNote[]
   readonly theme?: EditorTheme | null
   readonly loading: boolean
   readonly markdownCodeBackground: boolean
@@ -360,8 +373,11 @@ function renderTooltip(element: HTMLDivElement, content: TooltipContent): void {
   hoverParts.forEach((markdown, index) =>
     body.append(hoverPart(content, element.ownerDocument, markdown, index)),
   )
-  if (content.diagnostics.length > 0) body.append(diagnosticSection(content, element.ownerDocument))
+  if (content.notes.length > 0) body.append(noteSection(content, element.ownerDocument))
   if (content.loading) body.append(loadingSection(content, element.ownerDocument))
+  for (const action of content.actions ?? []) {
+    body.append(tooltipAction(element.ownerDocument, content, action))
+  }
   const firstRow = body.firstElementChild as HTMLElement | null
   if (firstRow) firstRow.style.borderTop = '0'
 
@@ -430,15 +446,15 @@ function createTooltipRow(
   return row
 }
 
-function diagnosticSection(content: TooltipContent, document: Document): HTMLElement {
-  const section = createTooltipRow(content, document, 'diagnostics')
+function noteSection(content: TooltipContent, document: Document): HTMLElement {
+  const section = createTooltipRow(content, document, 'notes')
   section.tabIndex = 0
   section.setAttribute('role', 'document')
-  section.setAttribute('aria-label', diagnosticAccessibleText(content.diagnostics))
-  for (const diagnostic of content.diagnostics) {
-    section.append(diagnosticRow(document, diagnostic))
+  section.setAttribute('aria-label', content.notes.map(noteCopyText).join('. '))
+  for (const note of content.notes) {
+    section.append(noteRow(document, note))
   }
-  const copyText = content.diagnostics.map(diagnosticCopyText).join('\n')
+  const copyText = content.notes.map(noteCopyText).join('\n')
   const button = createCopyButton(document, copyText, content.classNamespace)
   section.append(button)
   installCopyButtonVisibility(section, button)
@@ -533,7 +549,7 @@ function copyButtonLabel(state: CopyButtonState): string {
 
 function copyButtonColor(state: CopyButtonState): string {
   if (state === 'copied') return HOVER_COLORS.actionSuccess
-  if (state === 'failed') return DIAGNOSTIC_FOREGROUND_COLORS.error
+  if (state === 'failed') return HOVER_COLORS.actionFailure
   return HOVER_COLORS.secondaryForeground
 }
 
@@ -569,6 +585,7 @@ async function handleCopyButtonClick(button: HTMLButtonElement, copyText: string
 
 function showCopyButtonStatus(button: HTMLButtonElement, copied: boolean): void {
   setCopyButtonState(button, copied ? 'copied' : 'failed')
+  // @justification Resets the copy button's label after the user has had time to read it; DOM only.
   setTimeout(() => {
     if (!button.isConnected) return
     setCopyButtonState(button, 'idle')
@@ -615,30 +632,21 @@ function plainHoverText(markdown: string): string {
     .trim()
 }
 
-function diagnosticCopyText(diagnostic: lsp.Diagnostic): string {
-  return `${severityForDiagnostic(diagnostic)}: ${diagnosticMessageText(diagnostic.message)}`.trim()
+function noteCopyText(note: TooltipNote): string {
+  return `${note.label}: ${note.text}`.trim()
 }
 
-function diagnosticAccessibleText(diagnostics: readonly lsp.Diagnostic[]): string {
-  return diagnostics.map(diagnosticCopyText).join('. ')
-}
-
-function diagnosticMessageText(message: lsp.Diagnostic['message']): string {
-  if (typeof message === 'string') return message
-  return message.value
-}
-
-function diagnosticRow(document: Document, diagnostic: lsp.Diagnostic): HTMLElement {
+function noteRow(document: Document, note: TooltipNote): HTMLElement {
   const row = document.createElement('div')
   row.style.display = 'grid'
   row.style.gridTemplateColumns = 'auto 1fr'
   row.style.gap = '8px'
   row.style.alignItems = 'baseline'
   const label = document.createElement('span')
-  label.textContent = severityForDiagnostic(diagnostic)
-  label.style.color = diagnosticColor(diagnostic)
+  label.textContent = note.label
+  label.style.color = note.color
   const message = document.createElement('span')
-  message.textContent = diagnosticMessageText(diagnostic.message)
+  message.textContent = note.text
   row.append(label, message)
   return row
 }
@@ -855,10 +863,14 @@ function selectionInsideTooltip(document: Document, tooltip: HTMLElement): boole
   return tooltip.contains(selection.anchorNode) || tooltip.contains(selection.focusNode)
 }
 
-function syncEditorThemeVariables(target: HTMLElement, source: HTMLElement): void {
+function syncEditorThemeVariables(
+  target: HTMLElement,
+  source: HTMLElement,
+  extraVariables: readonly string[],
+): void {
   const style = source.ownerDocument.defaultView?.getComputedStyle(source)
   if (!style) return
-  for (const variable of TOOLTIP_THEME_VARIABLES) {
+  for (const variable of [...TOOLTIP_THEME_VARIABLES, ...extraVariables]) {
     const value =
       source.style.getPropertyValue(variable).trim() || style.getPropertyValue(variable).trim()
     if (value) target.style.setProperty(variable, value)
@@ -877,21 +889,7 @@ function tooltipClassNameForElement(element: HTMLElement, part: string): string 
 
 function tooltipNamespaceFromClassName(className: string): string {
   const match = /^editor-(.+)-hover(?:\s|$)/.exec(className)
-  return match?.[1] ?? 'lsp-plugin'
-}
-
-function severityForDiagnostic(diagnostic: lsp.Diagnostic): string {
-  if (diagnostic.severity === 2) return 'warning'
-  if (diagnostic.severity === 3) return 'info'
-  if (diagnostic.severity === 4) return 'hint'
-  return 'error'
-}
-
-function diagnosticColor(diagnostic: lsp.Diagnostic): string {
-  if (diagnostic.severity === 2) return DIAGNOSTIC_FOREGROUND_COLORS.warning
-  if (diagnostic.severity === 3) return DIAGNOSTIC_FOREGROUND_COLORS.information
-  if (diagnostic.severity === 4) return DIAGNOSTIC_FOREGROUND_COLORS.hint
-  return DIAGNOSTIC_FOREGROUND_COLORS.error
+  return match?.[1] ?? 'plugin'
 }
 
 function targetInsideElement(element: Element, target: EventTarget | null): boolean {
@@ -922,4 +920,26 @@ function sameRect(left: DOMRect, right: DOMRect): boolean {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(value, maximum))
+}
+
+function tooltipAction(
+  document: Document,
+  content: TooltipContent,
+  action: TooltipAction,
+): HTMLElement {
+  const row = createTooltipRow(content, document, 'action')
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.textContent = action.label
+  Object.assign(button.style, {
+    background: 'transparent',
+    border: '0',
+    color: 'inherit',
+    cursor: 'pointer',
+    font: 'inherit',
+    textDecoration: 'underline',
+  })
+  button.addEventListener('click', action.run)
+  row.append(button)
+  return row
 }

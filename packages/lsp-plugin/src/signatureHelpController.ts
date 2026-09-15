@@ -9,7 +9,6 @@ import type {
 import type { DocumentSessionChange } from '@singapore-editor/core'
 import { offsetToLspPosition } from '@singapore-editor/lsp'
 
-import { anchoredSurfaceFollowsUpdate } from './anchoredSurface'
 import type { ActiveDocument } from './pluginTypes'
 import type { LanguageServerFeatureRouter } from './serverSet'
 import {
@@ -18,7 +17,11 @@ import {
   signatureHelpTriggerFromChange,
   type SignatureHelpDisplay,
 } from './signatureHelp'
-import { createTooltipController, type TooltipController } from './tooltip'
+import {
+  anchoredSurfaceFollowsUpdate,
+  createTooltipController,
+  type TooltipController,
+} from '@singapore-editor/plugin-ui'
 
 export type SignatureHelpControllerOptions = {
   readonly context: EditorViewContributionContext
@@ -178,7 +181,6 @@ export class SignatureHelpController {
 
     this.tooltip.show({
       anchor,
-      diagnostics: [],
       hoverText: display.markdown,
       // Above the caret: the argument being typed sits below it, and covering that is the one
       // thing the widget must not do.

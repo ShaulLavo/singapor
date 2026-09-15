@@ -10,8 +10,11 @@ import type {
   EditorCommandContributionContext,
   EditorCommandHandler,
   EditorEditContributionContext,
+  EditorLanguageFeatureSelector,
+  EditorLanguageFeatureToken,
   EditorMinimapFeature,
   EditorPluginContext,
+  EditorViewContribution,
   EditorViewContributionContext,
   EditorViewContributionProvider,
   EditorViewSnapshot,
@@ -21,9 +24,11 @@ import { EDITOR_MINIMAP_FEATURE } from '@singapore-editor/core/extensions'
 import type { LspClient, LspWebSocketLike, LspWorkerLike } from '@singapore-editor/lsp'
 import { semanticTokensClientCapability } from '@singapore-editor/lsp'
 import {
+  createHoverPlugin,
   HOVER_REQUEST_DEBOUNCE_MS,
   TOOLTIP_HIDE_DELAY_MS,
-} from '@singapore-editor/lsp-plugin/tooltip'
+  type HoverPluginOptions,
+} from '@singapore-editor/plugin-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type * as lsp from 'vscode-languageserver-protocol'
 import { createTypeScriptLspPlugin, type TypeScriptLspDiagnosticSummary } from '../src'
@@ -871,11 +876,8 @@ describe('createTypeScriptLspPlugin', () => {
     vi.useFakeTimers()
     const worker = new FakeWorker()
     const context = viewContributionContext(editorSnapshot())
-    const plugin = createTypeScriptLspPlugin({
-      hoverMarkdownCodeBackground: true,
-      workerFactory: () => worker,
-    })
-    const provider = activatePlugin(plugin)
+    const plugin = createTypeScriptLspPlugin({ workerFactory: () => worker })
+    const provider = activatePlugin(plugin, { markdownCodeBackground: true })
     provider.createContribution(context)
 
     worker.receive(initializeResponse(message(worker.sent[0])))
@@ -1446,9 +1448,47 @@ describe('createTypeScriptLspPlugin', () => {
   })
 })
 
+/** The view provider of the TypeScript plugin, joined with the host's hover the way an app has it. */
 function activatePlugin(
   plugin: ReturnType<typeof createTypeScriptLspPlugin>,
+  hover: HoverPluginOptions = {},
 ): EditorViewContributionProvider {
+  return withHover(activateViewProvider(plugin), hover)
+}
+
+function withHover(
+  provider: EditorViewContributionProvider,
+  hover: HoverPluginOptions,
+): EditorViewContributionProvider {
+  const hoverProvider = activateViewProvider(
+    createHoverPlugin({ classNamespace: 'typescript-lsp', ...hover }),
+  )
+  return {
+    createContribution: (context) => {
+      const hoverContribution = hoverProvider.createContribution(context)
+      const contribution = provider.createContribution(context)
+      if (!hoverContribution || !contribution) return null
+      // Patched in place: the tests reach the plugin's own methods on the same object.
+      const update = contribution.update.bind(contribution)
+      const dispose = contribution.dispose.bind(contribution)
+      const joined: Pick<EditorViewContribution, 'update' | 'dispose'> = {
+        update: (snapshot, kind, change) => {
+          hoverContribution.update(snapshot, kind, change)
+          update(snapshot, kind, change)
+        },
+        dispose: () => {
+          dispose()
+          hoverContribution.dispose()
+        },
+      }
+      return Object.assign(contribution, joined)
+    },
+  }
+}
+
+function activateViewProvider(plugin: {
+  activate: ReturnType<typeof createTypeScriptLspPlugin>['activate']
+}): EditorViewContributionProvider {
   let provider: EditorViewContributionProvider | null = null
   plugin.activate({
     registerHighlighter: () => ({ dispose: () => undefined }),
@@ -1510,7 +1550,34 @@ function activatePluginWithCommands(
   } satisfies EditorPluginContext)
 
   if (!provider) throw new Error('missing provider')
-  return { provider, commands, features }
+  return { provider: withHover(provider, {}), commands, features }
+}
+
+/** The core registry, reduced to what a single-document harness needs: order of registration. */
+function providerRegistry(): Pick<
+  Required<EditorViewContributionContext>,
+  'registerProvider' | 'getProviders'
+> {
+  const providers = new Map<string, unknown[]>()
+  return {
+    registerProvider: <T>(
+      token: EditorLanguageFeatureToken<T>,
+      _selector: EditorLanguageFeatureSelector,
+      provider: T,
+    ) => {
+      const list = providers.get(token.id) ?? []
+      list.push(provider)
+      providers.set(token.id, list)
+      return {
+        dispose: () => {
+          const index = list.indexOf(provider)
+          if (index !== -1) list.splice(index, 1)
+        },
+      }
+    },
+    getProviders: <T>(token: EditorLanguageFeatureToken<T>) =>
+      (providers.get(token.id) ?? []) as readonly T[],
+  }
 }
 
 type FeatureContributionContextOptions = {
@@ -1569,6 +1636,7 @@ function viewContributionContext(
     return feature === undefined ? null : feature
   }) as EditorViewContributionContext['getFeature']
   return {
+    ...providerRegistry(),
     container: element,
     scrollElement: element,
     contentElement: element,

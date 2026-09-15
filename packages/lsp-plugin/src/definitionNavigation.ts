@@ -1,21 +1,11 @@
 import { lspPositionToOffset, offsetToLspPosition } from '@singapore-editor/lsp'
+import { identifierRangeAtOffset, type OffsetRange } from '@singapore-editor/plugin-ui'
 import type { EditorSetSelectionOptions } from '@singapore-editor/core/editor'
 import type * as lsp from 'vscode-languageserver-protocol'
 
 import { documentUriToFileName } from './paths'
 import type { LanguageServerFeatureRouter } from './serverSet'
 import type { LanguageServerDefinitionTarget, LanguageServerNavigationKind } from './types'
-
-/**
- * Half-open `[start, end)` offset range into the editor text buffer. Used
- * both to describe the identifier range under the pointer and (indirectly)
- * to suppress definition links that would just jump to the declaration the
- * user is already hovering.
- */
-export type OffsetRange = {
-  readonly start: number
-  readonly end: number
-}
 
 /**
  * Inputs required to issue a `textDocument/definition` request against the
@@ -195,29 +185,6 @@ export function preferredJumpableDefinitionTarget(
   return preferredTarget(activeUri, targets)
 }
 
-/**
- * Return the half-open offset range of the identifier at `offset`, or
- * `null` when the offset does not sit on an identifier character. An
- * identifier character is `[A-Za-z0-9_$]`, matching the set TypeScript's
- * language service treats as part of an identifier; offsets one position
- * past the identifier's last character are permitted so the function
- * behaves intuitively when the cursor is immediately after the name.
- */
-export function identifierRangeAtOffset(text: string, offset: number): OffsetRange | null {
-  const clamped = Math.max(0, Math.min(offset, text.length))
-  const index = identifierIndexAtOffset(text, clamped)
-  if (index === null) return null
-
-  let start = index
-  while (start > 0 && isIdentifierCharacter(text[start - 1] ?? '')) start -= 1
-
-  let end = index + 1
-  while (end < text.length && isIdentifierCharacter(text[end] ?? '')) end += 1
-
-  if (end <= start) return null
-  return { start, end }
-}
-
 function preferredTarget(
   activeUri: lsp.DocumentUri,
   targets: readonly LanguageServerDefinitionTarget[],
@@ -303,23 +270,4 @@ function definitionTarget(
       range,
     },
   ]
-}
-
-function identifierIndexAtOffset(text: string, offset: number): number | null {
-  if (isIdentifierCharacter(text[offset] ?? '')) return offset
-  if (offset > 0 && isIdentifierCharacter(text[offset - 1] ?? '')) return offset - 1
-  return null
-}
-
-function isIdentifierCharacter(value: string): boolean {
-  return /^[A-Za-z0-9_$]$/.test(value)
-}
-
-/**
- * Return `true` when two `OffsetRange`s cover the same `[start, end)`
- * span. Accepts `null` on the left-hand side so callers can pass in the
- * previously-stored "last link range" without an extra null check.
- */
-export function sameOffsetRange(left: OffsetRange | null, right: OffsetRange): boolean {
-  return left?.start === right.start && left.end === right.end
 }

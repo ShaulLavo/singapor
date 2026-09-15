@@ -2098,6 +2098,12 @@
         },
         {
           "kind": "unknown",
+          "name": "registerAmbientEditorPlugin",
+          "source": "packages/editor/src/public/extensions.ts",
+          "via": "packages/editor/src/index.ts"
+        },
+        {
+          "kind": "unknown",
           "name": "registerEditorColor",
           "source": "packages/editor/src/public/rendering.ts",
           "via": "packages/editor/src/index.ts"
@@ -4084,6 +4090,12 @@
       "exports": [
         {
           "kind": "type",
+          "name": "AmbientEditorPlugin",
+          "source": "packages/editor/src/plugins.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "type",
           "name": "EditorAutoClosingPair",
           "source": "packages/editor/src/editor/languageConfiguration.ts",
           "via": "packages/editor/src/public/extensions.ts"
@@ -4764,6 +4776,12 @@
           "kind": "unknown",
           "name": "projectDecorationRangeThroughEdits",
           "source": "packages/editor/src/editor/decorationStore.ts",
+          "via": "packages/editor/src/public/extensions.ts"
+        },
+        {
+          "kind": "unknown",
+          "name": "registerAmbientEditorPlugin",
+          "source": "packages/editor/src/plugins.ts",
           "via": "packages/editor/src/public/extensions.ts"
         },
         {

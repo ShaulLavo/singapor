@@ -1043,9 +1043,23 @@ type LanguageFeatureChannel = {
  * Priority separates only providers that fit equally well, and registration order separates the
  * rest — leaving the sequence a consumer walks the same on every query.
  */
+export type EditorLanguageFeatureRegistryListener = (tokenId: string, count: number) => void
+
 export class EditorLanguageFeatureRegistry {
   private readonly channels = new Map<string, LanguageFeatureChannel>()
+  private readonly listeners = new Set<EditorLanguageFeatureRegistryListener>()
   private sequence = 0
+
+  /** How many providers answer for a token, whatever the document. */
+  public count(token: EditorLanguageFeatureToken<unknown>): number {
+    return this.channels.get(token.id)?.entries.length ?? 0
+  }
+
+  /** Told after every registration and removal with the token's new provider count. */
+  public subscribe(listener: EditorLanguageFeatureRegistryListener): EditorDisposable {
+    this.listeners.add(listener)
+    return disposableOnce(() => this.listeners.delete(listener))
+  }
 
   public register<T>(
     token: EditorLanguageFeatureToken<T>,
@@ -1056,6 +1070,7 @@ export class EditorLanguageFeatureRegistry {
     const entry: LanguageFeatureEntry = { provider, selector, sequence: this.sequence++ }
     channel.entries.push(entry)
     channel.ordered.clear()
+    this.notify(token.id, channel.entries.length)
 
     return disposableOnce(() => this.unregister(token.id, entry))
   }
@@ -1097,6 +1112,11 @@ export class EditorLanguageFeatureRegistry {
 
     channel.entries.splice(index, 1)
     channel.ordered.clear()
+    this.notify(id, channel.entries.length)
+  }
+
+  private notify(tokenId: string, count: number): void {
+    for (const listener of this.listeners) listener(tokenId, count)
   }
 }
 
@@ -1143,6 +1163,42 @@ type EditorPluginActivation = {
 type EditorPluginInstallation = {
   readonly installed: boolean
   readonly disposable: EditorDisposable | null
+}
+
+/**
+ * A plugin an editor installs by itself, for as long as something in that editor asks for what it
+ * serves. This is how a package that is not the editor gives the editor a capability of its own:
+ * the shared hover registers itself here when its participant token is imported, and an editor
+ * loads and installs it the moment the first hover participant registers, and drops it when the
+ * last one goes. A host wires nothing, and an editor with no participants pays nothing.
+ */
+export type AmbientEditorPlugin = {
+  /** The language feature whose providers are the demand: installed while any is registered. */
+  readonly demand: EditorLanguageFeatureToken<unknown>
+  /** Called once, on first demand from any editor; the plugin is shared by every editor after. */
+  load(): EditorPlugin | Promise<EditorPlugin>
+}
+
+const ambientPlugins = new Set<AmbientEditorPlugin>()
+const ambientListeners = new Set<() => void>()
+
+export function registerAmbientEditorPlugin(ambient: AmbientEditorPlugin): EditorDisposable {
+  ambientPlugins.add(ambient)
+  for (const listener of ambientListeners) listener()
+  return disposableOnce(() => {
+    ambientPlugins.delete(ambient)
+    for (const listener of ambientListeners) listener()
+  })
+}
+
+export function ambientEditorPlugins(): readonly AmbientEditorPlugin[] {
+  return Array.from(ambientPlugins)
+}
+
+/** Told after every registration and removal, so a live editor follows the list. */
+export function subscribeAmbientEditorPlugins(listener: () => void): EditorDisposable {
+  ambientListeners.add(listener)
+  return disposableOnce(() => ambientListeners.delete(listener))
 }
 
 export class EditorPluginHost implements EditorDisposable {

@@ -25,34 +25,6 @@ const DEFINITION_LINK = registerEditorColor('lsp.definitionLink', {
   light: '#2563eb',
 })
 
-export const HOVER_COLORS = {
-  background: registerEditorColor('lsp.hover.background', {
-    dark: '#252526',
-    light: '#f3f3f3',
-  }),
-  foreground: registerEditorColor('lsp.hover.foreground', editorColorReference('foreground')),
-  border: registerEditorColor(
-    'lsp.hover.border',
-    transparentEditorColor(editorColorReference('foreground'), 0.28),
-  ),
-  shadow: registerEditorColor('lsp.hover.shadow', {
-    dark: '#0000005c',
-    light: '#00000029',
-  }),
-  separator: registerEditorColor(
-    'lsp.hover.separator',
-    transparentEditorColor(editorColorReference('foreground'), 0.18),
-  ),
-  secondaryForeground: registerEditorColor(
-    'lsp.hover.secondaryForeground',
-    transparentEditorColor(editorColorReference('foreground'), 0.72),
-  ),
-  actionSuccess: registerEditorColor('lsp.hover.actionSuccess', {
-    dark: '#86efac',
-    light: '#15803d',
-  }),
-} as const
-
 // One hue per severity, in the cut a dark canvas starts from, shared by everything that marks that
 // severity anywhere. Two marks on the same line disagreeing about the colour of a problem would read
 // as two problems.
@@ -94,6 +66,14 @@ export const DIAGNOSTIC_FOREGROUND_COLORS = {
   information: DIAGNOSTIC_INFORMATION,
   hint: DIAGNOSTIC_HINT,
 } as const satisfies Record<LanguageServerDiagnosticSeverity, string>
+
+/** The variables a hover tooltip must copy so a diagnostic note keeps its colour on the body. */
+export const DIAGNOSTIC_THEME_VARIABLES = [
+  '--editor-lsp-diagnostic-error',
+  '--editor-lsp-diagnostic-warning',
+  '--editor-lsp-diagnostic-information',
+  '--editor-lsp-diagnostic-hint',
+] as const
 
 // Each wash derives from its own severity colour, so restyling one id moves the range background
 // with it, and stays alpha-blended so it composes over any editor background.

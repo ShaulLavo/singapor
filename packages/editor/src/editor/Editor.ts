@@ -57,6 +57,7 @@ import {
 } from './performanceDiagnostics'
 import type { EditorCommandContext, EditorCommandId } from './commands'
 import { normalizeEditorEditInput } from './editInput'
+import { EditorAmbientPluginController } from './ambientPlugins'
 import { EditorCommandRouter } from './commandRouter'
 import { EditorAnnouncer } from './announce'
 import { SelectionRangeStore } from './selectionRanges'
@@ -296,6 +297,7 @@ export class Editor {
   private syntaxScrollDirection: SyntaxScrollDirection = 0
   private readonly options: EditorOptions
   private readonly pluginHost: EditorPluginHost
+  private readonly ambientPlugins: EditorAmbientPluginController
   private readonly commandRouter: EditorCommandRouter
   private readonly document: EditorDocumentController
   private readonly editorFeatures = new Map<EditorCapabilityToken<unknown>, unknown>()
@@ -719,6 +721,14 @@ export class Editor {
       onInjectedTextRowProvidersChanged: () => this.handleInjectedTextRowProvidersChanged(),
       onInlineReplacementProvidersChanged: () => this.handleInlineReplacementProvidersChanged(),
     })
+    // After the host reports provider changes to this editor: an ambient plugin installed before
+    // that would register its contributions into silence.
+    this.ambientPlugins = new EditorAmbientPluginController(
+      this.languageFeatures,
+      this.pluginHost,
+      (ambient, error) =>
+        this.logPluginFailure('editor.plugin.install_failed', ambient.demand.id, error, 0),
+    )
     this.inputSelection.install()
     this.setSnapshot(options.snapshot ?? null, options.documentKey ?? null)
     this.initializeDefaultText()
@@ -1781,6 +1791,7 @@ export class Editor {
     // takes the host with it. The host contains a throwing dispose per plugin; this catches what
     // escapes that — a throwing installation disposable, or a host-owned registration.
     try {
+      this.ambientPlugins.dispose()
       this.pluginHost.dispose()
     } finally {
       this.view.dispose()

@@ -29,7 +29,6 @@ export type TypeScriptLspResolvedOptions = {
   readonly rootUri: string | null
   readonly compilerOptions: TypeScriptLspPluginOptions['compilerOptions']
   readonly diagnosticDelayMs: number
-  readonly hoverMarkdownCodeBackground: boolean
   readonly timeoutMs: number
   readonly capabilities: TypeScriptLspPluginOptions['capabilities']
   readonly clientInfo: TypeScriptLspPluginOptions['clientInfo']
@@ -54,7 +53,6 @@ export function createTypeScriptLspPlugin(
   const plugin = createLanguageServerAdapterPlugin({
     name: 'editor.typescript-lsp',
     rootUri: resolved.rootUri,
-    hoverMarkdownCodeBackground: resolved.hoverMarkdownCodeBackground,
     initializationOptions: typeScriptInitializationOptions(resolved),
     timeoutMs: resolved.timeoutMs,
     capabilities: resolved.capabilities,
@@ -192,7 +190,6 @@ function resolveOptions(options: TypeScriptLspPluginOptions): TypeScriptLspResol
     rootUri: options.rootUri ?? 'file:///',
     compilerOptions: options.compilerOptions,
     diagnosticDelayMs: options.diagnosticDelayMs ?? DEFAULT_DIAGNOSTIC_DELAY_MS,
-    hoverMarkdownCodeBackground: options.hoverMarkdownCodeBackground ?? false,
     timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     capabilities: options.capabilities,
     clientInfo: options.clientInfo,

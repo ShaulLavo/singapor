@@ -4,7 +4,7 @@ import type {
 } from '@singapore-editor/core/extensions'
 
 /**
- * The placement every floating surface in this plugin shares.
+ * The placement every floating surface a plugin puts up shares.
  *
  * Anchor positioning does the page arithmetic: a hidden anchor element carries `anchor-name`, the
  * surface carries `position-anchor`, and `position-area` drops it on the side we name — nothing
@@ -92,6 +92,8 @@ export function createAnchoredSurface(options: AnchoredSurfaceOptions): Anchored
   if (element.parentNode) element.before(anchor)
   else document.body.prepend(anchor)
 
+  // One hook for a host to style every floating editor surface, whatever plugin owns it.
+  element.setAttribute('data-editor-popup', '')
   element.style.position = 'fixed'
   element.style.setProperty('position-anchor', anchorName)
   // The surface is placed entirely by its anchor, so any inset left over from an earlier life of

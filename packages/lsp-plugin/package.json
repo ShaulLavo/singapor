@@ -23,6 +23,11 @@
       "import": "./dist/completionController.js",
       "default": "./dist/completionController.js"
     },
+    "./definition-link-controller": {
+      "types": "./dist/definitionLinkController.d.ts",
+      "import": "./dist/definitionLinkController.js",
+      "default": "./dist/definitionLinkController.js"
+    },
     "./definition-navigation": {
       "types": "./dist/definitionNavigation.d.ts",
       "import": "./dist/definitionNavigation.js",
@@ -48,35 +53,25 @@
       "import": "./dist/documentSyncController.js",
       "default": "./dist/documentSyncController.js"
     },
-    "./hover-definition-controller": {
-      "types": "./dist/hoverDefinitionController.d.ts",
-      "import": "./dist/hoverDefinitionController.js",
-      "default": "./dist/hoverDefinitionController.js"
-    },
-    "./markdown-tooltip": {
-      "types": "./dist/markdownTooltip.d.ts",
-      "import": "./dist/markdownTooltip.js",
-      "default": "./dist/markdownTooltip.js"
+    "./hover-participant": {
+      "types": "./dist/hoverParticipant.d.ts",
+      "import": "./dist/hoverParticipant.js",
+      "default": "./dist/hoverParticipant.js"
     },
     "./paths": {
       "types": "./dist/paths.d.ts",
       "import": "./dist/paths.js",
       "default": "./dist/paths.js"
     },
-    "./plugin-types": {
-      "types": "./dist/pluginTypes.d.ts",
-      "import": "./dist/pluginTypes.js",
-      "default": "./dist/pluginTypes.js"
-    },
     "./plugin-styles": {
       "types": "./dist/plugin.styles.d.ts",
       "import": "./dist/plugin.styles.js",
       "default": "./dist/plugin.styles.js"
     },
-    "./tooltip": {
-      "types": "./dist/tooltip.d.ts",
-      "import": "./dist/tooltip.js",
-      "default": "./dist/tooltip.js"
+    "./plugin-types": {
+      "types": "./dist/pluginTypes.d.ts",
+      "import": "./dist/pluginTypes.js",
+      "default": "./dist/pluginTypes.js"
     },
     "./websocket": {
       "types": "./dist/websocket.d.ts",
@@ -103,10 +98,7 @@
   },
   "dependencies": {
     "@singapore-editor/lsp": "workspace:*",
-    "remark-gfm": "^4.0.1",
-    "remark-parse": "^11.0.0",
-    "remark-stringify": "^11.0.0",
-    "unified": "^11.0.5",
+    "@singapore-editor/plugin-ui": "workspace:*",
     "vscode-languageserver-protocol": "^3.18.3"
   },
   "devDependencies": {

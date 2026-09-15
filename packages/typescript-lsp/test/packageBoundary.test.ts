@@ -26,13 +26,12 @@ const SHARED_LSP_PLUGIN_FILES = [
   'diagnosticProjection.ts',
   'diagnostics.ts',
   'diagnosticsPresenter.ts',
+  'definitionLinkController.ts',
   'documentSync.ts',
-  'hoverDefinitionController.ts',
+  'hoverParticipant.ts',
   'lspConnection.ts',
-  'markdownTooltip.ts',
   'plugin.styles.ts',
   'pluginTypes.ts',
-  'tooltip.ts',
   'websocket.ts',
 ] as const
 

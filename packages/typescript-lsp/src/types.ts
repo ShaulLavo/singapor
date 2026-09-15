@@ -40,7 +40,6 @@ export type TypeScriptLspPluginOptions = {
   readonly rootUri?: lsp.DocumentUri | null
   readonly compilerOptions?: ts.CompilerOptions
   readonly diagnosticDelayMs?: number
-  readonly hoverMarkdownCodeBackground?: boolean
   readonly timeoutMs?: number
   /**
    * Merged over `defaultClientCapabilities()`. Build a semantic-tokens block with

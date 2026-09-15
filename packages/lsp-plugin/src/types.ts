@@ -159,7 +159,6 @@ export type LanguageServerRenamePrompt = {
 
 export type LanguageServerPluginOptions = LanguageServerLaneHostOptions & {
   readonly rootUri?: lsp.DocumentUri | null
-  readonly hoverMarkdownCodeBackground?: boolean
   readonly initializationOptions?: unknown
   readonly timeoutMs?: number
   /**
@@ -241,7 +240,6 @@ export type LanguageServerLaneOptions = LanguageServerLaneHostOptions & {
 
 export type LanguageServerSetPluginOptions = Pick<
   LanguageServerPluginOptions,
-  | 'hoverMarkdownCodeBackground'
   | 'documentSync'
   | 'onDiagnostics'
   | 'onDidNavigateDiagnostic'

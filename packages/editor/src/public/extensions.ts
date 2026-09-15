@@ -1,6 +1,7 @@
 export {
   createEditorCapabilityToken,
   createEditorLanguageFeatureToken,
+  registerAmbientEditorPlugin,
   EDITOR_MINIMAP_FEATURE,
   EDITOR_MINIMAP_FEATURE_ID,
   EDITOR_PASTE_HANDLER,
@@ -10,6 +11,7 @@ export {
   EditorDecorationStore,
   projectDecorationRangeThroughEdits,
 } from '../editor/decorationStore'
+export type { AmbientEditorPlugin } from '../plugins'
 export type {
   EditorDecoration,
   EditorDecorationRange,

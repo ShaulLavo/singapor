@@ -47,7 +47,7 @@
       "file": "packages/decode/src/diffusion.ts",
       "id": "packages/decode/src/diffusion.ts:queueMicrotask:a60528563a",
       "justification": "Nothing to animate still has to finish asynchronously, or a caller that always sees its completion after returning would see it before returning on an empty document. Guarded by `stopped`, so a cancel between the two beats it.",
-      "line": 175,
+      "line": 178,
       "snippet": "queueMicrotask(() => {"
     },
     {
@@ -55,7 +55,7 @@
       "file": "packages/decode/src/diffusion.ts",
       "id": "packages/decode/src/diffusion.ts:setInterval:f2b6c75238",
       "justification": "Drives a fixed-duration decorative overlay at a tick computed from its own duration, and owns the matching `clearInterval` in `stop()`. It paints a layer above the rows rather than editor state, so nothing it does has to be ordered against document work.",
-      "line": 188,
+      "line": 191,
       "snippet": "const interval = setInterval(() => {"
     },
     {
@@ -135,7 +135,7 @@
       "file": "packages/editor/src/shiki/shiki.worker.ts",
       "id": "packages/editor/src/shiki/shiki.worker.ts:setTimeout:7613cb083b",
       "justification": "Runs once per highlighter after a one-second delay so background grammar preload stays behind latency-sensitive tokenization and its first paint. `backgroundLoaded` prevents duplicate schedules, and worker-task tracking keeps idle fences and teardown behind the preload.",
-      "line": 233,
+      "line": 246,
       "snippet": "setTimeout(() => {"
     },
     {
@@ -175,7 +175,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:requestIdleCallback:14458bc40c",
       "justification": "Measuring every row's width is the work the horizontal scroll extent needs and nothing on screen is waiting for, so it is deliberately given whatever the frame has left rather than a place in the queue. `cancelContentWidthMeasurement` withdraws it when the content it would measure has already changed.",
-      "line": 1402,
+      "line": 1410,
       "snippet": "const handle = win.requestIdleCallback(run)"
     },
     {
@@ -183,7 +183,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextView.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextView.ts:setTimeout:25021385fc",
       "justification": "The same deferral for an engine with no idle callback. Zero rather than a delay, because the point is only to leave the current frame, and the same cancel withdraws it.",
-      "line": 1411,
+      "line": 1419,
       "snippet": "const handle = win.setTimeout(run, 0)"
     },
     {
@@ -191,7 +191,7 @@
       "file": "packages/editor/src/virtualization/virtualizedTextViewRows.ts",
       "id": "packages/editor/src/virtualization/virtualizedTextViewRows.ts:setTimeout:3bd76fd727",
       "justification": "Leaving the current frame is the entire content of this delay: it is what keeps the repaint out of the resize delivery and out of the row paint that ask for it. The one outstanding handle per view makes a second request in the same frame a no-op, and `cancelInlineWidgetRepaint` withdraws it when the view goes away.",
-      "line": 1497,
+      "line": 1513,
       "snippet": "const handle = win.setTimeout(() => {"
     },
     {
@@ -199,7 +199,7 @@
       "file": "packages/lsp-plugin/src/codeActions.ts",
       "id": "packages/lsp-plugin/src/codeActions.ts:setTimeout:add08e7112",
       "justification": "Debounces a question to the language server against the caret and the diagnostics, not against rendering, and `clear()` withdraws it on every further change — so a fix is never computed against text the reader has already moved past.",
-      "line": 179,
+      "line": 184,
       "snippet": "this.timer = setTimeout(() => {"
     },
     {
@@ -227,30 +227,6 @@
       "snippet": "queueMicrotask(() => {"
     },
     {
-      "api": "setTimeout",
-      "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
-      "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:577752bab8",
-      "justification": "Starts semantic work midway through pointer dwell so transient targets are skipped while network time overlaps the remaining dwell.",
-      "line": 309,
-      "snippet": "operation.dispatchTimer = setTimeout(() => {"
-    },
-    {
-      "api": "setTimeout",
-      "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
-      "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:83ef4f201e",
-      "justification": "Enforces the hover dwell before paint; cancellation clears it when the pointer leaves the identifier.",
-      "line": 314,
-      "snippet": "operation.revealTimer = setTimeout(() => {"
-    },
-    {
-      "api": "setTimeout",
-      "file": "packages/lsp-plugin/src/hoverDefinitionController.ts",
-      "id": "packages/lsp-plugin/src/hoverDefinitionController.ts:setTimeout:c104083303",
-      "justification": "Delays the loading row until the active server set is observably slow; cancellation clears it on every target change.",
-      "line": 302,
-      "snippet": "operation.loadingTimer = setTimeout(() => this.revealHoverLoading(id), HOVER_LOADING_DELAY_MS)"
-    },
-    {
       "api": "queueMicrotask",
       "file": "packages/lsp-plugin/src/lspConnectionPool.ts",
       "id": "packages/lsp-plugin/src/lspConnectionPool.ts:queueMicrotask:1d59545f0f",
@@ -268,22 +244,6 @@
     },
     {
       "api": "setTimeout",
-      "file": "packages/lsp-plugin/src/tooltip.ts",
-      "id": "packages/lsp-plugin/src/tooltip.ts:setTimeout:1004d55352",
-      "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 158,
-      "snippet": "hideTimer = setTimeout(() => {"
-    },
-    {
-      "api": "setTimeout",
-      "file": "packages/lsp-plugin/src/tooltip.ts",
-      "id": "packages/lsp-plugin/src/tooltip.ts:setTimeout:6e6b0feb4b",
-      "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 572,
-      "snippet": "setTimeout(() => {"
-    },
-    {
-      "api": "setTimeout",
       "file": "packages/lsp/src/client.ts",
       "id": "packages/lsp/src/client.ts:setTimeout:373e9c94c5",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
@@ -295,7 +255,7 @@
       "file": "packages/minimap/src/plugin.ts",
       "id": "packages/minimap/src/plugin.ts:requestAnimationFrame:cac4e5564e",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 490,
+      "line": 523,
       "snippet": "if (typeof requestAnimationFrame === 'function') return requestAnimationFrame(callback)"
     },
     {
@@ -303,8 +263,48 @@
       "file": "packages/minimap/src/plugin.ts",
       "id": "packages/minimap/src/plugin.ts:setTimeout:32fb906cca",
       "justification": "Phase 0 legacy baseline; keep until Phase 3 scheduler migration or replace with a specific scheduler-owned justification.",
-      "line": 491,
+      "line": 524,
       "snippet": "return setTimeout(callback, 16) as unknown as number"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/plugin-ui/src/hoverController.ts",
+      "id": "packages/plugin-ui/src/hoverController.ts:setTimeout:017e4b5257",
+      "justification": "Enforces the hover dwell before paint; the pointer leaving the target clears it.",
+      "line": 221,
+      "snippet": "current.revealTimer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/plugin-ui/src/hoverController.ts",
+      "id": "packages/plugin-ui/src/hoverController.ts:setTimeout:ceab8e0fd3",
+      "justification": "Delays the loading row until the participants are observably slow; every target change cancels it.",
+      "line": 207,
+      "snippet": "current.loadingTimer = setTimeout(() => revealLoading(current), HOVER_LOADING_DELAY_MS)"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/plugin-ui/src/hoverController.ts",
+      "id": "packages/plugin-ui/src/hoverController.ts:setTimeout:f83b59645d",
+      "justification": "Starts server work midway through the pointer dwell so transient targets are skipped while network time overlaps the rest of the dwell.",
+      "line": 216,
+      "snippet": "current.dispatchTimer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/plugin-ui/src/tooltip.ts",
+      "id": "packages/plugin-ui/src/tooltip.ts:setTimeout:89686cb98f",
+      "justification": "A pointer grace period before the hover goes away, cancelled by re-entry; it schedules no editor work.",
+      "line": 169,
+      "snippet": "hideTimer = setTimeout(() => {"
+    },
+    {
+      "api": "setTimeout",
+      "file": "packages/plugin-ui/src/tooltip.ts",
+      "id": "packages/plugin-ui/src/tooltip.ts:setTimeout:8ff275af18",
+      "justification": "Resets the copy button's label after the user has had time to read it; DOM only.",
+      "line": 589,
+      "snippet": "setTimeout(() => {"
     },
     {
       "api": "queueMicrotask",

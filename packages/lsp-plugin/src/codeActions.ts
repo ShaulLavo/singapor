@@ -9,7 +9,7 @@ import {
 } from '@singapore-editor/lsp'
 import type * as lsp from 'vscode-languageserver-protocol'
 
-import type { OffsetRange } from './definitionNavigation'
+import type { OffsetRange } from '@singapore-editor/plugin-ui'
 import type { ActiveDocument } from './pluginTypes'
 import {
   type LanguageServerCodeActionProvenance,

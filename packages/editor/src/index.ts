@@ -101,6 +101,7 @@ export {
 export {
   createEditorCapabilityToken,
   createEditorLanguageFeatureToken,
+  registerAmbientEditorPlugin,
   EDITOR_FIND_FEATURE,
   EDITOR_FIND_FEATURE_ID,
   EDITOR_MINIMAP_FEATURE,

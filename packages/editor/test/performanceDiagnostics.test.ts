@@ -44,7 +44,7 @@ test.each([
     const editor = mountEditor()
     editor.openDocument({ documentId: 'batch.txt', text: 'abc' })
     editor.edit({ from: 1, to: 1, text: 'X' })
-    await vi.runAllTimersAsync()
+    // Keep the fold index cold so the batch schedules deferred work.
     records.length = 0
 
     editor.runInOperation(() => {
@@ -126,7 +126,7 @@ test.each([false, true])(
       createEditorBufferSession(buffer, createEditorViewSession(buffer, 'second')),
     )
     first.edit({ from: 1, to: 1, text: 'X' })
-    await vi.runAllTimersAsync()
+    // Keep both fold indexes cold so each view schedules deferred work.
     records.length = 0
 
     first.runInOperation(() => second.dispatchCommand('undo'))

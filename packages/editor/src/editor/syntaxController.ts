@@ -1162,9 +1162,7 @@ export class EditorSyntaxController {
     this.highlightDispatchPoint = chain.point
     if (!change) return this.highlighterSession.refresh(session.getSnapshot())
 
-    return this.highlighterSession.applyChange(
-      composeSkippedChanges(session, chain, point, change),
-    )
+    return this.highlighterSession.applyChange(composeSkippedChanges(session, chain, point, change))
   }
 
   private applySyntaxResult(

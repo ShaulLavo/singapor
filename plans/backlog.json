@@ -442,6 +442,22 @@
         "Packed tokens end to end (drop the per-edit unpack)",
         "Input latency as an enforced budget"
       ]
+    },
+    {
+      "id": "E036",
+      "file": "e036-monaco-geometry-comparison.md",
+      "title": "Measure Monaco's view mechanisms against the calculated geometry path",
+      "status": "Proposed",
+      "owner": "Editor",
+      "kind": "Research",
+      "priority": "P1",
+      "effort": "M",
+      "baseline": "5f68ce6ae086bea10d9708ed56580e173d4dfee2",
+      "dependsOn": ["E001", "E002"],
+      "topics": [
+        "Input latency as an enforced budget",
+        "Standing stress fixtures + interactive benchmarks"
+      ]
     }
   ]
 }
